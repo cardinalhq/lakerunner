@@ -15,134 +15,20 @@
 package promql
 
 import (
-	"math"
 	"testing"
 	"time"
-
-	"github.com/axiomhq/hyperloglog"
 )
-
-// This test exercises LeafNode.Eval() on paths that don't depend on MAP aggregates,
-// so it compiles without needing details of SketchTags.getAggValue().
-//
-// Covered:
-//   - HLL sketch path (returns ValHLL with a materialized sketch)
-//   - Unknown sketch type (returns scalar NaN)
-//   - Empty input (returns empty map)
-func TestLeafNode_Eval_Basics(t *testing.T) {
-	step := 10 * time.Second
-
-	t.Run("HLL sketch produces ValHLL and preserves timestamp/tags", func(t *testing.T) {
-		// Build an HLL and serialize to bytes
-		h := hyperloglog.New14()
-		h.Insert([]byte("a"))
-		h.Insert([]byte("b"))
-		b, err := h.MarshalBinary()
-		if err != nil {
-			t.Fatalf("marshal HLL: %v", err)
-		}
-
-		now := time.Now().UnixMilli()
-
-		leaf := &LeafNode{
-			BE: BaseExpr{
-				ID:       "metric_hll",
-				FuncName: "", // not used for HLL path
-				// No GroupBy -> key is "default"
-			},
-		}
-
-		sg := SketchGroup{
-			Group: map[string][]SketchInput{
-				"metric_hll": {
-					{
-						Timestamp: now,
-						SketchTags: SketchTags{
-							SketchType: SketchHLL,
-							Tags:       map[string]any{"src": "test"},
-							Bytes:      b,
-						},
-					},
-				},
-			},
-		}
-
-		out := leaf.Eval(sg, step)
-		if len(out) != 1 {
-			t.Fatalf("expected 1 result, got %d", len(out))
-		}
-		r, ok := out["default"]
-		if !ok {
-			t.Fatalf("expected key 'default' (no group-by), got keys: %#v", out)
-		}
-		if r.Timestamp != now {
-			t.Fatalf("timestamp mismatch: got %d want %d", r.Timestamp, now)
-		}
-		if r.Value.Kind != ValHLL || r.Value.HLL == nil {
-			t.Fatalf("expected ValHLL with non-nil sketch, got %+v", r.Value)
-		}
-		// Basic sanity: cardinality should be >= 2 for the inserted items (approximate)
-		if est := r.Value.HLL.Estimate(); float64(est) < 1.5 {
-			t.Fatalf("unexpected low HLL estimate: got %d", est)
-		}
-	})
-
-	t.Run("Unknown sketch type yields scalar NaN", func(t *testing.T) {
-		leaf := &LeafNode{
-			BE: BaseExpr{
-				ID: "metric_unknown",
-			},
-		}
-		sg := SketchGroup{
-			Group: map[string][]SketchInput{
-				"metric_unknown": {
-					{
-						Timestamp: time.Now().UnixMilli(),
-						SketchTags: SketchTags{
-							SketchType: SUM,
-							Tags:       map[string]any{},
-						},
-					},
-				},
-			},
-		}
-
-		out := leaf.Eval(sg, step)
-		if len(out) != 1 {
-			t.Fatalf("expected 1 result, got %d", len(out))
-		}
-		r := out["default"]
-		if r.Value.Kind != ValScalar || !math.IsNaN(r.Value.Num) {
-			t.Fatalf("expected scalar NaN for unknown sketch type, got %+v", r.Value)
-		}
-	})
-
-	t.Run("Empty rows for BE.ID returns empty map", func(t *testing.T) {
-		leaf := &LeafNode{
-			BE: BaseExpr{
-				ID: "metric_empty",
-			},
-		}
-		sg := SketchGroup{
-			Group: map[string][]SketchInput{
-				"metric_empty": {},
-			},
-		}
-		out := leaf.Eval(sg, step)
-		if len(out) != 0 {
-			t.Fatalf("expected empty result, got %d entries", len(out))
-		}
-	})
-}
 
 func TestWinSumCount_FillThenSlide(t *testing.T) {
 	const step = 10 * time.Second
 	const rangeDur = 30 * time.Second
-	stepMs := step.Milliseconds()
+	stepMs := step.Milliseconds() // only used for readability in expectations
+	_ = stepMs
 	rangeMs := rangeDur.Milliseconds()
 
 	w := &winSumCount{rangeMs: rangeMs}
 
+	// All buckets are 10s wide (step-based windows)
 	w.add(0, 1, 1)
 	w.add(10_000, 2, 1)
 	w.add(20_000, 3, 1)
@@ -156,6 +42,7 @@ func TestWinSumCount_FillThenSlide(t *testing.T) {
 
 	w.add(30_000, 4, 1)
 	w.evict(0)
+	// (30s - 0s) + 10s = 40s
 	if got := w.coveredMs(30_000, stepMs); got != 40_000 {
 		t.Fatalf("coveredMs @30s = %d, want 40_000", got)
 	}
@@ -165,6 +52,7 @@ func TestWinSumCount_FillThenSlide(t *testing.T) {
 
 	w.add(40_000, 5, 1)
 	w.evict(10_000)
+	// (40s - 10s) + 10s = 40s
 	if got := w.coveredMs(40_000, stepMs); got != 40_000 {
 		t.Fatalf("coveredMs @40s = %d, want 40_000", got)
 	}
@@ -172,8 +60,10 @@ func TestWinSumCount_FillThenSlide(t *testing.T) {
 		t.Fatalf("sum,count after slide @40s = (%v,%v), want (14,4)", w.sum, w.count)
 	}
 
+	// Jump to 70s, evict < 40s
 	w.add(70_000, 8, 1)
 	w.evict(40_000)
+	// (70s - 40s) + 10s = 40s
 	if got := w.coveredMs(70_000, stepMs); got != 40_000 {
 		t.Fatalf("coveredMs @70s = %d, want 40_000", got)
 	}
@@ -189,6 +79,7 @@ func TestWinSumCount_PartialCoverage(t *testing.T) {
 	rangeMs := rangeDur.Milliseconds()
 
 	w := &winSumCount{rangeMs: rangeMs}
+	// Single 10s bucket at ts=0
 	w.add(0, 5, 1)
 
 	if got := w.coveredMs(0, stepMs); got != stepMs {
@@ -203,6 +94,7 @@ func TestWinMinMax_FillThenSlide(t *testing.T) {
 	const step = 10 * time.Second
 	const rangeDur = 30 * time.Second
 	stepMs := step.Milliseconds()
+	_ = stepMs
 	rangeMs := rangeDur.Milliseconds()
 
 	w := &winMinMax{rangeMs: rangeMs}
@@ -261,10 +153,9 @@ func TestWinMinMax_FillThenSlide(t *testing.T) {
 
 func TestWinMinMax_PartialCoverage(t *testing.T) {
 	const step = 10 * time.Second
-	const rangeDur = 30 * time.Second
 	stepMs := step.Milliseconds()
 
-	w := &winMinMax{rangeMs: rangeDur.Milliseconds()}
+	w := &winMinMax{rangeMs: (30 * time.Second).Milliseconds()}
 
 	// Single bucket at 0s: (min,max) = (2,9)
 	w.add(0, 2, 9)

@@ -33,8 +33,12 @@ import (
 type LeafNode struct {
 	BE        BaseExpr
 	mu        sync.Mutex
-	windows   map[string]*winSumCount // for sum/rate/increase/avg
+	windows   map[string]*winSumCount // for sum/rate/increase/avg/count/last
 	windowsMM map[string]*winMinMax   // for min/max
+
+	// Tracks previous bucket timestamp per grouping key to infer incoming bucket span
+	// (used for instant math and to stabilize sparse data in range windows).
+	prevTs map[string]int64
 }
 
 func (n *LeafNode) Hints() ExecHints {
@@ -49,12 +53,12 @@ func (n *LeafNode) Hints() ExecHints {
 
 type winEntry struct {
 	ts    int64   // bucket start (ms)
-	sum   float64 // bucket SUM(rollup_sum)
-	count float64 // bucket SUM(rollup_count)
+	sum   float64 // SUM(rollup_sum) within bucket
+	count float64 // SUM(rollup_count) within bucket
 }
 
-// winSumCount maintains a left-inclusive sliding window over step-buckets.
-// Coverage at time nowTs (start of current bucket) is (nowTs - firstTs) + stepMs.
+// winSumCount maintains a left-inclusive sliding window over *query-step/effective* buckets.
+// Coverage at time nowTs is (nowTs - firstTs) + stepMs (or an effective span passed in).
 type winSumCount struct {
 	rangeMs int64
 	entries []winEntry
@@ -184,8 +188,13 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 
 	out := make(map[string]EvalResult, len(rows))
 	for _, si := range rows {
-		var v Value
+		k := keyFor(si.SketchTags.Tags)
 
+		// Per-key inferred incoming span (ms); used to stabilize sparse data.
+		inferredSpanMs := n.inferSpanMs(k, si.Timestamp, stepMs)
+		effSpanMs := max64(stepMs, inferredSpanMs) // use the larger of (query step, incoming cadence)
+
+		var v Value
 		switch si.SketchTags.SketchType {
 		case SketchHLL:
 			if len(si.SketchTags.Bytes) == 0 {
@@ -220,44 +229,43 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 			v = Value{Kind: ValDDS, DDS: sk}
 
 		case SketchMAP:
-			k := keyFor(si.SketchTags.Tags)
 			if n.BE.WantCount {
-				v = Value{
-					Kind: ValScalar,
-					Num:  si.SketchTags.getAggValue(COUNT),
-				}
+				v = Value{Kind: ValScalar, Num: si.SketchTags.getAggValue(COUNT)}
 			} else if n.BE.FuncName != "" {
-				num := n.evalRangeAwareScalar(k, si, stepMs, rangeMs)
+				// RANGE math: use effSpanMs for eviction/coverage to handle sparse (e.g., 60s) buckets.
+				num := n.evalRangeAwareScalar(k, si, stepMs, inferredSpanMs, rangeMs)
 				v = Value{Kind: ValScalar, Num: num}
 			} else {
-				// Instant selector: MERGE Agg maps across workers (sum,sum; min=min; max=max).
-				// Start from any existing aggregate in out[k].
+				// Instant selector: merge maps across workers
 				merged := map[string]float64{}
 				if prev, ok := out[k]; ok && prev.Value.Kind == ValMap && prev.Value.AggMap != nil {
 					for name, val := range prev.Value.AggMap {
 						merged[name] = val
 					}
 				}
-
-				// Pull current row’s agg fields.
-				if v, ok := si.SketchTags.Agg["sum"]; ok {
-					merged["sum"] += v
+				if vv, ok := si.SketchTags.Agg["sum"]; ok {
+					merged["sum"] += vv
 				}
-				if v, ok := si.SketchTags.Agg["count"]; ok {
-					merged["count"] += v
+				if vv, ok := si.SketchTags.Agg["count"]; ok {
+					merged["count"] += vv
 				}
-				if v, ok := si.SketchTags.Agg["min"]; ok {
-					if cur, ok2 := merged["min"]; !ok2 || v < cur {
-						merged["min"] = v
+				if vv, ok := si.SketchTags.Agg["min"]; ok {
+					if cur, ok2 := merged["min"]; !ok2 || vv < cur {
+						merged["min"] = vv
 					}
 				}
-				if v, ok := si.SketchTags.Agg["max"]; ok {
-					if cur, ok2 := merged["max"]; !ok2 || v > cur {
-						merged["max"] = v
+				if vv, ok := si.SketchTags.Agg["max"]; ok {
+					if cur, ok2 := merged["max"]; !ok2 || vv > cur {
+						merged["max"] = vv
 					}
 				}
-
 				v = Value{Kind: ValMap, AggMap: merged}
+			}
+
+			// Instant rate (no range): denominator should be effSpanMs (seconds).
+			if n.BE.FuncName == "rate" && n.BE.Range == "" {
+				num := evalLeafValuePerBucket(n.BE, si, float64(effSpanMs)/1000.0)
+				v = Value{Kind: ValScalar, Num: num}
 			}
 
 		default:
@@ -265,7 +273,6 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 			v = Value{Kind: ValScalar, Num: math.NaN()}
 		}
 
-		k := keyFor(si.SketchTags.Tags)
 		out[k] = EvalResult{
 			Timestamp: si.Timestamp,
 			Value:     v,
@@ -275,10 +282,41 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 	return out
 }
 
-// evalRangeAwareScalar applies RANGE window math on top of raw step aggregates.
-func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rangeMs int64) float64 {
+// inferSpanMs returns the delta between consecutive timestamps for a given key,
+// falling back to stepMs if this is the first sample or the delta is non-positive.
+func (n *LeafNode) inferSpanMs(key string, ts int64, stepMs int64) int64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.prevTs == nil {
+		n.prevTs = make(map[string]int64, 64)
+	}
+	prev := n.prevTs[key]
+	span := stepMs
+	if prev > 0 && ts > prev {
+		span = ts - prev
+	}
+	if span <= 0 {
+		span = stepMs
+	}
+	n.prevTs[key] = ts
+	return span
+}
+
+// evalRangeAwareScalar applies RANGE window math.
+// It uses effSpanMs = max(stepMs, inferredSpanMs) for eviction and coverage to
+// avoid gaps when incoming buckets are sparser than the query step.
+func (n *LeafNode) evalRangeAwareScalar(
+	key string,
+	in SketchInput,
+	stepMs int64,
+	inferredSpanMs int64,
+	rangeMs int64,
+) float64 {
+	effSpanMs := max64(stepMs, inferredSpanMs)
+
 	if rangeMs <= 0 {
-		return evalLeafValuePerBucket(n.BE, in, float64(stepMs)/1000.0)
+		// Instant math: use effSpan for denominators (e.g., instant rate)
+		return evalLeafValuePerBucket(n.BE, in, float64(effSpanMs)/1000.0)
 	}
 
 	ts := in.Timestamp
@@ -298,17 +336,21 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 			n.windows[key] = w
 		}
 		w.add(ts, bktSum, bktCnt)
-		w.evict(ts - rangeMs + stepMs)
-		covered := w.coveredMs(ts, stepMs)
+
+		// Evict using effective span; left-inclusive coverage uses the same span.
+		w.evict(ts + effSpanMs - rangeMs)
+		covered := w.coveredMs(ts, effSpanMs)
 		sum, cnt := w.sum, w.count
+
+		// Approximate "last" as the last bucket's average (sum/count for that bucket).
 		lastVal := math.NaN()
 		if nBE := len(w.entries); nBE > 0 {
-			lastSum := w.entries[nBE-1].sum
-			lastCount := w.entries[nBE-1].count
-			if lastCount == 0 {
-				lastCount = 1
+			ls := w.entries[nBE-1].sum
+			lc := w.entries[nBE-1].count
+			if lc == 0 {
+				lc = 1
 			}
-			lastVal = lastSum / lastCount // <-- the "last" value in window (using SUM as the bucket value)
+			lastVal = ls / lc
 		}
 		n.mu.Unlock()
 
@@ -321,6 +363,7 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 		case "count_over_time":
 			return cnt
 		case "rate":
+			// Windowed rate uses the range width in seconds.
 			return sum / (float64(rangeMs) / 1000.0)
 		case "avg_over_time":
 			if cnt == 0 {
@@ -345,11 +388,10 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 			n.windowsMM[key] = w
 		}
 		w.add(ts, bktMin, bktMax)
-		w.evict(ts - rangeMs + stepMs)
-		covered := w.coveredMs(ts, stepMs)
+		w.evict(ts + effSpanMs - rangeMs)
+		covered := w.coveredMs(ts, effSpanMs)
 		var out float64
 		if covered < rangeMs {
-			slog.Info("Insufficient coverage", "coveredMs", covered, "requiredMs", rangeMs)
 			out = math.NaN()
 		} else if n.BE.FuncName == "min_over_time" {
 			out = w.min()
@@ -360,10 +402,13 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 		return out
 	}
 
-	return evalLeafValuePerBucket(n.BE, in, float64(stepMs)/1000.0)
+	// Fallback to per-bucket behavior (use effSpan for instant denominators).
+	return evalLeafValuePerBucket(n.BE, in, float64(effSpanMs)/1000.0)
 }
 
-func evalLeafValuePerBucket(be BaseExpr, in SketchInput, stepSecs float64) float64 {
+// evalLeafValuePerBucket computes per-bucket values; bucketSpanSecs is the
+// denominator for instant rate (caller passes effSpanSecs where appropriate).
+func evalLeafValuePerBucket(be BaseExpr, in SketchInput, bucketSpanSecs float64) float64 {
 	if in.SketchTags.SketchType != SketchMAP {
 		return math.NaN()
 	}
@@ -372,7 +417,7 @@ func evalLeafValuePerBucket(be BaseExpr, in SketchInput, stepSecs float64) float
 	}
 	switch be.FuncName {
 	case "rate":
-		rs := rangeSeconds(be, stepSecs)
+		rs := rangeSeconds(be, bucketSpanSecs)
 		if rs <= 0 {
 			return math.NaN()
 		}
@@ -400,9 +445,11 @@ func evalLeafValuePerBucket(be BaseExpr, in SketchInput, stepSecs float64) float
 	}
 }
 
-func rangeSeconds(be BaseExpr, stepSecs float64) float64 {
+func rangeSeconds(be BaseExpr, bucketSpanSecs float64) float64 {
+	// For instant rate, be.Range == "" and we use bucketSpanSecs.
+	// For range rate, we use the parsed range.
 	if be.Range == "" {
-		return stepSecs
+		return bucketSpanSecs
 	}
 	d, err := model.ParseDuration(be.Range)
 	if err != nil {
@@ -416,12 +463,6 @@ func (n *LeafNode) Label(tags map[string]any) string {
 	if n.BE.FuncName != "" {
 		out += n.BE.FuncName + "("
 	}
-	//if n.BE.isSyntheticLogMetric() {
-	//	out += n.BE.LogLeaf.Label()
-	//	return out + ")"
-	//} else {
-	//	out += n.BE.Metric
-	//}
 	out += n.BE.Metric
 
 	if len(n.BE.GroupBy) > 0 {
@@ -446,4 +487,11 @@ func (n *LeafNode) Label(tags map[string]any) string {
 	}
 	out += ")"
 	return out
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
