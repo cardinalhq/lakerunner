@@ -458,7 +458,7 @@ func TestRollupMetricSegments(t *testing.T) {
 	assert.False(t, targetSegs[0].Compacted)
 	assert.False(t, targetSegs[0].Rolledup)
 	assert.True(t, targetSegs[0].Published)
-	assert.Equal(t, lrdb.CreateByRollup, targetSegs[0].CreatedBy)
+	assert.Equal(t, lrdb.CreatedByRollup, targetSegs[0].CreatedBy)
 
 	// Verify kafka offsets were tracked
 	offsets, err := db.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{

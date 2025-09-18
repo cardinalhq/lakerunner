@@ -381,7 +381,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	}
 
 	// Report telemetry - ingestion transforms files into segments
-	reportTelemetry(ctx, "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "metrics", "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Metric ingestion completed successfully",
 		slog.Int("inputFiles", len(group.Messages)),

@@ -77,6 +77,13 @@ func createTraceReaderStack(
 				slog.String("bucket", profile.Bucket),
 				slog.String("objectID", objectID),
 				slog.Int64("segmentID", row.SegmentID))
+			recordTraceSegmentDownload404(
+				ctx,
+				profile.Bucket,
+				orgID,
+				profile.InstanceNum,
+				row.CreatedBy,
+			)
 			continue
 		}
 

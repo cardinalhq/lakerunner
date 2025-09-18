@@ -232,7 +232,7 @@ func (q *Store) RollupMetricSegments(
 			newItems := make([]InsertMetricSegsParams, len(newRecords))
 			for i, newRec := range newRecords {
 				newItems[i] = InsertMetricSegsParams{
-					CreatedBy:      CreateByRollup,
+					CreatedBy:      CreatedByRollup,
 					Dateint:        targetParams.Dateint,
 					EndTs:          newRec.EndTs,
 					FileSize:       newRec.FileSize,

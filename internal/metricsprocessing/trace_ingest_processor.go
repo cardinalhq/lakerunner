@@ -439,7 +439,7 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 	}
 
 	// Report telemetry - ingestion transforms files into segments
-	reportTelemetry(ctx, "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "traces", "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Trace ingestion completed successfully",
 		slog.Int("inputFiles", len(group.Messages)),

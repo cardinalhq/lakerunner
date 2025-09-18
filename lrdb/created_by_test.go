@@ -14,24 +14,26 @@
 
 package lrdb
 
-type CreatedBy int16
+import (
+	"testing"
 
-const (
-	CreatedByUnknown CreatedBy = iota
-	CreatedByIngest
-	CreatedByCompact
-	CreatedByRollup
+	"github.com/stretchr/testify/assert"
 )
 
-func (c CreatedBy) String() string {
-	switch c {
-	case CreatedByIngest:
-		return "ingest"
-	case CreatedByCompact:
-		return "compact"
-	case CreatedByRollup:
-		return "rollup"
-	default:
-		return "unknown"
+func TestCreatedBy_String(t *testing.T) {
+	tests := []struct {
+		input    CreatedBy
+		expected string
+	}{
+		{CreatedByUnknown, "unknown"},
+		{CreatedByIngest, "ingest"},
+		{CreatedByCompact, "compact"},
+		{CreatedByRollup, "rollup"},
+		{CreatedBy(99), "unknown"},
+		{CreatedBy(-1), "unknown"},
+	}
+
+	for _, tt := range tests {
+		assert.Equal(t, tt.expected, tt.input.String(), "CreatedBy(%d).String()", tt.input)
 	}
 }
