@@ -32,4 +32,5 @@ func init() {
 	debugCmd.AddCommand(debugcmd.GetParquetCmd())
 	debugCmd.AddCommand(debugcmd.GetScalingCmd())
 	debugCmd.AddCommand(debugcmd.GetKafkaCmd())
+	debugCmd.AddCommand(debugcmd.GetDownloadCmd())
 }

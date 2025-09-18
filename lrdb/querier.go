@@ -29,12 +29,15 @@ type Querier interface {
 	// Retrieves all existing pack estimates for EWMA calculations across all signals
 	GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error)
 	GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error)
+	GetLogSegmentsForDownload(ctx context.Context, arg GetLogSegmentsForDownloadParams) ([]LogSeg, error)
 	// Retrieves metric pack estimates for EWMA calculations (backward compatibility)
 	GetMetricPackEstimates(ctx context.Context) ([]GetMetricPackEstimatesRow, error)
 	GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error)
+	GetMetricSegmentsForDownload(ctx context.Context, arg GetMetricSegmentsForDownloadParams) ([]MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
 	GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (TraceSeg, error)
+	GetTraceSegmentsForDownload(ctx context.Context, arg GetTraceSegmentsForDownloadParams) ([]TraceSeg, error)
 	InsertKafkaOffsets(ctx context.Context, arg InsertKafkaOffsetsParams) error
 	KafkaOffsetsAfter(ctx context.Context, arg KafkaOffsetsAfterParams) ([]int64, error)
 	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error)
