@@ -125,7 +125,7 @@ jobs:
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
-            bash -c "git config --global --add safe.directory /workspace && goreleaser release --clean --split --config .goreleaser.test-release.yaml"
+            goreleaser-entrypoint.sh release --clean --split --config .goreleaser.test-release.yaml
 
       - shell: bash
         run: ls -lR dist
@@ -199,7 +199,7 @@ jobs:
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
-            bash -c "git config --global --add safe.directory /workspace && goreleaser continue --merge"
+            goreleaser-entrypoint.sh continue --merge
 
       - name: Add build summary
         run: |

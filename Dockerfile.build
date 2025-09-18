@@ -39,6 +39,10 @@ RUN echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | tee /etc/apt/s
     apt-get install -y --no-install-recommends goreleaser-pro && \
     rm -rf /var/lib/apt/lists/*
 
+# Copy the GoReleaser entrypoint script
+COPY goreleaser-entrypoint.sh /usr/local/bin/goreleaser-entrypoint.sh
+RUN chmod +x /usr/local/bin/goreleaser-entrypoint.sh
+
 # Create workspace
 WORKDIR /workspace
 
