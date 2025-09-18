@@ -36,7 +36,8 @@ type LeafNode struct {
 	windows   map[string]*winSumCount // for sum/rate/increase/avg/count/last
 	windowsMM map[string]*winMinMax   // for min/max
 
-	// Tracks previous bucket timestamp per grouping key to infer bucket span.
+	// Tracks previous bucket timestamp per grouping key to infer incoming bucket span
+	// (used only for instant math / non-window rate).
 	prevTs map[string]int64
 }
 
@@ -50,15 +51,14 @@ func (n *LeafNode) Hints() ExecHints {
 	}
 }
 
-/* ---------------- sum/count window (exact interval math) ------------------ */
-
 type winEntry struct {
 	ts    int64   // bucket start (ms)
-	span  int64   // bucket span (ms), bucket interval is [ts, ts+span)
-	sum   float64 // bucket SUM(rollup_sum)
-	count float64 // bucket SUM(rollup_count)
+	sum   float64 // SUM(rollup_sum) within bucket
+	count float64 // SUM(rollup_count) within bucket
 }
 
+// winSumCount maintains a left-inclusive sliding window over *query-step* buckets.
+// Coverage at time nowTs (start of current bucket) is (nowTs - firstTs) + stepMs.
 type winSumCount struct {
 	rangeMs int64
 	entries []winEntry
@@ -66,26 +66,18 @@ type winSumCount struct {
 	count   float64
 }
 
-// Add a new bucket.
-func (w *winSumCount) add(ts int64, spanMs int64, addSum, addCount float64) {
-	if spanMs <= 0 {
-		spanMs = 1
-	}
-	w.entries = append(w.entries, winEntry{ts: ts, span: spanMs, sum: addSum, count: addCount})
+func (w *winSumCount) add(ts int64, addSum, addCount float64) {
+	w.entries = append(w.entries, winEntry{ts: ts, sum: addSum, count: addCount})
 	w.sum += addSum
 	w.count += addCount
 }
 
-// Evict buckets whose end time is at/before keepFromTs (no overlap with window).
+// evict rows strictly older than keepFromTs (i.e. ts < keepFromTs).
 func (w *winSumCount) evict(keepFromTs int64) {
 	i := 0
-	for i < len(w.entries) {
-		e := w.entries[i]
-		if e.ts+e.span > keepFromTs {
-			break
-		}
-		w.sum -= e.sum
-		w.count -= e.count
+	for i < len(w.entries) && w.entries[i].ts < keepFromTs {
+		w.sum -= w.entries[i].sum
+		w.count -= w.entries[i].count
 		i++
 	}
 	if i > 0 {
@@ -93,117 +85,81 @@ func (w *winSumCount) evict(keepFromTs int64) {
 	}
 }
 
-// coveredMs computes exact overlap of all buckets with [nowTs-rangeMs, nowTs).
-func (w *winSumCount) coveredMs(nowTs int64) int64 {
+// coveredMs returns how much wall time is covered by the current window,
+// assuming each bucket spans [ts, ts+step).
+func (w *winSumCount) coveredMs(nowTs, stepMs int64) int64 {
 	if len(w.entries) == 0 {
 		return 0
 	}
-	winStart := nowTs - w.rangeMs
-	winEnd := nowTs
-
-	var covered int64
-	for _, e := range w.entries {
-		bStart := e.ts
-		bEnd := e.ts + e.span
-		start := max64(bStart, winStart)
-		end := min64(bEnd, winEnd)
-		if end > start {
-			covered += end - start
-		}
-	}
-	return covered
+	first := w.entries[0].ts
+	return (nowTs - first) + stepMs
 }
 
-/* -------------------- min/max window (exact interval math) ---------------- */
+// ---------- window state for min/max family (monotonic deques) --------------
 
 type mmEntry struct {
-	ts   int64   // start
-	span int64   // span
-	min  float64 // bucket min
-	max  float64 // bucket max
+	ts  int64
+	val float64
 }
 
 type winMinMax struct {
 	rangeMs int64
-	segs    []mmEntry // FIFO of segments for coverage & eviction
-	minDQ   []mmEntry // monotonic increasing by min (front is current window min)
-	maxDQ   []mmEntry // monotonic decreasing by max (front is current window max)
+	allTs   []int64 // FIFO of all bucket timestamps to compute coverage
+	minDQ   []mmEntry
+	maxDQ   []mmEntry
 }
 
-// Add a new bucket (ts, span, min, max).
-func (w *winMinMax) add(ts, spanMs int64, bktMin, bktMax float64) {
-	if spanMs <= 0 {
-		spanMs = 1
-	}
-	e := mmEntry{ts: ts, span: spanMs, min: bktMin, max: bktMax}
-	w.segs = append(w.segs, e)
+func (w *winMinMax) add(ts int64, bktMin, bktMax float64) {
+	w.allTs = append(w.allTs, ts)
 
-	// Maintain min deque (increasing by min).
-	for len(w.minDQ) > 0 && w.minDQ[len(w.minDQ)-1].min >= bktMin {
+	for len(w.minDQ) > 0 && w.minDQ[len(w.minDQ)-1].val >= bktMin {
 		w.minDQ = w.minDQ[:len(w.minDQ)-1]
 	}
-	w.minDQ = append(w.minDQ, e)
+	w.minDQ = append(w.minDQ, mmEntry{ts: ts, val: bktMin})
 
-	// Maintain max deque (decreasing by max).
-	for len(w.maxDQ) > 0 && w.maxDQ[len(w.maxDQ)-1].max <= bktMax {
+	for len(w.maxDQ) > 0 && w.maxDQ[len(w.maxDQ)-1].val <= bktMax {
 		w.maxDQ = w.maxDQ[:len(w.maxDQ)-1]
 	}
-	w.maxDQ = append(w.maxDQ, e)
+	w.maxDQ = append(w.maxDQ, mmEntry{ts: ts, val: bktMax})
 }
 
-// Evict all segments whose end ≤ keepFromTs; pop from deques if they match.
 func (w *winMinMax) evict(keepFromTs int64) {
-	i := 0
-	for i < len(w.segs) && w.segs[i].ts+w.segs[i].span <= keepFromTs {
-		seg := w.segs[i]
-		// If the evicted seg is at the front of a deque, pop it too.
-		if len(w.minDQ) > 0 && w.minDQ[0].ts == seg.ts {
-			w.minDQ = w.minDQ[1:]
-		}
-		if len(w.maxDQ) > 0 && w.maxDQ[0].ts == seg.ts {
-			w.maxDQ = w.maxDQ[1:]
-		}
-		i++
+	// Evict timestamps (coverage queue)
+	for len(w.allTs) > 0 && w.allTs[0] < keepFromTs {
+		w.allTs = w.allTs[1:]
 	}
-	if i > 0 {
-		w.segs = append([]mmEntry(nil), w.segs[i:]...)
+	// Evict from deques
+	for len(w.minDQ) > 0 && w.minDQ[0].ts < keepFromTs {
+		w.minDQ = w.minDQ[1:]
+	}
+	for len(w.maxDQ) > 0 && w.maxDQ[0].ts < keepFromTs {
+		w.maxDQ = w.maxDQ[1:]
 	}
 }
 
-// coveredMs computes exact overlap with [nowTs-rangeMs, nowTs).
-func (w *winMinMax) coveredMs(nowTs int64) int64 {
-	if len(w.segs) == 0 {
+func (w *winMinMax) coveredMs(nowTs, stepMs int64) int64 {
+	if len(w.allTs) == 0 {
 		return 0
 	}
-	winStart := nowTs - w.rangeMs
-	winEnd := nowTs
-
-	var covered int64
-	for _, e := range w.segs {
-		start := max64(e.ts, winStart)
-		end := min64(e.ts+e.span, winEnd)
-		if end > start {
-			covered += end - start
-		}
-	}
-	return covered
+	first := w.allTs[0]
+	return (nowTs - first) + stepMs
 }
 
 func (w *winMinMax) min() float64 {
 	if len(w.minDQ) == 0 {
 		return math.NaN()
 	}
-	return w.minDQ[0].min
+	return w.minDQ[0].val
 }
 
 func (w *winMinMax) max() float64 {
 	if len(w.maxDQ) == 0 {
 		return math.NaN()
 	}
-	return w.maxDQ[0].max
+	return w.maxDQ[0].val
 }
 
-/* -------------------------------------------------------------------------- */
+// ---------------------------------------------------------------------------
 
 func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult {
 	rows := sg.Group[n.BE.ID]
@@ -227,13 +183,16 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 		return strings.Join(parts, ",")
 	}
 
-	defaultSpanMs := step.Milliseconds()
+	stepMs := step.Milliseconds()
 	rangeMs := RangeMsFromRange(n.BE.Range)
 
 	out := make(map[string]EvalResult, len(rows))
 	for _, si := range rows {
 		k := keyFor(si.SketchTags.Tags)
-		spanMs := n.computeSpanMs(k, si.Timestamp, defaultSpanMs)
+
+		// Infer incoming bucket span (per key) to use for *instant* math only.
+		inferredSpanMs := n.inferSpanMs(k, si.Timestamp, stepMs)
+		instantSpanSecs := float64(max64(inferredSpanMs, stepMs)) / 1000.0
 
 		var v Value
 		switch si.SketchTags.SketchType {
@@ -271,38 +230,44 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 
 		case SketchMAP:
 			if n.BE.WantCount {
-				v = Value{
-					Kind: ValScalar,
-					Num:  si.SketchTags.getAggValue(COUNT),
-				}
+				v = Value{Kind: ValScalar, Num: si.SketchTags.getAggValue(COUNT)}
 			} else if n.BE.FuncName != "" {
-				num := n.evalRangeAwareScalar(k, si, spanMs, rangeMs)
+				// RANGE math: keep using query step for coverage/eviction (stable, test-friendly).
+				num := n.evalRangeAwareScalar(k, si, stepMs, rangeMs)
 				v = Value{Kind: ValScalar, Num: num}
 			} else {
-				// Instant selector: merge agg maps across workers (sum,sum; min=min; max=max).
+				// Instant selector (no func): just merge maps across workers
 				merged := map[string]float64{}
 				if prev, ok := out[k]; ok && prev.Value.Kind == ValMap && prev.Value.AggMap != nil {
 					for name, val := range prev.Value.AggMap {
 						merged[name] = val
 					}
 				}
-				if v, ok := si.SketchTags.Agg["sum"]; ok {
-					merged["sum"] += v
+				if vv, ok := si.SketchTags.Agg["sum"]; ok {
+					merged["sum"] += vv
 				}
-				if v, ok := si.SketchTags.Agg["count"]; ok {
-					merged["count"] += v
+				if vv, ok := si.SketchTags.Agg["count"]; ok {
+					merged["count"] += vv
 				}
-				if v, ok := si.SketchTags.Agg["min"]; ok {
-					if cur, ok2 := merged["min"]; !ok2 || v < cur {
-						merged["min"] = v
+				if vv, ok := si.SketchTags.Agg["min"]; ok {
+					if cur, ok2 := merged["min"]; !ok2 || vv < cur {
+						merged["min"] = vv
 					}
 				}
-				if v, ok := si.SketchTags.Agg["max"]; ok {
-					if cur, ok2 := merged["max"]; !ok2 || v > cur {
-						merged["max"] = v
+				if vv, ok := si.SketchTags.Agg["max"]; ok {
+					if cur, ok2 := merged["max"]; !ok2 || vv > cur {
+						merged["max"] = vv
 					}
 				}
 				v = Value{Kind: ValMap, AggMap: merged}
+			}
+
+			// If the query is an *instant* rate (FuncName == "rate" and Range == ""),
+			// evalLeafValuePerBucket uses the provided bucket span seconds. We compute it
+			// from max(step, inferredSpan) above.
+			if n.BE.FuncName == "rate" && n.BE.Range == "" {
+				num := evalLeafValuePerBucket(n.BE, si, instantSpanSecs)
+				v = Value{Kind: ValScalar, Num: num}
 			}
 
 		default:
@@ -319,31 +284,33 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 	return out
 }
 
-// computeSpanMs infers the bucket span for a key from the delta between consecutive timestamps.
-func (n *LeafNode) computeSpanMs(key string, ts int64, defaultSpanMs int64) int64 {
+// inferSpanMs returns the delta between consecutive timestamps for a given key,
+// falling back to stepMs if this is the first sample or the delta is non-positive.
+func (n *LeafNode) inferSpanMs(key string, ts int64, stepMs int64) int64 {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.prevTs == nil {
 		n.prevTs = make(map[string]int64, 64)
 	}
 	prev := n.prevTs[key]
-	span := defaultSpanMs
+	span := stepMs
 	if prev > 0 && ts > prev {
 		span = ts - prev
 	}
 	if span <= 0 {
-		span = defaultSpanMs
+		span = stepMs
 	}
 	n.prevTs[key] = ts
 	return span
 }
 
-// evalRangeAwareScalar applies RANGE window math on top of raw step aggregates,
-// using the *actual incoming bucket span* (spanMs), not the query step.
-func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, spanMs, rangeMs int64) float64 {
+// evalRangeAwareScalar applies RANGE window math on top of raw step aggregates.
+// IMPORTANT: This uses the *query step* for coverage and eviction to keep window
+// edges stable and avoid the gaps you saw.
+func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rangeMs int64) float64 {
 	if rangeMs <= 0 {
-		// Instant math: use bucket span for rate denominator.
-		return evalLeafValuePerBucket(n.BE, in, float64(spanMs)/1000.0)
+		// Instant math: handled by caller (esp. instant rate)
+		return evalLeafValuePerBucket(n.BE, in, float64(stepMs)/1000.0)
 	}
 
 	ts := in.Timestamp
@@ -362,16 +329,12 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, spanMs, rang
 			w = &winSumCount{rangeMs: rangeMs}
 			n.windows[key] = w
 		}
-		w.add(ts, spanMs, bktSum, bktCnt)
-
-		// Window is [ts-rangeMs, ts). Evict buckets with end ≤ ts-rangeMs.
-		keepFromTs := ts - w.rangeMs
-		w.evict(keepFromTs)
-
-		covered := w.coveredMs(ts)
+		w.add(ts, bktSum, bktCnt)
+		w.evict(ts - rangeMs + stepMs)
+		covered := w.coveredMs(ts, stepMs)
 		sum, cnt := w.sum, w.count
 
-		// last_over_time: approximate last bucket value as (sum/count) of the last entry.
+		// last_over_time: approximate "last" as the last bucket's value (sum/count)
 		lastVal := math.NaN()
 		if nBE := len(w.entries); nBE > 0 {
 			ls := w.entries[nBE-1].sum
@@ -392,6 +355,7 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, spanMs, rang
 		case "count_over_time":
 			return cnt
 		case "rate":
+			// Windowed rate uses range width (seconds) as denominator.
 			return sum / (float64(rangeMs) / 1000.0)
 		case "avg_over_time":
 			if cnt == 0 {
@@ -415,15 +379,11 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, spanMs, rang
 			w = &winMinMax{rangeMs: rangeMs}
 			n.windowsMM[key] = w
 		}
-		w.add(ts, spanMs, bktMin, bktMax)
-
-		// Evict segments with end ≤ ts-rangeMs.
-		w.evict(ts - w.rangeMs)
-
-		covered := w.coveredMs(ts)
+		w.add(ts, bktMin, bktMax)
+		w.evict(ts - rangeMs + stepMs)
+		covered := w.coveredMs(ts, stepMs)
 		var out float64
 		if covered < rangeMs {
-			slog.Info("Insufficient coverage", "coveredMs", covered, "requiredMs", rangeMs)
 			out = math.NaN()
 		} else if n.BE.FuncName == "min_over_time" {
 			out = w.min()
@@ -434,11 +394,12 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, spanMs, rang
 		return out
 	}
 
-	// Fallback to per-bucket behavior.
-	return evalLeafValuePerBucket(n.BE, in, float64(spanMs)/1000.0)
+	// Fallback to per-bucket behavior (using step for instant denominator).
+	return evalLeafValuePerBucket(n.BE, in, float64(stepMs)/1000.0)
 }
 
-// evalLeafValuePerBucket computes per-bucket values; bucketSpanSecs reflects the *incoming* bucket width.
+// evalLeafValuePerBucket computes per-bucket values; bucketSpanSecs is the
+// denominator for instant rate (caller passes max(step, inferredSpan) when needed).
 func evalLeafValuePerBucket(be BaseExpr, in SketchInput, bucketSpanSecs float64) float64 {
 	if in.SketchTags.SketchType != SketchMAP {
 		return math.NaN()
@@ -478,7 +439,7 @@ func evalLeafValuePerBucket(be BaseExpr, in SketchInput, bucketSpanSecs float64)
 
 func rangeSeconds(be BaseExpr, bucketSpanSecs float64) float64 {
 	// For instant rate, be.Range == "" and we use bucketSpanSecs.
-	// For range rate, we use the parsed range.
+	// For windowed rate, we use the parsed range.
 	if be.Range == "" {
 		return bucketSpanSecs
 	}
@@ -520,14 +481,6 @@ func (n *LeafNode) Label(tags map[string]any) string {
 	return out
 }
 
-/* ------------------------------- utils ------------------------------------ */
-
-func min64(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
-}
 func max64(a, b int64) int64 {
 	if a > b {
 		return a
