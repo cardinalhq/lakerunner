@@ -20,7 +20,7 @@ const (
 	CreatedByUnknown CreatedBy = iota
 	CreatedByIngest
 	CreatedByCompact
-	CreateByRollup
+	CreatedByRollup
 )
 
 func (c CreatedBy) String() string {
@@ -29,7 +29,7 @@ func (c CreatedBy) String() string {
 		return "ingest"
 	case CreatedByCompact:
 		return "compact"
-	case CreateByRollup:
+	case CreatedByRollup:
 		return "rollup"
 	default:
 		return "unknown"

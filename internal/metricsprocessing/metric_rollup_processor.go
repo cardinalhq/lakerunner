@@ -361,7 +361,7 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 			Rolledup:     false,
 			Fingerprints: stats.Fingerprints,
 			SortVersion:  lrdb.CurrentMetricSortVersion,
-			CreatedBy:    lrdb.CreateByRollup,
+			CreatedBy:    lrdb.CreatedByRollup,
 		}
 
 		segments = append(segments, segment)
