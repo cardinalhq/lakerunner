@@ -16,10 +16,24 @@
 set -e
 
 echo "GoReleaser entrypoint starting..."
+echo "Debug: Current user: $(whoami) ($(id))"
+echo "Debug: Home directory: $HOME"
+
+# Test write permissions
+echo "Debug: Testing write permissions..."
+touch /workspace/test-write && echo "Debug: Write test successful" && rm /workspace/test-write
+
+# Show workspace ownership
+echo "Debug: Workspace ownership:"
+ls -la /workspace | head -3
 
 # Configure git to trust the workspace directory
 echo "Configuring git safe directory..."
 git config --global --add safe.directory /workspace
+
+# Check git config was written
+echo "Debug: Git config written:"
+cat /root/.gitconfig
 
 # Verify git is working
 echo "Testing git status..."
