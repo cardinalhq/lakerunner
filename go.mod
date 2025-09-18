@@ -34,7 +34,7 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/jellydator/ttlcache/v3 v3.4.0
-	github.com/marcboeker/go-duckdb/v2 v2.3.8
+	github.com/marcboeker/go-duckdb/v2 v2.3.5
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/orlangure/gnomock v0.32.0
 	github.com/parquet-go/parquet-go v0.25.1
@@ -238,12 +238,12 @@ require (
 	github.com/docker/docker-credential-helpers v0.9.3 // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/duckdb/duckdb-go-bindings v0.1.18 // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.18 // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.18 // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.1.18 // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.1.18 // indirect
-	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.18 // indirect
+	github.com/duckdb/duckdb-go-bindings v0.1.17 // indirect
+	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.12 // indirect
+	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.12 // indirect
+	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.1.12 // indirect
+	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.1.12 // indirect
+	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.12 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/edsrzf/mmap-go v1.2.0 // indirect
@@ -438,8 +438,8 @@ require (
 	github.com/manuelarte/funcorder v0.5.0 // indirect
 	github.com/maratori/testableexamples v1.0.0 // indirect
 	github.com/maratori/testpackage v1.1.1 // indirect
-	github.com/marcboeker/go-duckdb/arrowmapping v0.0.18 // indirect
-	github.com/marcboeker/go-duckdb/mapping v0.0.18 // indirect
+	github.com/marcboeker/go-duckdb/arrowmapping v0.0.10 // indirect
+	github.com/marcboeker/go-duckdb/mapping v0.0.11 // indirect
 	github.com/matoous/godox v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

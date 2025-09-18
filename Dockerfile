@@ -43,7 +43,7 @@ RUN mkdir -p /app/extensions && \
     | gunzip -c > /app/extensions/azure.duckdb_extension
 
 # ========= Runtime Image =========
-FROM gcr.io/distroless/cc:nonroot
+FROM gcr.io/distroless/cc-debian12:nonroot
 
 # Copy the pre-built binary from goreleaser
 COPY --chmod=755 lakerunner /app/bin/lakerunner
