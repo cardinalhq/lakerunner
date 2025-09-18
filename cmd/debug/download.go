@@ -163,11 +163,28 @@ func downloadMetricSegments(ctx context.Context, store *lrdb.Store, cloudManager
 	dir := createOutputDir(orgStr, segments[0].Dateint)
 	fmt.Printf("Downloading %d metric segments to %s\n", len(segments), dir)
 
+	// Write query metadata
+	metadata := QueryMetadata{
+		Signal:         "metrics",
+		OrganizationID: orgID.String(),
+		StartTimeMs:    startTimeMs,
+		EndTimeMs:      endTimeMs,
+		StartDateint:   startDateint,
+		EndDateint:     endDateint,
+		FrequencyMs:    &frequencyMs,
+		DateGathered:   time.Now().UTC(),
+		SegmentCount:   len(segments),
+	}
+	if err := writeMetadata(metadata, filepath.Join(dir, "metadata.json")); err != nil {
+		return fmt.Errorf("failed to write metadata: %w", err)
+	}
+
 	if err := writeSegments(segments, filepath.Join(dir, "metric_seg.json")); err != nil {
 		return fmt.Errorf("failed to write segment metadata: %w", err)
 	}
 
 	downloads := make([]downloadInfo, 0, len(segments))
+	var totalSize int64
 	for _, seg := range segments {
 		startTs, _ := getTsRangeBounds(seg.TsRange)
 		downloads = append(downloads, downloadInfo{
@@ -176,14 +193,21 @@ func downloadMetricSegments(ctx context.Context, store *lrdb.Store, cloudManager
 			SegmentID:      seg.SegmentID,
 			InstanceNum:    seg.InstanceNum,
 			StartTs:        startTs,
+			FileSize:       seg.FileSize,
 		})
+		totalSize += seg.FileSize
 	}
+
+	// Print download summary
+	fmt.Printf("\nPreparing to download:\n")
+	fmt.Printf("  Total segments: %d\n", len(segments))
+	fmt.Printf("  Total size: %.2f GB\n\n", float64(totalSize)/(1024*1024*1024))
 
 	if err := downloadParquetFiles(ctx, cloudManagers, profileProvider, downloads, dir, "metrics", orgID, endpoint); err != nil {
 		return fmt.Errorf("failed to download files: %w", err)
 	}
 
-	fmt.Printf("Successfully downloaded %d metric segments\n", len(segments))
+	fmt.Printf("\nSuccessfully downloaded %d metric segments\n", len(segments))
 	return nil
 }
 
@@ -210,11 +234,27 @@ func downloadLogSegments(ctx context.Context, store *lrdb.Store, cloudManagers c
 	dir := createOutputDir(orgStr, segments[0].Dateint)
 	fmt.Printf("Downloading %d log segments to %s\n", len(segments), dir)
 
+	// Write query metadata
+	metadata := QueryMetadata{
+		Signal:         "logs",
+		OrganizationID: orgID.String(),
+		StartTimeMs:    startTimeMs,
+		EndTimeMs:      endTimeMs,
+		StartDateint:   startDateint,
+		EndDateint:     endDateint,
+		DateGathered:   time.Now().UTC(),
+		SegmentCount:   len(segments),
+	}
+	if err := writeMetadata(metadata, filepath.Join(dir, "metadata.json")); err != nil {
+		return fmt.Errorf("failed to write metadata: %w", err)
+	}
+
 	if err := writeSegments(segments, filepath.Join(dir, "log_seg.json")); err != nil {
 		return fmt.Errorf("failed to write segment metadata: %w", err)
 	}
 
 	downloads := make([]downloadInfo, 0, len(segments))
+	var totalSize int64
 	for _, seg := range segments {
 		startTs, _ := getTsRangeBounds(seg.TsRange)
 		downloads = append(downloads, downloadInfo{
@@ -223,14 +263,21 @@ func downloadLogSegments(ctx context.Context, store *lrdb.Store, cloudManagers c
 			SegmentID:      seg.SegmentID,
 			InstanceNum:    seg.InstanceNum,
 			StartTs:        startTs,
+			FileSize:       seg.FileSize,
 		})
+		totalSize += seg.FileSize
 	}
+
+	// Print download summary
+	fmt.Printf("\nPreparing to download:\n")
+	fmt.Printf("  Total segments: %d\n", len(segments))
+	fmt.Printf("  Total size: %.2f GB\n\n", float64(totalSize)/(1024*1024*1024))
 
 	if err := downloadParquetFiles(ctx, cloudManagers, profileProvider, downloads, dir, "logs", orgID, endpoint); err != nil {
 		return fmt.Errorf("failed to download files: %w", err)
 	}
 
-	fmt.Printf("Successfully downloaded %d log segments\n", len(segments))
+	fmt.Printf("\nSuccessfully downloaded %d log segments\n", len(segments))
 	return nil
 }
 
@@ -257,11 +304,27 @@ func downloadTraceSegments(ctx context.Context, store *lrdb.Store, cloudManagers
 	dir := createOutputDir(orgStr, segments[0].Dateint)
 	fmt.Printf("Downloading %d trace segments to %s\n", len(segments), dir)
 
+	// Write query metadata
+	metadata := QueryMetadata{
+		Signal:         "traces",
+		OrganizationID: orgID.String(),
+		StartTimeMs:    startTimeMs,
+		EndTimeMs:      endTimeMs,
+		StartDateint:   startDateint,
+		EndDateint:     endDateint,
+		DateGathered:   time.Now().UTC(),
+		SegmentCount:   len(segments),
+	}
+	if err := writeMetadata(metadata, filepath.Join(dir, "metadata.json")); err != nil {
+		return fmt.Errorf("failed to write metadata: %w", err)
+	}
+
 	if err := writeSegments(segments, filepath.Join(dir, "trace_seg.json")); err != nil {
 		return fmt.Errorf("failed to write segment metadata: %w", err)
 	}
 
 	downloads := make([]downloadInfo, 0, len(segments))
+	var totalSize int64
 	for _, seg := range segments {
 		startTs, _ := getTsRangeBounds(seg.TsRange)
 		downloads = append(downloads, downloadInfo{
@@ -270,15 +333,35 @@ func downloadTraceSegments(ctx context.Context, store *lrdb.Store, cloudManagers
 			SegmentID:      seg.SegmentID,
 			InstanceNum:    seg.InstanceNum,
 			StartTs:        startTs,
+			FileSize:       seg.FileSize,
 		})
+		totalSize += seg.FileSize
 	}
+
+	// Print download summary
+	fmt.Printf("\nPreparing to download:\n")
+	fmt.Printf("  Total segments: %d\n", len(segments))
+	fmt.Printf("  Total size: %.2f GB\n\n", float64(totalSize)/(1024*1024*1024))
 
 	if err := downloadParquetFiles(ctx, cloudManagers, profileProvider, downloads, dir, "traces", orgID, endpoint); err != nil {
 		return fmt.Errorf("failed to download files: %w", err)
 	}
 
-	fmt.Printf("Successfully downloaded %d trace segments\n", len(segments))
+	fmt.Printf("\nSuccessfully downloaded %d trace segments\n", len(segments))
 	return nil
+}
+
+// QueryMetadata captures the parameters and context of the download query
+type QueryMetadata struct {
+	Signal         string    `json:"signal"`
+	OrganizationID string    `json:"organization_id"`
+	StartTimeMs    int64     `json:"start_time_ms"`
+	EndTimeMs      int64     `json:"end_time_ms"`
+	StartDateint   int32     `json:"start_dateint"`
+	EndDateint     int32     `json:"end_dateint"`
+	FrequencyMs    *int32    `json:"frequency_ms,omitempty"`
+	DateGathered   time.Time `json:"date_gathered"`
+	SegmentCount   int       `json:"segment_count"`
 }
 
 type downloadInfo struct {
@@ -287,13 +370,15 @@ type downloadInfo struct {
 	SegmentID      int64
 	InstanceNum    int16
 	StartTs        int64
+	FileSize       int64
 }
 
 // Generic download function for Parquet files
 func downloadParquetFiles(ctx context.Context, cloudManagers cloudstorage.ClientProvider, profileProvider storageprofile.StorageProfileProvider,
 	downloads []downloadInfo, dir, signal string, orgID uuid.UUID, endpoint string) error {
 
-	for _, dl := range downloads {
+	totalFiles := len(downloads)
+	for i, dl := range downloads {
 		profile, err := profileProvider.GetStorageProfileForOrganizationAndInstance(ctx, orgID, dl.InstanceNum)
 		if err != nil {
 			return fmt.Errorf("failed to get storage profile for org %s instance %d: %w", orgID, dl.InstanceNum, err)
@@ -320,7 +405,7 @@ func downloadParquetFiles(ctx context.Context, cloudManagers cloudstorage.Client
 
 		localPath := filepath.Join(dir, fmt.Sprintf("tbl_%d.parquet", dl.SegmentID))
 
-		fmt.Printf("Downloading %s from %s -> %s\n", s3Key, profile.Bucket, localPath)
+		fmt.Printf("[%d/%d] Downloading %s (%.2f MB)\n", i+1, totalFiles, s3Key, float64(dl.FileSize)/(1024*1024))
 
 		tmpFile, _, notFound, err := storageClient.DownloadObject(ctx, dir, profile.Bucket, s3Key)
 		if err != nil {
@@ -377,9 +462,25 @@ func writeSegments[T lrdb.TraceSeg | lrdb.LogSeg | lrdb.MetricSeg](segments []T,
 	return nil
 }
 
+// writeMetadata writes the query metadata to a JSON file
+func writeMetadata(metadata QueryMetadata, path string) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(metadata)
+}
+
 // Helper functions
 func timeDateint(t time.Time) int32 {
-	return int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
+	// Convert to UTC to ensure consistent dateint calculations across timezones
+	// This matches how segments are stored (using helpers.MSToDateintHour which converts to UTC)
+	utc := t.UTC()
+	return int32(utc.Year()*10000 + int(utc.Month())*100 + utc.Day())
 }
 
 func createOutputDir(orgID string, dateint int32) string {
