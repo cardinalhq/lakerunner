@@ -320,7 +320,6 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 }
 
 // computeSpanMs infers the bucket span for a key from the delta between consecutive timestamps.
-// Falls back to defaultSpanMs (query step) if this is the first sample or the delta is non-positive.
 func (n *LeafNode) computeSpanMs(key string, ts int64, defaultSpanMs int64) int64 {
 	n.mu.Lock()
 	defer n.mu.Unlock()
