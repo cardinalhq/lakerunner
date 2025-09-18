@@ -45,7 +45,7 @@ func init() {
 			fmt.Fprintf(os.Stderr, "failed to set maxprocs package github.com/rdforte/gomaxecs/maxprocs: %v\n", err)
 		}
 	} else {
-		_, err := maxprocs.Set(maxprocs.Logger(simpleLogger))
+		_, err := maxprocs.Set()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "failed to set maxprocs using package go.uber.org/automaxprocs/maxprocs: %v\n", err)
 		}
@@ -64,9 +64,6 @@ func init() {
 	}
 
 	if os.Getenv("GOGC") == "" {
-		if debugEnabled {
-			fmt.Fprintf(os.Stderr, "GOGC is not set, setting it to 50%%\n")
-		}
 		debug.SetGCPercent(50)
 		_ = os.Setenv("GOGC", "50")
 	}
