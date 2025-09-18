@@ -50,38 +50,42 @@ func (n *LeafNode) Hints() ExecHints {
 	}
 }
 
+/* ---------------- sum/count window (exact interval math) ------------------ */
+
 type winEntry struct {
 	ts    int64   // bucket start (ms)
+	span  int64   // bucket span (ms), bucket interval is [ts, ts+span)
 	sum   float64 // bucket SUM(rollup_sum)
 	count float64 // bucket SUM(rollup_count)
 }
 
-// winSumCount maintains a left-inclusive sliding window over real bucket spans.
-// Coverage at time nowTs (start of current bucket) is (nowTs - firstTs) + lastSpanMs.
 type winSumCount struct {
-	rangeMs    int64
-	entries    []winEntry
-	sum        float64
-	count      float64
-	lastSpanMs int64 // span of the most-recent bucket (ms)
+	rangeMs int64
+	entries []winEntry
+	sum     float64
+	count   float64
 }
 
-func (w *winSumCount) add(ts int64, addSum, addCount float64, spanMs int64) {
+// Add a new bucket.
+func (w *winSumCount) add(ts int64, spanMs int64, addSum, addCount float64) {
 	if spanMs <= 0 {
 		spanMs = 1
 	}
-	w.entries = append(w.entries, winEntry{ts: ts, sum: addSum, count: addCount})
+	w.entries = append(w.entries, winEntry{ts: ts, span: spanMs, sum: addSum, count: addCount})
 	w.sum += addSum
 	w.count += addCount
-	w.lastSpanMs = spanMs
 }
 
-// evict rows strictly older than keepFromTs (i.e. ts < keepFromTs).
+// Evict buckets whose end time is at/before keepFromTs (no overlap with window).
 func (w *winSumCount) evict(keepFromTs int64) {
 	i := 0
-	for i < len(w.entries) && w.entries[i].ts < keepFromTs {
-		w.sum -= w.entries[i].sum
-		w.count -= w.entries[i].count
+	for i < len(w.entries) {
+		e := w.entries[i]
+		if e.ts+e.span > keepFromTs {
+			break
+		}
+		w.sum -= e.sum
+		w.count -= e.count
 		i++
 	}
 	if i > 0 {
@@ -89,96 +93,117 @@ func (w *winSumCount) evict(keepFromTs int64) {
 	}
 }
 
-// coveredMs returns how much wall time is covered by the current window,
-// assuming the current bucket spans [nowTs, nowTs+lastSpanMs).
+// coveredMs computes exact overlap of all buckets with [nowTs-rangeMs, nowTs).
 func (w *winSumCount) coveredMs(nowTs int64) int64 {
 	if len(w.entries) == 0 {
 		return 0
 	}
-	span := w.lastSpanMs
-	if span <= 0 {
-		span = 1
+	winStart := nowTs - w.rangeMs
+	winEnd := nowTs
+
+	var covered int64
+	for _, e := range w.entries {
+		bStart := e.ts
+		bEnd := e.ts + e.span
+		start := max64(bStart, winStart)
+		end := min64(bEnd, winEnd)
+		if end > start {
+			covered += end - start
+		}
 	}
-	first := w.entries[0].ts
-	return (nowTs - first) + span
+	return covered
 }
 
-// ---------- window state for min/max family (monotonic deques) --------------
+/* -------------------- min/max window (exact interval math) ---------------- */
 
 type mmEntry struct {
-	ts  int64
-	val float64
+	ts   int64   // start
+	span int64   // span
+	min  float64 // bucket min
+	max  float64 // bucket max
 }
 
 type winMinMax struct {
-	rangeMs    int64
-	allTs      []int64 // FIFO of all bucket timestamps to compute coverage
-	minDQ      []mmEntry
-	maxDQ      []mmEntry
-	lastSpanMs int64
+	rangeMs int64
+	segs    []mmEntry // FIFO of segments for coverage & eviction
+	minDQ   []mmEntry // monotonic increasing by min (front is current window min)
+	maxDQ   []mmEntry // monotonic decreasing by max (front is current window max)
 }
 
-func (w *winMinMax) add(ts int64, bktMin, bktMax float64, spanMs int64) {
+// Add a new bucket (ts, span, min, max).
+func (w *winMinMax) add(ts, spanMs int64, bktMin, bktMax float64) {
 	if spanMs <= 0 {
 		spanMs = 1
 	}
-	w.allTs = append(w.allTs, ts)
-	w.lastSpanMs = spanMs
+	e := mmEntry{ts: ts, span: spanMs, min: bktMin, max: bktMax}
+	w.segs = append(w.segs, e)
 
-	for len(w.minDQ) > 0 && w.minDQ[len(w.minDQ)-1].val >= bktMin {
+	// Maintain min deque (increasing by min).
+	for len(w.minDQ) > 0 && w.minDQ[len(w.minDQ)-1].min >= bktMin {
 		w.minDQ = w.minDQ[:len(w.minDQ)-1]
 	}
-	w.minDQ = append(w.minDQ, mmEntry{ts: ts, val: bktMin})
+	w.minDQ = append(w.minDQ, e)
 
-	for len(w.maxDQ) > 0 && w.maxDQ[len(w.maxDQ)-1].val <= bktMax {
+	// Maintain max deque (decreasing by max).
+	for len(w.maxDQ) > 0 && w.maxDQ[len(w.maxDQ)-1].max <= bktMax {
 		w.maxDQ = w.maxDQ[:len(w.maxDQ)-1]
 	}
-	w.maxDQ = append(w.maxDQ, mmEntry{ts: ts, val: bktMax})
+	w.maxDQ = append(w.maxDQ, e)
 }
 
+// Evict all segments whose end ≤ keepFromTs; pop from deques if they match.
 func (w *winMinMax) evict(keepFromTs int64) {
-	// Evict timestamps (coverage queue)
-	for len(w.allTs) > 0 && w.allTs[0] < keepFromTs {
-		w.allTs = w.allTs[1:]
+	i := 0
+	for i < len(w.segs) && w.segs[i].ts+w.segs[i].span <= keepFromTs {
+		seg := w.segs[i]
+		// If the evicted seg is at the front of a deque, pop it too.
+		if len(w.minDQ) > 0 && w.minDQ[0].ts == seg.ts {
+			w.minDQ = w.minDQ[1:]
+		}
+		if len(w.maxDQ) > 0 && w.maxDQ[0].ts == seg.ts {
+			w.maxDQ = w.maxDQ[1:]
+		}
+		i++
 	}
-	// Evict from deques
-	for len(w.minDQ) > 0 && w.minDQ[0].ts < keepFromTs {
-		w.minDQ = w.minDQ[1:]
-	}
-	for len(w.maxDQ) > 0 && w.maxDQ[0].ts < keepFromTs {
-		w.maxDQ = w.maxDQ[1:]
+	if i > 0 {
+		w.segs = append([]mmEntry(nil), w.segs[i:]...)
 	}
 }
 
-// coveredMs returns how much wall time is covered by the current window,
-// assuming the current bucket spans [nowTs, nowTs+lastSpanMs).
+// coveredMs computes exact overlap with [nowTs-rangeMs, nowTs).
 func (w *winMinMax) coveredMs(nowTs int64) int64 {
-	if len(w.allTs) == 0 {
+	if len(w.segs) == 0 {
 		return 0
 	}
-	span := w.lastSpanMs
-	if span <= 0 {
-		span = 1
+	winStart := nowTs - w.rangeMs
+	winEnd := nowTs
+
+	var covered int64
+	for _, e := range w.segs {
+		start := max64(e.ts, winStart)
+		end := min64(e.ts+e.span, winEnd)
+		if end > start {
+			covered += end - start
+		}
 	}
-	first := w.allTs[0]
-	return (nowTs - first) + span
+	return covered
 }
 
 func (w *winMinMax) min() float64 {
 	if len(w.minDQ) == 0 {
 		return math.NaN()
 	}
-	return w.minDQ[0].val
+	return w.minDQ[0].min
 }
 
 func (w *winMinMax) max() float64 {
 	if len(w.maxDQ) == 0 {
 		return math.NaN()
 	}
-	return w.maxDQ[0].val
+	return w.maxDQ[0].max
 }
 
-// ---------------------------------------------------------------------------
+/* -------------------------------------------------------------------------- */
 
 func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult {
 	rows := sg.Group[n.BE.ID]
@@ -254,14 +279,13 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 				num := n.evalRangeAwareScalar(k, si, spanMs, rangeMs)
 				v = Value{Kind: ValScalar, Num: num}
 			} else {
-				// Instant selector: MERGE Agg maps across workers (sum,sum; min=min; max=max).
+				// Instant selector: merge agg maps across workers (sum,sum; min=min; max=max).
 				merged := map[string]float64{}
 				if prev, ok := out[k]; ok && prev.Value.Kind == ValMap && prev.Value.AggMap != nil {
 					for name, val := range prev.Value.AggMap {
 						merged[name] = val
 					}
 				}
-
 				if v, ok := si.SketchTags.Agg["sum"]; ok {
 					merged["sum"] += v
 				}
@@ -278,7 +302,6 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 						merged["max"] = v
 					}
 				}
-
 				v = Value{Kind: ValMap, AggMap: merged}
 			}
 
@@ -340,13 +363,16 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, spanMs, rang
 			w = &winSumCount{rangeMs: rangeMs}
 			n.windows[key] = w
 		}
-		w.add(ts, bktSum, bktCnt, spanMs)
-		// Evict based on real last span, not query step.
-		w.evict(ts - w.rangeMs + w.lastSpanMs)
+		w.add(ts, spanMs, bktSum, bktCnt)
+
+		// Window is [ts-rangeMs, ts). Evict buckets with end ≤ ts-rangeMs.
+		keepFromTs := ts - w.rangeMs
+		w.evict(keepFromTs)
+
 		covered := w.coveredMs(ts)
 		sum, cnt := w.sum, w.count
 
-		// "last_over_time": last bucket's value approximated as sum/count for that bucket
+		// last_over_time: approximate last bucket value as (sum/count) of the last entry.
 		lastVal := math.NaN()
 		if nBE := len(w.entries); nBE > 0 {
 			ls := w.entries[nBE-1].sum
@@ -390,8 +416,11 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, spanMs, rang
 			w = &winMinMax{rangeMs: rangeMs}
 			n.windowsMM[key] = w
 		}
-		w.add(ts, bktMin, bktMax, spanMs)
-		w.evict(ts - w.rangeMs + w.lastSpanMs)
+		w.add(ts, spanMs, bktMin, bktMax)
+
+		// Evict segments with end ≤ ts-rangeMs.
+		w.evict(ts - w.rangeMs)
+
 		covered := w.coveredMs(ts)
 		var out float64
 		if covered < rangeMs {
@@ -490,4 +519,19 @@ func (n *LeafNode) Label(tags map[string]any) string {
 	}
 	out += ")"
 	return out
+}
+
+/* ------------------------------- utils ------------------------------------ */
+
+func min64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
