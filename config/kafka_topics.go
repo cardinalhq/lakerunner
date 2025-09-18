@@ -144,6 +144,26 @@ func (tr *TopicRegistry) GetServiceMapping(serviceType string) (ServiceMapping, 
 	return ServiceMapping{}, false
 }
 
+// GetServiceNameByTopic returns the service name for a given topic name
+func (tr *TopicRegistry) GetServiceNameByTopic(topic string) string {
+	for _, spec := range tr.specs {
+		if spec.Name == topic {
+			return spec.ServiceType
+		}
+	}
+	return "unknown"
+}
+
+// GetServiceNameByConsumerGroup returns the service name for a given consumer group
+func (tr *TopicRegistry) GetServiceNameByConsumerGroup(consumerGroup string) string {
+	for _, spec := range tr.specs {
+		if spec.ConsumerGroup == consumerGroup {
+			return spec.ServiceType
+		}
+	}
+	return "unknown"
+}
+
 // GetAllServiceMappings returns all service mappings for external scaling
 func (tr *TopicRegistry) GetAllServiceMappings() []ServiceMapping {
 	var mappings []ServiceMapping

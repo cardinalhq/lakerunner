@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -26,17 +27,24 @@ import (
 // KafkaMetricsExporter exports Kafka consumer lag metrics as OpenTelemetry metrics
 type KafkaMetricsExporter struct {
 	monitor          LagMonitorInterface
+	topicRegistry    *config.TopicRegistry
 	meter            metric.Meter
-	offsetGauge      metric.Int64ObservableGauge
 	consumerLagGauge metric.Int64ObservableGauge
-	hwmGauge         metric.Int64ObservableGauge
 }
 
 // NewKafkaMetricsExporter creates a new Kafka metrics exporter
-func NewKafkaMetricsExporter(monitor LagMonitorInterface) (*KafkaMetricsExporter, error) {
+func NewKafkaMetricsExporter(monitor LagMonitorInterface, topicRegistry *config.TopicRegistry) (*KafkaMetricsExporter, error) {
+	if monitor == nil {
+		return nil, fmt.Errorf("monitor cannot be nil")
+	}
+	if topicRegistry == nil {
+		return nil, fmt.Errorf("topicRegistry cannot be nil")
+	}
+
 	exporter := &KafkaMetricsExporter{
-		monitor: monitor,
-		meter:   otel.Meter("github.com/cardinalhq/lakerunner/externalscaler"),
+		monitor:       monitor,
+		topicRegistry: topicRegistry,
+		meter:         otel.Meter("github.com/cardinalhq/lakerunner/externalscaler"),
 	}
 
 	if err := exporter.registerMetrics(); err != nil {
@@ -50,17 +58,6 @@ func NewKafkaMetricsExporter(monitor LagMonitorInterface) (*KafkaMetricsExporter
 func (e *KafkaMetricsExporter) registerMetrics() error {
 	var err error
 
-	// Register consumer group offset gauge
-	e.offsetGauge, err = e.meter.Int64ObservableGauge(
-		"lakerunner.kafka.consumer_group.offset",
-		metric.WithDescription("Current offset for consumer group"),
-		metric.WithUnit("1"),
-		metric.WithInt64Callback(e.observeConsumerOffsets),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create consumer offset gauge: %w", err)
-	}
-
 	// Register consumer lag gauge
 	e.consumerLagGauge, err = e.meter.Int64ObservableGauge(
 		"lakerunner.kafka.consumer_group.lag",
@@ -72,35 +69,6 @@ func (e *KafkaMetricsExporter) registerMetrics() error {
 		return fmt.Errorf("failed to create consumer lag gauge: %w", err)
 	}
 
-	// Register high water mark gauge
-	e.hwmGauge, err = e.meter.Int64ObservableGauge(
-		"lakerunner.kafka.partition.high_water_mark",
-		metric.WithDescription("High water mark for topic partition"),
-		metric.WithUnit("1"),
-		metric.WithInt64Callback(e.observeHighWaterMark),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create high water mark gauge: %w", err)
-	}
-
-	return nil
-}
-
-// observeConsumerOffsets is the callback for consumer offset metrics
-func (e *KafkaMetricsExporter) observeConsumerOffsets(ctx context.Context, observer metric.Int64Observer) error {
-	metrics := e.monitor.GetDetailedMetrics()
-
-	for _, info := range metrics {
-		if info.CommittedOffset >= 0 {
-			observer.Observe(info.CommittedOffset,
-				metric.WithAttributes(
-					attribute.String("topic", info.Topic),
-					attribute.String("consumer_group", info.GroupID),
-					attribute.Int("partition", info.Partition),
-				),
-			)
-		}
-	}
 	return nil
 }
 
@@ -109,34 +77,19 @@ func (e *KafkaMetricsExporter) observeConsumerLag(ctx context.Context, observer 
 	metrics := e.monitor.GetDetailedMetrics()
 
 	for _, info := range metrics {
+		serviceName := "unknown"
+		if e.topicRegistry != nil {
+			serviceName = e.topicRegistry.GetServiceNameByConsumerGroup(info.GroupID)
+		}
+
 		observer.Observe(info.Lag,
 			metric.WithAttributes(
 				attribute.String("topic", info.Topic),
 				attribute.String("consumer_group", info.GroupID),
 				attribute.Int("partition", info.Partition),
+				attribute.String("service", serviceName),
 			),
 		)
-	}
-	return nil
-}
-
-// observeHighWaterMark is the callback for high water mark metrics
-func (e *KafkaMetricsExporter) observeHighWaterMark(ctx context.Context, observer metric.Int64Observer) error {
-	metrics := e.monitor.GetDetailedMetrics()
-
-	// Deduplicate HWM by topic/partition (multiple consumer groups may read same topic)
-	seen := make(map[string]bool)
-	for _, info := range metrics {
-		key := fmt.Sprintf("%s:%d", info.Topic, info.Partition)
-		if !seen[key] {
-			observer.Observe(info.HighWaterMark,
-				metric.WithAttributes(
-					attribute.String("topic", info.Topic),
-					attribute.Int("partition", info.Partition),
-				),
-			)
-			seen[key] = true
-		}
 	}
 	return nil
 }

@@ -52,6 +52,7 @@ type Config struct {
 	GRPCPort      int
 	LagMonitor    LagMonitorInterface
 	ScalingConfig *config.ScalingConfig // Scaling configuration from main config
+	TopicRegistry *config.TopicRegistry // Topic registry for service name lookup
 }
 
 func NewService(_ context.Context, cfg Config) (*Service, error) {
@@ -74,7 +75,7 @@ func NewService(_ context.Context, cfg Config) (*Service, error) {
 	}
 
 	// Initialize Kafka metrics exporter if lag monitor is provided and OTEL is enabled
-	exporter, err := NewKafkaMetricsExporter(cfg.LagMonitor)
+	exporter, err := NewKafkaMetricsExporter(cfg.LagMonitor, cfg.TopicRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka metrics exporter: %w", err)
 	}
