@@ -142,6 +142,11 @@ func (s *S3DB) GetConnectionForBucket(ctx context.Context, bucket, region string
 
 // acquireLocal gets a connection for local database queries (no S3 authentication needed).
 func (p *connectionPool) acquireLocal(ctx context.Context) (*sql.Conn, func(), error) {
+	// Ensure extensions are loaded and database is set up before any connection is used
+	if err := p.parent.ensureSetup(ctx); err != nil {
+		return nil, nil, err
+	}
+
 	// try to get a pooled connection
 	select {
 	case pc := <-p.ch:
@@ -179,6 +184,11 @@ func (p *connectionPool) acquireLocal(ctx context.Context) (*sql.Conn, func(), e
 
 // acquireForBucket gets a connection configured with S3 credentials for the specified bucket.
 func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, endpoint string) (*sql.Conn, func(), error) {
+	// Ensure extensions are loaded and database is set up before any connection is used
+	if err := p.parent.ensureSetup(ctx); err != nil {
+		return nil, nil, err
+	}
+
 	// Helper function to ensure credentials are set for the bucket
 	ensureCredentials := func(conn *sql.Conn) error {
 		// Create/replace the secret for this bucket
@@ -288,6 +298,13 @@ func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) 
 		slog.Warn("Failed to disable automatic extension loading", "error", err)
 	}
 
+	// Load extensions for this connection (they need to be loaded per-connection)
+	if err := p.parent.loadExtensionsForConnection(ctx, conn); err != nil {
+		_ = conn.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("load extensions for connection: %w", err)
+	}
+
 	return &pooledConn{
 		conn: conn,
 		db:   db,
@@ -324,6 +341,13 @@ func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, e
 	}
 	if _, err := conn.ExecContext(ctx, "SET autoload_known_extensions = false;"); err != nil {
 		slog.Warn("Failed to disable automatic extension loading", "error", err)
+	}
+
+	// Load extensions for this connection (they need to be loaded per-connection)
+	if err := p.parent.loadExtensionsForConnection(ctx, conn); err != nil {
+		_ = conn.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("load extensions for connection: %w", err)
 	}
 
 	// create cloud storage secret for this bucket (serialize DDL)
@@ -443,6 +467,35 @@ func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
 	return nil
 }
 
+// loadExtensionsForConnection loads extensions for a specific connection.
+// Unlike loadExtensions which is called during setup, this just loads the extensions
+// without trying to discover paths (which should already be known).
+func (s *S3DB) loadExtensionsForConnection(ctx context.Context, conn *sql.Conn) error {
+	// Try to load extensions - they might already be installed in the database
+	// Check httpfs
+	if _, err := conn.ExecContext(ctx, "LOAD httpfs"); err != nil {
+		// If not available, that's OK for connections - the setup should have installed them
+		slog.Debug("Could not load httpfs in connection", "error", err)
+	}
+
+	// Check aws
+	if _, err := conn.ExecContext(ctx, "LOAD aws"); err != nil {
+		slog.Debug("Could not load aws in connection", "error", err)
+	}
+
+	// Check azure
+	if _, err := conn.ExecContext(ctx, "LOAD azure"); err != nil {
+		slog.Debug("Could not load azure in connection", "error", err)
+		// Configure Azure transport to use curl for better compatibility
+	} else {
+		if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
+			slog.Warn("Failed to set azure transport option", "error", err)
+		}
+	}
+
+	return nil
+}
+
 func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
 	// Check if httpfs is already available (built-in or installed)
 	var loaded, installed bool
@@ -464,8 +517,12 @@ func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
 	// Extension not available, try to load from disk
 	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
 	if base == "" {
-		slog.Debug("LAKERUNNER_EXTENSIONS_PATH not set, httpfs extension not loaded")
-		return nil
+		// Try to auto-discover extensions for testing
+		base = discoverExtensionsPath()
+		if base == "" {
+			return fmt.Errorf("httpfs extension required but not found: LAKERUNNER_EXTENSIONS_PATH not set and could not auto-discover extensions in docker/duckdb-extensions")
+		}
+		slog.Debug("Auto-discovered extensions path", "path", base)
 	}
 
 	path := filepath.Join(base, "httpfs.duckdb_extension")
@@ -501,7 +558,11 @@ func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
 	// Extension not available, try to load from disk
 	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
 	if base == "" {
-		return nil // No extensions path configured
+		// Try to auto-discover extensions for testing
+		base = discoverExtensionsPath()
+		if base == "" {
+			return fmt.Errorf("aws extension required but not found: LAKERUNNER_EXTENSIONS_PATH not set and could not auto-discover extensions in docker/duckdb-extensions")
+		}
 	}
 
 	path := filepath.Join(base, "aws.duckdb_extension")
@@ -541,7 +602,11 @@ func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
 	// Extension not available, try to load from disk
 	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
 	if base == "" {
-		return nil // No extensions path configured
+		// Try to auto-discover extensions for testing
+		base = discoverExtensionsPath()
+		if base == "" {
+			return fmt.Errorf("azure extension required but not found: LAKERUNNER_EXTENSIONS_PATH not set and could not auto-discover extensions in docker/duckdb-extensions")
+		}
 	}
 
 	path := filepath.Join(base, "azure.duckdb_extension")
@@ -755,6 +820,71 @@ func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig) 
 	duckdbDDLMu.Unlock()
 
 	return err
+}
+
+// discoverExtensionsPath attempts to find DuckDB extensions in the repository.
+// This is primarily for testing purposes when LAKERUNNER_EXTENSIONS_PATH is not set.
+// It walks up from the current directory looking for docker/duckdb-extensions.
+func discoverExtensionsPath() string {
+	// Start from current working directory
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	// Determine platform-specific subdirectory
+	platform := getPlatformDir()
+	if platform == "" {
+		return ""
+	}
+
+	// Walk up the directory tree looking for the extensions
+	for {
+		// Check if docker/duckdb-extensions/platform exists
+		extensionsPath := filepath.Join(dir, "docker", "duckdb-extensions", platform)
+		if info, err := os.Stat(extensionsPath); err == nil && info.IsDir() {
+			// Verify at least one extension exists
+			httpfsPath := filepath.Join(extensionsPath, "httpfs.duckdb_extension")
+			if _, err := os.Stat(httpfsPath); err == nil {
+				return extensionsPath
+			}
+		}
+
+		// Move up one directory
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached root
+			break
+		}
+		dir = parent
+
+		// Safety check: don't go too far up (max 10 levels)
+		if strings.Count(dir, string(filepath.Separator)) < 2 {
+			break
+		}
+	}
+
+	return ""
+}
+
+// getPlatformDir returns the platform-specific directory name for DuckDB extensions
+func getPlatformDir() string {
+	goos := runtime.GOOS
+	goarch := runtime.GOARCH
+
+	switch {
+	case goos == "darwin" && goarch == "arm64":
+		return "osx_arm64"
+	case goos == "darwin" && goarch == "amd64":
+		return "osx_amd64"
+	case goos == "linux" && goarch == "arm64":
+		return "linux_arm64"
+	case goos == "linux" && goarch == "amd64":
+		return "linux_amd64"
+	default:
+		// Unsupported platform
+		return ""
+	}
 }
 
 func escapeSingle(s string) string { return strings.ReplaceAll(s, `'`, `''`) }

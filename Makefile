@@ -217,12 +217,11 @@ bin/lakectl: ${all_deps}
 test: generate test-only
 
 .PHONY: test-only
-test-only:
-	LAKERUNNER_EXTENSIONS_PATH=$(PWD)/docker/duckdb-extensions/$(shell uname -s | tr A-Z a-z | sed 's/darwin/osx/')_$(shell uname -m | sed 's/x86_64/amd64/') \
+test-only: duckdb-extensions-decompress
 	go test -race ./...
 
 .PHONY: test-integration
-test-integration: bin/lakerunner
+test-integration: duckdb-extensions-decompress bin/lakerunner
 	@echo "Running integration tests (requires test databases)..."
 	@echo "Running database migrations..."
 	LRDB_HOST=$${LRDB_HOST:-localhost} \
