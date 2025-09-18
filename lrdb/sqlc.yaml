@@ -27,15 +27,6 @@ sql:
           insertMetricSegDirectParams: InsertMetricSegmentParams
           insertMetricSegsDirectParams: InsertMetricSegsParams
           insertTraceSegmentDirectParams: InsertTraceSegmentParams
-          WorkQueueAddDirectParams: WorkQueueAddParams
-          WorkQueueClaimDirectParams: WorkQueueClaimParams
-          WorkQueueClaimDirectRow: WorkQueueClaimRow
-          WorkQueueCleanupDirectParams: WorkQueueCleanupParams
-          WorkQueueCleanupDirectRow: WorkQueueCleanupRow
-          WorkQueueCompleteDirectParams: WorkQueueCompleteParams
-          WorkQueueDeleteDirectParams: WorkQueueDeleteParams
-          WorkQueueFailDirectParams: WorkQueueFailParams
-          WorkQueueHeartbeatDirectParams: WorkQueueHeartbeatParams
         overrides:
           - {db_type: "jsonb", go_type: {type: "map[string]any"}}
           - {db_type: "timestamptz", go_type: {type: "time.Time"}}
