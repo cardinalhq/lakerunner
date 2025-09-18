@@ -19,24 +19,73 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+
+	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+var (
+	packEstimateGauge   metric.Int64ObservableGauge
+	estimateGaugeValues sync.Map // key -> gaugeEntry
+)
+
+type gaugeEntry struct {
+	value int64
+	attrs []attribute.KeyValue
+}
+
+func init() {
+	meter := otel.Meter("github.com/cardinalhq/lakerunner/cmd/sweeper")
+	var err error
+	packEstimateGauge, err = meter.Int64ObservableGauge(
+		"lakerunner.sweeper.pack_estimate_target_records",
+		metric.WithDescription("Target record estimates for pack tables"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create pack_estimate_target_records gauge: %w", err))
+	}
+
+	_, err = meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		estimateGaugeValues.Range(func(_, v any) bool {
+			ge := v.(gaugeEntry)
+			o.ObserveInt64(packEstimateGauge, ge.value, metric.WithAttributes(ge.attrs...))
+			return true
+		})
+		return nil
+	}, packEstimateGauge)
+	if err != nil {
+		panic(fmt.Errorf("failed to register pack_estimate_target_records callback: %w", err))
+	}
+}
+
+func recordPackEstimate(orgID uuid.UUID, freqMs int32, signal string, target int64) {
+	attrs := []attribute.KeyValue{
+		attribute.String("organization_id", orgID.String()),
+		attribute.String("signal", signal),
+	}
+	if freqMs >= 0 {
+		attrs = append(attrs, attribute.Int("frequency_ms", int(freqMs)))
+	}
+	key := orgID.String() + "-" + signal + fmt.Sprintf("-%d", freqMs)
+	estimateGaugeValues.Store(key, gaugeEntry{value: target, attrs: attrs})
+}
+
 func runMetricEstimateUpdate(ctx context.Context, mdb lrdb.StoreFull) error {
 	ll := logctx.FromContext(ctx)
 
 	// Constants for EWMA calculation
 	const (
-		alpha                = 0.2 // EWMA smoothing factor (20% new data, 80% old data)
-		lookbackMinutes      = 10
-		defaultTargetRecords = 40000
+		alpha           = 0.2 // EWMA smoothing factor (20% new data, 80% old data)
+		lookbackMinutes = 10
 	)
 
 	now := time.Now().UTC()
@@ -136,6 +185,8 @@ func runMetricEstimateUpdate(ctx context.Context, mdb lrdb.StoreFull) error {
 			}()),
 			slog.Int64("new_estimate", data.EstimatedRecords),
 			slog.Int64("new_target", newTargetRecords))
+
+		recordPackEstimate(data.OrganizationID, data.FrequencyMs, "metrics", newTargetRecords)
 	}
 
 	metricEstimateCounter.Add(ctx, updateCount, metric.WithAttributes(
@@ -257,6 +308,8 @@ func runLogEstimateUpdate(ctx context.Context, mdb lrdb.StoreFull) error {
 			}()),
 			slog.Int64("new_estimate", data.EstimatedRecords),
 			slog.Int64("new_target", newTargetRecords))
+
+		recordPackEstimate(data.OrganizationID, -1, "logs", newTargetRecords)
 	}
 
 	metricEstimateCounter.Add(ctx, updateCount, metric.WithAttributes(
@@ -379,6 +432,8 @@ func runTraceEstimateUpdate(ctx context.Context, mdb lrdb.StoreFull) error {
 			}()),
 			slog.Int64("new_estimate", data.EstimatedRecords),
 			slog.Int64("new_target", newTargetRecords))
+
+		recordPackEstimate(data.OrganizationID, -1, "traces", newTargetRecords)
 	}
 
 	metricEstimateCounter.Add(ctx, updateCount, metric.WithAttributes(

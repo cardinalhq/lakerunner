@@ -124,6 +124,8 @@ func (w *LogCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		}
 	}
 
+	recordObjectCleanup(ctx, "log", s3DeletedCount, s3FailedCount)
+
 	// Execute database deletions using batch operation
 	dbDeletedCount := 0
 	if len(dbRecordsToDelete) > 0 {

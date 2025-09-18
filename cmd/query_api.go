@@ -81,6 +81,7 @@ func init() {
 
 			// Mark as ready now that database connections are established and migrations have been checked
 			healthServer.SetReady(true)
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			// Create API key provider
 			apiKeyProvider := orgapikey.NewDBProvider(cdb)

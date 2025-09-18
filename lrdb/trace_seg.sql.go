@@ -55,7 +55,7 @@ func (q *Queries) GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (Trace
 
 const markTraceSegsCompactedByKeys = `-- name: MarkTraceSegsCompactedByKeys :exec
 UPDATE trace_seg
-SET compacted = true, published = false
+SET compacted = true
 WHERE organization_id = $1
   AND dateint         = $2
   AND instance_num    = $3
@@ -138,6 +138,33 @@ func (q *Queries) insertTraceSegmentDirect(ctx context.Context, arg InsertTraceS
 		arg.Fingerprints,
 		arg.Published,
 		arg.Compacted,
+	)
+	return err
+}
+
+const markTraceSegsCompactedUnpublishedByKeys = `-- name: markTraceSegsCompactedUnpublishedByKeys :exec
+UPDATE trace_seg
+SET compacted = true, published = false
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND instance_num    = $3
+  AND segment_id      = ANY($4::bigint[])
+  AND compacted       = false
+`
+
+type markTraceSegsCompactedUnpublishedByKeysParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	InstanceNum    int16     `json:"instance_num"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+func (q *Queries) markTraceSegsCompactedUnpublishedByKeys(ctx context.Context, arg markTraceSegsCompactedUnpublishedByKeysParams) error {
+	_, err := q.db.Exec(ctx, markTraceSegsCompactedUnpublishedByKeys,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.InstanceNum,
+		arg.SegmentIds,
 	)
 	return err
 }

@@ -92,7 +92,7 @@ func (q *Store) CompactTraceSegments(
 				segIDs[i] = oldRec.SegmentID
 			}
 
-			if err := s.MarkTraceSegsCompactedByKeys(ctx, MarkTraceSegsCompactedByKeysParams{
+			if err := s.markTraceSegsCompactedUnpublishedByKeys(ctx, markTraceSegsCompactedUnpublishedByKeysParams{
 				OrganizationID: params.OrganizationID,
 				Dateint:        params.Dateint,
 				InstanceNum:    params.InstanceNum,

@@ -97,7 +97,7 @@ func (f *Factory) CreateConsumer(topic string, groupID string) (Consumer, error)
 		MaxWait:           f.config.ConsumerMaxWait,
 		BatchSize:         f.config.ConsumerBatchSize,
 		StartOffset:       kafka.LastOffset,
-		AutoCommit:        false,
+		AutoCommit:        true, // Default to true for backward compatibility
 		CommitBatch:       true,
 		ConnectionTimeout: f.config.ConnectionTimeout,
 	}

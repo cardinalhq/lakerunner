@@ -114,3 +114,90 @@ jobs:
         CONFIGDB_DBNAME: testing_configdb
       run: |
         make test-integration
+
+  kafka-test:
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        go-version: [1.25.x]
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+          POSTGRES_INITDB_ARGS: --auth-host=md5
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --name postgres
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+        cache: true
+        cache-dependency-path: go.sum
+
+    - name: Install PostgreSQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client-17 || sudo apt-get install -y postgresql-client
+
+    - name: Wait for PostgreSQL
+      run: |
+        until pg_isready -h localhost -p 5432 -U postgres; do
+          echo "Waiting for PostgreSQL..."
+          sleep 1
+        done
+
+    - name: Create test databases
+      run: |
+        PGPASSWORD=postgres createdb -h localhost -p 5432 -U postgres testing_lrdb
+        PGPASSWORD=postgres createdb -h localhost -p 5432 -U postgres testing_configdb
+
+    - name: Run database migrations
+      env:
+        LRDB_HOST: localhost
+        LRDB_PORT: 5432
+        LRDB_USER: postgres
+        LRDB_PASSWORD: postgres
+        LRDB_DBNAME: testing_lrdb
+        CONFIGDB_HOST: localhost
+        CONFIGDB_PORT: 5432
+        CONFIGDB_USER: postgres
+        CONFIGDB_PASSWORD: postgres
+        CONFIGDB_DBNAME: testing_configdb
+      run: |
+        # Build the binary first
+        make local
+
+        # Run lrdb migrations
+        ./bin/lakerunner migrate --databases=lrdb
+
+        # Run configdb migrations
+        ./bin/lakerunner migrate --databases=configdb
+
+    - name: Run Kafka tests
+      env:
+        LRDB_HOST: localhost
+        LRDB_USER: postgres
+        LRDB_PASSWORD: postgres
+        LRDB_DBNAME: testing_lrdb
+        CONFIGDB_HOST: localhost
+        CONFIGDB_USER: postgres
+        CONFIGDB_PASSWORD: postgres
+        CONFIGDB_DBNAME: testing_configdb
+      run: |
+        make test-kafka

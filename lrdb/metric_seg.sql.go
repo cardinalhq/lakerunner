@@ -186,8 +186,7 @@ func (q *Queries) ListMetricSegmentsForQuery(ctx context.Context, arg ListMetric
 
 const markMetricSegsCompactedByKeys = `-- name: MarkMetricSegsCompactedByKeys :exec
 UPDATE metric_seg
-SET compacted = true,
-    published = false
+SET compacted = true
 WHERE organization_id = $1
   AND dateint         = $2
   AND frequency_ms    = $3
@@ -315,6 +314,36 @@ func (q *Queries) insertMetricSegDirect(ctx context.Context, arg InsertMetricSeg
 		arg.Fingerprints,
 		arg.SortVersion,
 		arg.Compacted,
+	)
+	return err
+}
+
+const markMetricSegsCompactedUnpublishedByKeys = `-- name: markMetricSegsCompactedUnpublishedByKeys :exec
+UPDATE metric_seg
+SET compacted = true, published = false
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND frequency_ms    = $3
+  AND instance_num    = $4
+  AND segment_id      = ANY($5::bigint[])
+  AND compacted       = false
+`
+
+type markMetricSegsCompactedUnpublishedByKeysParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+func (q *Queries) markMetricSegsCompactedUnpublishedByKeys(ctx context.Context, arg markMetricSegsCompactedUnpublishedByKeysParams) error {
+	_, err := q.db.Exec(ctx, markMetricSegsCompactedUnpublishedByKeys,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.InstanceNum,
+		arg.SegmentIds,
 	)
 	return err
 }

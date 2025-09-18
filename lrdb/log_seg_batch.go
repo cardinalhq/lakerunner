@@ -92,7 +92,7 @@ func (q *Store) CompactLogSegments(
 				segIDs[i] = oldRec.SegmentID
 			}
 
-			if err := s.MarkLogSegsCompactedByKeys(ctx, MarkLogSegsCompactedByKeysParams{
+			if err := s.markLogSegsCompactedUnpublishedByKeys(ctx, markLogSegsCompactedUnpublishedByKeysParams{
 				OrganizationID: params.OrganizationID,
 				Dateint:        params.Dateint,
 				InstanceNum:    params.InstanceNum,

@@ -22,7 +22,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -37,7 +37,7 @@ type GCPPubSubService struct {
 	tracer       trace.Tracer
 	sp           storageprofile.StorageProfileProvider
 	client       *pubsub.Client
-	sub          *pubsub.Subscription
+	sub          *pubsub.Subscriber
 	kafkaHandler *KafkaHandler
 }
 
@@ -65,7 +65,7 @@ func NewGCPPubSubService(ctx context.Context, cfg *config.Config, kafkaFactory *
 		return nil, fmt.Errorf("failed to create pubsub client: %w", err)
 	}
 
-	sub := client.Subscription(subscriptionID)
+	sub := client.Subscriber(subscriptionID)
 
 	cdb, err := dbopen.ConfigDBStore(ctx)
 	if err != nil {

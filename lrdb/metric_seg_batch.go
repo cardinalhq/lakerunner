@@ -121,7 +121,7 @@ func (q *Store) CompactMetricSegments(
 				segIDs[i] = oldRec.SegmentID
 			}
 
-			if err := s.MarkMetricSegsCompactedByKeys(ctx, MarkMetricSegsCompactedByKeysParams{
+			if err := s.markMetricSegsCompactedUnpublishedByKeys(ctx, markMetricSegsCompactedUnpublishedByKeysParams{
 				OrganizationID: params.OrganizationID,
 				Dateint:        params.Dateint,
 				FrequencyMs:    params.FrequencyMs,

@@ -110,6 +110,9 @@ generate: bin/buf
 bin/buf:
 	./scripts/install-proto-tools.sh
 
+bin/golangci-lint bin/goimports:
+	./scripts/install-dev-tools.sh
+
 #
 # Run pre-commit checks
 #
@@ -118,9 +121,9 @@ check: test license-check gofmt lint check-migration-integrity
 license-check:
 	go tool license-eye header check
 
-imports-check:
+imports-check: bin/goimports
 	@echo "Checking import organization..."
-	@go tool goimports -local github.com/cardinalhq/lakerunner -l . | grep -v '\.pb\.go' | tee /tmp/goimports-check.out
+	@./bin/goimports -local github.com/cardinalhq/lakerunner -l . | grep -v '\.pb\.go' | tee /tmp/goimports-check.out
 	@if [ -s /tmp/goimports-check.out ]; then \
 		echo "Import organization check failed. Files with incorrect imports:"; \
 		cat /tmp/goimports-check.out; \
@@ -131,16 +134,16 @@ imports-check:
 
 fmt: gofmt imports-fix
 
-imports-fix:
+imports-fix: bin/goimports
 	@echo "Fixing import organization (excluding *.pb.go files)..."
-	@find . -name '*.go' -not -name '*.pb.go' -exec go tool goimports -local github.com/cardinalhq/lakerunner -w {} \;
+	@find . -name '*.go' -not -name '*.pb.go' -exec ./bin/goimports -local github.com/cardinalhq/lakerunner -w {} \;
 
 gofmt:
 	@echo "Running gofmt to fix formatting..."
 	@gofmt -w -s .
 
-lint:
-	go tool golangci-lint run --timeout 15m --config .golangci.yaml
+lint: bin/golangci-lint
+	./bin/golangci-lint run --timeout 15m --config .golangci.yaml
 
 #
 # Build locally, mostly for development speed.
