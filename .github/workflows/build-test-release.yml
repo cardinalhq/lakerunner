@@ -117,7 +117,7 @@ jobs:
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
-            check --config .goreleaser.test-release.yaml
+            check
 
       - name: Run GoReleaser Pro in custom container
         run: |
@@ -129,7 +129,7 @@ jobs:
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
-            goreleaser-entrypoint.sh release --clean --split --config .goreleaser.test-release.yaml
+            release --clean --split --config .goreleaser.test-release.yaml
 
       - shell: bash
         run: ls -lR dist
@@ -204,7 +204,7 @@ jobs:
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
-            goreleaser-entrypoint.sh continue --merge
+            continue --merge
 
       - name: Add build summary
         run: |
