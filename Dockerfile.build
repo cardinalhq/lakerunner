@@ -36,7 +36,7 @@ ENV GOSUMDB="sum.golang.org"
 # Install GoReleaser Pro
 RUN echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | tee /etc/apt/sources.list.d/goreleaser.list && \
     apt-get update && \
-    apt-get install -y goreleaser-pro && \
+    apt-get install -y --no-install-recommends goreleaser-pro && \
     rm -rf /var/lib/apt/lists/*
 
 # Create workspace
