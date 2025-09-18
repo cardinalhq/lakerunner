@@ -36,7 +36,7 @@ func TestS3DB_SharedDataBetweenConnections(t *testing.T) {
 	}()
 
 	// Get first connection and create a table with data
-	conn1, release1, err := s3db.GetConnection(ctx, "local", "", "")
+	conn1, release1, err := s3db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release1()
 
@@ -49,7 +49,7 @@ func TestS3DB_SharedDataBetweenConnections(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get second connection and verify data is visible
-	conn2, release2, err := s3db.GetConnection(ctx, "local", "", "")
+	conn2, release2, err := s3db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release2()
 
@@ -95,7 +95,7 @@ func TestS3DB_ExtensionsLoaded(t *testing.T) {
 	}()
 
 	// Get a connection
-	conn, release, err := s3db.GetConnection(ctx, "local", "", "")
+	conn, release, err := s3db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release()
 
@@ -158,7 +158,7 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 	}()
 
 	// Get first connection and create a secret (using a test bucket)
-	conn1, release1, err := s3db.GetConnection(ctx, "test-bucket-1", "", "")
+	conn1, release1, err := s3db.GetConnectionForBucket(ctx, "test-bucket-1", "", "")
 	require.NoError(t, err)
 	defer release1()
 
@@ -180,7 +180,7 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 	require.True(t, found1, "secret should exist in first connection")
 
 	// Get second connection for a different bucket
-	conn2, release2, err := s3db.GetConnection(ctx, "test-bucket-2", "", "")
+	conn2, release2, err := s3db.GetConnectionForBucket(ctx, "test-bucket-2", "", "")
 	require.NoError(t, err)
 	defer release2()
 
@@ -204,7 +204,7 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 
 	// Now get a third connection back to the first bucket
 	// It should reuse the existing secret (CREATE OR REPLACE)
-	conn3, release3, err := s3db.GetConnection(ctx, "test-bucket-1", "", "")
+	conn3, release3, err := s3db.GetConnectionForBucket(ctx, "test-bucket-1", "", "")
 	require.NoError(t, err)
 	defer release3()
 
@@ -244,10 +244,10 @@ func TestS3DB_PoolSizeLimits(t *testing.T) {
 	}()
 
 	// Get two connections (fills the pool)
-	conn1, release1, err := s3db.GetConnection(ctx, "local", "", "")
+	conn1, release1, err := s3db.GetConnection(ctx)
 	require.NoError(t, err)
 
-	conn2, release2, err := s3db.GetConnection(ctx, "local", "", "")
+	conn2, release2, err := s3db.GetConnection(ctx)
 	require.NoError(t, err)
 
 	// Both connections should work
@@ -261,7 +261,7 @@ func TestS3DB_PoolSizeLimits(t *testing.T) {
 	release1()
 
 	// Should be able to get another connection now
-	conn3, release3, err := s3db.GetConnection(ctx, "local", "", "")
+	conn3, release3, err := s3db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release3()
 
@@ -285,7 +285,7 @@ func TestS3DB_ConcurrentAccess(t *testing.T) {
 	}()
 
 	// Create a shared table
-	conn, release, err := s3db.GetConnection(ctx, "local", "", "")
+	conn, release, err := s3db.GetConnection(ctx)
 	require.NoError(t, err)
 	_, err = conn.ExecContext(ctx, `CREATE TABLE concurrent_test (id INTEGER)`)
 	require.NoError(t, err)
@@ -295,7 +295,7 @@ func TestS3DB_ConcurrentAccess(t *testing.T) {
 	done := make(chan error, 10)
 	for i := 0; i < 10; i++ {
 		go func(id int) {
-			conn, release, err := s3db.GetConnection(ctx, "local", "", "")
+			conn, release, err := s3db.GetConnection(ctx)
 			if err != nil {
 				done <- fmt.Errorf("failed to get connection %d: %w", id, err)
 				return
@@ -320,7 +320,7 @@ func TestS3DB_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Verify all inserts succeeded
-	conn, release, err = s3db.GetConnection(ctx, "local", "", "")
+	conn, release, err = s3db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release()
 

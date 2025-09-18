@@ -303,7 +303,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 
 			//slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
 			// Get connection from shared pool for local queries
-			conn, release, err := w.sink.s3Pool.GetConnection(ctx, "local", "", "")
+			conn, release, err := w.sink.s3Pool.GetConnection(ctx)
 			if err != nil {
 				slog.Error("Failed to get connection", slog.Any("error", err))
 				return
@@ -387,7 +387,7 @@ func streamFromS3[T promql.Timestamped](
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
 			start := time.Now()
-			conn, release, err := w.s3Pool.GetConnection(ctx, bucket, region, endpoint)
+			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, bucket, region, endpoint)
 			connectionAcquireTime := time.Since(start)
 			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", bucket)
 
