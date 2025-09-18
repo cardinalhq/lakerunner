@@ -56,4 +56,15 @@ RUN mkdir -p /go/pkg /go/bin /go/src && chmod -R 777 /go
 ENV CGO_ENABLED=1
 ENV GOOS=linux
 
+# Create a user with UID 1001 to match GitHub Actions runner
+RUN useradd -u 1001 -m -s /bin/bash builder
+
+# Configure git globally for both root and builder users
+RUN git config --system --add safe.directory '*' && \
+    echo "[safe]" > /home/builder/.gitconfig && \
+    echo "    directory = *" >> /home/builder/.gitconfig && \
+    chown builder:builder /home/builder/.gitconfig
+
+# Set default entrypoint to handle git configuration
+ENTRYPOINT ["/usr/local/bin/goreleaser-entrypoint.sh"]
 CMD ["/bin/bash"]

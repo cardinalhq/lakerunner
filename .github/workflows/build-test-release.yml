@@ -122,6 +122,7 @@ jobs:
             -v $PWD:/workspace \
             -v $PWD/.git:/workspace/.git \
             -w /workspace \
+            --user 1001:1001 \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
@@ -196,6 +197,7 @@ jobs:
             -v $PWD:/workspace \
             -v $PWD/.git:/workspace/.git \
             -w /workspace \
+            --user 1001:1001 \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
