@@ -479,3 +479,240 @@ func TestCreateS3SecretValidation(t *testing.T) {
 	require.Equal(t, "secret_minimal_bucket", name)
 	require.Equal(t, "s3", secretType)
 }
+
+// TestPooledConnectionReuse tests that connections work correctly when returned to pool and reused.
+// This ensures that loading extensions on new connections doesn't break reused connections.
+func TestPooledConnectionReuse(t *testing.T) {
+	ctx := context.Background()
+
+	// Create S3DB instance with small pool to force reuse
+	oldPoolSize := os.Getenv("DUCKDB_S3_POOL_SIZE")
+	_ = os.Setenv("DUCKDB_S3_POOL_SIZE", "2") // Small pool
+	defer func() {
+		if oldPoolSize != "" {
+			_ = os.Setenv("DUCKDB_S3_POOL_SIZE", oldPoolSize)
+		} else {
+			_ = os.Unsetenv("DUCKDB_S3_POOL_SIZE")
+		}
+	}()
+
+	s3db, err := NewS3DB()
+	require.NoError(t, err)
+	defer func() {
+		err := s3db.Close()
+		require.NoError(t, err)
+	}()
+
+	// Test 1: Get connection, use it, return it, get it again
+	conn1, release1, err := s3db.GetConnection(ctx)
+	require.NoError(t, err)
+
+	// Create a table and insert data
+	_, err = conn1.ExecContext(ctx, `CREATE TABLE pool_test (id INTEGER, name VARCHAR)`)
+	require.NoError(t, err)
+	_, err = conn1.ExecContext(ctx, `INSERT INTO pool_test VALUES (1, 'first')`)
+	require.NoError(t, err)
+
+	// Create an S3 secret to test extension functionality
+	testConfig := S3SecretConfig{
+		Bucket:   "reuse-test-bucket",
+		Region:   "us-east-1",
+		Endpoint: "s3.amazonaws.com",
+		KeyID:    "REUSE_TEST_KEY",
+		Secret:   "REUSE_TEST_SECRET",
+		URLStyle: "path",
+		UseSSL:   true,
+	}
+	err = createS3Secret(ctx, conn1, testConfig)
+	require.NoError(t, err, "should be able to create S3 secret in first use")
+
+	// Return connection to pool
+	release1()
+
+	// Get connection again (should get the same one from pool)
+	conn2, release2, err := s3db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release2()
+
+	// Verify the table still exists and we can query it
+	var count int
+	err = conn2.QueryRowContext(ctx, `SELECT COUNT(*) FROM pool_test`).Scan(&count)
+	require.NoError(t, err, "should be able to query table created in first connection")
+	require.Equal(t, 1, count)
+
+	// Verify the secret still exists
+	var secretName string
+	err = conn2.QueryRowContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name = 'secret_reuse_test_bucket'`).Scan(&secretName)
+	require.NoError(t, err, "secret should still exist in reused connection")
+	require.Equal(t, "secret_reuse_test_bucket", secretName)
+
+	// Verify we can still create new secrets (extensions still work)
+	testConfig2 := S3SecretConfig{
+		Bucket:   "reuse-test-bucket-2",
+		Region:   "eu-west-1",
+		Endpoint: "s3.eu-west-1.amazonaws.com",
+		KeyID:    "REUSE_TEST_KEY_2",
+		Secret:   "REUSE_TEST_SECRET_2",
+		URLStyle: "path",
+		UseSSL:   true,
+	}
+	err = createS3Secret(ctx, conn2, testConfig2)
+	require.NoError(t, err, "should be able to create new S3 secret in reused connection")
+
+	// Insert more data to verify connection is fully functional
+	_, err = conn2.ExecContext(ctx, `INSERT INTO pool_test VALUES (2, 'second')`)
+	require.NoError(t, err, "should be able to insert data in reused connection")
+
+	err = conn2.QueryRowContext(ctx, `SELECT COUNT(*) FROM pool_test`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 2, count, "should have both rows")
+}
+
+// TestPooledConnectionReuseAcrossBuckets tests that connections work when reused for different buckets.
+func TestPooledConnectionReuseAcrossBuckets(t *testing.T) {
+	ctx := context.Background()
+
+	// Set test AWS credentials
+	oldKeyID := os.Getenv("S3_ACCESS_KEY_ID")
+	oldSecret := os.Getenv("S3_SECRET_ACCESS_KEY")
+	_ = os.Setenv("S3_ACCESS_KEY_ID", "TEST_ACCESS_KEY")
+	_ = os.Setenv("S3_SECRET_ACCESS_KEY", "TEST_SECRET_KEY")
+	defer func() {
+		if oldKeyID != "" {
+			_ = os.Setenv("S3_ACCESS_KEY_ID", oldKeyID)
+		} else {
+			_ = os.Unsetenv("S3_ACCESS_KEY_ID")
+		}
+		if oldSecret != "" {
+			_ = os.Setenv("S3_SECRET_ACCESS_KEY", oldSecret)
+		} else {
+			_ = os.Unsetenv("S3_SECRET_ACCESS_KEY")
+		}
+	}()
+
+	// Set small pool size to force connection reuse
+	oldPoolSize := os.Getenv("DUCKDB_S3_POOL_SIZE")
+	_ = os.Setenv("DUCKDB_S3_POOL_SIZE", "1") // Tiny pool - only 1 connection
+	defer func() {
+		if oldPoolSize != "" {
+			_ = os.Setenv("DUCKDB_S3_POOL_SIZE", oldPoolSize)
+		} else {
+			_ = os.Unsetenv("DUCKDB_S3_POOL_SIZE")
+		}
+	}()
+
+	s3db, err := NewS3DB()
+	require.NoError(t, err)
+	defer func() {
+		err := s3db.Close()
+		require.NoError(t, err)
+	}()
+
+	// Get connection for bucket 1
+	conn1, release1, err := s3db.GetConnectionForBucket(ctx, "bucket-one", "us-east-1", "")
+	require.NoError(t, err)
+
+	// Verify secret was created for bucket-one
+	var found bool
+	rows, err := conn1.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name = 'secret_bucket_one'`)
+	require.NoError(t, err)
+	for rows.Next() {
+		var name string
+		_ = rows.Scan(&name)
+		if name == "secret_bucket_one" {
+			found = true
+		}
+	}
+	_ = rows.Close()
+	require.True(t, found, "secret for bucket-one should exist")
+
+	// Return connection
+	release1()
+
+	// Get connection for a different bucket (should reuse the same connection)
+	conn2, release2, err := s3db.GetConnectionForBucket(ctx, "bucket-two", "eu-west-1", "")
+	require.NoError(t, err)
+	defer release2()
+
+	// Both secrets should now exist
+	rows, err = conn2.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name IN ('secret_bucket_one', 'secret_bucket_two') ORDER BY name`)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	var secrets []string
+	for rows.Next() {
+		var name string
+		err := rows.Scan(&name)
+		require.NoError(t, err)
+		secrets = append(secrets, name)
+	}
+
+	require.Equal(t, 2, len(secrets), "both bucket secrets should exist")
+	require.Equal(t, "secret_bucket_one", secrets[0])
+	require.Equal(t, "secret_bucket_two", secrets[1])
+
+	// Verify we can still use the connection normally
+	_, err = conn2.ExecContext(ctx, `SELECT 1`)
+	require.NoError(t, err, "connection should still be functional")
+}
+
+// TestInMemoryDatabase tests that we would like to use an in-memory database (empty filename)
+// and have data visible across pooled connections.
+//
+// NOTE: This test demonstrates the desired behavior but may skip if not supported.
+// Currently NewS3DB always creates a temp file, not a true in-memory database.
+func TestInMemoryDatabase(t *testing.T) {
+	ctx := context.Background()
+
+	// The current implementation always uses a file-based database
+	// If we want to support true in-memory databases with empty string,
+	// we would need to modify NewS3DB to check for an environment variable
+	// or add a parameter to support this.
+
+	// For now, this test verifies that our current file-based approach
+	// does share state across connections (which it does).
+
+	s3db, err := NewS3DB()
+	require.NoError(t, err)
+	defer func() {
+		err := s3db.Close()
+		require.NoError(t, err)
+	}()
+
+	// Get first connection
+	conn1, release1, err := s3db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release1()
+
+	// Create a table and insert data
+	_, err = conn1.ExecContext(ctx, `CREATE TABLE shared_test (id INTEGER, value VARCHAR)`)
+	require.NoError(t, err)
+	_, err = conn1.ExecContext(ctx, `INSERT INTO shared_test VALUES (1, 'from_conn1')`)
+	require.NoError(t, err)
+
+	// Get second connection (different from first in the pool)
+	conn2, release2, err := s3db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release2()
+
+	// Check if data is visible in second connection
+	// With our file-based approach, this DOES work
+	var value string
+	err = conn2.QueryRowContext(ctx, `SELECT value FROM shared_test WHERE id = 1`).Scan(&value)
+	require.NoError(t, err, "data should be visible across connections")
+	require.Equal(t, "from_conn1", value, "data from conn1 should be visible in conn2")
+
+	// Insert from conn2
+	_, err = conn2.ExecContext(ctx, `INSERT INTO shared_test VALUES (2, 'from_conn2')`)
+	require.NoError(t, err)
+
+	// Verify both rows are visible from conn1
+	var count int
+	err = conn1.QueryRowContext(ctx, `SELECT COUNT(*) FROM shared_test`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 2, count, "both rows should be visible")
+
+	// This test passes because we use a shared file-based database
+	// If we need true in-memory support with "", we would need code changes
+	t.Log("File-based shared database works correctly across pooled connections")
+}

@@ -144,8 +144,12 @@ func Open(dataSourceName string, opts ...option) (*DB, error) {
 	}
 
 	// Auto-configure extensions path from environment for air-gapped mode
+	// If not set, try to auto-discover for development/testing
 	if extensionsPath := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); extensionsPath != "" {
 		config.ExtensionsPath = extensionsPath
+	} else {
+		// Try to auto-discover extensions for testing (same logic as S3DB)
+		config.ExtensionsPath = discoverExtensionsPath()
 	}
 
 	for _, opt := range opts {
