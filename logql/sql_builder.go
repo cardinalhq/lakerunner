@@ -668,15 +668,64 @@ type arg struct {
 	typ string
 }
 
+func joinIndexKeys(keys []string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	// If you prefer flat single key only, just return keys[0]
+	return strings.Join(keys, ".")
+}
+
 func evalCommand(c *parse.CommandNode, prev []arg, colResolver func(string) string) (string, string, error) {
 	if len(c.Args) == 0 {
 		return "''", "string", nil
 	}
-	// First token decides: func call vs field/constant
+
 	switch a := c.Args[0].(type) {
 	case *parse.IdentifierNode:
-		// function call
 		fn := a.Ident
+
+		if fn == "index" {
+			if len(c.Args) < 3 {
+				return "", "", fmt.Errorf("label_format: index requires root (.) and at least one string key")
+			}
+			// 1) First arg must be DotNode (.) or $ (if you want to allow it)
+			switch root := c.Args[1].(type) {
+			case *parse.DotNode:
+				// ok
+			case *parse.VariableNode:
+				// allow only "$" if you want to accept it
+				if len(root.Ident) != 1 || root.Ident[0] != "$" {
+					return "", "", fmt.Errorf("label_format: index first arg must be . or $")
+				}
+			default:
+				return "", "", fmt.Errorf("label_format: index first arg must be . or $")
+			}
+
+			// 2) Collect string keys
+			var keys []string
+			for _, n := range c.Args[2:] {
+				sn, ok := n.(*parse.StringNode)
+				if !ok {
+					return "", "", fmt.Errorf("label_format: index keys must be string literals")
+				}
+				// sn.Text is the unquoted value already
+				keys = append(keys, sn.Text)
+			}
+			if len(keys) == 0 {
+				return "", "", fmt.Errorf("label_format: index requires at least one key")
+			}
+
+			// 3) Build the column name
+			// For your case: "log.@OrderResult" => exactly that.
+			// If you want nested support, joinIndexKeys(keys) → "a.b"
+			colName := joinIndexKeys(keys)
+
+			// 4) Return it as a string-typed SQL expression via the resolver
+			return colResolver(colName), "string", nil
+		}
+
+		// Normal function call path (your existing behavior)
 		var args []arg
 		for _, raw := range c.Args[1:] {
 			aa, err := evalArg(raw, colResolver)
@@ -685,7 +734,6 @@ func evalCommand(c *parse.CommandNode, prev []arg, colResolver func(string) stri
 			}
 			args = append(args, aa)
 		}
-		// pipeline: append previous value as last arg
 		args = append(args, prev...)
 		return callFunc(fn, args)
 
@@ -693,7 +741,7 @@ func evalCommand(c *parse.CommandNode, prev []arg, colResolver func(string) stri
 		name := strings.Join(a.Ident, ".")
 		return colResolver(name), "string", nil
 
-	case *parse.VariableNode: // {{ $x }} unsupported in this DSL
+	case *parse.VariableNode:
 		return "", "", fmt.Errorf("label_format: variables not supported")
 
 	case *parse.StringNode:

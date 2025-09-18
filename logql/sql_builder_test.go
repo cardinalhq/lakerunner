@@ -1217,3 +1217,73 @@ func TestToWorkerSQL_LineFormat_JSONToMessage(t *testing.T) {
 		t.Fatalf(`rewritten _cardinalhq.message mismatch: got %q, want "boom"`, got)
 	}
 }
+
+func TestToWorkerSQL_LineFormat_IndexBaseField(t *testing.T) {
+	db := openDuckDB(t)
+	t.Cleanup(func() { mustDropTable(db, "logs") })
+
+	// Base table with:
+	// - selector column "resource.service.name" (because LogQL normalizes resource_service_name)
+	// - top-level base column with special char: "log.@OrderResult"
+	// - message column to be rewritten
+	mustExec(t, db, `CREATE TABLE logs(
+		"resource.service.name" TEXT,
+		"_cardinalhq.message"   TEXT,
+		"log.@OrderResult"      TEXT
+	);`)
+
+	// Insert 2 rows: one matches selector, the other does not.
+	mustExec(t, db, `INSERT INTO logs VALUES
+		('accounting', 'orig msg 1', 'SUCCESS'),
+		('billing',    'orig msg 2', 'IGNORED');`)
+
+	// Your intended query:
+	// - matcher on resource_service_name (normalized to "resource.service.name")
+	// - label_format derives "order_result" from top-level base column via index
+	// - line_format turns that into the new _cardinalhq.message
+	q := `{resource_service_name="accounting"} ` +
+		`| label_format order_result=` + "`{{ index . \"log.@OrderResult\" }}`" + ` ` +
+		`| line_format "{{ .order_result }}"`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+
+	// Sanity checks: selector WHERE, dependency hoist, and message rewrite present
+	if !strings.Contains(sql, `"resource.service.name" = 'accounting'`) {
+		t.Fatalf("missing selector on resource.service.name:\n%s", sql)
+	}
+	if !strings.Contains(sql, `"log.@OrderResult"`) {
+		t.Fatalf("expected hoisted base column \"log.@OrderResult\" in SQL:\n%s", sql)
+	}
+	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq.message"`) {
+		t.Fatalf("expected rewrite of _cardinalhq.message via line_format:\n%s", sql)
+	}
+
+	rows := queryAll(t, db, sql)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row (service=accounting), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
+	}
+
+	// The new message should be the value of "log.@OrderResult" (SUCCESS)
+	gotMsg := getString(rows[0][`_cardinalhq.message`])
+	if gotMsg != "SUCCESS" {
+		t.Fatalf(`rewritten _cardinalhq.message mismatch: got %q, want "SUCCESS"`, gotMsg)
+	}
+
+	// And the losing row (billing) should not appear
+	if svc := getString(rows[0][`resource.service.name`]); svc != "accounting" {
+		t.Fatalf("wrong row selected: resource.service.name=%q", svc)
+	}
+}
