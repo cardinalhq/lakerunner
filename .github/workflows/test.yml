@@ -22,7 +22,7 @@ jobs:
         cache: true
         cache-dependency-path: go.sum
     - name: Build
-      run: make local
+      run: make duckdb-extensions-decompress local
     - name: Test binary
       run: ./bin/lakerunner help
     - name: Test
