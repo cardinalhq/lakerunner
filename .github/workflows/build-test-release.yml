@@ -118,6 +118,10 @@ jobs:
             --user 1001:$DOCKER_GID \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
+            -e AWS_ACCESS_KEY_ID="${{ env.AWS_ACCESS_KEY_ID }}" \
+            -e AWS_SECRET_ACCESS_KEY="${{ env.AWS_SECRET_ACCESS_KEY }}" \
+            -e AWS_SESSION_TOKEN="${{ env.AWS_SESSION_TOKEN }}" \
+            -e AWS_REGION="${{ env.AWS_REGION }}" \
             lakerunner-build \
             check
 
@@ -132,6 +136,10 @@ jobs:
             --user 1001:$DOCKER_GID \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
+            -e AWS_ACCESS_KEY_ID="${{ env.AWS_ACCESS_KEY_ID }}" \
+            -e AWS_SECRET_ACCESS_KEY="${{ env.AWS_SECRET_ACCESS_KEY }}" \
+            -e AWS_SESSION_TOKEN="${{ env.AWS_SESSION_TOKEN }}" \
+            -e AWS_REGION="${{ env.AWS_REGION }}" \
             lakerunner-build \
             release --clean --split --config .goreleaser.test-release.yaml
 
@@ -209,6 +217,10 @@ jobs:
             --user 1001:$DOCKER_GID \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
+            -e AWS_ACCESS_KEY_ID="${{ env.AWS_ACCESS_KEY_ID }}" \
+            -e AWS_SECRET_ACCESS_KEY="${{ env.AWS_SECRET_ACCESS_KEY }}" \
+            -e AWS_SESSION_TOKEN="${{ env.AWS_SESSION_TOKEN }}" \
+            -e AWS_REGION="${{ env.AWS_REGION }}" \
             lakerunner-build \
             continue --merge
 
