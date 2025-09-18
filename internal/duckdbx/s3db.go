@@ -524,31 +524,20 @@ func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
 }
 
 // loadExtensionsForConnection loads extensions for a specific connection.
-// Unlike loadExtensions which is called during setup, this just loads the extensions
-// without trying to discover paths (which should already be known).
+// Extensions need to be loaded per-connection in DuckDB, even if they were loaded
+// in the setup phase for other connections.
 func (s *S3DB) loadExtensionsForConnection(ctx context.Context, conn *sql.Conn) error {
-	// Try to load extensions - they might already be installed in the database
-	// Check httpfs
-	if _, err := conn.ExecContext(ctx, "LOAD httpfs"); err != nil {
-		// If not available, that's OK for connections - the setup should have installed them
-		slog.Debug("Could not load httpfs in connection", "error", err)
+	// Load extensions for this connection - they need to be loaded from disk if not already available
+	// Use the same loading logic as in setup, but without the DDL mutex (not needed for LOAD operations)
+	if err := s.loadHTTPFS(ctx, conn); err != nil {
+		return fmt.Errorf("load httpfs for connection: %w", err)
 	}
-
-	// Check aws
-	if _, err := conn.ExecContext(ctx, "LOAD aws"); err != nil {
-		slog.Debug("Could not load aws in connection", "error", err)
+	if err := s.loadAWS(ctx, conn); err != nil {
+		return fmt.Errorf("load aws for connection: %w", err)
 	}
-
-	// Check azure
-	if _, err := conn.ExecContext(ctx, "LOAD azure"); err != nil {
-		slog.Debug("Could not load azure in connection", "error", err)
-		// Configure Azure transport to use curl for better compatibility
-	} else {
-		if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
-			slog.Warn("Failed to set azure transport option", "error", err)
-		}
+	if err := s.loadAzure(ctx, conn); err != nil {
+		return fmt.Errorf("load azure for connection: %w", err)
 	}
-
 	return nil
 }
 
@@ -583,8 +572,7 @@ func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
 
 	path := filepath.Join(base, "httpfs.duckdb_extension")
 	if _, err := os.Stat(path); err != nil {
-		slog.Debug("httpfs extension file not found", "path", path)
-		return nil // Non-fatal, continue without extension
+		return fmt.Errorf("httpfs extension file not found at %s: %w", path, err)
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
 		return fmt.Errorf("LOAD httpfs: %w", err)
@@ -623,8 +611,7 @@ func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
 
 	path := filepath.Join(base, "aws.duckdb_extension")
 	if _, err := os.Stat(path); err != nil {
-		slog.Debug("aws extension file not found", "path", path)
-		return nil // Non-fatal, continue without extension
+		return fmt.Errorf("aws extension file not found at %s: %w", path, err)
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
 		return fmt.Errorf("LOAD aws: %w", err)
@@ -667,8 +654,7 @@ func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
 
 	path := filepath.Join(base, "azure.duckdb_extension")
 	if _, err := os.Stat(path); err != nil {
-		slog.Debug("azure extension file not found", "path", path)
-		return nil // Non-fatal, continue without extension
+		return fmt.Errorf("azure extension file not found at %s: %w", path, err)
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
 		return fmt.Errorf("LOAD azure: %w", err)
