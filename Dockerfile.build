@@ -59,9 +59,9 @@ RUN mkdir -p /go/pkg /go/bin /go/src && chmod -R 777 /go
 ENV CGO_ENABLED=1
 ENV GOOS=linux
 
-# Create a user with UID 1001 to match GitHub Actions runner and add to docker group
-RUN useradd -u 1001 -m -s /bin/bash builder && \
-    usermod -aG docker builder
+# Create a user with UID 1001 to match GitHub Actions runner
+# Docker group membership will be handled at runtime via --user UID:GID
+RUN useradd -u 1001 -m -s /bin/bash builder
 
 # Configure git globally for both root and builder users
 RUN git config --system --add safe.directory '*' && \

@@ -109,12 +109,13 @@ jobs:
           echo "Host .git directory:"
           ls -la .git/
           echo "Testing GoReleaser dry run:"
+          DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
           docker run --rm \
             -v $PWD:/workspace \
             -v $PWD/.git:/workspace/.git \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -w /workspace \
-            --user 1001:1001 \
+            --user 1001:$DOCKER_GID \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
@@ -122,12 +123,13 @@ jobs:
 
       - name: Run GoReleaser Pro in custom container
         run: |
+          DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
           docker run --rm \
             -v $PWD:/workspace \
             -v $PWD/.git:/workspace/.git \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -w /workspace \
-            --user 1001:1001 \
+            --user 1001:$DOCKER_GID \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
@@ -198,12 +200,13 @@ jobs:
 
       - name: Run GoReleaser Pro merge in custom container
         run: |
+          DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
           docker run --rm \
             -v $PWD:/workspace \
             -v $PWD/.git:/workspace/.git \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -w /workspace \
-            --user 1001:1001 \
+            --user 1001:$DOCKER_GID \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
