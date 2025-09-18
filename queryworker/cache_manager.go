@@ -302,7 +302,15 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 			}
 
 			//slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
-			rows, conn, err := w.sink.db.QueryContext(ctx, cacheSQL)
+			// Get connection from shared pool for local queries
+			conn, release, err := w.sink.s3Pool.GetConnection(ctx, "local", "", "")
+			if err != nil {
+				slog.Error("Failed to get connection", slog.Any("error", err))
+				return
+			}
+			defer release()
+
+			rows, err := conn.QueryContext(ctx, cacheSQL)
 			if err != nil {
 				return
 			}
