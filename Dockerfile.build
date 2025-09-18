@@ -49,6 +49,9 @@ WORKDIR /workspace
 # Verify Go and GoReleaser installations
 RUN go version && goreleaser --version
 
+# Create /go directory structure with proper permissions
+RUN mkdir -p /go/pkg /go/bin /go/src && chmod -R 777 /go
+
 # Set up build environment
 ENV CGO_ENABLED=1
 ENV GOOS=linux

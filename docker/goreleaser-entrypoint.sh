@@ -30,10 +30,11 @@ ls -la /workspace | head -3
 # Configure git to trust the workspace directory
 echo "Configuring git safe directory..."
 git config --global --add safe.directory /workspace
+git config --global --add safe.directory '*'
 
 # Check git config was written
 echo "Debug: Git config written:"
-cat /root/.gitconfig
+cat /root/.gitconfig 2>/dev/null || echo "No .gitconfig found"
 
 # Verify git is working
 echo "Testing git status..."
