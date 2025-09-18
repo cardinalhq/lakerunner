@@ -329,3 +329,153 @@ func TestS3DB_ConcurrentAccess(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 10, count, "all concurrent inserts should succeed")
 }
+
+// TestCreateS3Secret tests that secrets created via createS3Secret in one connection
+// are visible in other pooled connections.
+func TestCreateS3Secret(t *testing.T) {
+	ctx := context.Background()
+
+	// Create S3DB instance
+	s3db, err := NewS3DB()
+	require.NoError(t, err)
+	defer func() {
+		err := s3db.Close()
+		require.NoError(t, err)
+	}()
+
+	// Get first connection (this will trigger setup and extension loading)
+	conn1, release1, err := s3db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release1()
+
+	// Create a test S3 secret using our new createS3Secret function
+	testConfig := S3SecretConfig{
+		Bucket:       "test-bucket-foo",
+		Region:       "us-west-2",
+		Endpoint:     "s3.us-west-2.amazonaws.com",
+		KeyID:        "TEST_ACCESS_KEY_ID",
+		Secret:       "TEST_SECRET_ACCESS_KEY",
+		SessionToken: "TEST_SESSION_TOKEN",
+		URLStyle:     "path",
+		UseSSL:       true,
+	}
+
+	err = createS3Secret(ctx, conn1, testConfig)
+	require.NoError(t, err, "createS3Secret should succeed")
+
+	// Get second connection from the pool
+	conn2, release2, err := s3db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release2()
+
+	// Verify the secret is visible in the second connection
+	expectedSecretName := "secret_test_bucket_foo"
+	rows, err := conn2.QueryContext(ctx, `SELECT name, type FROM duckdb_secrets() WHERE name = ?`, expectedSecretName)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	// Check that the secret exists
+	var found bool
+	for rows.Next() {
+		var name, secretType string
+		err := rows.Scan(&name, &secretType)
+		require.NoError(t, err)
+		if name == expectedSecretName && secretType == "s3" {
+			found = true
+		}
+	}
+	require.True(t, found, "secret created in conn1 should be visible in conn2")
+
+	// Create another secret with different configuration to test edge cases
+	testConfig2 := S3SecretConfig{
+		Bucket:   "test-bucket-bar",
+		Region:   "eu-west-1",
+		Endpoint: "http://localhost:9000", // MinIO-style endpoint
+		KeyID:    "MINIOACCESSKEY",
+		Secret:   "MINIOSECRETKEY",
+		URLStyle: "vhost",
+		UseSSL:   false, // HTTP endpoint
+	}
+
+	err = createS3Secret(ctx, conn2, testConfig2)
+	require.NoError(t, err, "createS3Secret with HTTP endpoint should succeed")
+
+	// Verify both secrets are visible in conn1 (after creating second in conn2)
+	rows, err = conn1.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name LIKE 'secret_test_bucket_%' ORDER BY name`)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	var secrets []string
+	for rows.Next() {
+		var name string
+		err := rows.Scan(&name)
+		require.NoError(t, err)
+		secrets = append(secrets, name)
+	}
+
+	require.Equal(t, 2, len(secrets), "should have both test secrets")
+	require.Equal(t, "secret_test_bucket_bar", secrets[0])
+	require.Equal(t, "secret_test_bucket_foo", secrets[1])
+}
+
+// TestCreateS3SecretValidation tests the validation logic in createS3Secret.
+func TestCreateS3SecretValidation(t *testing.T) {
+	ctx := context.Background()
+
+	// Create S3DB instance
+	s3db, err := NewS3DB()
+	require.NoError(t, err)
+	defer func() {
+		err := s3db.Close()
+		require.NoError(t, err)
+	}()
+
+	// Get a connection
+	conn, release, err := s3db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release()
+
+	// Test missing KeyID
+	invalidConfig := S3SecretConfig{
+		Bucket: "test-bucket",
+		Secret: "SECRET_KEY",
+	}
+	err = createS3Secret(ctx, conn, invalidConfig)
+	require.Error(t, err, "should fail with missing KeyID")
+	require.Contains(t, err.Error(), "missing AWS credentials")
+
+	// Test missing Secret
+	invalidConfig = S3SecretConfig{
+		Bucket: "test-bucket",
+		KeyID:  "ACCESS_KEY",
+	}
+	err = createS3Secret(ctx, conn, invalidConfig)
+	require.Error(t, err, "should fail with missing Secret")
+	require.Contains(t, err.Error(), "missing AWS credentials")
+
+	// Test missing Bucket
+	invalidConfig = S3SecretConfig{
+		KeyID:  "ACCESS_KEY",
+		Secret: "SECRET_KEY",
+	}
+	err = createS3Secret(ctx, conn, invalidConfig)
+	require.Error(t, err, "should fail with missing Bucket")
+	require.Contains(t, err.Error(), "bucket is required")
+
+	// Test with minimal valid config (defaults should be applied)
+	minimalConfig := S3SecretConfig{
+		Bucket: "minimal-bucket",
+		KeyID:  "MIN_ACCESS_KEY",
+		Secret: "MIN_SECRET_KEY",
+	}
+	err = createS3Secret(ctx, conn, minimalConfig)
+	require.NoError(t, err, "should succeed with minimal config")
+
+	// Verify the secret was created (we can't easily check the defaults from SQL)
+	var name, secretType string
+	err = conn.QueryRowContext(ctx,
+		`SELECT name, type FROM duckdb_secrets() WHERE name = 'secret_minimal_bucket'`).Scan(&name, &secretType)
+	require.NoError(t, err)
+	require.Equal(t, "secret_minimal_bucket", name)
+	require.Equal(t, "s3", secretType)
+}
