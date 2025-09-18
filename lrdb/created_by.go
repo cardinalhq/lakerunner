@@ -22,3 +22,16 @@ const (
 	CreatedByCompact
 	CreateByRollup
 )
+
+func (c CreatedBy) String() string {
+	switch c {
+	case CreatedByIngest:
+		return "ingest"
+	case CreatedByCompact:
+		return "compact"
+	case CreateByRollup:
+		return "rollup"
+	default:
+		return "unknown"
+	}
+}
