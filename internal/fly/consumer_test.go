@@ -234,7 +234,7 @@ func TestConsumer_CommitMessages(t *testing.T) {
 	produceTestMessagesWithContainer(t, kafkaContainer, topic, testMessages)
 
 	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
-	config.AutoCommit = false // Test manual commits
+	config.AutoCommit = false  // Test manual commits
 	config.CommitBatch = false // Test individual commits
 	config.BatchSize = 10
 

@@ -28,7 +28,6 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 
 	// 1) Prepare sets: group keys, parser-created, feature flags
 	groupKeys := dedupeStrings(be.OutBy)
-	// Include fields parameter in the keys that need to be projected
 	parserCreated, hasJSON, hasLogFmt := analyzeParsers(be)
 
 	// If json/logfmt is present, treat all non-base groupKeys as parser-created
@@ -44,7 +43,7 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 	// 2) Build CTE pipeline
 	pb := newPipelineBuilder()
 
-	// s0: minimal base projection (message, timestamp, exemplar defaults) + matchers + non-parser groupKeys + fields
+	// s0: minimal base projection + matchers + non-parser groupKeys (+ fields param)
 	s0Need := computeS0Need(be, groupKeys, parserCreated)
 
 	// Add fields parameter to s0 if they are base table columns and not being extracted by parsers
@@ -109,7 +108,6 @@ func (p *pipelineBuilder) push(selectList []string, from string, whereConds []st
 	p.layers = append(p.layers, struct{ name, sql string }{name: alias, sql: sql})
 }
 
-// change signature to accept limit
 func finalizeSelect(p *pipelineBuilder, tsCol string, wantOrder bool, order string, limit int) string {
 	var sb strings.Builder
 	sb.WriteString("WITH\n")
@@ -136,7 +134,6 @@ func finalizeSelect(p *pipelineBuilder, tsCol string, wantOrder bool, order stri
 		sb.WriteByte(' ')
 		sb.WriteString(dir)
 
-		// <-- use limit here
 		if limit > 0 {
 			sb.WriteString(fmt.Sprintf(" LIMIT %d", limit))
 		}
@@ -175,6 +172,21 @@ func analyzeParsers(be *LogLeaf) (parserCreated map[string]struct{}, hasJSON, ha
 	return
 }
 
+// NEW: parse label_format/line_format templates and collect referenced columns.
+func collectTemplateDeps(tmpl string) []string {
+	deps := map[string]struct{}{}
+	_, _ = buildLabelFormatExprTemplate(tmpl, func(name string) string {
+		deps[name] = struct{}{}
+		return "0"
+	})
+	out := make([]string, 0, len(deps))
+	for k := range deps {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func computeS0Need(be *LogLeaf, groupKeys []string, parserCreated map[string]struct{}) map[string]struct{} {
 	// base columns always in s0
 	need := map[string]struct{}{
@@ -194,6 +206,33 @@ func computeS0Need(be *LogLeaf, groupKeys []string, parserCreated map[string]str
 			need[quoteIdent(k)] = struct{}{}
 		}
 	}
+
+	// NEW: hoist base columns referenced by label_format / line_format templates.
+	for _, p := range be.Parsers {
+		switch strings.ToLower(p.Type) {
+		case "label_format", "label-format", "labelformat":
+			// If precompiled SQL in LabelFormats, we can't reliably recover deps.
+			// But Params case is common and covers templates.
+			for _, tmpl := range p.Params {
+				for _, dep := range collectTemplateDeps(tmpl) {
+					q := quoteIdent(dep)
+					if isBaseCol(q) {
+						need[q] = struct{}{}
+					}
+				}
+			}
+		case "line_format", "line-format", "lineformat":
+			if tmpl := strings.TrimSpace(p.Params["template"]); tmpl != "" {
+				for _, dep := range collectTemplateDeps(tmpl) {
+					q := quoteIdent(dep)
+					if isBaseCol(q) {
+						need[q] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+
 	return need
 }
 
@@ -329,7 +368,6 @@ func emitParsers(
 
 				// Apply filters that now have their columns created:
 				created := mkSet(names)
-				// Merge global remaining filters with this stage's filters, then partition
 				allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
 				now, later := partitionByNames(allFilters, created)
 
@@ -339,10 +377,8 @@ func emitParsers(
 						pb.push([]string{pb.top() + ".*"}, pb.top(), where)
 					}
 				}
-				// Carry un-applied filters forward
 				*remainingLF = later
 			} else {
-				// No captures materialized → nothing new created. Carry stage filters forward.
 				if len(p.Filters) > 0 {
 					*remainingLF = append(*remainingLF, p.Filters...)
 				}
@@ -358,16 +394,12 @@ func emitParsers(
 			}
 			needKeys = dedupeStrings(excludeFuture(needKeys))
 
-			// s*: project keys from JSON.
-			// Priority:
-			//   1) Explicit mappings provided in p.Params (e.g., json lat_ms="req.lat_ms")
-			//   2) Any remaining needed keys not covered by mappings (fallback to "$.<key>")
+			// s*: project keys from JSON (mappings first)
 			sel := []string{pb.top() + ".*"}
 			created := make(map[string]struct{})
 
-			// 1) explicit mappings
 			if len(p.Params) > 0 {
-				keys := sortedKeys(p.Params) // stable output order
+				keys := sortedKeys(p.Params)
 				for _, out := range keys {
 					rawPath := strings.TrimSpace(p.Params[out])
 					if rawPath == "" {
@@ -382,12 +414,11 @@ func emitParsers(
 				}
 			}
 
-			// 2) additional needs not already covered by mappings
 			for _, k := range needKeys {
 				if _, ok := created[k]; ok {
 					continue
 				}
-				path := jsonPathForKey(k) // existing behavior: treat label as a single key
+				path := jsonPathForKey(k)
 				sel = append(sel, fmt.Sprintf(
 					"json_extract_string(%s, %s) AS %s",
 					bodyCol, sqlQuote(path), quoteIdent(k),
@@ -395,7 +426,6 @@ func emitParsers(
 				created[k] = struct{}{}
 			}
 
-			// If nothing was requested, still expose a __json column for debugging/compat
 			if len(created) == 0 {
 				sel = append(sel, fmt.Sprintf("to_json(%s) AS __json", bodyCol))
 			}
@@ -412,8 +442,9 @@ func emitParsers(
 				}
 			}
 			*remainingLF = later
+
 		case "logfmt":
-			// Same logic as JSON: include both global remaining filters and this stage's filters.
+			// Same logic as JSON
 			baseFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
 			needKeys := uniqLabels(baseFilters)
 			needKeys = append(needKeys, groupKeys...)
@@ -422,7 +453,6 @@ func emitParsers(
 			}
 			needKeys = dedupeStrings(excludeFuture(needKeys))
 
-			// s*: extract each needed key via a logfmt-ish regexp
 			sel := []string{pb.top() + ".*"}
 			for _, k := range needKeys {
 				reKey := fmt.Sprintf(`(?:^|\s)%s=([^\s]+)`, regexp.QuoteMeta(k))
@@ -431,12 +461,10 @@ func emitParsers(
 			}
 			pb.push(sel, pb.top(), nil)
 
-			// Apply filters whose columns now exist
 			if len(needKeys) > 0 {
 				created := mkSet(needKeys)
 				allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
 				now, later := partitionByNames(allFilters, created)
-
 				if len(now) > 0 {
 					where := buildLabelFilterWhere(now, nil)
 					if len(where) > 0 {
@@ -482,6 +510,36 @@ func emitParsers(
 			}
 			*remainingLF = later
 
+		case "line_format":
+			// Build a SQL expr from the Go-template-like string (same compiler used by label_format)
+			tmpl := strings.TrimSpace(p.Params["template"])
+			if tmpl == "" {
+				// No template → no-op pass-through, but still carry stage-level filters
+				pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
+				if len(p.Filters) > 0 {
+					*remainingLF = append(*remainingLF, p.Filters...)
+				}
+				break
+			}
+
+			// Compile the template to a SQL string expression (VARCHAR)
+			expr, err := buildLabelFormatExprTemplate(tmpl, func(col string) string { return quoteIdent(col) })
+			if err != nil {
+				expr = "''"
+			}
+
+			// Replace the message column with the formatted result.
+			sel := []string{
+				pb.top() + `.* EXCLUDE "` + `_cardinalhq.message` + `"`,
+				"(" + expr + `) AS "` + `_cardinalhq.message` + `"`,
+			}
+			pb.push(sel, pb.top(), nil)
+
+			// line_format doesn't create new labels; any attached filters are carried forward
+			if len(p.Filters) > 0 {
+				*remainingLF = append(*remainingLF, p.Filters...)
+			}
+
 		case "unwrap":
 			// s*: compute __unwrap_value (DOUBLE)
 			field := strings.TrimSpace(p.Params["field"])
@@ -502,8 +560,6 @@ func emitParsers(
 			}
 			pb.push([]string{pb.top() + ".*", expr + " AS __unwrap_value"}, pb.top(), nil)
 
-			// If someone attached filters to unwrap, allow them to target __unwrap_value or the field.
-			// Treat both names as "created".
 			created := map[string]struct{}{"__unwrap_value": {}, field: {}}
 			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
 			now, later := partitionByNames(allFilters, created)
@@ -542,8 +598,6 @@ func dedupeStrings(ss []string) []string {
 	return out
 }
 
-// --- add near other helpers (keep simpleIdentRe where it already exists) ---
-
 // jsonPathFromMapping converts a user-supplied mapping like "a.b.c" into "$.a.b.c".
 // - If the string already starts with "$", it's assumed to be a JSONPath and returned as-is.
 // - Dotted segments are treated as nested members; non-simple segments are quoted as members.
@@ -577,6 +631,7 @@ func jsonPathFromMapping(s string) string {
 }
 
 func isBaseCol(q string) bool {
+	// quoted, so prefixes look like: "\"resource.", "\"log.", "\"_cardinalhq"
 	if strings.HasPrefix(q, "\"resource.") || strings.HasPrefix(q, "\"log.") || strings.HasPrefix(q, "\"_cardinalhq") {
 		return true
 	}
