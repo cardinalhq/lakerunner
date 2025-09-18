@@ -18,6 +18,7 @@ WHERE organization_id = $1
   AND dateint >= $2
   AND dateint <= $3
   AND ts_range && int8range($4, $5, '[)')
+  AND published = true
 ORDER BY dateint, segment_id
 `
 
@@ -77,6 +78,7 @@ WHERE organization_id = $1
   AND dateint <= $3
   AND ts_range && int8range($4, $5, '[)')
   AND published = true
+  AND frequency_ms = $6
 ORDER BY dateint, segment_id
 `
 
@@ -86,6 +88,7 @@ type GetMetricSegmentsForDownloadParams struct {
 	EndDateint     int32     `json:"end_dateint"`
 	StartTime      int64     `json:"start_time"`
 	EndTime        int64     `json:"end_time"`
+	FrequencyMs    int32     `json:"frequency_ms"`
 }
 
 func (q *Queries) GetMetricSegmentsForDownload(ctx context.Context, arg GetMetricSegmentsForDownloadParams) ([]MetricSeg, error) {
@@ -95,6 +98,7 @@ func (q *Queries) GetMetricSegmentsForDownload(ctx context.Context, arg GetMetri
 		arg.EndDateint,
 		arg.StartTime,
 		arg.EndTime,
+		arg.FrequencyMs,
 	)
 	if err != nil {
 		return nil, err
@@ -138,6 +142,7 @@ WHERE organization_id = $1
   AND dateint >= $2
   AND dateint <= $3
   AND ts_range && int8range($4, $5, '[)')
+  AND published = true
 ORDER BY dateint, segment_id
 `
 

@@ -6,6 +6,7 @@ WHERE organization_id = @organization_id
   AND dateint <= @end_dateint
   AND ts_range && int8range(@start_time, @end_time, '[)')
   AND published = true
+  AND frequency_ms = @frequency_ms
 ORDER BY dateint, segment_id;
 
 -- name: GetLogSegmentsForDownload :many
@@ -15,6 +16,7 @@ WHERE organization_id = @organization_id
   AND dateint >= @start_dateint
   AND dateint <= @end_dateint
   AND ts_range && int8range(@start_time, @end_time, '[)')
+  AND published = true
 ORDER BY dateint, segment_id;
 
 -- name: GetTraceSegmentsForDownload :many
@@ -24,4 +26,5 @@ WHERE organization_id = @organization_id
   AND dateint >= @start_dateint
   AND dateint <= @end_dateint
   AND ts_range && int8range(@start_time, @end_time, '[)')
+  AND published = true
 ORDER BY dateint, segment_id;

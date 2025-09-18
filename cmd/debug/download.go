@@ -115,13 +115,11 @@ func runDownload(ctx context.Context, orgStr, signal string, hours int, endpoint
 	startTimeMs := startTime.UnixMilli()
 	endTimeMs := endTime.UnixMilli()
 
-	// Create cloud managers for storage access
 	cloudManagers, err := cloudstorage.NewCloudManagers(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create cloud managers: %w", err)
 	}
 
-	// Handle each signal type separately
 	switch signal {
 	case "metrics":
 		return downloadMetricSegments(ctx, lrStore, cloudManagers, profileProvider, orgID, orgStr,
@@ -141,27 +139,16 @@ func downloadMetricSegments(ctx context.Context, store *lrdb.Store, cloudManager
 	profileProvider storageprofile.StorageProfileProvider, orgID uuid.UUID, orgStr string,
 	startDateint, endDateint int32, startTimeMs, endTimeMs int64, endpoint string, frequencyMs int32) error {
 
-	// Query segments
 	segments, err := store.GetMetricSegmentsForDownload(ctx, lrdb.GetMetricSegmentsForDownloadParams{
 		OrganizationID: orgID,
 		StartDateint:   startDateint,
 		EndDateint:     endDateint,
 		StartTime:      startTimeMs,
 		EndTime:        endTimeMs,
+		FrequencyMs:    frequencyMs,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to fetch metric segments: %w", err)
-	}
-
-	// Filter by frequency if specified
-	if frequencyMs > 0 {
-		filtered := make([]lrdb.MetricSeg, 0)
-		for _, seg := range segments {
-			if seg.FrequencyMs == frequencyMs {
-				filtered = append(filtered, seg)
-			}
-		}
-		segments = filtered
 	}
 
 	if len(segments) == 0 {
@@ -173,16 +160,13 @@ func downloadMetricSegments(ctx context.Context, store *lrdb.Store, cloudManager
 		return nil
 	}
 
-	// Create output directory
 	dir := createOutputDir(orgStr, segments[0].Dateint)
 	fmt.Printf("Downloading %d metric segments to %s\n", len(segments), dir)
 
-	// Write segment metadata to JSON
 	if err := writeSegments(segments, filepath.Join(dir, "metric_seg.json")); err != nil {
 		return fmt.Errorf("failed to write segment metadata: %w", err)
 	}
 
-	// Download Parquet files
 	downloads := make([]downloadInfo, 0, len(segments))
 	for _, seg := range segments {
 		startTs, _ := getTsRangeBounds(seg.TsRange)
@@ -207,7 +191,6 @@ func downloadLogSegments(ctx context.Context, store *lrdb.Store, cloudManagers c
 	profileProvider storageprofile.StorageProfileProvider, orgID uuid.UUID, orgStr string,
 	startDateint, endDateint int32, startTimeMs, endTimeMs int64, endpoint string) error {
 
-	// Query segments
 	segments, err := store.GetLogSegmentsForDownload(ctx, lrdb.GetLogSegmentsForDownloadParams{
 		OrganizationID: orgID,
 		StartDateint:   startDateint,
@@ -224,16 +207,13 @@ func downloadLogSegments(ctx context.Context, store *lrdb.Store, cloudManagers c
 		return nil
 	}
 
-	// Create output directory
 	dir := createOutputDir(orgStr, segments[0].Dateint)
 	fmt.Printf("Downloading %d log segments to %s\n", len(segments), dir)
 
-	// Write segment metadata to JSON
 	if err := writeSegments(segments, filepath.Join(dir, "log_seg.json")); err != nil {
 		return fmt.Errorf("failed to write segment metadata: %w", err)
 	}
 
-	// Download Parquet files
 	downloads := make([]downloadInfo, 0, len(segments))
 	for _, seg := range segments {
 		startTs, _ := getTsRangeBounds(seg.TsRange)
@@ -258,7 +238,6 @@ func downloadTraceSegments(ctx context.Context, store *lrdb.Store, cloudManagers
 	profileProvider storageprofile.StorageProfileProvider, orgID uuid.UUID, orgStr string,
 	startDateint, endDateint int32, startTimeMs, endTimeMs int64, endpoint string) error {
 
-	// Query segments
 	segments, err := store.GetTraceSegmentsForDownload(ctx, lrdb.GetTraceSegmentsForDownloadParams{
 		OrganizationID: orgID,
 		StartDateint:   startDateint,
@@ -275,16 +254,13 @@ func downloadTraceSegments(ctx context.Context, store *lrdb.Store, cloudManagers
 		return nil
 	}
 
-	// Create output directory
 	dir := createOutputDir(orgStr, segments[0].Dateint)
 	fmt.Printf("Downloading %d trace segments to %s\n", len(segments), dir)
 
-	// Write segment metadata to JSON
 	if err := writeSegments(segments, filepath.Join(dir, "trace_seg.json")); err != nil {
 		return fmt.Errorf("failed to write segment metadata: %w", err)
 	}
 
-	// Download Parquet files
 	downloads := make([]downloadInfo, 0, len(segments))
 	for _, seg := range segments {
 		startTs, _ := getTsRangeBounds(seg.TsRange)
@@ -305,7 +281,6 @@ func downloadTraceSegments(ctx context.Context, store *lrdb.Store, cloudManagers
 	return nil
 }
 
-// Common download info structure
 type downloadInfo struct {
 	OrganizationID uuid.UUID
 	Dateint        int32
@@ -319,18 +294,15 @@ func downloadParquetFiles(ctx context.Context, cloudManagers cloudstorage.Client
 	downloads []downloadInfo, dir, signal string, orgID uuid.UUID, endpoint string) error {
 
 	for _, dl := range downloads {
-		// Get storage profile for this instance
 		profile, err := profileProvider.GetStorageProfileForOrganizationAndInstance(ctx, orgID, dl.InstanceNum)
 		if err != nil {
 			return fmt.Errorf("failed to get storage profile for org %s instance %d: %w", orgID, dl.InstanceNum, err)
 		}
 
-		// Override endpoint if specified
 		if endpoint != "" {
 			profile.Endpoint = endpoint
 		}
 
-		// Create storage client for this profile
 		storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
 		if err != nil {
 			return fmt.Errorf("failed to create storage client for org %s instance %d: %w", orgID, dl.InstanceNum, err)
@@ -350,7 +322,6 @@ func downloadParquetFiles(ctx context.Context, cloudManagers cloudstorage.Client
 
 		fmt.Printf("Downloading %s from %s -> %s\n", s3Key, profile.Bucket, localPath)
 
-		// Download using the cloudstorage abstraction
 		tmpFile, _, notFound, err := storageClient.DownloadObject(ctx, dir, profile.Bucket, s3Key)
 		if err != nil {
 			if notFound {
@@ -359,9 +330,7 @@ func downloadParquetFiles(ctx context.Context, cloudManagers cloudstorage.Client
 			return fmt.Errorf("failed to download %s from bucket %s: %w", s3Key, profile.Bucket, err)
 		}
 
-		// Move the temp file to the desired location
 		if err := os.Rename(tmpFile, localPath); err != nil {
-			// If rename fails (e.g., different filesystem), copy the file
 			if err := copyFile(tmpFile, localPath); err != nil {
 				_ = os.Remove(tmpFile)
 				return fmt.Errorf("failed to move file to %s: %w", localPath, err)
