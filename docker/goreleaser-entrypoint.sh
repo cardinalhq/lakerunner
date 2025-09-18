@@ -40,6 +40,12 @@ cat ~/.gitconfig 2>/dev/null || echo "No .gitconfig found"
 echo "Testing git status..."
 git status
 
+# Login to ECR if AWS credentials are available
+if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ]; then
+    echo "Logging in to ECR..."
+    aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
+fi
+
 # Run GoReleaser with provided arguments
 echo "Running GoReleaser with args: $@"
 exec goreleaser "$@"
