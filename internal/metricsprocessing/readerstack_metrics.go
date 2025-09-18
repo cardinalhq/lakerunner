@@ -82,6 +82,14 @@ func createMetricReaderStack(
 				slog.Bool("isRolledup", row.Rolledup),
 				slog.Bool("isPublished", row.Published),
 			)
+			recordMetricSegmentDownload404(
+				ctx,
+				profile.Bucket,
+				orgID,
+				profile.InstanceNum,
+				row.CreatedBy,
+				row.FrequencyMs,
+			)
 			continue
 		}
 
