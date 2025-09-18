@@ -69,7 +69,7 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 	require.Greater(t, rowCount, int64(0), "no rows ingested")
 
 	// Step 6: Optionally query segment_id column to check distinct values
-	conn, release, err := s3Pool.GetConnection(ctx, "local", "", "")
+	conn, release, err := s3Pool.GetConnection(ctx)
 	require.NoError(t, err, "get connection failed")
 	defer release()
 

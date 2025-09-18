@@ -63,7 +63,7 @@ func NewDDBSink(dataset string, ctx context.Context, s3Pool *duckdbx.S3DB) (*DDB
 	}
 
 	// Get a connection from the pool to create the table
-	conn, release, err := s.s3Pool.GetConnection(ctx, "local", "", "")
+	conn, release, err := s.s3Pool.GetConnection(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get connection: %w", err)
 	}
@@ -206,7 +206,7 @@ JOIN %s ON f.filename = m.path;
 `, ident(s.table), leftCols(tableCols), strings.Join(sel, ", "), sqlStringArray(pathsChunk), mapping)
 
 		// 3e) Get connection and execute in a transaction
-		conn, release, err := s.s3Pool.GetConnection(ctx, "local", "", "")
+		conn, release, err := s.s3Pool.GetConnection(ctx)
 		if err != nil {
 			return fmt.Errorf("get connection (chunk [%d:%d]): %w", start, end, err)
 		}
@@ -250,7 +250,7 @@ func (s *DDBSink) DeleteSegments(ctx context.Context, segmentIDs []int64) (int64
 	defer s.writeMu.Unlock()
 
 	// Get connection from pool
-	conn, release, err := s.s3Pool.GetConnection(ctx, "local", "", "")
+	conn, release, err := s.s3Pool.GetConnection(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("get connection: %w", err)
 	}
@@ -287,7 +287,7 @@ func (s *DDBSink) ensureSegmentIDColumn(ctx context.Context) error {
 	defer s.writeMu.Unlock()
 
 	// Get connection from pool
-	conn, release, err := s.s3Pool.GetConnection(ctx, "local", "", "")
+	conn, release, err := s.s3Pool.GetConnection(ctx)
 	if err != nil {
 		return fmt.Errorf("get connection: %w", err)
 	}
@@ -303,7 +303,7 @@ func (s *DDBSink) ensureSegmentIDColumn(ctx context.Context) error {
 
 func (s *DDBSink) reloadSchema(ctx context.Context) error {
 	// Get connection from pool
-	conn, release, err := s.s3Pool.GetConnection(ctx, "local", "", "")
+	conn, release, err := s.s3Pool.GetConnection(ctx)
 	if err != nil {
 		return fmt.Errorf("get connection: %w", err)
 	}
@@ -363,7 +363,7 @@ func (s *DDBSink) diffMissing(incoming map[string]string) map[string]string {
 // applyAltersLocked assumes writeMu is already held.
 func (s *DDBSink) applyAltersLocked(ctx context.Context, missing map[string]string) error {
 	// Get connection from pool
-	conn, release, err := s.s3Pool.GetConnection(ctx, "local", "", "")
+	conn, release, err := s.s3Pool.GetConnection(ctx)
 	if err != nil {
 		return fmt.Errorf("get connection: %w", err)
 	}
@@ -394,7 +394,7 @@ func (s *DDBSink) probeParquetSchemaList(ctx context.Context, paths []string) (m
 	q := fmt.Sprintf(`SELECT * FROM read_parquet(%s, union_by_name=true) LIMIT 0`, sqlStringArray(paths))
 
 	// Get connection from pool
-	conn, release, err := s.s3Pool.GetConnection(ctx, "local", "", "")
+	conn, release, err := s.s3Pool.GetConnection(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get connection: %w", err)
 	}
