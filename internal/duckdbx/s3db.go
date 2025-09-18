@@ -69,15 +69,59 @@ type pooledConn struct {
 	conn *sql.Conn
 }
 
-func NewS3DB() (*S3DB, error) {
-	// Always use a single on-disk database to reduce memory footprint
-	// Create a temp directory and single database file
-	dbDir, err := os.MkdirTemp("", "")
-	if err != nil {
-		return nil, fmt.Errorf("create temp dir for S3DB: %w", err)
+// s3DBConfig holds configuration options for S3DB
+type s3DBConfig struct {
+	dbPath   *string
+	inMemory bool
+}
+
+// S3DBOption is a functional option for configuring S3DB
+type S3DBOption func(*s3DBConfig)
+
+// WithDatabasePath sets the database path for S3DB.
+// The path must not be empty - use WithInMemory() for in-memory databases.
+func WithDatabasePath(path string) S3DBOption {
+	return func(cfg *s3DBConfig) {
+		if path == "" {
+			panic("WithDatabasePath: path must not be empty, use WithInMemory() for in-memory databases")
+		}
+		cfg.dbPath = &path
+	}
+}
+
+// WithInMemory creates in-memory databases (isolated per connection, not pooled).
+func WithInMemory() S3DBOption {
+	return func(cfg *s3DBConfig) {
+		cfg.inMemory = true
+		empty := ""
+		cfg.dbPath = &empty
+	}
+}
+
+// NewS3DB creates a new S3DB instance with a shared database.
+// Database location behavior:
+//   - No options provided: creates a temporary file database (persistent across connections)
+//   - WithInMemory(): creates in-memory databases (isolated per connection, not pooled)
+//   - WithDatabasePath("/path/to/db"): uses specified file database (persistent across connections)
+func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
+	cfg := &s3DBConfig{}
+	for _, opt := range opts {
+		opt(cfg)
 	}
 
-	dbPath := filepath.Join(dbDir, "global.ddb")
+	var dbPath string
+	if cfg.inMemory {
+		dbPath = ""
+	} else if cfg.dbPath != nil {
+		dbPath = *cfg.dbPath
+	} else {
+		// No options provided - create a temp file
+		dbDir, err := os.MkdirTemp("", "")
+		if err != nil {
+			return nil, fmt.Errorf("create temp dir for S3DB: %w", err)
+		}
+		dbPath = filepath.Join(dbDir, "global.ddb")
+	}
 
 	memoryMB := envInt64("DUCKDB_MEMORY_LIMIT", 0)
 
@@ -88,8 +132,17 @@ func NewS3DB() (*S3DB, error) {
 	total := runtime.GOMAXPROCS(0)
 	// All connections share the same database, so threads setting applies to the shared instance
 	threads := envIntClamp("DUCKDB_THREADS", total, 1, 256)
+
+	dbType := "file"
+	displayPath := dbPath
+	if dbPath == "" {
+		dbType = "memory"
+		displayPath = ":memory:"
+	}
+
 	slog.Info("duckdbx: single shared database",
-		"dbPath", dbPath,
+		"type", dbType,
+		"dbPath", displayPath,
 		"memoryLimitMB", memoryMB,
 		"tempDir", os.Getenv("DUCKDB_TEMP_DIRECTORY"),
 		"maxTempSize", os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
@@ -119,7 +172,6 @@ func (s *S3DB) Close() error {
 		s.pool.closeAll()
 	}
 
-	// Clean up the database file and its directory
 	if s.dbPath != "" {
 		dbDir := filepath.Dir(s.dbPath)
 		_ = os.RemoveAll(dbDir)
@@ -147,14 +199,12 @@ func (p *connectionPool) acquireLocal(ctx context.Context) (*sql.Conn, func(), e
 		return nil, nil, err
 	}
 
-	// try to get a pooled connection
 	select {
 	case pc := <-p.ch:
 		return pc.conn, func() { p.release(pc) }, nil
 	default:
 	}
 
-	// create new if capacity
 	p.mu.Lock()
 	canCreate := p.cur < p.size
 	if canCreate {
@@ -173,7 +223,6 @@ func (p *connectionPool) acquireLocal(ctx context.Context) (*sql.Conn, func(), e
 		return pc.conn, func() { p.release(pc) }, nil
 	}
 
-	// wait for one to become available
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
@@ -196,7 +245,6 @@ func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, e
 		return seedCloudSecretFromEnv(ctx, conn, bucket, region, endpoint)
 	}
 
-	// try to get a pooled connection
 	select {
 	case pc := <-p.ch:
 		// Ensure credentials are configured for this specific bucket
@@ -213,7 +261,6 @@ func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, e
 	default:
 	}
 
-	// create new if capacity
 	p.mu.Lock()
 	canCreate := p.cur < p.size
 	if canCreate {
@@ -232,7 +279,6 @@ func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, e
 		return pc.conn, func() { p.release(pc) }, nil
 	}
 
-	// wait for one to become available
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
@@ -252,7 +298,17 @@ func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, e
 }
 
 func (p *connectionPool) release(pc *pooledConn) {
-	// Simply return to pool - no expiration checks needed
+	// For in-memory databases, don't return to pool - just close
+	if p.parent.dbPath == "" {
+		_ = pc.conn.Close()
+		_ = pc.db.Close()
+		p.mu.Lock()
+		p.cur--
+		p.mu.Unlock()
+		return
+	}
+
+	// For file-based databases, return to pool
 	select {
 	case p.ch <- pc:
 		// returned to pool
