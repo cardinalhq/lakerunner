@@ -656,23 +656,13 @@ func TestPooledConnectionReuseAcrossBuckets(t *testing.T) {
 	require.NoError(t, err, "connection should still be functional")
 }
 
-// TestInMemoryDatabase tests that we would like to use an in-memory database (empty filename)
-// and have data visible across pooled connections.
-//
-// NOTE: This test demonstrates the desired behavior but may skip if not supported.
-// Currently NewS3DB always creates a temp file, not a true in-memory database.
+// TestInMemoryDatabase tests that in-memory databases (empty filename)
+// create isolated instances per connection and are not pooled.
 func TestInMemoryDatabase(t *testing.T) {
 	ctx := context.Background()
 
-	// The current implementation always uses a file-based database
-	// If we want to support true in-memory databases with empty string,
-	// we would need to modify NewS3DB to check for an environment variable
-	// or add a parameter to support this.
-
-	// For now, this test verifies that our current file-based approach
-	// does share state across connections (which it does).
-
-	s3db, err := NewS3DB()
+	// Test with in-memory database
+	s3db, err := NewS3DB(WithInMemory())
 	require.NoError(t, err)
 	defer func() {
 		err := s3db.Close()
@@ -682,37 +672,115 @@ func TestInMemoryDatabase(t *testing.T) {
 	// Get first connection
 	conn1, release1, err := s3db.GetConnection(ctx)
 	require.NoError(t, err)
-	defer release1()
 
-	// Create a table and insert data
-	_, err = conn1.ExecContext(ctx, `CREATE TABLE shared_test (id INTEGER, value VARCHAR)`)
+	// Create a table and insert data in conn1's isolated database
+	_, err = conn1.ExecContext(ctx, `CREATE TABLE inmem_test (id INTEGER, value VARCHAR)`)
 	require.NoError(t, err)
-	_, err = conn1.ExecContext(ctx, `INSERT INTO shared_test VALUES (1, 'from_conn1')`)
+	_, err = conn1.ExecContext(ctx, `INSERT INTO inmem_test VALUES (1, 'from_conn1')`)
 	require.NoError(t, err)
 
-	// Get second connection (different from first in the pool)
+	// Verify data exists in conn1
+	var count int
+	err = conn1.QueryRowContext(ctx, `SELECT COUNT(*) FROM inmem_test`).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "should have one row in conn1")
+
+	// Get second connection (should be a completely separate in-memory database)
+	conn2, release2, err := s3db.GetConnection(ctx)
+	require.NoError(t, err)
+
+	// The table should NOT exist in conn2's database
+	_, err = conn2.ExecContext(ctx, `SELECT * FROM inmem_test`)
+	require.Error(t, err, "table should not exist in conn2's separate database")
+	require.Contains(t, err.Error(), "does not exist", "should get table not found error")
+
+	// Create a different table in conn2 to verify isolation
+	_, err = conn2.ExecContext(ctx, `CREATE TABLE conn2_only (id INTEGER)`)
+	require.NoError(t, err)
+	_, err = conn2.ExecContext(ctx, `INSERT INTO conn2_only VALUES (99)`)
+	require.NoError(t, err)
+
+	// Verify conn1 can't see conn2's table
+	_, err = conn1.ExecContext(ctx, `SELECT * FROM conn2_only`)
+	require.Error(t, err, "conn1 should not see conn2's table")
+
+	// Release both connections
+	release1()
+	release2()
+
+	t.Log("In-memory database test verified - connections are properly isolated")
+}
+
+// TestInMemoryNotPooled verifies that in-memory connections are not returned to the pool.
+func TestInMemoryNotPooled(t *testing.T) {
+	ctx := context.Background()
+
+	// Create in-memory S3DB with small pool
+	oldPoolSize := os.Getenv("DUCKDB_S3_POOL_SIZE")
+	_ = os.Setenv("DUCKDB_S3_POOL_SIZE", "2")
+	defer func() {
+		if oldPoolSize != "" {
+			_ = os.Setenv("DUCKDB_S3_POOL_SIZE", oldPoolSize)
+		} else {
+			_ = os.Unsetenv("DUCKDB_S3_POOL_SIZE")
+		}
+	}()
+
+	s3db, err := NewS3DB(WithInMemory())
+	require.NoError(t, err)
+	defer func() {
+		err := s3db.Close()
+		require.NoError(t, err)
+	}()
+
+	// Get a connection
+	conn1, release1, err := s3db.GetConnection(ctx)
+	require.NoError(t, err)
+
+	// Create a table (this will only exist in this connection's database)
+	_, err = conn1.ExecContext(ctx, `CREATE TABLE test_not_pooled (id INTEGER)`)
+	require.NoError(t, err)
+
+	// Release the connection - for in-memory, this should close it, not pool it
+	release1()
+
+	// Get another connection - should be a fresh one
 	conn2, release2, err := s3db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release2()
 
-	// Check if data is visible in second connection
-	// With our file-based approach, this DOES work
-	var value string
-	err = conn2.QueryRowContext(ctx, `SELECT value FROM shared_test WHERE id = 1`).Scan(&value)
-	require.NoError(t, err, "data should be visible across connections")
-	require.Equal(t, "from_conn1", value, "data from conn1 should be visible in conn2")
+	// The table should NOT exist (proving we got a fresh connection)
+	_, err = conn2.ExecContext(ctx, `SELECT * FROM test_not_pooled`)
+	require.Error(t, err, "table should not exist in new connection")
+	require.Contains(t, err.Error(), "does not exist")
 
-	// Insert from conn2
-	_, err = conn2.ExecContext(ctx, `INSERT INTO shared_test VALUES (2, 'from_conn2')`)
+	// Get a third connection while second is still held
+	conn3, release3, err := s3db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release3()
+
+	// Both conn2 and conn3 should be independent
+	_, err = conn2.ExecContext(ctx, `CREATE TABLE conn2_table (id INTEGER)`)
 	require.NoError(t, err)
 
-	// Verify both rows are visible from conn1
-	var count int
-	err = conn1.QueryRowContext(ctx, `SELECT COUNT(*) FROM shared_test`).Scan(&count)
-	require.NoError(t, err)
-	require.Equal(t, 2, count, "both rows should be visible")
+	_, err = conn3.ExecContext(ctx, `SELECT * FROM conn2_table`)
+	require.Error(t, err, "conn3 should not see conn2's table")
 
-	// This test passes because we use a shared file-based database
-	// If we need true in-memory support with "", we would need code changes
-	t.Log("File-based shared database works correctly across pooled connections")
+	t.Log("In-memory connections are not pooled - each get creates a new database")
+}
+
+// TestWithDatabasePathEmptyPanics verifies that WithDatabasePath("") panics
+// to prevent accidental misuse.
+func TestWithDatabasePathEmptyPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		require.NotNil(t, r, "WithDatabasePath(\"\") should panic")
+		require.Contains(t, fmt.Sprintf("%v", r), "must not be empty")
+		require.Contains(t, fmt.Sprintf("%v", r), "WithInMemory()")
+	}()
+
+	// This should panic when the option is applied
+	cfg := &s3DBConfig{}
+	opt := WithDatabasePath("")
+	opt(cfg)
 }
