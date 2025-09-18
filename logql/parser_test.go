@@ -840,3 +840,70 @@ and
 		t.Fatalf("expected at least one RangeAgg with offset 1h in right-side LHS")
 	}
 }
+
+func TestParse_LineFormat_StageAndAttachedFilter(t *testing.T) {
+	q := `{app="a"} | json msg="message" | line_format "{{.msg}}" | level = "ERROR"`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	if ast.Kind != KindLogSelector || ast.LogSel == nil {
+		t.Fatalf("want KindLogSelector, got kind=%s sel=%#v", ast.Kind, ast.LogSel)
+	}
+
+	// Stage order should be: json -> line_format
+	parsers := ast.LogSel.Parsers
+	if len(parsers) != 2 {
+		t.Fatalf("expected 2 parsers (json, line_format), got %d: %#v", len(parsers), parsers)
+	}
+	if parsers[0].Type != "json" {
+		t.Fatalf("parsers[0].Type = %q, want %q", parsers[0].Type, "json")
+	}
+	if parsers[1].Type != "line_format" {
+		t.Fatalf("parsers[1].Type = %q, want %q", parsers[1].Type, "line_format")
+	}
+
+	// Ensure label filter after line_format is captured and attached to that parser
+	// i.e., ParserIdx points to the line_format stage (index 1) and AfterParser=true.
+	var found bool
+	for _, lf := range ast.LogSel.LabelFilters {
+		if lf.Label == "level" && lf.Op == MatchEq && lf.Value == "ERROR" {
+			found = true
+			if !lf.AfterParser {
+				t.Fatalf("label filter %v should have AfterParser=true", lf)
+			}
+			if lf.ParserIdx == nil || *lf.ParserIdx != 1 {
+				t.Fatalf("label filter %v should have ParserIdx=1 (line_format), got %v", lf, lf.ParserIdx)
+			}
+			// also confirm the filter is present on the line_format parser’s Filters
+			if len(parsers[1].Filters) != 1 ||
+				parsers[1].Filters[0].Label != "level" ||
+				parsers[1].Filters[0].Op != MatchEq ||
+				parsers[1].Filters[0].Value != "ERROR" {
+				t.Fatalf("line_format parser filters not attached correctly: %#v", parsers[1].Filters)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf(`did not find expected label filter: level = "ERROR"; got: %#v`, ast.LogSel.LabelFilters)
+	}
+
+	// Sanity: ensure json mapping was captured (current behavior stores mappings in Params).
+	if parsers[0].Params == nil || parsers[0].Params["msg"] != "message" {
+		t.Fatalf(`json mapping not captured: want msg="message", got %#v`, parsers[0].Params)
+	}
+
+	// NEW: ensure the line_format template was captured into Params["template"].
+	// normalizeLabelFormatLiteral should have stripped quotes/backticks for us,
+	// so we expect the raw "{{.msg}}" here.
+	if parsers[1].Params == nil || parsers[1].Params["template"] != "{{.msg}}" {
+		t.Fatalf(`line_format template not captured: want "{{.msg}}", got %#v`, parsers[1].Params)
+	}
+
+	// And line_format should not populate LabelFormats (that’s only for label_format).
+	if len(parsers[1].LabelFormats) != 0 {
+		t.Fatalf("line_format should not expose LabelFormats; got %#v", parsers[1].LabelFormats)
+	}
+}

@@ -624,6 +624,93 @@ func TestPlanner_CountOverTime_WithRegexLineFilter(t *testing.T) {
 	}
 }
 
+func TestPlanner_LineFormat_StageAndAttachedFilter(t *testing.T) {
+	q := `{app="web"} | json msg="message" | line_format "{{ .msg }}" | level="ERROR"`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+
+	// One pushdown leaf expected.
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+
+	// Root should be that same leaf.
+	rootLeaf, ok := plan.Root.(*LLeafNode)
+	if !ok {
+		t.Fatalf("root is not *LLeafNode, got %T", plan.Root)
+	}
+	if rootLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("root leaf ID mismatch: got %s, want %s", rootLeaf.Leaf.ID, leaf.ID)
+	}
+
+	// Matchers include app="web".
+	if !hasMatcher(leaf.Matchers, "app", "web") {
+		t.Fatalf("missing matcher app=web; got %#v", leaf.Matchers)
+	}
+
+	// Stage order: json → line_format
+	if len(leaf.Parsers) != 2 {
+		t.Fatalf("expected 2 parsers (json, line_format), got %d: %#v", len(leaf.Parsers), leaf.Parsers)
+	}
+	if leaf.Parsers[0].Type != "json" {
+		t.Fatalf("parsers[0].Type = %q, want %q", leaf.Parsers[0].Type, "json")
+	}
+	if leaf.Parsers[1].Type != "line_format" {
+		t.Fatalf("parsers[1].Type = %q, want %q", leaf.Parsers[1].Type, "line_format")
+	}
+
+	// JSON mapping should be preserved.
+	if got := leaf.Parsers[0].Params["msg"]; got != "message" {
+		t.Fatalf(`json mapping not captured: want Params["msg"]="message", got %q`, got)
+	}
+
+	// Current parser does not extract outputs/templates for line_format.
+	lfIdx := 1
+	lfStage := leaf.Parsers[lfIdx]
+	if len(lfStage.LabelFormats) != 0 {
+		t.Fatalf("line_format should not expose LabelFormats; got %#v", lfStage.LabelFormats)
+	}
+
+	// The label filter after line_format (level="ERROR") must be attached to that stage.
+	found := false
+	for _, f := range leaf.LabelFilters {
+		if f.Label == "level" && f.Op == MatchEq && f.Value == "ERROR" {
+			found = true
+			if !f.AfterParser {
+				t.Fatalf("label filter %+v should have AfterParser=true", f)
+			}
+			if f.ParserIdx == nil || *f.ParserIdx != lfIdx {
+				t.Fatalf("label filter %+v should have ParserIdx=%d, got %v", f, lfIdx, f.ParserIdx)
+			}
+			// also ensure it’s attached on the line_format stage itself
+			if len(lfStage.Filters) != 1 ||
+				lfStage.Filters[0].Label != "level" ||
+				lfStage.Filters[0].Op != MatchEq ||
+				lfStage.Filters[0].Value != "ERROR" {
+				t.Fatalf("line_format stage filters not attached correctly: %#v", lfStage.Filters)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf(`did not find expected label filter: level = "ERROR"; got: %#v`, leaf.LabelFilters)
+	}
+
+	// Pretty label rendering should include "line_format".
+	lbl := (&rootLeaf.Leaf).Label()
+	if !strings.Contains(lbl, "line_format") {
+		t.Fatalf("pretty label missing line_format: %q", lbl)
+	}
+}
+
 // Helper functions for tests.
 
 func findParserIndexByType(ps []ParserStage, typ string) int {

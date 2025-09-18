@@ -1166,3 +1166,54 @@ func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestToWorkerSQL_LineFormat_JSONToMessage(t *testing.T) {
+	db := openDuckDB(t)
+
+	mustExec(t, db, `CREATE TABLE logs(app TEXT, level TEXT, "_cardinalhq.message" TEXT);`)
+	// Note: include "level" in the JSON body because the filter runs AFTER the json stage
+	mustExec(t, db, `INSERT INTO logs(app, level, "_cardinalhq.message") VALUES
+        ('web',   'ERROR', '{"message":"boom","level":"ERROR","x":1}'),
+        ('web',   'INFO',  '{"message":"ok","level":"INFO","x":2}'),
+        ('other', 'ERROR', '{"message":"nope","level":"ERROR","x":3}')`)
+
+	q := `{app="web"} | json msg="message" | line_format "{{.msg}}" | level="ERROR"`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+
+	// sanity checks (optional)
+	if !strings.Contains(sql, "app = 'web'") {
+		t.Fatalf("missing app filter:\n%s", sql)
+	}
+	if !strings.Contains(sql, "json_extract_string(\"_cardinalhq.message\", '$.message') AS msg") &&
+		!strings.Contains(sql, "json_extract_string(\"_cardinalhq.message\",'$.message') AS msg") {
+		t.Fatalf("missing msg JSON projection:\n%s", sql)
+	}
+	if !strings.Contains(sql, `level = 'ERROR'`) {
+		t.Fatalf("missing level filter:\n%s", sql)
+	}
+	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq.message"`) {
+		t.Fatalf("expected rewrite of _cardinalhq.message:\n%s", sql)
+	}
+
+	rows := queryAll(t, db, sql)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row (app=web & json.level=ERROR), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
+	}
+	if got := getString(rows[0][`_cardinalhq.message`]); got != "boom" {
+		t.Fatalf(`rewritten _cardinalhq.message mismatch: got %q, want "boom"`, got)
+	}
+}

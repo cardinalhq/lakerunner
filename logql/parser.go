@@ -542,7 +542,23 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 		}
 		return "logfmt", params, true
 
-	case "line_format", "label_replace", "keep_labels", "drop_labels", "decolorize":
+		// in looksLikeParser(stage string)
+	case "line_format":
+		tmpl := ""
+		if i := strings.IndexAny(stage, "`\""); i >= 0 {
+			q := stage[i]
+			if j := strings.LastIndexByte(stage, q); j > i {
+				inner := stage[i : j+1]                   // includes quotes
+				tmpl = normalizeLabelFormatLiteral(inner) // strips quotes/backticks, unescapes \" etc
+			}
+		}
+		params := map[string]string{}
+		if tmpl != "" {
+			params["template"] = tmpl
+		}
+		return "line_format", params, true
+
+	case "label_replace", "keep_labels", "drop_labels", "decolorize":
 		return head[0], map[string]string{}, true
 
 	case "regexp":

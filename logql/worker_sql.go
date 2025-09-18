@@ -482,6 +482,37 @@ func emitParsers(
 			}
 			*remainingLF = later
 
+		case "line_format":
+			// Build a SQL expr from the Go-template-like string (same compiler used by label_format)
+			tmpl := strings.TrimSpace(p.Params["template"])
+			if tmpl == "" {
+				// No template → no-op pass-through, but still carry stage-level filters
+				pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
+				if len(p.Filters) > 0 {
+					*remainingLF = append(*remainingLF, p.Filters...)
+				}
+				break
+			}
+
+			// Compile the template to a SQL string expression (VARCHAR)
+			expr, err := buildLabelFormatExprTemplate(tmpl, func(col string) string { return quoteIdent(col) })
+			if err != nil {
+				// Be tolerant: produce empty strings on bad templates
+				expr = "''"
+			}
+
+			// Replace the message column with the formatted result.
+			sel := []string{
+				pb.top() + `.* EXCLUDE "` + `_cardinalhq.message` + `"`,
+				"(" + expr + `) AS "` + `_cardinalhq.message` + `"`,
+			}
+			pb.push(sel, pb.top(), nil)
+
+			// line_format doesn't create new labels; any attached filters are carried forward
+			if len(p.Filters) > 0 {
+				*remainingLF = append(*remainingLF, p.Filters...)
+			}
+
 		case "unwrap":
 			// s*: compute __unwrap_value (DOUBLE)
 			field := strings.TrimSpace(p.Params["field"])
