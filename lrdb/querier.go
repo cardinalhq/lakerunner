@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type Querier interface {
@@ -60,6 +61,9 @@ type Querier interface {
 	MetricSegmentCleanupBatchDelete(ctx context.Context, arg []MetricSegmentCleanupBatchDeleteParams) *MetricSegmentCleanupBatchDeleteBatchResults
 	MetricSegmentCleanupDelete(ctx context.Context, arg MetricSegmentCleanupDeleteParams) error
 	MetricSegmentCleanupGet(ctx context.Context, arg MetricSegmentCleanupGetParams) ([]MetricSegmentCleanupGetRow, error)
+	PubSubMessageHistoryCleanup(ctx context.Context, arg PubSubMessageHistoryCleanupParams) (pgconn.CommandTag, error)
+	PubSubMessageHistoryCount(ctx context.Context) (int64, error)
+	PubSubMessageHistoryInsert(ctx context.Context, arg PubSubMessageHistoryInsertParams) (pgconn.CommandTag, error)
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
 	TraceSegmentCleanupBatchDelete(ctx context.Context, arg []TraceSegmentCleanupBatchDeleteParams) *TraceSegmentCleanupBatchDeleteBatchResults

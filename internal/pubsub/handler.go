@@ -22,8 +22,9 @@ import (
 )
 
 var (
-	itemsProcessed metric.Int64Counter
-	itemsSkipped   metric.Int64Counter
+	itemsProcessed  metric.Int64Counter
+	itemsSkipped    metric.Int64Counter
+	itemsDuplicated metric.Int64Counter
 )
 
 func init() {
@@ -44,5 +45,13 @@ func init() {
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create itemsSkipped counter: %w", err))
+	}
+
+	itemsDuplicated, err = meter.Int64Counter(
+		"pubsub_items_duplicated_total",
+		metric.WithDescription("Total number of pubsub items skipped due to deduplication"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create itemsDuplicated counter: %w", err))
 	}
 }

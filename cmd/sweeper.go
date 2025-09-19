@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/sweeper"
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 )
 
@@ -67,10 +68,16 @@ func init() {
 				}
 			}
 
+			// Load configuration
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
 			// Mark as healthy immediately - health is not dependent on database readiness
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			cmd := sweeper.New(myInstanceID, finalSyncLegacyTables)
+			cmd := sweeper.New(myInstanceID, finalSyncLegacyTables, cfg)
 
 			// Mark as ready now that database connections are established and migrations have been checked
 			healthServer.SetReady(true)
