@@ -1,7 +1,5 @@
 # S3 and SQS Manual Setup for Lakerunner
 
-Based on analysis of the actual Lakerunner codebase and Helm charts, this guide covers the specific S3 bucket and SQS queue setup required for Lakerunner to work.
-
 ## Overview
 
 Lakerunner requires:
