@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -63,6 +64,7 @@ type SummaryReport struct {
 func GetSizingReportCmd() *cobra.Command {
 	var (
 		detailed bool
+		sample   int
 	)
 
 	cmd := &cobra.Command{
@@ -72,16 +74,30 @@ func GetSizingReportCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := args[0]
-			return runSizingReport(cmd.Context(), dir, detailed)
+			return runSizingReport(cmd.Context(), dir, detailed, sample)
 		},
 	}
 
 	cmd.Flags().BoolVar(&detailed, "detailed", false, "Show detailed per-file statistics")
+	cmd.Flags().IntVar(&sample, "sample", 0, "Randomly sample N files (0 = process all files)")
 
 	return cmd
 }
 
-func runSizingReport(ctx context.Context, dir string, detailed bool) error {
+func runSizingReport(ctx context.Context, dir string, detailed bool, sampleSize int) error {
+	// Try to read metadata to get signal type
+	var signalType string
+	metadataPath := filepath.Join(dir, "metadata.json")
+	if metadataFile, err := os.Open(metadataPath); err == nil {
+		var metadata struct {
+			Signal string `json:"signal"`
+		}
+		if err := json.NewDecoder(metadataFile).Decode(&metadata); err == nil {
+			signalType = metadata.Signal
+		}
+		_ = metadataFile.Close()
+	}
+
 	// Find all parquet files
 	parquetFiles, err := findParquetFiles(dir)
 	if err != nil {
@@ -92,10 +108,27 @@ func runSizingReport(ctx context.Context, dir string, detailed bool) error {
 		return fmt.Errorf("no parquet files found in %s", dir)
 	}
 
+	// Apply sampling if requested
+	originalCount := len(parquetFiles)
+	if sampleSize > 0 && len(parquetFiles) > sampleSize {
+		fmt.Printf("Found %d parquet files, randomly sampling %d\n", len(parquetFiles), sampleSize)
+		parquetFiles = sampleFiles(parquetFiles, sampleSize)
+	} else if sampleSize > 0 && len(parquetFiles) <= sampleSize {
+		fmt.Printf("Found %d parquet files (less than or equal to sample size %d, processing all)\n", len(parquetFiles), sampleSize)
+	} else {
+		fmt.Printf("Found %d parquet files to analyze\n", len(parquetFiles))
+	}
+
 	// Determine number of workers (use all available CPUs)
 	numWorkers := runtime.NumCPU()
-	fmt.Printf("Found %d parquet files to analyze\n", len(parquetFiles))
-	fmt.Printf("Using %d parallel workers\n\n", numWorkers)
+	if len(parquetFiles) < numWorkers {
+		numWorkers = len(parquetFiles)
+	}
+	fmt.Printf("Using %d parallel workers\n", numWorkers)
+	if sampleSize > 0 && originalCount > len(parquetFiles) {
+		fmt.Printf("Processing %d sampled files out of %d total files\n", len(parquetFiles), originalCount)
+	}
+	fmt.Printf("\n")
 
 	// Create channels for work distribution
 	type workItem struct {
@@ -200,7 +233,7 @@ func runSizingReport(ctx context.Context, dir string, detailed bool) error {
 	}
 
 	// Print reports
-	printSizingReport(reports, summary, detailed)
+	printSizingReport(reports, summary, detailed, signalType)
 
 	return nil
 }
@@ -258,6 +291,13 @@ func analyzeParquetFile(ctx context.Context, filePath string) (*FileReport, erro
 			// Remove sketch field for metric data - it's not needed for size calculations
 			delete(row, "sketch")
 
+			// Remove all null entries from the map
+			for key, value := range row {
+				if value == nil {
+					delete(row, key)
+				}
+			}
+
 			// Calculate uncompressed JSON size
 			jsonBytes, err := json.Marshal(row)
 			if err != nil {
@@ -312,13 +352,16 @@ func analyzeParquetFile(ctx context.Context, filePath string) (*FileReport, erro
 	return report, nil
 }
 
-func printSizingReport(reports []FileReport, summary SummaryReport, detailed bool) {
+func printSizingReport(reports []FileReport, summary SummaryReport, detailed bool, signalType string) {
 	fmt.Printf("%s\n", strings.Repeat("=", 100))
 	fmt.Printf("PARQUET SIZING REPORT\n")
 	fmt.Printf("%s\n\n", strings.Repeat("=", 100))
 
 	// Print summary first
 	fmt.Printf("SUMMARY\n")
+	if signalType != "" {
+		fmt.Printf("  Signal type: %s\n", signalType)
+	}
 	fmt.Printf("  Total files analyzed: %d\n", summary.TotalFiles)
 	fmt.Printf("  Total records: %s\n", formatNumber(summary.TotalRecords))
 	fmt.Printf("\n")
@@ -461,4 +504,24 @@ func truncateFilename(filename string, maxLen int) string {
 		return filename
 	}
 	return filename[:maxLen-3] + "..."
+}
+
+// sampleFiles randomly samples n files from the input slice
+func sampleFiles(files []string, n int) []string {
+	if n >= len(files) {
+		return files
+	}
+
+	// Create a copy to avoid modifying the original slice
+	shuffled := make([]string, len(files))
+	copy(shuffled, files)
+
+	// Fisher-Yates shuffle for the first n elements
+	for i := 0; i < n; i++ {
+		j := i + rand.IntN(len(shuffled)-i)
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	}
+
+	// Return the first n elements
+	return shuffled[:n]
 }
