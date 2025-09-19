@@ -172,10 +172,11 @@ func analyzeParsers(be *LogLeaf) (parserCreated map[string]struct{}, hasJSON, ha
 	return
 }
 
-// NEW: parse label_format/line_format templates and collect referenced columns.
+// in logql/to_worker_sql.go (or wherever collectTemplateDeps lives)
 func collectTemplateDeps(tmpl string) []string {
 	deps := map[string]struct{}{}
 	_, _ = buildLabelFormatExprTemplate(tmpl, func(name string) string {
+		name = normalizeLabelName(name)
 		deps[name] = struct{}{}
 		return "0"
 	})

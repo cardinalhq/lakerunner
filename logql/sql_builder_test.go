@@ -1287,3 +1287,65 @@ func TestToWorkerSQL_LineFormat_IndexBaseField(t *testing.T) {
 		t.Fatalf("wrong row selected: resource.service.name=%q", svc)
 	}
 }
+
+func TestToWorkerSQL_LineFormat_DirectIndexBaseField(t *testing.T) {
+	db := openDuckDB(t)
+	t.Cleanup(func() { mustDropTable(db, "logs") })
+
+	// Base table:
+	mustExec(t, db, `CREATE TABLE logs(
+		"resource.service.name" TEXT,
+		"_cardinalhq.message"   TEXT,
+		"log.@OrderResult"      TEXT
+	);`)
+
+	// Two rows; only one should match the selector.
+	mustExec(t, db, `INSERT INTO logs VALUES
+		('accounting', 'orig msg 1', 'SUCCESS'),
+		('billing',    'orig msg 2', 'IGNORED');`)
+
+	// Query:
+	//  - selector on resource_service_name (normalized to "resource.service.name")
+	//  - line_format directly uses index to access base field with special chars
+	q := `{resource_service_name="accounting"} | line_format "{{ index . \"log.@OrderResult\" }}"`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+
+	// Sanity: selector, hoisted dep, and message rewrite present.
+	if !strings.Contains(sql, `"resource.service.name" = 'accounting'`) {
+		t.Fatalf("missing selector on resource.service.name:\n%s", sql)
+	}
+	if !strings.Contains(sql, `"log.@OrderResult"`) {
+		t.Fatalf("expected hoisted base column \"log.@OrderResult\" in SQL:\n%s", sql)
+	}
+	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq.message"`) {
+		t.Fatalf("expected rewrite of _cardinalhq.message via line_format:\n%s", sql)
+	}
+
+	// Execute and validate.
+	rows := queryAll(t, db, sql)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row (service=accounting), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
+	}
+
+	gotMsg := getString(rows[0][`_cardinalhq.message`])
+	if gotMsg != "SUCCESS" {
+		t.Fatalf(`rewritten _cardinalhq.message mismatch: got %q, want "SUCCESS"`, gotMsg)
+	}
+	if svc := getString(rows[0][`resource.service.name`]); svc != "accounting" {
+		t.Fatalf("wrong row selected: resource.service.name=%q", svc)
+	}
+}
