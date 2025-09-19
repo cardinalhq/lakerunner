@@ -57,7 +57,7 @@ func machineID() (uint16, error) {
 	}
 
 	if id == 0 {
-		slog.Warn("machineID: POD_NAME/POD_IP not set or hash resulted in 0, falling back to random ID")
+		slog.Debug("machineID: POD_NAME/POD_IP not set or hash resulted in 0, falling back to random ID")
 		id = uint16(rand.Uint32())
 		if id == 0 {
 			id = 1
