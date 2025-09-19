@@ -187,6 +187,10 @@ func EvaluatePushDown[T promql.Timestamped](
 
 	outs := make([]<-chan T, 0)
 
+	// Create a cancellable context for producers that MergeSorted can cancel when limit is reached
+	producerCtx, producerCancel := context.WithCancel(ctx)
+	defer producerCancel() // Ensure cleanup if we return early with error
+
 	// Build channels per (org, instance)
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
@@ -242,7 +246,7 @@ func EvaluatePushDown[T promql.Timestamped](
 				"numPresent", numPresent)
 
 			// Stream uncached segments directly from S3 (one channel per glob).
-			s3Channels, err := streamFromS3(ctx, w, request,
+			s3Channels, err := streamFromS3(producerCtx, w, request,
 				profile.Bucket,
 				profile.Region,
 				profile.Endpoint,
@@ -261,7 +265,7 @@ func EvaluatePushDown[T promql.Timestamped](
 			}
 
 			// Stream cached segments from the cache.
-			cachedChannels := streamCached(ctx, w, request, cachedIDs, userSQL, mapper)
+			cachedChannels := streamCached(producerCtx, w, request, cachedIDs, userSQL, mapper)
 			outs = append(outs, cachedChannels...)
 		}
 	}
@@ -274,7 +278,8 @@ func EvaluatePushDown[T promql.Timestamped](
 	if request.Limit > 0 && request.Limit < mergeBufferSize {
 		mergeBufferSize = request.Limit // No need for large buffer if limit is small
 	}
-	return promql.MergeSorted(ctx, mergeBufferSize, request.Reverse, request.Limit, outs...), nil
+	// Pass the producer cancel function so MergeSorted can stop producers when limit is reached
+	return promql.MergeSorted(ctx, producerCancel, mergeBufferSize, request.Reverse, request.Limit, outs...), nil
 }
 
 func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,

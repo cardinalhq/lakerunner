@@ -320,7 +320,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 
 				// Merge across leaves within this group and register immediately.
 				// Use smaller buffer to reduce memory overhead
-				groupChan := promql.MergeSorted(pushCtx, 128, false, 0, leafChans...)
+				groupChan := promql.MergeSorted(pushCtx, cancelAllPush, 128, false, 0, leafChans...)
 				slog.Info("Registering group stream", "idx", gi, "groupStart", group.StartTs, "groupEnd", group.EndTs)
 				select {
 				case regs <- groupReg{idx: gi, startTs: group.StartTs, endTs: group.EndTs, ch: groupChan}:

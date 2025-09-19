@@ -18,6 +18,7 @@ import (
 	"context"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -79,7 +80,7 @@ func TestMergeSorted_Ascending_TwoInputs(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted(ctx /*ascending*/, 8, false, 0, ch1, ch2)
+	out := MergeSorted(ctx, nil /*ascending*/, 8, false, 0, ch1, ch2)
 	got := toSlice(out)
 
 	if len(got) != len(a)+len(b) {
@@ -99,7 +100,7 @@ func TestMergeSorted_Ascending_WithDuplicates(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted(ctx, 2, false, 0, ch1, ch2)
+	out := MergeSorted(ctx, nil, 2, false, 0, ch1, ch2)
 	got := toSlice(out)
 
 	if !isSortedAsc(got) {
@@ -116,7 +117,7 @@ func TestMergeSorted_HandlesEmptyInputs(t *testing.T) {
 	c2 := chFromSlice(ctx, 0, full)
 	c3 := chFromSlice(ctx, 0, empty)
 
-	out := MergeSorted(ctx, 1, false, 0, c1, c2, c3)
+	out := MergeSorted(ctx, nil, 1, false, 0, c1, c2, c3)
 	got := toSlice(out)
 
 	if len(got) != len(full) {
@@ -129,7 +130,7 @@ func TestMergeSorted_HandlesEmptyInputs(t *testing.T) {
 
 func TestMergeSorted_NoInputs(t *testing.T) {
 	ctx := context.Background()
-	out := MergeSorted[tsItem](ctx, 1, false, 0)
+	out := MergeSorted[tsItem](ctx, nil, 1, false, 0)
 	got := toSlice(out)
 	if len(got) != 0 {
 		t.Fatalf("expected empty, got: %#v", got)
@@ -147,7 +148,7 @@ func TestMergeSorted_Cancellation(t *testing.T) {
 	}
 	ch := chFromSlice(ctx, 0, long)
 
-	out := MergeSorted(ctx, 32, false, 0, ch)
+	out := MergeSorted(ctx, nil, 32, false, 0, ch)
 
 	// Consume a few, then cancel and ensure the channel closes.
 	for i := 0; i < 10; i++ {
@@ -193,7 +194,7 @@ func TestMergeSorted_Descending_TwoInputs(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted(ctx, 8, true, 0, ch1, ch2)
+	out := MergeSorted(ctx, nil, 8, true, 0, ch1, ch2)
 	got := toSlice(out)
 
 	if len(got) != len(a)+len(b) {
@@ -213,7 +214,7 @@ func TestMergeSorted_Descending_WithDuplicates(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted(ctx, 2, true, 0, ch1, ch2)
+	out := MergeSorted(ctx, nil, 2, true, 0, ch1, ch2)
 	got := toSlice(out)
 
 	if !isSortedDesc(got) {
@@ -230,7 +231,7 @@ func TestMergeSorted_Descending_HandlesEmptyInputs(t *testing.T) {
 	c2 := chFromSlice(ctx, 0, full)
 	c3 := chFromSlice(ctx, 0, empty)
 
-	out := MergeSorted(ctx, 1, true, 0, c1, c2, c3)
+	out := MergeSorted(ctx, nil, 1, true, 0, c1, c2, c3)
 	got := toSlice(out)
 
 	if len(got) != len(full) {
@@ -245,7 +246,14 @@ func TestMergeSorted_Limit_Ascending(t *testing.T) {
 	ctx := context.Background()
 	a := []tsItem{{1}, {3}, {5}, {7}}
 	b := []tsItem{{2}, {4}, {6}, {8}}
-	out := MergeSorted(ctx, 8, false /*asc*/, 5 /*limit*/, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
+
+	// Test that cancel is called when limit is reached
+	cancelCalled := false
+	cancel := func() {
+		cancelCalled = true
+	}
+
+	out := MergeSorted(ctx, cancel, 8, false /*asc*/, 5 /*limit*/, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
 	got := toSlice(out)
 	if len(got) != 5 {
 		t.Fatalf("len mismatch: got=%d want=5", len(got))
@@ -253,19 +261,32 @@ func TestMergeSorted_Limit_Ascending(t *testing.T) {
 	if !isSortedAsc(got) {
 		t.Fatalf("not sorted asc: %#v", got)
 	}
+	if !cancelCalled {
+		t.Fatal("producerCancel was not called when limit was reached")
+	}
 }
 
 func TestMergeSorted_Limit_Descending(t *testing.T) {
 	ctx := context.Background()
 	a := []tsItem{{8}, {6}, {4}, {2}}
 	b := []tsItem{{7}, {5}, {3}, {1}}
-	out := MergeSorted(ctx, 8, true /*desc*/, 3 /*limit*/, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
+
+	// Test that cancel is called when limit is reached
+	cancelCalled := false
+	cancel := func() {
+		cancelCalled = true
+	}
+
+	out := MergeSorted(ctx, cancel, 8, true /*desc*/, 3 /*limit*/, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
 	got := toSlice(out)
 	if len(got) != 3 {
 		t.Fatalf("len mismatch: got=%d want=3", len(got))
 	}
 	if !isSortedDesc(got) {
 		t.Fatalf("not sorted desc: %#v", got)
+	}
+	if !cancelCalled {
+		t.Fatal("producerCancel was not called when limit was reached")
 	}
 }
 
@@ -317,7 +338,7 @@ func TestMergeSorted_LimitDrainsPreventsBlocking(t *testing.T) {
 	}
 
 	// Start MergeSorted with a limit
-	merged := MergeSorted(ctx, 8, false, limit, producers...)
+	merged := MergeSorted(ctx, nil, 8, false, limit, producers...)
 
 	// Consume all items from merged channel to verify it stops at limit
 	consumed := 0
@@ -380,7 +401,7 @@ func TestMergeSorted_NoGoroutineLeakWithLimit(t *testing.T) {
 		}
 
 		// Merge with small limit
-		merged := MergeSorted(ctx, 8, false, 5, producers...)
+		merged := MergeSorted(ctx, nil, 8, false, 5, producers...)
 
 		// Consume results
 		count := 0
@@ -479,7 +500,7 @@ func TestMergeSorted_BlockingProducerScenario(t *testing.T) {
 
 	// Merge with a small limit
 	limit := 20
-	merged := MergeSorted(ctx, 8, false, limit, chans...)
+	merged := MergeSorted(ctx, nil, 8, false, limit, chans...)
 
 	// Consume only the limit
 	consumed := 0
@@ -505,6 +526,56 @@ func TestMergeSorted_BlockingProducerScenario(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("Producers blocked - this is the exact bug that was reported")
 	}
+}
+
+// TestMergeSorted_ProducerCancelOnLimit verifies that when a limit is reached,
+// the producer cancel function is called to stop upstream producers immediately.
+func TestMergeSorted_ProducerCancelOnLimit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Track how many items the producer actually generates
+	var producerCount int32
+	ch := make(chan tsItem, 10) // Small buffer to test cancellation
+
+	go func() {
+		defer close(ch)
+		// Try to send many items, but should be cancelled early
+		for i := 0; i < 1000; i++ {
+			select {
+			case <-ctx.Done():
+				// Producer stopped due to context cancellation
+				return
+			case ch <- tsItem{ts: int64(i)}:
+				atomic.AddInt32(&producerCount, 1)
+			}
+		}
+	}()
+
+	// Set a small limit and pass the cancel function
+	limit := 5
+	merged := MergeSorted(ctx, cancel, 8, false, limit, ch)
+
+	// Consume all output
+	got := toSlice(merged)
+
+	// Verify we got exactly the limit
+	if len(got) != limit {
+		t.Fatalf("expected %d items, got %d", limit, len(got))
+	}
+
+	// Give producer time to react to cancellation
+	time.Sleep(100 * time.Millisecond)
+
+	// Producer should have been cancelled and not produced all 1000 items
+	// It might produce a bit more than the limit due to buffering, but not all 1000
+	count := atomic.LoadInt32(&producerCount)
+	// With a buffer of 10 and limit of 5, we expect at most 15-20 items produced
+	// before cancellation takes effect
+	if count >= 30 {
+		t.Fatalf("producer generated too many items (%d), should have been cancelled early", count)
+	}
+	t.Logf("Producer generated %d items before being cancelled (limit was %d)", count, limit)
 }
 
 // TestMergeSorted_ProducerUnblocksOnContextCancel verifies that producers
@@ -533,7 +604,7 @@ func TestMergeSorted_ProducerUnblocksOnContextCancel(t *testing.T) {
 	}()
 
 	// Start MergeSorted
-	merged := MergeSorted(ctx, 8, false, 0, ch)
+	merged := MergeSorted(ctx, nil, 8, false, 0, ch)
 
 	// Consume a few items
 	count := 0

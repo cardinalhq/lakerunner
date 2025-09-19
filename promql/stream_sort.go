@@ -31,8 +31,10 @@ type Timestamped interface {
 // reverse=false → ascending; reverse=true → descending.
 // limit=0 → unlimited; limit>0 → stop after emitting exactly limit items.
 // When limit is reached or context is cancelled, input channels are drained to unblock producers.
+// producerCancel (if not nil) is called when limit is reached to stop upstream producers immediately.
 func MergeSorted[T Timestamped](
 	ctx context.Context,
+	producerCancel context.CancelFunc,
 	outBuf int,
 	reverse bool,
 	limit int,
@@ -262,6 +264,10 @@ func MergeSorted[T Timestamped](
 					if h.Len() > 0 || openCount > 0 {
 						slog.Debug("MergeSorted: limit reached; stopping early",
 							"limit", limit, "emitted", emitted, "heapPending", h.Len(), "openSources", openCount)
+					}
+					// Cancel upstream producers immediately if cancel func provided
+					if producerCancel != nil {
+						producerCancel()
 					}
 					return
 				}
