@@ -387,22 +387,17 @@ func printSizingReport(reports []FileReport, summary SummaryReport, detailed boo
 	fmt.Printf("%-25s %15s %15s %15s\n", strings.Repeat("-", 25), strings.Repeat("-", 15), strings.Repeat("-", 15), strings.Repeat("-", 15))
 	fmt.Printf("\n")
 
-	// Parquet space savings table
-	fmt.Printf("PARQUET SPACE SAVINGS\n")
+	// Parquet comparison table
+	fmt.Printf("PARQUET SIZE COMPARISON\n")
 	fmt.Printf("%-25s %15s\n", strings.Repeat("-", 25), strings.Repeat("-", 15))
-	fmt.Printf("%-25s %15s\n", "Comparison", "Reduction")
+	fmt.Printf("%-25s %15s\n", "Comparison", "Difference")
 	fmt.Printf("%-25s %15s\n", strings.Repeat("-", 25), strings.Repeat("-", 15))
-	if summary.OverallPQvsJSON >= 0 {
-		fmt.Printf("%-25s %14.1f%%\n", "Parquet vs JSON", summary.OverallPQvsJSON)
-	} else {
-		fmt.Printf("%-25s %14.1f%% larger\n", "Parquet vs JSON", -summary.OverallPQvsJSON)
-	}
-	if summary.OverallPQvsGZ >= 0 {
-		fmt.Printf("%-25s %14.1f%%\n", "Parquet vs JSON.gz", summary.OverallPQvsGZ)
-	} else {
-		fmt.Printf("%-25s %14.1f%% larger\n", "Parquet vs JSON.gz", -summary.OverallPQvsGZ)
-	}
+
+	// Show actual signed percentage - positive means Parquet is smaller, negative means larger
+	fmt.Printf("%-25s %14.1f%%\n", "Parquet vs JSON", summary.OverallPQvsJSON)
+	fmt.Printf("%-25s %14.1f%%\n", "Parquet vs JSON.gz", summary.OverallPQvsGZ)
 	fmt.Printf("%-25s %15s\n", strings.Repeat("-", 25), strings.Repeat("-", 15))
+	fmt.Printf("  (Positive = Parquet smaller, Negative = Parquet larger)\n")
 
 	if detailed && len(reports) > 0 {
 		fmt.Printf("\n%s\n", strings.Repeat("=", 100))
