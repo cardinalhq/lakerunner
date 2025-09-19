@@ -111,11 +111,9 @@ func handleMessageWithKafka(
 		// Check for duplicate message
 		shouldProcess, err := deduplicator.CheckAndRecord(ctx, &item, source)
 		if err != nil {
-			slog.Error("Deduplication check failed, skipping message",
-				slog.Any("error", err),
-				slog.String("bucket", item.Bucket),
-				slog.String("object_id", item.ObjectID))
-			continue
+			// Deduplication failure - return error to trigger message retry
+			return fmt.Errorf("deduplication check failed for bucket %s object %s: %w",
+				item.Bucket, item.ObjectID, err)
 		}
 		if !shouldProcess {
 			// Message is a duplicate, skip it

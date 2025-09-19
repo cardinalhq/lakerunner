@@ -433,3 +433,57 @@ func TestCheckAndRecord_DatabaseConnection_Integration(t *testing.T) {
 	require.False(t, shouldProcess, "Should fail closed when database is unavailable")
 	require.Contains(t, err.Error(), "deduplication check failed")
 }
+
+func TestDeduplication_ErrorPropagation_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+
+	ctx := context.Background()
+
+	// Set up test database
+	store, cleanup := setupIntegrationTest(t)
+	defer cleanup()
+
+	// Create deduplicator with working database first
+	deduplicator := NewDeduplicator(store)
+
+	orgID := uuid.New()
+	item := &ingest.IngestItem{
+		OrganizationID: orgID,
+		InstanceNum:    1,
+		Bucket:         "test-bucket",
+		ObjectID:       "logs-raw/2023/01/01/file1.gz",
+		Signal:         "logs",
+		FileSize:       1024,
+		QueuedAt:       time.Now(),
+	}
+
+	// First verify normal operation works
+	shouldProcess, err := deduplicator.CheckAndRecord(ctx, item, "test")
+	require.NoError(t, err)
+	require.True(t, shouldProcess, "First message should be processed")
+
+	// Now close the database connection to simulate failure
+	store.Pool().Close()
+
+	// Create new item to test error propagation
+	item2 := &ingest.IngestItem{
+		OrganizationID: orgID,
+		InstanceNum:    1,
+		Bucket:         "test-bucket",
+		ObjectID:       "logs-raw/2023/01/01/file2.gz", // Different file
+		Signal:         "logs",
+		FileSize:       1024,
+		QueuedAt:       time.Now(),
+	}
+
+	// Should return error when database is unavailable
+	shouldProcess, err = deduplicator.CheckAndRecord(ctx, item2, "test")
+	require.Error(t, err, "Should return error when database is unavailable")
+	require.False(t, shouldProcess, "Should fail closed when database is unavailable")
+	require.Contains(t, err.Error(), "deduplication check failed", "Error should indicate deduplication failure")
+
+	// This verifies that the error handling change in kafka_handler.go will work correctly
+	// because CheckAndRecord now properly returns errors that can be propagated
+}
