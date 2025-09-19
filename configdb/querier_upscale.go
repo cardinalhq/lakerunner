@@ -20,9 +20,18 @@ import (
 	"github.com/google/uuid"
 )
 
-type QuerierFull interface {
+type StoreFull interface {
 	Querier
 	GetStorageProfile(ctx context.Context, arg GetStorageProfileParams) (GetStorageProfileRow, error)
 	GetStorageProfileByCollectorName(ctx context.Context, organizationID uuid.UUID) (GetStorageProfileByCollectorNameRow, error)
 	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error)
+
+	// High-level transactional operations
+	CreateOrganizationAPIKeyWithMapping(ctx context.Context, params CreateOrganizationAPIKeyParams, orgID uuid.UUID) (*OrganizationApiKey, error)
+	DeleteOrganizationAPIKeyWithMappings(ctx context.Context, keyID uuid.UUID) error
+	AddOrganizationBucket(ctx context.Context, orgID uuid.UUID, bucketName string, instanceNum int16, collectorName string) error
+	CreateBucketPrefixMappingForOrg(ctx context.Context, bucketName string, orgID uuid.UUID, pathPrefix string, signal string) (*BucketPrefixMapping, error)
 }
+
+// QuerierFull is deprecated, use StoreFull instead
+type QuerierFull = StoreFull

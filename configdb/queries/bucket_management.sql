@@ -136,7 +136,24 @@ LIMIT 1;
 -- name: GetLowestInstanceOrganizationBucket :one
 SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
 FROM organization_buckets ob
-JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
-WHERE ob.organization_id = $1 AND bc.bucket_name = $2 
-ORDER BY ob.instance_num, ob.collector_name 
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id
+WHERE ob.organization_id = $1 AND bc.bucket_name = $2
+ORDER BY ob.instance_num, ob.collector_name
 LIMIT 1;
+
+-- name: ListOrganizationBucketsByOrg :many
+SELECT ob.organization_id, bc.bucket_name, ob.instance_num, ob.collector_name
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id
+WHERE ob.organization_id = @organization_id
+ORDER BY bc.bucket_name, ob.instance_num;
+
+-- name: DeleteOrganizationBucket :exec
+DELETE FROM organization_buckets
+WHERE organization_id = @organization_id
+AND bucket_id = (SELECT id FROM bucket_configurations WHERE bucket_name = @bucket_name)
+AND instance_num = @instance_num
+AND collector_name = @collector_name;
+
+-- name: GetBucketConfigurationByName :one
+SELECT * FROM bucket_configurations WHERE bucket_name = @bucket_name;

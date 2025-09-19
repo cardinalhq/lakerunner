@@ -39,6 +39,26 @@ service AdminService {
 
   // Get Kafka consumer group lag information
   rpc GetConsumerLag(GetConsumerLagRequest) returns (GetConsumerLagResponse);
+
+  // Organization API Keys Management
+  rpc ListOrganizationAPIKeys(ListOrganizationAPIKeysRequest) returns (ListOrganizationAPIKeysResponse);
+  rpc CreateOrganizationAPIKey(CreateOrganizationAPIKeyRequest) returns (CreateOrganizationAPIKeyResponse);
+  rpc DeleteOrganizationAPIKey(DeleteOrganizationAPIKeyRequest) returns (DeleteOrganizationAPIKeyResponse);
+
+  // Organization Buckets Management
+  rpc ListOrganizationBuckets(ListOrganizationBucketsRequest) returns (ListOrganizationBucketsResponse);
+  rpc AddOrganizationBucket(AddOrganizationBucketRequest) returns (AddOrganizationBucketResponse);
+  rpc DeleteOrganizationBucket(DeleteOrganizationBucketRequest) returns (DeleteOrganizationBucketResponse);
+
+  // Bucket Configuration Management
+  rpc ListBucketConfigurations(ListBucketConfigurationsRequest) returns (ListBucketConfigurationsResponse);
+  rpc CreateBucketConfiguration(CreateBucketConfigurationRequest) returns (CreateBucketConfigurationResponse);
+  rpc DeleteBucketConfiguration(DeleteBucketConfigurationRequest) returns (DeleteBucketConfigurationResponse);
+
+  // Bucket Prefix Mappings Management
+  rpc ListBucketPrefixMappings(ListBucketPrefixMappingsRequest) returns (ListBucketPrefixMappingsResponse);
+  rpc CreateBucketPrefixMapping(CreateBucketPrefixMappingRequest) returns (CreateBucketPrefixMappingResponse);
+  rpc DeleteBucketPrefixMapping(DeleteBucketPrefixMappingRequest) returns (DeleteBucketPrefixMappingResponse);
 }
 
 message PingRequest {
@@ -113,3 +133,149 @@ message ConsumerPartitionLag {
   int64 lag = 5;
   string consumer_group = 6;
 }
+
+// Organization API Keys Messages
+
+message OrganizationAPIKey {
+  string id = 1;
+  string organization_id = 2;
+  string name = 3;
+  string description = 4;
+  string key_preview = 5; // First few chars of the key for display
+}
+
+message ListOrganizationAPIKeysRequest {
+  string organization_id = 1;
+}
+
+message ListOrganizationAPIKeysResponse {
+  repeated OrganizationAPIKey api_keys = 1;
+}
+
+message CreateOrganizationAPIKeyRequest {
+  string organization_id = 1;
+  string name = 2;
+  string description = 3;
+}
+
+message CreateOrganizationAPIKeyResponse {
+  OrganizationAPIKey api_key = 1;
+  string full_key = 2; // The actual key, only returned on creation
+}
+
+message DeleteOrganizationAPIKeyRequest {
+  string id = 1;
+}
+
+message DeleteOrganizationAPIKeyResponse {}
+
+// Organization Buckets Messages
+
+message OrganizationBucket {
+  string organization_id = 1;
+  string bucket_name = 2;
+  int32 instance_num = 3;
+  string collector_name = 4;
+}
+
+message ListOrganizationBucketsRequest {
+  string organization_id = 1;
+}
+
+message ListOrganizationBucketsResponse {
+  repeated OrganizationBucket buckets = 1;
+}
+
+message AddOrganizationBucketRequest {
+  string organization_id = 1;
+  string bucket_name = 2;
+  int32 instance_num = 3;
+  string collector_name = 4;
+}
+
+message AddOrganizationBucketResponse {
+  OrganizationBucket bucket = 1;
+}
+
+message DeleteOrganizationBucketRequest {
+  string organization_id = 1;
+  string bucket_name = 2;
+  int32 instance_num = 3;
+  string collector_name = 4;
+}
+
+message DeleteOrganizationBucketResponse {}
+
+// Bucket Configuration Messages
+
+message BucketConfiguration {
+  string bucket_name = 1;
+  string cloud_provider = 2;
+  string region = 3;
+  string endpoint = 4;
+  string role = 5;
+  bool use_path_style = 6;
+  bool insecure_tls = 7;
+}
+
+message ListBucketConfigurationsRequest {}
+
+message ListBucketConfigurationsResponse {
+  repeated BucketConfiguration configurations = 1;
+}
+
+message CreateBucketConfigurationRequest {
+  string bucket_name = 1;
+  string cloud_provider = 2;
+  string region = 3;
+  string endpoint = 4;
+  string role = 5;
+  bool use_path_style = 6;
+  bool insecure_tls = 7;
+}
+
+message CreateBucketConfigurationResponse {
+  BucketConfiguration configuration = 1;
+}
+
+message DeleteBucketConfigurationRequest {
+  string bucket_name = 1;
+}
+
+message DeleteBucketConfigurationResponse {}
+
+// Bucket Prefix Mapping Messages
+
+message BucketPrefixMapping {
+  string id = 1;
+  string bucket_name = 2;
+  string organization_id = 3;
+  string path_prefix = 4;
+  string signal = 5;
+}
+
+message ListBucketPrefixMappingsRequest {
+  string bucket_name = 1; // Optional filter
+  string organization_id = 2; // Optional filter
+}
+
+message ListBucketPrefixMappingsResponse {
+  repeated BucketPrefixMapping mappings = 1;
+}
+
+message CreateBucketPrefixMappingRequest {
+  string bucket_name = 1;
+  string organization_id = 2;
+  string path_prefix = 3;
+  string signal = 4;
+}
+
+message CreateBucketPrefixMappingResponse {
+  BucketPrefixMapping mapping = 1;
+}
+
+message DeleteBucketPrefixMappingRequest {
+  string id = 1;
+}
+
+message DeleteBucketPrefixMappingResponse {}

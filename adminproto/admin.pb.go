@@ -792,6 +792,1486 @@ func (x *ConsumerPartitionLag) GetConsumerGroup() string {
 	return ""
 }
 
+type OrganizationAPIKey struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	OrganizationId string                 `protobuf:"bytes,2,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	Name           string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Description    string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	KeyPreview     string                 `protobuf:"bytes,5,opt,name=key_preview,json=keyPreview,proto3" json:"key_preview,omitempty"` // First few chars of the key for display
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *OrganizationAPIKey) Reset() {
+	*x = OrganizationAPIKey{}
+	mi := &file_admin_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrganizationAPIKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrganizationAPIKey) ProtoMessage() {}
+
+func (x *OrganizationAPIKey) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrganizationAPIKey.ProtoReflect.Descriptor instead.
+func (*OrganizationAPIKey) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *OrganizationAPIKey) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *OrganizationAPIKey) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *OrganizationAPIKey) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *OrganizationAPIKey) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *OrganizationAPIKey) GetKeyPreview() string {
+	if x != nil {
+		return x.KeyPreview
+	}
+	return ""
+}
+
+type ListOrganizationAPIKeysRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ListOrganizationAPIKeysRequest) Reset() {
+	*x = ListOrganizationAPIKeysRequest{}
+	mi := &file_admin_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOrganizationAPIKeysRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOrganizationAPIKeysRequest) ProtoMessage() {}
+
+func (x *ListOrganizationAPIKeysRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOrganizationAPIKeysRequest.ProtoReflect.Descriptor instead.
+func (*ListOrganizationAPIKeysRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ListOrganizationAPIKeysRequest) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+type ListOrganizationAPIKeysResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ApiKeys       []*OrganizationAPIKey  `protobuf:"bytes,1,rep,name=api_keys,json=apiKeys,proto3" json:"api_keys,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListOrganizationAPIKeysResponse) Reset() {
+	*x = ListOrganizationAPIKeysResponse{}
+	mi := &file_admin_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOrganizationAPIKeysResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOrganizationAPIKeysResponse) ProtoMessage() {}
+
+func (x *ListOrganizationAPIKeysResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOrganizationAPIKeysResponse.ProtoReflect.Descriptor instead.
+func (*ListOrganizationAPIKeysResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ListOrganizationAPIKeysResponse) GetApiKeys() []*OrganizationAPIKey {
+	if x != nil {
+		return x.ApiKeys
+	}
+	return nil
+}
+
+type CreateOrganizationAPIKeyRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	Name           string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description    string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CreateOrganizationAPIKeyRequest) Reset() {
+	*x = CreateOrganizationAPIKeyRequest{}
+	mi := &file_admin_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateOrganizationAPIKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateOrganizationAPIKeyRequest) ProtoMessage() {}
+
+func (x *CreateOrganizationAPIKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateOrganizationAPIKeyRequest.ProtoReflect.Descriptor instead.
+func (*CreateOrganizationAPIKeyRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *CreateOrganizationAPIKeyRequest) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *CreateOrganizationAPIKeyRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateOrganizationAPIKeyRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+type CreateOrganizationAPIKeyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ApiKey        *OrganizationAPIKey    `protobuf:"bytes,1,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	FullKey       string                 `protobuf:"bytes,2,opt,name=full_key,json=fullKey,proto3" json:"full_key,omitempty"` // The actual key, only returned on creation
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateOrganizationAPIKeyResponse) Reset() {
+	*x = CreateOrganizationAPIKeyResponse{}
+	mi := &file_admin_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateOrganizationAPIKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateOrganizationAPIKeyResponse) ProtoMessage() {}
+
+func (x *CreateOrganizationAPIKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateOrganizationAPIKeyResponse.ProtoReflect.Descriptor instead.
+func (*CreateOrganizationAPIKeyResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *CreateOrganizationAPIKeyResponse) GetApiKey() *OrganizationAPIKey {
+	if x != nil {
+		return x.ApiKey
+	}
+	return nil
+}
+
+func (x *CreateOrganizationAPIKeyResponse) GetFullKey() string {
+	if x != nil {
+		return x.FullKey
+	}
+	return ""
+}
+
+type DeleteOrganizationAPIKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteOrganizationAPIKeyRequest) Reset() {
+	*x = DeleteOrganizationAPIKeyRequest{}
+	mi := &file_admin_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteOrganizationAPIKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteOrganizationAPIKeyRequest) ProtoMessage() {}
+
+func (x *DeleteOrganizationAPIKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteOrganizationAPIKeyRequest.ProtoReflect.Descriptor instead.
+func (*DeleteOrganizationAPIKeyRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *DeleteOrganizationAPIKeyRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type DeleteOrganizationAPIKeyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteOrganizationAPIKeyResponse) Reset() {
+	*x = DeleteOrganizationAPIKeyResponse{}
+	mi := &file_admin_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteOrganizationAPIKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteOrganizationAPIKeyResponse) ProtoMessage() {}
+
+func (x *DeleteOrganizationAPIKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteOrganizationAPIKeyResponse.ProtoReflect.Descriptor instead.
+func (*DeleteOrganizationAPIKeyResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{21}
+}
+
+type OrganizationBucket struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	BucketName     string                 `protobuf:"bytes,2,opt,name=bucket_name,json=bucketName,proto3" json:"bucket_name,omitempty"`
+	InstanceNum    int32                  `protobuf:"varint,3,opt,name=instance_num,json=instanceNum,proto3" json:"instance_num,omitempty"`
+	CollectorName  string                 `protobuf:"bytes,4,opt,name=collector_name,json=collectorName,proto3" json:"collector_name,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *OrganizationBucket) Reset() {
+	*x = OrganizationBucket{}
+	mi := &file_admin_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OrganizationBucket) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OrganizationBucket) ProtoMessage() {}
+
+func (x *OrganizationBucket) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OrganizationBucket.ProtoReflect.Descriptor instead.
+func (*OrganizationBucket) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *OrganizationBucket) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *OrganizationBucket) GetBucketName() string {
+	if x != nil {
+		return x.BucketName
+	}
+	return ""
+}
+
+func (x *OrganizationBucket) GetInstanceNum() int32 {
+	if x != nil {
+		return x.InstanceNum
+	}
+	return 0
+}
+
+func (x *OrganizationBucket) GetCollectorName() string {
+	if x != nil {
+		return x.CollectorName
+	}
+	return ""
+}
+
+type ListOrganizationBucketsRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ListOrganizationBucketsRequest) Reset() {
+	*x = ListOrganizationBucketsRequest{}
+	mi := &file_admin_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOrganizationBucketsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOrganizationBucketsRequest) ProtoMessage() {}
+
+func (x *ListOrganizationBucketsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOrganizationBucketsRequest.ProtoReflect.Descriptor instead.
+func (*ListOrganizationBucketsRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ListOrganizationBucketsRequest) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+type ListOrganizationBucketsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Buckets       []*OrganizationBucket  `protobuf:"bytes,1,rep,name=buckets,proto3" json:"buckets,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListOrganizationBucketsResponse) Reset() {
+	*x = ListOrganizationBucketsResponse{}
+	mi := &file_admin_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOrganizationBucketsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOrganizationBucketsResponse) ProtoMessage() {}
+
+func (x *ListOrganizationBucketsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOrganizationBucketsResponse.ProtoReflect.Descriptor instead.
+func (*ListOrganizationBucketsResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ListOrganizationBucketsResponse) GetBuckets() []*OrganizationBucket {
+	if x != nil {
+		return x.Buckets
+	}
+	return nil
+}
+
+type AddOrganizationBucketRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	BucketName     string                 `protobuf:"bytes,2,opt,name=bucket_name,json=bucketName,proto3" json:"bucket_name,omitempty"`
+	InstanceNum    int32                  `protobuf:"varint,3,opt,name=instance_num,json=instanceNum,proto3" json:"instance_num,omitempty"`
+	CollectorName  string                 `protobuf:"bytes,4,opt,name=collector_name,json=collectorName,proto3" json:"collector_name,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AddOrganizationBucketRequest) Reset() {
+	*x = AddOrganizationBucketRequest{}
+	mi := &file_admin_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddOrganizationBucketRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddOrganizationBucketRequest) ProtoMessage() {}
+
+func (x *AddOrganizationBucketRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddOrganizationBucketRequest.ProtoReflect.Descriptor instead.
+func (*AddOrganizationBucketRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *AddOrganizationBucketRequest) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *AddOrganizationBucketRequest) GetBucketName() string {
+	if x != nil {
+		return x.BucketName
+	}
+	return ""
+}
+
+func (x *AddOrganizationBucketRequest) GetInstanceNum() int32 {
+	if x != nil {
+		return x.InstanceNum
+	}
+	return 0
+}
+
+func (x *AddOrganizationBucketRequest) GetCollectorName() string {
+	if x != nil {
+		return x.CollectorName
+	}
+	return ""
+}
+
+type AddOrganizationBucketResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Bucket        *OrganizationBucket    `protobuf:"bytes,1,opt,name=bucket,proto3" json:"bucket,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddOrganizationBucketResponse) Reset() {
+	*x = AddOrganizationBucketResponse{}
+	mi := &file_admin_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddOrganizationBucketResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddOrganizationBucketResponse) ProtoMessage() {}
+
+func (x *AddOrganizationBucketResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddOrganizationBucketResponse.ProtoReflect.Descriptor instead.
+func (*AddOrganizationBucketResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *AddOrganizationBucketResponse) GetBucket() *OrganizationBucket {
+	if x != nil {
+		return x.Bucket
+	}
+	return nil
+}
+
+type DeleteOrganizationBucketRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	BucketName     string                 `protobuf:"bytes,2,opt,name=bucket_name,json=bucketName,proto3" json:"bucket_name,omitempty"`
+	InstanceNum    int32                  `protobuf:"varint,3,opt,name=instance_num,json=instanceNum,proto3" json:"instance_num,omitempty"`
+	CollectorName  string                 `protobuf:"bytes,4,opt,name=collector_name,json=collectorName,proto3" json:"collector_name,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DeleteOrganizationBucketRequest) Reset() {
+	*x = DeleteOrganizationBucketRequest{}
+	mi := &file_admin_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteOrganizationBucketRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteOrganizationBucketRequest) ProtoMessage() {}
+
+func (x *DeleteOrganizationBucketRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteOrganizationBucketRequest.ProtoReflect.Descriptor instead.
+func (*DeleteOrganizationBucketRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *DeleteOrganizationBucketRequest) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *DeleteOrganizationBucketRequest) GetBucketName() string {
+	if x != nil {
+		return x.BucketName
+	}
+	return ""
+}
+
+func (x *DeleteOrganizationBucketRequest) GetInstanceNum() int32 {
+	if x != nil {
+		return x.InstanceNum
+	}
+	return 0
+}
+
+func (x *DeleteOrganizationBucketRequest) GetCollectorName() string {
+	if x != nil {
+		return x.CollectorName
+	}
+	return ""
+}
+
+type DeleteOrganizationBucketResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteOrganizationBucketResponse) Reset() {
+	*x = DeleteOrganizationBucketResponse{}
+	mi := &file_admin_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteOrganizationBucketResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteOrganizationBucketResponse) ProtoMessage() {}
+
+func (x *DeleteOrganizationBucketResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteOrganizationBucketResponse.ProtoReflect.Descriptor instead.
+func (*DeleteOrganizationBucketResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{28}
+}
+
+type BucketConfiguration struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BucketName    string                 `protobuf:"bytes,1,opt,name=bucket_name,json=bucketName,proto3" json:"bucket_name,omitempty"`
+	CloudProvider string                 `protobuf:"bytes,2,opt,name=cloud_provider,json=cloudProvider,proto3" json:"cloud_provider,omitempty"`
+	Region        string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`
+	Endpoint      string                 `protobuf:"bytes,4,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
+	Role          string                 `protobuf:"bytes,5,opt,name=role,proto3" json:"role,omitempty"`
+	UsePathStyle  bool                   `protobuf:"varint,6,opt,name=use_path_style,json=usePathStyle,proto3" json:"use_path_style,omitempty"`
+	InsecureTls   bool                   `protobuf:"varint,7,opt,name=insecure_tls,json=insecureTls,proto3" json:"insecure_tls,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BucketConfiguration) Reset() {
+	*x = BucketConfiguration{}
+	mi := &file_admin_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BucketConfiguration) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BucketConfiguration) ProtoMessage() {}
+
+func (x *BucketConfiguration) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BucketConfiguration.ProtoReflect.Descriptor instead.
+func (*BucketConfiguration) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *BucketConfiguration) GetBucketName() string {
+	if x != nil {
+		return x.BucketName
+	}
+	return ""
+}
+
+func (x *BucketConfiguration) GetCloudProvider() string {
+	if x != nil {
+		return x.CloudProvider
+	}
+	return ""
+}
+
+func (x *BucketConfiguration) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *BucketConfiguration) GetEndpoint() string {
+	if x != nil {
+		return x.Endpoint
+	}
+	return ""
+}
+
+func (x *BucketConfiguration) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *BucketConfiguration) GetUsePathStyle() bool {
+	if x != nil {
+		return x.UsePathStyle
+	}
+	return false
+}
+
+func (x *BucketConfiguration) GetInsecureTls() bool {
+	if x != nil {
+		return x.InsecureTls
+	}
+	return false
+}
+
+type ListBucketConfigurationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListBucketConfigurationsRequest) Reset() {
+	*x = ListBucketConfigurationsRequest{}
+	mi := &file_admin_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListBucketConfigurationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListBucketConfigurationsRequest) ProtoMessage() {}
+
+func (x *ListBucketConfigurationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListBucketConfigurationsRequest.ProtoReflect.Descriptor instead.
+func (*ListBucketConfigurationsRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{30}
+}
+
+type ListBucketConfigurationsResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Configurations []*BucketConfiguration `protobuf:"bytes,1,rep,name=configurations,proto3" json:"configurations,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ListBucketConfigurationsResponse) Reset() {
+	*x = ListBucketConfigurationsResponse{}
+	mi := &file_admin_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListBucketConfigurationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListBucketConfigurationsResponse) ProtoMessage() {}
+
+func (x *ListBucketConfigurationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListBucketConfigurationsResponse.ProtoReflect.Descriptor instead.
+func (*ListBucketConfigurationsResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *ListBucketConfigurationsResponse) GetConfigurations() []*BucketConfiguration {
+	if x != nil {
+		return x.Configurations
+	}
+	return nil
+}
+
+type CreateBucketConfigurationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BucketName    string                 `protobuf:"bytes,1,opt,name=bucket_name,json=bucketName,proto3" json:"bucket_name,omitempty"`
+	CloudProvider string                 `protobuf:"bytes,2,opt,name=cloud_provider,json=cloudProvider,proto3" json:"cloud_provider,omitempty"`
+	Region        string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`
+	Endpoint      string                 `protobuf:"bytes,4,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
+	Role          string                 `protobuf:"bytes,5,opt,name=role,proto3" json:"role,omitempty"`
+	UsePathStyle  bool                   `protobuf:"varint,6,opt,name=use_path_style,json=usePathStyle,proto3" json:"use_path_style,omitempty"`
+	InsecureTls   bool                   `protobuf:"varint,7,opt,name=insecure_tls,json=insecureTls,proto3" json:"insecure_tls,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateBucketConfigurationRequest) Reset() {
+	*x = CreateBucketConfigurationRequest{}
+	mi := &file_admin_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateBucketConfigurationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateBucketConfigurationRequest) ProtoMessage() {}
+
+func (x *CreateBucketConfigurationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateBucketConfigurationRequest.ProtoReflect.Descriptor instead.
+func (*CreateBucketConfigurationRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *CreateBucketConfigurationRequest) GetBucketName() string {
+	if x != nil {
+		return x.BucketName
+	}
+	return ""
+}
+
+func (x *CreateBucketConfigurationRequest) GetCloudProvider() string {
+	if x != nil {
+		return x.CloudProvider
+	}
+	return ""
+}
+
+func (x *CreateBucketConfigurationRequest) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *CreateBucketConfigurationRequest) GetEndpoint() string {
+	if x != nil {
+		return x.Endpoint
+	}
+	return ""
+}
+
+func (x *CreateBucketConfigurationRequest) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *CreateBucketConfigurationRequest) GetUsePathStyle() bool {
+	if x != nil {
+		return x.UsePathStyle
+	}
+	return false
+}
+
+func (x *CreateBucketConfigurationRequest) GetInsecureTls() bool {
+	if x != nil {
+		return x.InsecureTls
+	}
+	return false
+}
+
+type CreateBucketConfigurationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Configuration *BucketConfiguration   `protobuf:"bytes,1,opt,name=configuration,proto3" json:"configuration,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateBucketConfigurationResponse) Reset() {
+	*x = CreateBucketConfigurationResponse{}
+	mi := &file_admin_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateBucketConfigurationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateBucketConfigurationResponse) ProtoMessage() {}
+
+func (x *CreateBucketConfigurationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateBucketConfigurationResponse.ProtoReflect.Descriptor instead.
+func (*CreateBucketConfigurationResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *CreateBucketConfigurationResponse) GetConfiguration() *BucketConfiguration {
+	if x != nil {
+		return x.Configuration
+	}
+	return nil
+}
+
+type DeleteBucketConfigurationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BucketName    string                 `protobuf:"bytes,1,opt,name=bucket_name,json=bucketName,proto3" json:"bucket_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteBucketConfigurationRequest) Reset() {
+	*x = DeleteBucketConfigurationRequest{}
+	mi := &file_admin_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteBucketConfigurationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteBucketConfigurationRequest) ProtoMessage() {}
+
+func (x *DeleteBucketConfigurationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteBucketConfigurationRequest.ProtoReflect.Descriptor instead.
+func (*DeleteBucketConfigurationRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *DeleteBucketConfigurationRequest) GetBucketName() string {
+	if x != nil {
+		return x.BucketName
+	}
+	return ""
+}
+
+type DeleteBucketConfigurationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteBucketConfigurationResponse) Reset() {
+	*x = DeleteBucketConfigurationResponse{}
+	mi := &file_admin_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteBucketConfigurationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteBucketConfigurationResponse) ProtoMessage() {}
+
+func (x *DeleteBucketConfigurationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteBucketConfigurationResponse.ProtoReflect.Descriptor instead.
+func (*DeleteBucketConfigurationResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{35}
+}
+
+type BucketPrefixMapping struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	BucketName     string                 `protobuf:"bytes,2,opt,name=bucket_name,json=bucketName,proto3" json:"bucket_name,omitempty"`
+	OrganizationId string                 `protobuf:"bytes,3,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	PathPrefix     string                 `protobuf:"bytes,4,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`
+	Signal         string                 `protobuf:"bytes,5,opt,name=signal,proto3" json:"signal,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *BucketPrefixMapping) Reset() {
+	*x = BucketPrefixMapping{}
+	mi := &file_admin_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BucketPrefixMapping) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BucketPrefixMapping) ProtoMessage() {}
+
+func (x *BucketPrefixMapping) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BucketPrefixMapping.ProtoReflect.Descriptor instead.
+func (*BucketPrefixMapping) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *BucketPrefixMapping) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *BucketPrefixMapping) GetBucketName() string {
+	if x != nil {
+		return x.BucketName
+	}
+	return ""
+}
+
+func (x *BucketPrefixMapping) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *BucketPrefixMapping) GetPathPrefix() string {
+	if x != nil {
+		return x.PathPrefix
+	}
+	return ""
+}
+
+func (x *BucketPrefixMapping) GetSignal() string {
+	if x != nil {
+		return x.Signal
+	}
+	return ""
+}
+
+type ListBucketPrefixMappingsRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	BucketName     string                 `protobuf:"bytes,1,opt,name=bucket_name,json=bucketName,proto3" json:"bucket_name,omitempty"`             // Optional filter
+	OrganizationId string                 `protobuf:"bytes,2,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"` // Optional filter
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ListBucketPrefixMappingsRequest) Reset() {
+	*x = ListBucketPrefixMappingsRequest{}
+	mi := &file_admin_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListBucketPrefixMappingsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListBucketPrefixMappingsRequest) ProtoMessage() {}
+
+func (x *ListBucketPrefixMappingsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListBucketPrefixMappingsRequest.ProtoReflect.Descriptor instead.
+func (*ListBucketPrefixMappingsRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *ListBucketPrefixMappingsRequest) GetBucketName() string {
+	if x != nil {
+		return x.BucketName
+	}
+	return ""
+}
+
+func (x *ListBucketPrefixMappingsRequest) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+type ListBucketPrefixMappingsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Mappings      []*BucketPrefixMapping `protobuf:"bytes,1,rep,name=mappings,proto3" json:"mappings,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListBucketPrefixMappingsResponse) Reset() {
+	*x = ListBucketPrefixMappingsResponse{}
+	mi := &file_admin_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListBucketPrefixMappingsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListBucketPrefixMappingsResponse) ProtoMessage() {}
+
+func (x *ListBucketPrefixMappingsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListBucketPrefixMappingsResponse.ProtoReflect.Descriptor instead.
+func (*ListBucketPrefixMappingsResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *ListBucketPrefixMappingsResponse) GetMappings() []*BucketPrefixMapping {
+	if x != nil {
+		return x.Mappings
+	}
+	return nil
+}
+
+type CreateBucketPrefixMappingRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	BucketName     string                 `protobuf:"bytes,1,opt,name=bucket_name,json=bucketName,proto3" json:"bucket_name,omitempty"`
+	OrganizationId string                 `protobuf:"bytes,2,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	PathPrefix     string                 `protobuf:"bytes,3,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`
+	Signal         string                 `protobuf:"bytes,4,opt,name=signal,proto3" json:"signal,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CreateBucketPrefixMappingRequest) Reset() {
+	*x = CreateBucketPrefixMappingRequest{}
+	mi := &file_admin_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateBucketPrefixMappingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateBucketPrefixMappingRequest) ProtoMessage() {}
+
+func (x *CreateBucketPrefixMappingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateBucketPrefixMappingRequest.ProtoReflect.Descriptor instead.
+func (*CreateBucketPrefixMappingRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *CreateBucketPrefixMappingRequest) GetBucketName() string {
+	if x != nil {
+		return x.BucketName
+	}
+	return ""
+}
+
+func (x *CreateBucketPrefixMappingRequest) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *CreateBucketPrefixMappingRequest) GetPathPrefix() string {
+	if x != nil {
+		return x.PathPrefix
+	}
+	return ""
+}
+
+func (x *CreateBucketPrefixMappingRequest) GetSignal() string {
+	if x != nil {
+		return x.Signal
+	}
+	return ""
+}
+
+type CreateBucketPrefixMappingResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Mapping       *BucketPrefixMapping   `protobuf:"bytes,1,opt,name=mapping,proto3" json:"mapping,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateBucketPrefixMappingResponse) Reset() {
+	*x = CreateBucketPrefixMappingResponse{}
+	mi := &file_admin_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateBucketPrefixMappingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateBucketPrefixMappingResponse) ProtoMessage() {}
+
+func (x *CreateBucketPrefixMappingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateBucketPrefixMappingResponse.ProtoReflect.Descriptor instead.
+func (*CreateBucketPrefixMappingResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *CreateBucketPrefixMappingResponse) GetMapping() *BucketPrefixMapping {
+	if x != nil {
+		return x.Mapping
+	}
+	return nil
+}
+
+type DeleteBucketPrefixMappingRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteBucketPrefixMappingRequest) Reset() {
+	*x = DeleteBucketPrefixMappingRequest{}
+	mi := &file_admin_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteBucketPrefixMappingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteBucketPrefixMappingRequest) ProtoMessage() {}
+
+func (x *DeleteBucketPrefixMappingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteBucketPrefixMappingRequest.ProtoReflect.Descriptor instead.
+func (*DeleteBucketPrefixMappingRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *DeleteBucketPrefixMappingRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type DeleteBucketPrefixMappingResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteBucketPrefixMappingResponse) Reset() {
+	*x = DeleteBucketPrefixMappingResponse{}
+	mi := &file_admin_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteBucketPrefixMappingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteBucketPrefixMappingResponse) ProtoMessage() {}
+
+func (x *DeleteBucketPrefixMappingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteBucketPrefixMappingResponse.ProtoReflect.Descriptor instead.
+func (*DeleteBucketPrefixMappingResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{42}
+}
+
 var File_admin_proto protoreflect.FileDescriptor
 
 const file_admin_proto_rawDesc = "" +
@@ -839,14 +2319,125 @@ const file_admin_proto_rawDesc = "" +
 	"\x0ecurrent_offset\x18\x03 \x01(\x03R\rcurrentOffset\x12&\n" +
 	"\x0fhigh_water_mark\x18\x04 \x01(\x03R\rhighWaterMark\x12\x10\n" +
 	"\x03lag\x18\x05 \x01(\x03R\x03lag\x12%\n" +
-	"\x0econsumer_group\x18\x06 \x01(\tR\rconsumerGroup2\xa4\x04\n" +
+	"\x0econsumer_group\x18\x06 \x01(\tR\rconsumerGroup\"\xa4\x01\n" +
+	"\x12OrganizationAPIKey\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
+	"\x0forganization_id\x18\x02 \x01(\tR\x0eorganizationId\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x1f\n" +
+	"\vkey_preview\x18\x05 \x01(\tR\n" +
+	"keyPreview\"I\n" +
+	"\x1eListOrganizationAPIKeysRequest\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\"\\\n" +
+	"\x1fListOrganizationAPIKeysResponse\x129\n" +
+	"\bapi_keys\x18\x01 \x03(\v2\x1e.adminproto.OrganizationAPIKeyR\aapiKeys\"\x80\x01\n" +
+	"\x1fCreateOrganizationAPIKeyRequest\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\"v\n" +
+	" CreateOrganizationAPIKeyResponse\x127\n" +
+	"\aapi_key\x18\x01 \x01(\v2\x1e.adminproto.OrganizationAPIKeyR\x06apiKey\x12\x19\n" +
+	"\bfull_key\x18\x02 \x01(\tR\afullKey\"1\n" +
+	"\x1fDeleteOrganizationAPIKeyRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"\"\n" +
+	" DeleteOrganizationAPIKeyResponse\"\xa8\x01\n" +
+	"\x12OrganizationBucket\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1f\n" +
+	"\vbucket_name\x18\x02 \x01(\tR\n" +
+	"bucketName\x12!\n" +
+	"\finstance_num\x18\x03 \x01(\x05R\vinstanceNum\x12%\n" +
+	"\x0ecollector_name\x18\x04 \x01(\tR\rcollectorName\"I\n" +
+	"\x1eListOrganizationBucketsRequest\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\"[\n" +
+	"\x1fListOrganizationBucketsResponse\x128\n" +
+	"\abuckets\x18\x01 \x03(\v2\x1e.adminproto.OrganizationBucketR\abuckets\"\xb2\x01\n" +
+	"\x1cAddOrganizationBucketRequest\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1f\n" +
+	"\vbucket_name\x18\x02 \x01(\tR\n" +
+	"bucketName\x12!\n" +
+	"\finstance_num\x18\x03 \x01(\x05R\vinstanceNum\x12%\n" +
+	"\x0ecollector_name\x18\x04 \x01(\tR\rcollectorName\"W\n" +
+	"\x1dAddOrganizationBucketResponse\x126\n" +
+	"\x06bucket\x18\x01 \x01(\v2\x1e.adminproto.OrganizationBucketR\x06bucket\"\xb5\x01\n" +
+	"\x1fDeleteOrganizationBucketRequest\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1f\n" +
+	"\vbucket_name\x18\x02 \x01(\tR\n" +
+	"bucketName\x12!\n" +
+	"\finstance_num\x18\x03 \x01(\x05R\vinstanceNum\x12%\n" +
+	"\x0ecollector_name\x18\x04 \x01(\tR\rcollectorName\"\"\n" +
+	" DeleteOrganizationBucketResponse\"\xee\x01\n" +
+	"\x13BucketConfiguration\x12\x1f\n" +
+	"\vbucket_name\x18\x01 \x01(\tR\n" +
+	"bucketName\x12%\n" +
+	"\x0ecloud_provider\x18\x02 \x01(\tR\rcloudProvider\x12\x16\n" +
+	"\x06region\x18\x03 \x01(\tR\x06region\x12\x1a\n" +
+	"\bendpoint\x18\x04 \x01(\tR\bendpoint\x12\x12\n" +
+	"\x04role\x18\x05 \x01(\tR\x04role\x12$\n" +
+	"\x0euse_path_style\x18\x06 \x01(\bR\fusePathStyle\x12!\n" +
+	"\finsecure_tls\x18\a \x01(\bR\vinsecureTls\"!\n" +
+	"\x1fListBucketConfigurationsRequest\"k\n" +
+	" ListBucketConfigurationsResponse\x12G\n" +
+	"\x0econfigurations\x18\x01 \x03(\v2\x1f.adminproto.BucketConfigurationR\x0econfigurations\"\xfb\x01\n" +
+	" CreateBucketConfigurationRequest\x12\x1f\n" +
+	"\vbucket_name\x18\x01 \x01(\tR\n" +
+	"bucketName\x12%\n" +
+	"\x0ecloud_provider\x18\x02 \x01(\tR\rcloudProvider\x12\x16\n" +
+	"\x06region\x18\x03 \x01(\tR\x06region\x12\x1a\n" +
+	"\bendpoint\x18\x04 \x01(\tR\bendpoint\x12\x12\n" +
+	"\x04role\x18\x05 \x01(\tR\x04role\x12$\n" +
+	"\x0euse_path_style\x18\x06 \x01(\bR\fusePathStyle\x12!\n" +
+	"\finsecure_tls\x18\a \x01(\bR\vinsecureTls\"j\n" +
+	"!CreateBucketConfigurationResponse\x12E\n" +
+	"\rconfiguration\x18\x01 \x01(\v2\x1f.adminproto.BucketConfigurationR\rconfiguration\"C\n" +
+	" DeleteBucketConfigurationRequest\x12\x1f\n" +
+	"\vbucket_name\x18\x01 \x01(\tR\n" +
+	"bucketName\"#\n" +
+	"!DeleteBucketConfigurationResponse\"\xa8\x01\n" +
+	"\x13BucketPrefixMapping\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
+	"\vbucket_name\x18\x02 \x01(\tR\n" +
+	"bucketName\x12'\n" +
+	"\x0forganization_id\x18\x03 \x01(\tR\x0eorganizationId\x12\x1f\n" +
+	"\vpath_prefix\x18\x04 \x01(\tR\n" +
+	"pathPrefix\x12\x16\n" +
+	"\x06signal\x18\x05 \x01(\tR\x06signal\"k\n" +
+	"\x1fListBucketPrefixMappingsRequest\x12\x1f\n" +
+	"\vbucket_name\x18\x01 \x01(\tR\n" +
+	"bucketName\x12'\n" +
+	"\x0forganization_id\x18\x02 \x01(\tR\x0eorganizationId\"_\n" +
+	" ListBucketPrefixMappingsResponse\x12;\n" +
+	"\bmappings\x18\x01 \x03(\v2\x1f.adminproto.BucketPrefixMappingR\bmappings\"\xa5\x01\n" +
+	" CreateBucketPrefixMappingRequest\x12\x1f\n" +
+	"\vbucket_name\x18\x01 \x01(\tR\n" +
+	"bucketName\x12'\n" +
+	"\x0forganization_id\x18\x02 \x01(\tR\x0eorganizationId\x12\x1f\n" +
+	"\vpath_prefix\x18\x03 \x01(\tR\n" +
+	"pathPrefix\x12\x16\n" +
+	"\x06signal\x18\x04 \x01(\tR\x06signal\"^\n" +
+	"!CreateBucketPrefixMappingResponse\x129\n" +
+	"\amapping\x18\x01 \x01(\v2\x1f.adminproto.BucketPrefixMappingR\amapping\"2\n" +
+	" DeleteBucketPrefixMappingRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"#\n" +
+	"!DeleteBucketPrefixMappingResponse2\xb5\x0f\n" +
 	"\fAdminService\x129\n" +
 	"\x04Ping\x12\x17.adminproto.PingRequest\x1a\x18.adminproto.PingResponse\x12T\n" +
 	"\rInQueueStatus\x12 .adminproto.InQueueStatusRequest\x1a!.adminproto.InQueueStatusResponse\x12`\n" +
 	"\x11ListOrganizations\x12$.adminproto.ListOrganizationsRequest\x1a%.adminproto.ListOrganizationsResponse\x12c\n" +
 	"\x12CreateOrganization\x12%.adminproto.CreateOrganizationRequest\x1a&.adminproto.CreateOrganizationResponse\x12c\n" +
 	"\x12UpdateOrganization\x12%.adminproto.UpdateOrganizationRequest\x1a&.adminproto.UpdateOrganizationResponse\x12W\n" +
-	"\x0eGetConsumerLag\x12!.adminproto.GetConsumerLagRequest\x1a\".adminproto.GetConsumerLagResponseB-Z+github.com/cardinalhq/lakerunner/adminprotob\x06proto3"
+	"\x0eGetConsumerLag\x12!.adminproto.GetConsumerLagRequest\x1a\".adminproto.GetConsumerLagResponse\x12r\n" +
+	"\x17ListOrganizationAPIKeys\x12*.adminproto.ListOrganizationAPIKeysRequest\x1a+.adminproto.ListOrganizationAPIKeysResponse\x12u\n" +
+	"\x18CreateOrganizationAPIKey\x12+.adminproto.CreateOrganizationAPIKeyRequest\x1a,.adminproto.CreateOrganizationAPIKeyResponse\x12u\n" +
+	"\x18DeleteOrganizationAPIKey\x12+.adminproto.DeleteOrganizationAPIKeyRequest\x1a,.adminproto.DeleteOrganizationAPIKeyResponse\x12r\n" +
+	"\x17ListOrganizationBuckets\x12*.adminproto.ListOrganizationBucketsRequest\x1a+.adminproto.ListOrganizationBucketsResponse\x12l\n" +
+	"\x15AddOrganizationBucket\x12(.adminproto.AddOrganizationBucketRequest\x1a).adminproto.AddOrganizationBucketResponse\x12u\n" +
+	"\x18DeleteOrganizationBucket\x12+.adminproto.DeleteOrganizationBucketRequest\x1a,.adminproto.DeleteOrganizationBucketResponse\x12u\n" +
+	"\x18ListBucketConfigurations\x12+.adminproto.ListBucketConfigurationsRequest\x1a,.adminproto.ListBucketConfigurationsResponse\x12x\n" +
+	"\x19CreateBucketConfiguration\x12,.adminproto.CreateBucketConfigurationRequest\x1a-.adminproto.CreateBucketConfigurationResponse\x12x\n" +
+	"\x19DeleteBucketConfiguration\x12,.adminproto.DeleteBucketConfigurationRequest\x1a-.adminproto.DeleteBucketConfigurationResponse\x12u\n" +
+	"\x18ListBucketPrefixMappings\x12+.adminproto.ListBucketPrefixMappingsRequest\x1a,.adminproto.ListBucketPrefixMappingsResponse\x12x\n" +
+	"\x19CreateBucketPrefixMapping\x12,.adminproto.CreateBucketPrefixMappingRequest\x1a-.adminproto.CreateBucketPrefixMappingResponse\x12x\n" +
+	"\x19DeleteBucketPrefixMapping\x12,.adminproto.DeleteBucketPrefixMappingRequest\x1a-.adminproto.DeleteBucketPrefixMappingResponseB-Z+github.com/cardinalhq/lakerunner/adminprotob\x06proto3"
 
 var (
 	file_admin_proto_rawDescOnce sync.Once
@@ -860,51 +2451,111 @@ func file_admin_proto_rawDescGZIP() []byte {
 	return file_admin_proto_rawDescData
 }
 
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_admin_proto_goTypes = []any{
-	(*PingRequest)(nil),                // 0: adminproto.PingRequest
-	(*PingResponse)(nil),               // 1: adminproto.PingResponse
-	(*InQueueStatusRequest)(nil),       // 2: adminproto.InQueueStatusRequest
-	(*InQueueStatusResponse)(nil),      // 3: adminproto.InQueueStatusResponse
-	(*InQueueItem)(nil),                // 4: adminproto.InQueueItem
-	(*Organization)(nil),               // 5: adminproto.Organization
-	(*ListOrganizationsRequest)(nil),   // 6: adminproto.ListOrganizationsRequest
-	(*ListOrganizationsResponse)(nil),  // 7: adminproto.ListOrganizationsResponse
-	(*CreateOrganizationRequest)(nil),  // 8: adminproto.CreateOrganizationRequest
-	(*CreateOrganizationResponse)(nil), // 9: adminproto.CreateOrganizationResponse
-	(*UpdateOrganizationRequest)(nil),  // 10: adminproto.UpdateOrganizationRequest
-	(*UpdateOrganizationResponse)(nil), // 11: adminproto.UpdateOrganizationResponse
-	(*GetConsumerLagRequest)(nil),      // 12: adminproto.GetConsumerLagRequest
-	(*GetConsumerLagResponse)(nil),     // 13: adminproto.GetConsumerLagResponse
-	(*ConsumerPartitionLag)(nil),       // 14: adminproto.ConsumerPartitionLag
-	(*wrapperspb.StringValue)(nil),     // 15: google.protobuf.StringValue
-	(*wrapperspb.BoolValue)(nil),       // 16: google.protobuf.BoolValue
+	(*PingRequest)(nil),                       // 0: adminproto.PingRequest
+	(*PingResponse)(nil),                      // 1: adminproto.PingResponse
+	(*InQueueStatusRequest)(nil),              // 2: adminproto.InQueueStatusRequest
+	(*InQueueStatusResponse)(nil),             // 3: adminproto.InQueueStatusResponse
+	(*InQueueItem)(nil),                       // 4: adminproto.InQueueItem
+	(*Organization)(nil),                      // 5: adminproto.Organization
+	(*ListOrganizationsRequest)(nil),          // 6: adminproto.ListOrganizationsRequest
+	(*ListOrganizationsResponse)(nil),         // 7: adminproto.ListOrganizationsResponse
+	(*CreateOrganizationRequest)(nil),         // 8: adminproto.CreateOrganizationRequest
+	(*CreateOrganizationResponse)(nil),        // 9: adminproto.CreateOrganizationResponse
+	(*UpdateOrganizationRequest)(nil),         // 10: adminproto.UpdateOrganizationRequest
+	(*UpdateOrganizationResponse)(nil),        // 11: adminproto.UpdateOrganizationResponse
+	(*GetConsumerLagRequest)(nil),             // 12: adminproto.GetConsumerLagRequest
+	(*GetConsumerLagResponse)(nil),            // 13: adminproto.GetConsumerLagResponse
+	(*ConsumerPartitionLag)(nil),              // 14: adminproto.ConsumerPartitionLag
+	(*OrganizationAPIKey)(nil),                // 15: adminproto.OrganizationAPIKey
+	(*ListOrganizationAPIKeysRequest)(nil),    // 16: adminproto.ListOrganizationAPIKeysRequest
+	(*ListOrganizationAPIKeysResponse)(nil),   // 17: adminproto.ListOrganizationAPIKeysResponse
+	(*CreateOrganizationAPIKeyRequest)(nil),   // 18: adminproto.CreateOrganizationAPIKeyRequest
+	(*CreateOrganizationAPIKeyResponse)(nil),  // 19: adminproto.CreateOrganizationAPIKeyResponse
+	(*DeleteOrganizationAPIKeyRequest)(nil),   // 20: adminproto.DeleteOrganizationAPIKeyRequest
+	(*DeleteOrganizationAPIKeyResponse)(nil),  // 21: adminproto.DeleteOrganizationAPIKeyResponse
+	(*OrganizationBucket)(nil),                // 22: adminproto.OrganizationBucket
+	(*ListOrganizationBucketsRequest)(nil),    // 23: adminproto.ListOrganizationBucketsRequest
+	(*ListOrganizationBucketsResponse)(nil),   // 24: adminproto.ListOrganizationBucketsResponse
+	(*AddOrganizationBucketRequest)(nil),      // 25: adminproto.AddOrganizationBucketRequest
+	(*AddOrganizationBucketResponse)(nil),     // 26: adminproto.AddOrganizationBucketResponse
+	(*DeleteOrganizationBucketRequest)(nil),   // 27: adminproto.DeleteOrganizationBucketRequest
+	(*DeleteOrganizationBucketResponse)(nil),  // 28: adminproto.DeleteOrganizationBucketResponse
+	(*BucketConfiguration)(nil),               // 29: adminproto.BucketConfiguration
+	(*ListBucketConfigurationsRequest)(nil),   // 30: adminproto.ListBucketConfigurationsRequest
+	(*ListBucketConfigurationsResponse)(nil),  // 31: adminproto.ListBucketConfigurationsResponse
+	(*CreateBucketConfigurationRequest)(nil),  // 32: adminproto.CreateBucketConfigurationRequest
+	(*CreateBucketConfigurationResponse)(nil), // 33: adminproto.CreateBucketConfigurationResponse
+	(*DeleteBucketConfigurationRequest)(nil),  // 34: adminproto.DeleteBucketConfigurationRequest
+	(*DeleteBucketConfigurationResponse)(nil), // 35: adminproto.DeleteBucketConfigurationResponse
+	(*BucketPrefixMapping)(nil),               // 36: adminproto.BucketPrefixMapping
+	(*ListBucketPrefixMappingsRequest)(nil),   // 37: adminproto.ListBucketPrefixMappingsRequest
+	(*ListBucketPrefixMappingsResponse)(nil),  // 38: adminproto.ListBucketPrefixMappingsResponse
+	(*CreateBucketPrefixMappingRequest)(nil),  // 39: adminproto.CreateBucketPrefixMappingRequest
+	(*CreateBucketPrefixMappingResponse)(nil), // 40: adminproto.CreateBucketPrefixMappingResponse
+	(*DeleteBucketPrefixMappingRequest)(nil),  // 41: adminproto.DeleteBucketPrefixMappingRequest
+	(*DeleteBucketPrefixMappingResponse)(nil), // 42: adminproto.DeleteBucketPrefixMappingResponse
+	(*wrapperspb.StringValue)(nil),            // 43: google.protobuf.StringValue
+	(*wrapperspb.BoolValue)(nil),              // 44: google.protobuf.BoolValue
 }
 var file_admin_proto_depIdxs = []int32{
 	4,  // 0: adminproto.InQueueStatusResponse.items:type_name -> adminproto.InQueueItem
 	5,  // 1: adminproto.ListOrganizationsResponse.organizations:type_name -> adminproto.Organization
 	5,  // 2: adminproto.CreateOrganizationResponse.organization:type_name -> adminproto.Organization
-	15, // 3: adminproto.UpdateOrganizationRequest.name:type_name -> google.protobuf.StringValue
-	16, // 4: adminproto.UpdateOrganizationRequest.enabled:type_name -> google.protobuf.BoolValue
+	43, // 3: adminproto.UpdateOrganizationRequest.name:type_name -> google.protobuf.StringValue
+	44, // 4: adminproto.UpdateOrganizationRequest.enabled:type_name -> google.protobuf.BoolValue
 	5,  // 5: adminproto.UpdateOrganizationResponse.organization:type_name -> adminproto.Organization
 	14, // 6: adminproto.GetConsumerLagResponse.lags:type_name -> adminproto.ConsumerPartitionLag
-	0,  // 7: adminproto.AdminService.Ping:input_type -> adminproto.PingRequest
-	2,  // 8: adminproto.AdminService.InQueueStatus:input_type -> adminproto.InQueueStatusRequest
-	6,  // 9: adminproto.AdminService.ListOrganizations:input_type -> adminproto.ListOrganizationsRequest
-	8,  // 10: adminproto.AdminService.CreateOrganization:input_type -> adminproto.CreateOrganizationRequest
-	10, // 11: adminproto.AdminService.UpdateOrganization:input_type -> adminproto.UpdateOrganizationRequest
-	12, // 12: adminproto.AdminService.GetConsumerLag:input_type -> adminproto.GetConsumerLagRequest
-	1,  // 13: adminproto.AdminService.Ping:output_type -> adminproto.PingResponse
-	3,  // 14: adminproto.AdminService.InQueueStatus:output_type -> adminproto.InQueueStatusResponse
-	7,  // 15: adminproto.AdminService.ListOrganizations:output_type -> adminproto.ListOrganizationsResponse
-	9,  // 16: adminproto.AdminService.CreateOrganization:output_type -> adminproto.CreateOrganizationResponse
-	11, // 17: adminproto.AdminService.UpdateOrganization:output_type -> adminproto.UpdateOrganizationResponse
-	13, // 18: adminproto.AdminService.GetConsumerLag:output_type -> adminproto.GetConsumerLagResponse
-	13, // [13:19] is the sub-list for method output_type
-	7,  // [7:13] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	15, // 7: adminproto.ListOrganizationAPIKeysResponse.api_keys:type_name -> adminproto.OrganizationAPIKey
+	15, // 8: adminproto.CreateOrganizationAPIKeyResponse.api_key:type_name -> adminproto.OrganizationAPIKey
+	22, // 9: adminproto.ListOrganizationBucketsResponse.buckets:type_name -> adminproto.OrganizationBucket
+	22, // 10: adminproto.AddOrganizationBucketResponse.bucket:type_name -> adminproto.OrganizationBucket
+	29, // 11: adminproto.ListBucketConfigurationsResponse.configurations:type_name -> adminproto.BucketConfiguration
+	29, // 12: adminproto.CreateBucketConfigurationResponse.configuration:type_name -> adminproto.BucketConfiguration
+	36, // 13: adminproto.ListBucketPrefixMappingsResponse.mappings:type_name -> adminproto.BucketPrefixMapping
+	36, // 14: adminproto.CreateBucketPrefixMappingResponse.mapping:type_name -> adminproto.BucketPrefixMapping
+	0,  // 15: adminproto.AdminService.Ping:input_type -> adminproto.PingRequest
+	2,  // 16: adminproto.AdminService.InQueueStatus:input_type -> adminproto.InQueueStatusRequest
+	6,  // 17: adminproto.AdminService.ListOrganizations:input_type -> adminproto.ListOrganizationsRequest
+	8,  // 18: adminproto.AdminService.CreateOrganization:input_type -> adminproto.CreateOrganizationRequest
+	10, // 19: adminproto.AdminService.UpdateOrganization:input_type -> adminproto.UpdateOrganizationRequest
+	12, // 20: adminproto.AdminService.GetConsumerLag:input_type -> adminproto.GetConsumerLagRequest
+	16, // 21: adminproto.AdminService.ListOrganizationAPIKeys:input_type -> adminproto.ListOrganizationAPIKeysRequest
+	18, // 22: adminproto.AdminService.CreateOrganizationAPIKey:input_type -> adminproto.CreateOrganizationAPIKeyRequest
+	20, // 23: adminproto.AdminService.DeleteOrganizationAPIKey:input_type -> adminproto.DeleteOrganizationAPIKeyRequest
+	23, // 24: adminproto.AdminService.ListOrganizationBuckets:input_type -> adminproto.ListOrganizationBucketsRequest
+	25, // 25: adminproto.AdminService.AddOrganizationBucket:input_type -> adminproto.AddOrganizationBucketRequest
+	27, // 26: adminproto.AdminService.DeleteOrganizationBucket:input_type -> adminproto.DeleteOrganizationBucketRequest
+	30, // 27: adminproto.AdminService.ListBucketConfigurations:input_type -> adminproto.ListBucketConfigurationsRequest
+	32, // 28: adminproto.AdminService.CreateBucketConfiguration:input_type -> adminproto.CreateBucketConfigurationRequest
+	34, // 29: adminproto.AdminService.DeleteBucketConfiguration:input_type -> adminproto.DeleteBucketConfigurationRequest
+	37, // 30: adminproto.AdminService.ListBucketPrefixMappings:input_type -> adminproto.ListBucketPrefixMappingsRequest
+	39, // 31: adminproto.AdminService.CreateBucketPrefixMapping:input_type -> adminproto.CreateBucketPrefixMappingRequest
+	41, // 32: adminproto.AdminService.DeleteBucketPrefixMapping:input_type -> adminproto.DeleteBucketPrefixMappingRequest
+	1,  // 33: adminproto.AdminService.Ping:output_type -> adminproto.PingResponse
+	3,  // 34: adminproto.AdminService.InQueueStatus:output_type -> adminproto.InQueueStatusResponse
+	7,  // 35: adminproto.AdminService.ListOrganizations:output_type -> adminproto.ListOrganizationsResponse
+	9,  // 36: adminproto.AdminService.CreateOrganization:output_type -> adminproto.CreateOrganizationResponse
+	11, // 37: adminproto.AdminService.UpdateOrganization:output_type -> adminproto.UpdateOrganizationResponse
+	13, // 38: adminproto.AdminService.GetConsumerLag:output_type -> adminproto.GetConsumerLagResponse
+	17, // 39: adminproto.AdminService.ListOrganizationAPIKeys:output_type -> adminproto.ListOrganizationAPIKeysResponse
+	19, // 40: adminproto.AdminService.CreateOrganizationAPIKey:output_type -> adminproto.CreateOrganizationAPIKeyResponse
+	21, // 41: adminproto.AdminService.DeleteOrganizationAPIKey:output_type -> adminproto.DeleteOrganizationAPIKeyResponse
+	24, // 42: adminproto.AdminService.ListOrganizationBuckets:output_type -> adminproto.ListOrganizationBucketsResponse
+	26, // 43: adminproto.AdminService.AddOrganizationBucket:output_type -> adminproto.AddOrganizationBucketResponse
+	28, // 44: adminproto.AdminService.DeleteOrganizationBucket:output_type -> adminproto.DeleteOrganizationBucketResponse
+	31, // 45: adminproto.AdminService.ListBucketConfigurations:output_type -> adminproto.ListBucketConfigurationsResponse
+	33, // 46: adminproto.AdminService.CreateBucketConfiguration:output_type -> adminproto.CreateBucketConfigurationResponse
+	35, // 47: adminproto.AdminService.DeleteBucketConfiguration:output_type -> adminproto.DeleteBucketConfigurationResponse
+	38, // 48: adminproto.AdminService.ListBucketPrefixMappings:output_type -> adminproto.ListBucketPrefixMappingsResponse
+	40, // 49: adminproto.AdminService.CreateBucketPrefixMapping:output_type -> adminproto.CreateBucketPrefixMappingResponse
+	42, // 50: adminproto.AdminService.DeleteBucketPrefixMapping:output_type -> adminproto.DeleteBucketPrefixMappingResponse
+	33, // [33:51] is the sub-list for method output_type
+	15, // [15:33] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -918,7 +2569,7 @@ func file_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

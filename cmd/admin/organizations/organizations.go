@@ -149,6 +149,12 @@ func GetOrganizationsCmd() *cobra.Command {
 	}
 	orgCmd.AddCommand(renameCmd)
 
+	// Add new subcommands for organization resources
+	orgCmd.AddCommand(getAPIKeysCmd())
+	orgCmd.AddCommand(getBucketsCmd())
+	orgCmd.AddCommand(getPrefixMappingsCmd())
+	orgCmd.AddCommand(getBucketConfigsCmd())
+
 	return orgCmd
 }
 

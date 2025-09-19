@@ -61,3 +61,13 @@ JOIN organization_api_key_mappings ako ON ak.id = ako.api_key_id;
 SELECT organization_id, api_key, name, enabled
 FROM c_organization_api_keys
 WHERE enabled = true OR enabled IS NULL;
+
+-- name: ListOrganizationAPIKeysByOrg :many
+SELECT ak.id, ak.name, ak.key_hash, ak.description
+FROM organization_api_keys ak
+JOIN organization_api_key_mappings ako ON ak.id = ako.api_key_id
+WHERE ako.organization_id = @organization_id;
+
+-- name: DeleteOrganizationAPIKeyMapping :exec
+DELETE FROM organization_api_key_mappings
+WHERE api_key_id = @api_key_id;

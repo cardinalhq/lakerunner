@@ -183,6 +183,31 @@ func (q *Queries) DeleteBucketPrefixMapping(ctx context.Context, id uuid.UUID) e
 	return err
 }
 
+const deleteOrganizationBucket = `-- name: DeleteOrganizationBucket :exec
+DELETE FROM organization_buckets
+WHERE organization_id = $1
+AND bucket_id = (SELECT id FROM bucket_configurations WHERE bucket_name = $2)
+AND instance_num = $3
+AND collector_name = $4
+`
+
+type DeleteOrganizationBucketParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	BucketName     string    `json:"bucket_name"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
+}
+
+func (q *Queries) DeleteOrganizationBucket(ctx context.Context, arg DeleteOrganizationBucketParams) error {
+	_, err := q.db.Exec(ctx, deleteOrganizationBucket,
+		arg.OrganizationID,
+		arg.BucketName,
+		arg.InstanceNum,
+		arg.CollectorName,
+	)
+	return err
+}
+
 const getAllCStorageProfilesForSync = `-- name: GetAllCStorageProfilesForSync :many
 
 SELECT DISTINCT
@@ -264,6 +289,26 @@ func (q *Queries) GetBucketConfiguration(ctx context.Context, bucketName string)
 	return i, err
 }
 
+const getBucketConfigurationByName = `-- name: GetBucketConfigurationByName :one
+SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls FROM bucket_configurations WHERE bucket_name = $1
+`
+
+func (q *Queries) GetBucketConfigurationByName(ctx context.Context, bucketName string) (BucketConfiguration, error) {
+	row := q.db.QueryRow(ctx, getBucketConfigurationByName, bucketName)
+	var i BucketConfiguration
+	err := row.Scan(
+		&i.ID,
+		&i.BucketName,
+		&i.CloudProvider,
+		&i.Region,
+		&i.Endpoint,
+		&i.Role,
+		&i.UsePathStyle,
+		&i.InsecureTls,
+	)
+	return i, err
+}
+
 const getDefaultOrganizationBucket = `-- name: GetDefaultOrganizationBucket :one
 SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
 FROM organization_buckets ob
@@ -331,9 +376,9 @@ func (q *Queries) GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefi
 const getLowestInstanceOrganizationBucket = `-- name: GetLowestInstanceOrganizationBucket :one
 SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
 FROM organization_buckets ob
-JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
-WHERE ob.organization_id = $1 AND bc.bucket_name = $2 
-ORDER BY ob.instance_num, ob.collector_name 
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id
+WHERE ob.organization_id = $1 AND bc.bucket_name = $2
+ORDER BY ob.instance_num, ob.collector_name
 LIMIT 1
 `
 
@@ -563,6 +608,46 @@ func (q *Queries) ListBucketPrefixMappings(ctx context.Context) ([]ListBucketPre
 			&i.OrganizationID,
 			&i.PathPrefix,
 			&i.Signal,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrganizationBucketsByOrg = `-- name: ListOrganizationBucketsByOrg :many
+SELECT ob.organization_id, bc.bucket_name, ob.instance_num, ob.collector_name
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id
+WHERE ob.organization_id = $1
+ORDER BY bc.bucket_name, ob.instance_num
+`
+
+type ListOrganizationBucketsByOrgRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	BucketName     string    `json:"bucket_name"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
+}
+
+func (q *Queries) ListOrganizationBucketsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationBucketsByOrgRow, error) {
+	rows, err := q.db.Query(ctx, listOrganizationBucketsByOrg, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrganizationBucketsByOrgRow
+	for rows.Next() {
+		var i ListOrganizationBucketsByOrgRow
+		if err := rows.Scan(
+			&i.OrganizationID,
+			&i.BucketName,
+			&i.InstanceNum,
+			&i.CollectorName,
 		); err != nil {
 			return nil, err
 		}

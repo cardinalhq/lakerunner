@@ -31,6 +31,8 @@ type Querier interface {
 	DeleteBucketPrefixMapping(ctx context.Context, id uuid.UUID) error
 	DeleteOrganization(ctx context.Context, id uuid.UUID) error
 	DeleteOrganizationAPIKey(ctx context.Context, id uuid.UUID) error
+	DeleteOrganizationAPIKeyMapping(ctx context.Context, apiKeyID uuid.UUID) error
+	DeleteOrganizationBucket(ctx context.Context, arg DeleteOrganizationBucketParams) error
 	GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (AdminApiKey, error)
 	GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (AdminApiKey, error)
 	GetAllAdminAPIKeys(ctx context.Context) ([]AdminApiKey, error)
@@ -40,6 +42,7 @@ type Querier interface {
 	GetAllOrganizationAPIKeys(ctx context.Context) ([]GetAllOrganizationAPIKeysRow, error)
 	GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error)
 	GetBucketConfiguration(ctx context.Context, bucketName string) (BucketConfiguration, error)
+	GetBucketConfigurationByName(ctx context.Context, bucketName string) (BucketConfiguration, error)
 	GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (GetDefaultOrganizationBucketRow, error)
 	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (uuid.UUID, error)
 	GetLowestInstanceOrganizationBucket(ctx context.Context, arg GetLowestInstanceOrganizationBucketParams) (GetLowestInstanceOrganizationBucketRow, error)
@@ -57,6 +60,8 @@ type Querier interface {
 	ListBucketConfigurations(ctx context.Context) ([]BucketConfiguration, error)
 	ListBucketPrefixMappings(ctx context.Context) ([]ListBucketPrefixMappingsRow, error)
 	ListEnabledOrganizations(ctx context.Context) ([]Organization, error)
+	ListOrganizationAPIKeysByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationAPIKeysByOrgRow, error)
+	ListOrganizationBucketsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationBucketsByOrgRow, error)
 	ListOrganizations(ctx context.Context) ([]Organization, error)
 	SyncOrganizationBuckets(ctx context.Context) error
 	// This file contains queries for syncing data from legacy c_ tables (managed externally)
