@@ -34,4 +34,5 @@ func init() {
 	debugCmd.AddCommand(debugcmd.GetKafkaCmd())
 	debugCmd.AddCommand(debugcmd.GetDownloadCmd())
 	debugCmd.AddCommand(debugcmd.GetAnalyzeCmd())
+	debugCmd.AddCommand(debugcmd.GetSizingReportCmd())
 }
