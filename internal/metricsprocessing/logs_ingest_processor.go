@@ -69,7 +69,7 @@ func newLogIngestProcessor(
 	cfg *config.Config,
 	store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
 	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
+	exemplarProcessor.SetLogsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
 		return processLogsExemplarsDirect(ctx, organizationID, exemplars, store)
 	})
 
