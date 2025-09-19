@@ -2,8 +2,6 @@ name: Build Release Candidate
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*.*.*-rc*'
 
