@@ -37,7 +37,9 @@ import (
 )
 
 const (
-	ChannelBufferSize = 4096
+	// Reduced from 4096 to minimize memory overhead. The MergeSorted coordinator
+	// will buffer and apply backpressure as needed.
+	ChannelBufferSize = 128
 )
 
 // DownloadBatchFunc downloads ALL given paths to their target local paths.
@@ -262,7 +264,12 @@ func EvaluatePushDown[T promql.Timestamped](
 	slog.Info("Channel Creation Time", "duration", channelCreationTime.String())
 
 	// Merge all sources (cached + S3 batches) in timestamp order.
-	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
+	// Use smaller buffer for the final merge to reduce memory overhead
+	mergeBufferSize := 128
+	if request.Limit > 0 && request.Limit < mergeBufferSize {
+		mergeBufferSize = request.Limit // No need for large buffer if limit is small
+	}
+	return promql.MergeSorted(ctx, mergeBufferSize, request.Reverse, request.Limit, outs...), nil
 }
 
 func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
@@ -338,8 +345,13 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				if mErr != nil {
 					return
 				}
-				//ts := v.GetTimestamp()
-				out <- v
+				// Blocking send with context check - preserves data integrity.
+				// MergeSorted will drain the channel if it stops early (limit reached, etc.)
+				select {
+				case <-ctx.Done():
+					return
+				case out <- v:
+				}
 			}
 			_ = rows.Err()
 		}(cachedIDs, out)
@@ -428,7 +440,13 @@ func streamFromS3[T promql.Timestamped](
 					slog.Error("Row mapping failed", slog.Any("error", mErr))
 					return
 				}
-				out <- v
+				// Blocking send with context check - preserves data integrity.
+				// MergeSorted will drain the channel if it stops early (limit reached, etc.)
+				select {
+				case <-ctx.Done():
+					return
+				case out <- v:
+				}
 			}
 			if err := rows.Err(); err != nil {
 				slog.Error("Rows iteration error", slog.Any("error", err))

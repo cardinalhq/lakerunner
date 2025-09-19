@@ -19,6 +19,7 @@ import (
 	"context"
 	"log/slog"
 	"math"
+	"sync"
 )
 
 // Timestamped is the constraint for mergeable items.
@@ -29,6 +30,7 @@ type Timestamped interface {
 // MergeSorted merges N locally-sorted channels into one globally-sorted stream.
 // reverse=false → ascending; reverse=true → descending.
 // limit=0 → unlimited; limit>0 → stop after emitting exactly limit items.
+// When limit is reached or context is cancelled, input channels are drained to unblock producers.
 func MergeSorted[T Timestamped](
 	ctx context.Context,
 	outBuf int,
@@ -48,6 +50,10 @@ func MergeSorted[T Timestamped](
 		ok  bool
 	}
 
+	// Create a derived context that we can cancel when we stop early
+	// This ensures all fetchers stop promptly when limit is reached
+	mergeCtx, cancelMerge := context.WithCancel(ctx)
+
 	req := make([]chan struct{}, len(chans))
 	rsp := make([]chan headMsg, len(chans))
 	for i := range chans {
@@ -55,44 +61,63 @@ func MergeSorted[T Timestamped](
 		rsp[i] = make(chan headMsg, 1)
 	}
 
-	// Per-source fetchers.
+	// Per-source fetchers - use mergeCtx so they stop when we cancel
+	var fetchersWg sync.WaitGroup
+	fetchersWg.Add(len(chans))
 	for i, ch := range chans {
 		i, ch := i, ch
 		go func() {
+			defer fetchersWg.Done()
 			defer close(rsp[i])
 			for {
 				select {
-				case <-ctx.Done():
-					slog.Warn("MergeSorted: ctx canceled in fetcher; dropping unread tail", "src", i)
+				case <-mergeCtx.Done():
 					return
 				case _, ok := <-req[i]:
 					if !ok {
 						return
 					}
-					v, ok := <-ch
-					if !ok {
-						// Source closed. Not a drop by itself; coordinator may still have a head in heap.
-						select {
-						case <-ctx.Done():
-							slog.Warn("MergeSorted: ctx canceled while reporting close", "src", i)
-						case rsp[i] <- headMsg{src: i, ok: false}:
-						}
-						return
-					}
+					// Check context before blocking on channel read
 					select {
-					case <-ctx.Done():
-						slog.Warn("MergeSorted: ctx canceled after fetch; dropping fetched head", "src", i)
+					case <-mergeCtx.Done():
 						return
-					case rsp[i] <- headMsg{src: i, val: v, ok: true}:
+					case v, ok := <-ch:
+						if !ok {
+							// Source closed
+							select {
+							case <-mergeCtx.Done():
+							case rsp[i] <- headMsg{src: i, ok: false}:
+							}
+							return
+						}
+						select {
+						case <-mergeCtx.Done():
+							return
+						case rsp[i] <- headMsg{src: i, val: v, ok: true}:
+						}
 					}
 				}
 			}
 		}()
 	}
 
+	// Drain goroutines - started after fetchers, drain input channels when merge stops
+	for _, ch := range chans {
+		ch := ch
+		go func() {
+			<-mergeCtx.Done()
+			// When merge stops early (limit/cancel), drain this input channel
+			// to unblock any upstream producer that might be blocked on a send
+			for range ch {
+				// Discard - this unblocks the producer
+			}
+		}()
+	}
+
 	go func() {
 		defer close(out)
-		defer func() { // unblock/wind-down sources
+		defer cancelMerge() // Signal all fetchers to stop
+		defer func() {      // unblock/wind-down sources
 			for i := range req {
 				close(req[i])
 			}
@@ -160,8 +185,7 @@ func MergeSorted[T Timestamped](
 					continue
 				}
 				select {
-				case <-ctx.Done():
-					slog.Warn("MergeSorted: ctx canceled while polling; heap", "len", h.Len(), "open", openCount)
+				case <-mergeCtx.Done():
 					return
 				case m, ok := <-rsp[i]:
 					handleRsp(i, m, ok)
@@ -182,8 +206,7 @@ func MergeSorted[T Timestamped](
 				return false
 			}
 			select {
-			case <-ctx.Done():
-				slog.Warn("MergeSorted: ctx canceled while waiting; heap", "len", h.Len(), "open", openCount)
+			case <-mergeCtx.Done():
 				return false
 			case m, ok := <-rsp[idx]:
 				handleRsp(idx, m, ok)
@@ -210,9 +233,7 @@ func MergeSorted[T Timestamped](
 				} else {
 					awaiting[src] = true
 					select {
-					case <-ctx.Done():
-						slog.Warn("MergeSorted: ctx canceled before re-fetch; dropping remainder",
-							"emitted", emitted, "heap", h.Len(), "open", openCount)
+					case <-mergeCtx.Done():
 						return
 					case req[src] <- struct{}{}:
 					}
@@ -230,19 +251,18 @@ func MergeSorted[T Timestamped](
 				lastTs = ts
 
 				select {
-				case <-ctx.Done():
-					slog.Warn("MergeSorted: ctx canceled while emitting; dropping remainder",
-						"emitted", emitted, "heap", h.Len(), "open", openCount)
+				case <-mergeCtx.Done():
 					return
 				case out <- best.val:
 				}
 				emitted++
 				if limit > 0 && emitted >= limit {
-					// Intentional drop: we stop early by contract.
-					// Log how many were still pending.
-					pending := h.Len()
-					slog.Warn("MergeSorted: limit reached; truncating stream",
-						"limit", limit, "emitted", emitted, "heapPending", pending, "openSources", openCount)
+					// Limit reached - cancel context to stop all fetchers promptly
+					// This prevents upstream producers from blocking
+					if h.Len() > 0 || openCount > 0 {
+						slog.Debug("MergeSorted: limit reached; stopping early",
+							"limit", limit, "emitted", emitted, "heapPending", h.Len(), "openSources", openCount)
+					}
 					return
 				}
 				continue
@@ -254,9 +274,7 @@ func MergeSorted[T Timestamped](
 			}
 			if !waitOne() {
 				select {
-				case <-ctx.Done():
-					slog.Warn("MergeSorted: ctx canceled idle; dropping remainder",
-						"emitted", emitted, "heap", h.Len(), "open", openCount)
+				case <-mergeCtx.Done():
 					return
 				default:
 				}

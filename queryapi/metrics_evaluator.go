@@ -50,7 +50,8 @@ func computeMaxParallel(numWorkers int) int {
 
 // concat groups in index order; streams as soon as idx=0 registers.
 func runOrderedCoordinator(ctx context.Context, regs <-chan groupReg) <-chan promql.SketchInput {
-	out := make(chan promql.SketchInput, 4096)
+	// Use smaller buffer to reduce memory pressure - the coordinator goroutine will buffer
+	out := make(chan promql.SketchInput, 256)
 	go func() {
 		defer close(out)
 
@@ -116,19 +117,20 @@ func (q *QuerierService) EvaluateMetricsQuery(
 		return nil, fmt.Errorf("failed to get all workers: %w", err)
 	}
 
-	out := make(chan map[string]promql.EvalResult, 1024)
+	// Use smaller buffer since results are consumed immediately by the client
+	out := make(chan map[string]promql.EvalResult, 64)
 
 	go func() {
 		defer close(out)
 
 		// ---------- Stage 0: coordinator & EvalFlow ----------
-		regs := make(chan groupReg, 256)
+		regs := make(chan groupReg, 64) // Smaller buffer since groups register sequentially
 		coordinated := runOrderedCoordinator(ctx, regs)
 
 		// Give the aggregator a bit more slack; this also smooths seams.
 		flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
 			NumBuffers: 8,
-			OutBuffer:  1024,
+			OutBuffer:  256, // Reduced from 1024 to minimize memory usage
 		})
 		results := flow.Run(ctx, coordinated)
 
@@ -317,7 +319,8 @@ func (q *QuerierService) EvaluateMetricsQuery(
 				}
 
 				// Merge across leaves within this group and register immediately.
-				groupChan := promql.MergeSorted(pushCtx, 1024, false, 0, leafChans...)
+				// Use smaller buffer to reduce memory overhead
+				groupChan := promql.MergeSorted(pushCtx, 128, false, 0, leafChans...)
 				slog.Info("Registering group stream", "idx", gi, "groupStart", group.StartTs, "groupEnd", group.EndTs)
 				select {
 				case regs <- groupReg{idx: gi, startTs: group.StartTs, endTs: group.EndTs, ch: groupChan}:

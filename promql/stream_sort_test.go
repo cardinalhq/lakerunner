@@ -16,6 +16,8 @@ package promql
 
 import (
 	"context"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
@@ -77,7 +79,7 @@ func TestMergeSorted_Ascending_TwoInputs(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted[tsItem](ctx /*ascending*/, 8, false, 0, ch1, ch2)
+	out := MergeSorted(ctx /*ascending*/, 8, false, 0, ch1, ch2)
 	got := toSlice(out)
 
 	if len(got) != len(a)+len(b) {
@@ -97,7 +99,7 @@ func TestMergeSorted_Ascending_WithDuplicates(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted[tsItem](ctx, 2, false, 0, ch1, ch2)
+	out := MergeSorted(ctx, 2, false, 0, ch1, ch2)
 	got := toSlice(out)
 
 	if !isSortedAsc(got) {
@@ -114,7 +116,7 @@ func TestMergeSorted_HandlesEmptyInputs(t *testing.T) {
 	c2 := chFromSlice(ctx, 0, full)
 	c3 := chFromSlice(ctx, 0, empty)
 
-	out := MergeSorted[tsItem](ctx, 1, false, 0, c1, c2, c3)
+	out := MergeSorted(ctx, 1, false, 0, c1, c2, c3)
 	got := toSlice(out)
 
 	if len(got) != len(full) {
@@ -145,7 +147,7 @@ func TestMergeSorted_Cancellation(t *testing.T) {
 	}
 	ch := chFromSlice(ctx, 0, long)
 
-	out := MergeSorted[tsItem](ctx, 32, false, 0, ch)
+	out := MergeSorted(ctx, 32, false, 0, ch)
 
 	// Consume a few, then cancel and ensure the channel closes.
 	for i := 0; i < 10; i++ {
@@ -191,7 +193,7 @@ func TestMergeSorted_Descending_TwoInputs(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted[tsItem](ctx, 8, true, 0, ch1, ch2)
+	out := MergeSorted(ctx, 8, true, 0, ch1, ch2)
 	got := toSlice(out)
 
 	if len(got) != len(a)+len(b) {
@@ -211,7 +213,7 @@ func TestMergeSorted_Descending_WithDuplicates(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted[tsItem](ctx, 2, true, 0, ch1, ch2)
+	out := MergeSorted(ctx, 2, true, 0, ch1, ch2)
 	got := toSlice(out)
 
 	if !isSortedDesc(got) {
@@ -228,7 +230,7 @@ func TestMergeSorted_Descending_HandlesEmptyInputs(t *testing.T) {
 	c2 := chFromSlice(ctx, 0, full)
 	c3 := chFromSlice(ctx, 0, empty)
 
-	out := MergeSorted[tsItem](ctx, 1, true, 0, c1, c2, c3)
+	out := MergeSorted(ctx, 1, true, 0, c1, c2, c3)
 	got := toSlice(out)
 
 	if len(got) != len(full) {
@@ -243,7 +245,7 @@ func TestMergeSorted_Limit_Ascending(t *testing.T) {
 	ctx := context.Background()
 	a := []tsItem{{1}, {3}, {5}, {7}}
 	b := []tsItem{{2}, {4}, {6}, {8}}
-	out := MergeSorted[tsItem](ctx, 8, false /*asc*/, 5 /*limit*/, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
+	out := MergeSorted(ctx, 8, false /*asc*/, 5 /*limit*/, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
 	got := toSlice(out)
 	if len(got) != 5 {
 		t.Fatalf("len mismatch: got=%d want=5", len(got))
@@ -257,12 +259,299 @@ func TestMergeSorted_Limit_Descending(t *testing.T) {
 	ctx := context.Background()
 	a := []tsItem{{8}, {6}, {4}, {2}}
 	b := []tsItem{{7}, {5}, {3}, {1}}
-	out := MergeSorted[tsItem](ctx, 8, true /*desc*/, 3 /*limit*/, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
+	out := MergeSorted(ctx, 8, true /*desc*/, 3 /*limit*/, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
 	got := toSlice(out)
 	if len(got) != 3 {
 		t.Fatalf("len mismatch: got=%d want=3", len(got))
 	}
 	if !isSortedDesc(got) {
 		t.Fatalf("not sorted desc: %#v", got)
+	}
+}
+
+// TestMergeSorted_LimitDrainsPreventsBlocking verifies that when a limit is reached,
+// the drain mechanism prevents producers from blocking on channel sends.
+func TestMergeSorted_LimitDrainsPreventsBlocking(t *testing.T) {
+	ctx := context.Background()
+
+	// Create producers that will send more data than the limit
+	// Use unbuffered channels to ensure blocking sends
+	producerCount := 3
+	itemsPerProducer := 100
+	limit := 10
+
+	// Track when producers finish to verify they don't block
+	var producerWg sync.WaitGroup
+	producerWg.Add(producerCount)
+
+	producers := make([]<-chan tsItem, producerCount)
+	producerBlocked := make([]bool, producerCount)
+
+	for i := 0; i < producerCount; i++ {
+		ch := make(chan tsItem) // Unbuffered channel - will block on send if not consumed
+		producers[i] = ch
+
+		idx := i
+		go func() {
+			defer producerWg.Done()
+			defer close(ch)
+
+			for j := 0; j < itemsPerProducer; j++ {
+				ts := int64(idx*1000 + j)
+				item := tsItem{ts: ts}
+
+				// Use a timeout to detect if we're blocked
+				timer := time.NewTimer(100 * time.Millisecond)
+				select {
+				case ch <- item:
+					timer.Stop()
+				case <-timer.C:
+					// If we timeout, it means the send is blocked
+					producerBlocked[idx] = true
+					return
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// Start MergeSorted with a limit
+	merged := MergeSorted(ctx, 8, false, limit, producers...)
+
+	// Consume all items from merged channel to verify it stops at limit
+	consumed := 0
+	for item := range merged {
+		_ = item
+		consumed++
+	}
+
+	// Verify we got exactly the limit number of items
+	if consumed != limit {
+		t.Errorf("Expected exactly %d items, got %d", limit, consumed)
+	}
+
+	// Wait for producers to finish (they should not block)
+	done := make(chan struct{})
+	go func() {
+		producerWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Good - all producers finished
+	case <-time.After(2 * time.Second):
+		t.Fatal("Producers blocked - drain mechanism failed")
+	}
+
+	// Check if any producer was blocked
+	for i, blocked := range producerBlocked {
+		if blocked {
+			t.Errorf("Producer %d was blocked on send", i)
+		}
+	}
+}
+
+// TestMergeSorted_NoGoroutineLeakWithLimit verifies that reaching the limit
+// doesn't leave goroutines running.
+func TestMergeSorted_NoGoroutineLeakWithLimit(t *testing.T) {
+	// Get initial goroutine count
+	runtime.GC()
+	initialGoroutines := runtime.NumGoroutine()
+
+	ctx := context.Background()
+
+	// Run the merge with limit multiple times
+	for i := 0; i < 5; i++ {
+		// Create large producers
+		producers := make([]<-chan tsItem, 3)
+		for j := 0; j < 3; j++ {
+			ch := make(chan tsItem, 1000)
+			producers[j] = ch
+
+			// Fill channel with many items
+			go func(ch chan tsItem, offset int) {
+				defer close(ch)
+				for k := 0; k < 1000; k++ {
+					ch <- tsItem{ts: int64(offset + k)}
+				}
+			}(ch, j*1000)
+		}
+
+		// Merge with small limit
+		merged := MergeSorted(ctx, 8, false, 5, producers...)
+
+		// Consume results
+		count := 0
+		for range merged {
+			count++
+		}
+
+		if count != 5 {
+			t.Errorf("iteration %d: expected 5 items, got %d", i, count)
+		}
+	}
+
+	// Give goroutines time to exit
+	time.Sleep(100 * time.Millisecond)
+	runtime.GC()
+
+	// Check final goroutine count
+	finalGoroutines := runtime.NumGoroutine()
+
+	// Allow for some variance, but should be close to initial
+	if finalGoroutines > initialGoroutines+2 {
+		t.Errorf("Potential goroutine leak: started with %d, ended with %d",
+			initialGoroutines, finalGoroutines)
+	}
+}
+
+// TestMergeSorted_BlockingProducerScenario simulates the exact scenario from the bug report:
+// producers with blocking sends that would hang without proper draining.
+func TestMergeSorted_BlockingProducerScenario(t *testing.T) {
+	ctx := context.Background()
+
+	// Simulate the queryworker scenario:
+	// - Multiple producers sending data with blocking sends
+	// - Consumer reaches limit and stops
+	// - Without draining, producers would block forever
+
+	type producer struct {
+		name     string
+		items    []tsItem
+		finished chan struct{}
+	}
+
+	producers := []producer{
+		{
+			name:     "cached",
+			items:    make([]tsItem, 100),
+			finished: make(chan struct{}),
+		},
+		{
+			name:     "s3-batch-1",
+			items:    make([]tsItem, 100),
+			finished: make(chan struct{}),
+		},
+		{
+			name:     "s3-batch-2",
+			items:    make([]tsItem, 100),
+			finished: make(chan struct{}),
+		},
+	}
+
+	// Fill items
+	for i := range producers {
+		for j := range producers[i].items {
+			producers[i].items[j] = tsItem{ts: int64(i*100 + j)}
+		}
+	}
+
+	// Create channels
+	chans := make([]<-chan tsItem, len(producers))
+	for i, p := range producers {
+		// Small buffer to simulate real scenario
+		ch := make(chan tsItem, 8)
+		chans[i] = ch
+
+		// Start producer with blocking sends
+		go func(p producer, ch chan tsItem) {
+			defer close(p.finished)
+			defer close(ch)
+
+			for _, item := range p.items {
+				// This is a blocking send - exactly like in the real code:
+				// select {
+				//   case <-ctx.Done():
+				//     return
+				//   case out <- v:  // This would block without draining
+				// }
+				select {
+				case <-ctx.Done():
+					return
+				case ch <- item:
+					// Successfully sent
+				}
+			}
+		}(p, ch)
+	}
+
+	// Merge with a small limit
+	limit := 20
+	merged := MergeSorted(ctx, 8, false, limit, chans...)
+
+	// Consume only the limit
+	consumed := 0
+	for range merged {
+		consumed++
+		if consumed >= limit {
+			break
+		}
+	}
+
+	// Verify all producers finish (don't block)
+	allFinished := make(chan struct{})
+	go func() {
+		for _, p := range producers {
+			<-p.finished
+		}
+		close(allFinished)
+	}()
+
+	select {
+	case <-allFinished:
+		// Success - all producers completed without blocking
+	case <-time.After(1 * time.Second):
+		t.Fatal("Producers blocked - this is the exact bug that was reported")
+	}
+}
+
+// TestMergeSorted_ProducerUnblocksOnContextCancel verifies that producers
+// are unblocked when the parent context is cancelled, even mid-send.
+func TestMergeSorted_ProducerUnblocksOnContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // Ensure cancel is always called
+
+	// Create a producer that will block
+	ch := make(chan tsItem) // Unbuffered channel
+	producerDone := make(chan struct{})
+
+	go func() {
+		defer close(producerDone)
+		defer close(ch)
+
+		// Send items continuously
+		for i := 0; i < 1000; i++ {
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- tsItem{ts: int64(i)}:
+				// Sent successfully
+			}
+		}
+	}()
+
+	// Start MergeSorted
+	merged := MergeSorted(ctx, 8, false, 0, ch)
+
+	// Consume a few items
+	count := 0
+	for item := range merged {
+		_ = item
+		count++
+		if count >= 5 {
+			// Cancel context while producer is likely blocked on send
+			cancel()
+			break
+		}
+	}
+
+	// Verify producer finishes quickly after cancel
+	select {
+	case <-producerDone:
+		// Success - producer was unblocked by draining
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Producer did not unblock after context cancel")
 	}
 }
