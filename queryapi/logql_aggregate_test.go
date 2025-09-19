@@ -2313,3 +2313,66 @@ func TestLog_CountOverTime_LineRegex_TwoWorkers_Eval(t *testing.T) {
 		}
 	}
 }
+
+func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
+	db := openDuckDB(t)
+
+	// Minimal table including defaults and the base column referenced by the first line_format:
+	// - "_cardinalhq.timestamp"      (required)
+	// - "_cardinalhq.message"        (replaced by line_format)
+	// - "resource.service.name"      (used by matcher)
+	// - "log.@OrderResult"           (the source JSON blob to index)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT,
+		"log.@OrderResult"        TEXT
+	);`)
+
+	// Insert one row; the JSON is placed in the base column "log.@OrderResult".
+	const orderJSON = `{"orderId":"O-123","shippingCost":{"currencyCode":"USD","units":"12","nanos":"500000000"}}`
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name","log.@OrderResult") VALUES
+	(10*1000, 'ignored', 'accounting', '`+orderJSON+`');`)
+
+	// The exact LogQL pipeline under test.
+	q := `{resource_service_name="accounting"} | line_format "{{ index . \"log_@OrderResult\" }}" | json | line_format "orderId={{.orderId}} currency={{.shippingCost.currencyCode}} units={{.shippingCost.units}} nanos={{.shippingCost.nanos}}"`
+
+	// Compile LogQL to a log plan and pull the single leaf.
+	ast, err := logql.FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	lplan, err := logql.CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog error: %v", err)
+	}
+	if len(lplan.Leaves) != 1 {
+		t.Fatalf("expected 1 log leaf, got %d", len(lplan.Leaves))
+	}
+	leaf := lplan.Leaves[0]
+
+	// Build worker SQL (no explicit limit/order/extra fields) and bind placeholders.
+	sql := leaf.ToWorkerSQL(0, "DESC", nil)
+	sql = replaceWorkerPlaceholders(sql, 0, 60*1000)
+
+	// Sanity checks that both line_format stages and json extraction appear.
+	if !strings.Contains(sql, `_cardinalhq.message`) || !strings.Contains(sql, "json_extract_string") {
+		t.Fatalf("expected line_format + json stages in SQL, got:\n%s", sql)
+	}
+
+	// Execute and assert the final rendered message.
+	rows := queryAll(t, db, sql)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d; sql=\n%s", len(rows), sql)
+	}
+
+	gotMsg := s(rows[0][`_cardinalhq.message`])
+	wantMsg := "orderId=O-123 currency=USD units=12 nanos=500000000"
+	if gotMsg != wantMsg {
+		t.Fatalf("final _cardinalhq.message mismatch:\n  got:  %q\n  want: %q\nsql:\n%s", gotMsg, wantMsg, sql)
+	}
+}
