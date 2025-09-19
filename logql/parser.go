@@ -393,7 +393,10 @@ func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 				compiled := make([]LabelFormatExpr, 0, len(params))
 				for outName, raw := range params {
 					tmpl := normalizeLabelFormatLiteral(raw)
-					sqlExpr, err := buildLabelFormatExprTemplate(tmpl, func(col string) string { return quoteIdent(col) })
+					sqlExpr, err := buildLabelFormatExprTemplate(
+						tmpl,
+						func(col string) string { return quoteIdent(normalizeLabelName(col)) },
+					)
 					if err != nil {
 						return fmt.Errorf("label_format %s: %w", outName, err)
 					}

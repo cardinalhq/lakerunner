@@ -523,8 +523,12 @@ func emitParsers(
 				break
 			}
 
-			// Compile the template to a SQL string expression (VARCHAR)
-			expr, err := buildLabelFormatExprTemplate(tmpl, func(col string) string { return quoteIdent(col) })
+			expr, err := buildLabelFormatExprTemplate(
+				tmpl,
+				func(col string) string {
+					return quoteIdent(normalizeLabelName(col))
+				},
+			)
 			if err != nil {
 				expr = "''"
 			}

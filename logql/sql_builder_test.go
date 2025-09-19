@@ -1349,3 +1349,55 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField(t *testing.T) {
 		t.Fatalf("wrong row selected: resource.service.name=%q", svc)
 	}
 }
+
+func TestToWorkerSQL_LineFormat_DirectIndexBaseField_UnderscoreCompat(t *testing.T) {
+	db := openDuckDB(t)
+	t.Cleanup(func() { mustDropTable(db, "logs") })
+
+	mustExec(t, db, `CREATE TABLE logs(
+        "resource.service.name" TEXT,
+        "_cardinalhq.message"   TEXT,
+        "log.@OrderResult"      TEXT
+    );`)
+
+	mustExec(t, db, `INSERT INTO logs VALUES
+        ('accounting', 'orig msg 1', 'SUCCESS'),
+        ('billing',    'orig msg 2', 'IGNORED');`)
+
+	// NOTE: underscore in the template key; base column is with a dot.
+	q := `{resource_service_name="accounting"} | line_format "{{ index . \"log_@OrderResult\" }}"`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+
+	// We should hoist the base column with the DOT form into s0.
+	if !strings.Contains(sql, `"log.@OrderResult"`) {
+		t.Fatalf("expected hoisted base column \"log.@OrderResult\" in SQL:\n%s", sql)
+	}
+	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq.message"`) {
+		t.Fatalf("expected rewrite of _cardinalhq.message via line_format:\n%s", sql)
+	}
+
+	rows := queryAll(t, db, sql)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row (service=accounting), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
+	}
+	if got := getString(rows[0][`_cardinalhq.message`]); got != "SUCCESS" {
+		t.Fatalf(`rewritten _cardinalhq.message mismatch: got %q, want "SUCCESS"`, got)
+	}
+	if svc := getString(rows[0][`resource.service.name`]); svc != "accounting" {
+		t.Fatalf("wrong row selected: resource.service.name=%q", svc)
+	}
+}
