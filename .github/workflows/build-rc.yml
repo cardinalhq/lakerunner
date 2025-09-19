@@ -3,7 +3,7 @@ name: Build Release Candidate
 on:
   push:
     branches:
-      - release-candidate
+      - main
     tags:
       - 'v*.*.*-rc*'
 
@@ -65,14 +65,27 @@ jobs:
       - shell: bash
         run: make clean
 
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser-pro
-          version: "~> v2"
-          args: release --clean --split --config .goreleaser.rc.yaml
-        env:
-          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
-          DUCKDB_SDK_VERSION: v1.3.2
+      - name: Build custom build environment
+        run: docker build -f Dockerfile.build -t lakerunner-build .
+
+      - name: Run GoReleaser Pro in custom container
+        run: |
+          DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+          docker run --rm \
+            -v $PWD:/workspace \
+            -v $PWD/.git:/workspace/.git \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -w /workspace \
+            --user 1001:$DOCKER_GID \
+            -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
+            -e GORELEASER_CURRENT_TAG="${{ github.ref_name }}" \
+            -e AWS_ACCESS_KEY_ID="${{ env.AWS_ACCESS_KEY_ID }}" \
+            -e AWS_SECRET_ACCESS_KEY="${{ env.AWS_SECRET_ACCESS_KEY }}" \
+            -e AWS_SESSION_TOKEN="${{ env.AWS_SESSION_TOKEN }}" \
+            -e AWS_REGION="${{ env.AWS_REGION }}" \
+            -e DUCKDB_SDK_VERSION="v1.3.2" \
+            lakerunner-build \
+            release --clean --split --config .goreleaser.rc.yaml
 
       - shell: bash
         run: ls -lR dist
@@ -121,14 +134,27 @@ jobs:
           key: linux_arm64-${{ env.sha_short }}
           fail-on-cache-miss: true
 
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser-pro
-          version: "~> v2"
-          args: continue --merge
-        env:
-          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
-          DUCKDB_SDK_VERSION: v1.3.2
+      - name: Build custom build environment
+        run: docker build -f Dockerfile.build -t lakerunner-build .
+
+      - name: Run GoReleaser Pro merge in custom container
+        run: |
+          DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+          docker run --rm \
+            -v $PWD:/workspace \
+            -v $PWD/.git:/workspace/.git \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -w /workspace \
+            --user 1001:$DOCKER_GID \
+            -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
+            -e GORELEASER_CURRENT_TAG="${{ github.ref_name }}" \
+            -e AWS_ACCESS_KEY_ID="${{ env.AWS_ACCESS_KEY_ID }}" \
+            -e AWS_SECRET_ACCESS_KEY="${{ env.AWS_SECRET_ACCESS_KEY }}" \
+            -e AWS_SESSION_TOKEN="${{ env.AWS_SESSION_TOKEN }}" \
+            -e AWS_REGION="${{ env.AWS_REGION }}" \
+            -e DUCKDB_SDK_VERSION="v1.3.2" \
+            lakerunner-build \
+            continue --merge
 
       - name: Output built images
         run: |
