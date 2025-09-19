@@ -22,7 +22,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/configdb"
 )
 
@@ -107,7 +106,7 @@ func runLocalStorageProfilesList() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to configdb: %w", err)
 	}
@@ -142,7 +141,7 @@ func runLocalStorageProfilesCreate(bucket string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to configdb: %w", err)
 	}
@@ -182,7 +181,7 @@ func runLocalStorageProfilesDelete(bucket string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to configdb: %w", err)
 	}

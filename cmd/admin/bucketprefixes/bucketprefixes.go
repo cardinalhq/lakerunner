@@ -23,7 +23,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/configdb"
 )
 
@@ -100,7 +99,7 @@ func runLocalBucketPrefixesList() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to configdb: %w", err)
 	}
@@ -131,7 +130,7 @@ func runLocalBucketPrefixesCreate(bucket, orgID, prefix, signal string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to configdb: %w", err)
 	}
@@ -172,7 +171,7 @@ func runLocalBucketPrefixesDelete(id string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to configdb: %w", err)
 	}

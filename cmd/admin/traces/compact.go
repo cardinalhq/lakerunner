@@ -22,7 +22,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -98,7 +97,7 @@ func runTraceCompact(orgID uuid.UUID, instance int16, startTime time.Time, endTi
 	var store lrdb.StoreFull
 	if !dryRun {
 		var err error
-		store, err = dbopen.LRDBStoreForAdmin(ctx)
+		store, err = lrdb.LRDBStoreForAdmin(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to connect to lrdb: %w", err)
 		}

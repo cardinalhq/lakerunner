@@ -16,9 +16,10 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 	"log/slog"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
 	"github.com/cardinalhq/lakerunner/queryapi"
@@ -66,14 +67,14 @@ func init() {
 			// Mark as healthy immediately - health is not dependent on database readiness
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			mdb, err := dbopen.LRDBStore(ctx)
+			mdb, err := lrdb.LRDBStore(ctx)
 			if err != nil {
 				slog.Error("Failed to connect to lr database", slog.Any("error", err))
 				return fmt.Errorf("failed to connect to lr database: %w", err)
 			}
 
 			// Connect to configdb for API key validation
-			cdb, err := dbopen.ConfigDBStore(ctx)
+			cdb, err := configdb.ConfigDBStore(ctx)
 			if err != nil {
 				slog.Error("Failed to connect to config database", slog.Any("error", err))
 				return fmt.Errorf("failed to connect to config database: %w", err)

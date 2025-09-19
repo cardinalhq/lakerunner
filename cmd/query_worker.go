@@ -17,9 +17,9 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"log/slog"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryworker"
@@ -58,7 +58,7 @@ func init() {
 				}
 			}()
 
-			cdb, err := dbopen.ConfigDBStore(context.Background())
+			cdb, err := configdb.ConfigDBStore(context.Background())
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
 			if err != nil {

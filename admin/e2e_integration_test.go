@@ -21,12 +21,10 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -325,7 +323,7 @@ func cleanupTestOrg(t *testing.T, service *Service, orgID string) {
 	ctx := context.Background()
 
 	// Connect to database
-	pool, err := connectToTestConfigDB(ctx)
+	pool, err := configdb.ConnectToConfigDB(ctx)
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -341,19 +339,4 @@ func cleanupTestOrg(t *testing.T, service *Service, orgID string) {
 		// Best effort cleanup
 		fmt.Printf("Warning: failed to clean up organization %s: %v\n", orgID, err)
 	}
-}
-
-func connectToTestConfigDB(ctx context.Context) (*pgxpool.Pool, error) {
-	// Use environment variables to configure the test database connection
-	host := os.Getenv("CONFIGDB_HOST")
-	if host == "" {
-		host = "localhost"
-	}
-	dbName := os.Getenv("CONFIGDB_DBNAME")
-	if dbName == "" {
-		dbName = "testing_configdb"
-	}
-
-	connStr := "postgres://" + host + "/" + dbName + "?sslmode=disable"
-	return pgxpool.New(ctx, connStr)
 }

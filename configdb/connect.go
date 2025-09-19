@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package dbopen
+package configdb
 
 import (
 	"context"
@@ -21,18 +21,18 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cardinalhq/lakerunner/configdb"
 	configdbmigrations "github.com/cardinalhq/lakerunner/configdb/migrations"
+	"github.com/cardinalhq/lakerunner/internal/dbopen"
 	"github.com/cardinalhq/lakerunner/migrations"
 )
 
-func ConnectToConfigDB(ctx context.Context, opts ...Options) (*pgxpool.Pool, error) {
-	connectionString, err := getDatabaseURLFromEnv("CONFIGDB")
+func ConnectToConfigDB(ctx context.Context, opts ...dbopen.Options) (*pgxpool.Pool, error) {
+	connectionString, err := dbopen.GetDatabaseURLFromEnv("CONFIGDB")
 	if err != nil {
-		return nil, errors.Join(ErrDatabaseNotConfigured, fmt.Errorf("failed to get CONFIGDB connection string: %w", err))
+		return nil, errors.Join(dbopen.ErrDatabaseNotConfigured, fmt.Errorf("failed to get CONFIGDB connection string: %w", err))
 	}
 
-	pool, err := configdb.NewConnectionPool(ctx, connectionString)
+	pool, err := NewConnectionPool(ctx, connectionString)
 	if err != nil {
 		return nil, err
 	}
@@ -51,11 +51,22 @@ func ConnectToConfigDB(ctx context.Context, opts ...Options) (*pgxpool.Pool, err
 	return pool, nil
 }
 
-func ConfigDBStore(ctx context.Context) (configdb.QuerierFull, error) {
+func ConfigDBStore(ctx context.Context) (QuerierFull, error) {
 	pool, err := ConnectToConfigDB(ctx)
 	if err != nil {
 		return nil, err
 	}
-	configStore := configdb.NewStore(pool)
+	configStore := NewStore(pool)
+	return configStore, nil
+}
+
+// ConfigDBStoreForAdmin connects to ConfigDB with admin-friendly migration checking
+// that warns and continues instead of failing on migration mismatches
+func ConfigDBStoreForAdmin(ctx context.Context) (QuerierFull, error) {
+	pool, err := ConnectToConfigDB(ctx, dbopen.WarnOnMigrationMismatch())
+	if err != nil {
+		return nil, err
+	}
+	configStore := NewStore(pool)
 	return configStore, nil
 }

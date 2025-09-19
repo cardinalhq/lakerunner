@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"io"
 	"log/slog"
 	"net/http"
@@ -27,7 +28,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -41,7 +41,7 @@ type HTTPService struct {
 }
 
 func NewHTTPService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Factory) (*HTTPService, error) {
-	cdb, err := dbopen.ConfigDBStore(ctx)
+	cdb, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)

@@ -21,7 +21,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/cmd/initialize"
 	"github.com/cardinalhq/lakerunner/configdb"
 )
@@ -63,7 +62,7 @@ func runInitialize(configFile string, apiKeysFile string, replace bool) error {
 	ctx := context.Background()
 
 	// Connect to configdb
-	configDBPool, err := dbopen.ConnectToConfigDB(ctx)
+	configDBPool, err := configdb.ConnectToConfigDB(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to configdb: %w", err)
 	}

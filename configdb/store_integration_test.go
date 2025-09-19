@@ -19,11 +19,9 @@ package configdb
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +30,7 @@ func TestOrganizationAPIKeyOperations(t *testing.T) {
 	ctx := context.Background()
 
 	// Connect to test database
-	pool, err := connectToTestDB(ctx)
+	pool, err := ConnectToConfigDB(ctx)
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -88,7 +86,7 @@ func TestOrganizationBucketOperations(t *testing.T) {
 	ctx := context.Background()
 
 	// Connect to test database
-	pool, err := connectToTestDB(ctx)
+	pool, err := ConnectToConfigDB(ctx)
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -142,7 +140,7 @@ func TestBucketPrefixMappingOperations(t *testing.T) {
 	ctx := context.Background()
 
 	// Connect to test database
-	pool, err := connectToTestDB(ctx)
+	pool, err := ConnectToConfigDB(ctx)
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -196,7 +194,7 @@ func TestTransactionRollback(t *testing.T) {
 	ctx := context.Background()
 
 	// Connect to test database
-	pool, err := connectToTestDB(ctx)
+	pool, err := ConnectToConfigDB(ctx)
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -217,21 +215,6 @@ func TestTransactionRollback(t *testing.T) {
 }
 
 // Helper functions
-func connectToTestDB(ctx context.Context) (*pgxpool.Pool, error) {
-	// Use environment variables to configure the test database connection
-	host := os.Getenv("CONFIGDB_HOST")
-	if host == "" {
-		host = "localhost"
-	}
-	dbName := os.Getenv("CONFIGDB_DBNAME")
-	if dbName == "" {
-		dbName = "testing_configdb"
-	}
-
-	connStr := "postgres://" + host + "/" + dbName + "?sslmode=disable"
-	return pgxpool.New(ctx, connStr)
-}
-
 func stringPtr(s string) *string {
 	return &s
 }

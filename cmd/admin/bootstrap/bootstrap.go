@@ -20,7 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/bootstrap"
 )
 
@@ -39,7 +39,7 @@ func GetBootstrapCmd() *cobra.Command {
 			defer cancel()
 
 			// Connect to configdb
-			configDBPool, err := dbopen.ConnectToConfigDB(ctx)
+			configDBPool, err := configdb.ConnectToConfigDB(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to connect to configdb: %w", err)
 			}

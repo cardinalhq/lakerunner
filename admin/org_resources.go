@@ -28,7 +28,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/configdb"
 )
 
@@ -58,7 +57,7 @@ func (s *Service) ListOrganizationAPIKeys(ctx context.Context, req *adminproto.L
 		return nil, status.Errorf(codes.InvalidArgument, "invalid organization_id: %v", err)
 	}
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -103,7 +102,7 @@ func (s *Service) CreateOrganizationAPIKey(ctx context.Context, req *adminproto.
 		return nil, status.Errorf(codes.InvalidArgument, "invalid organization_id: %v", err)
 	}
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -157,7 +156,7 @@ func (s *Service) DeleteOrganizationAPIKey(ctx context.Context, req *adminproto.
 		return nil, status.Errorf(codes.InvalidArgument, "invalid id: %v", err)
 	}
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -187,7 +186,7 @@ func (s *Service) ListOrganizationBuckets(ctx context.Context, req *adminproto.L
 		return nil, status.Errorf(codes.InvalidArgument, "invalid organization_id: %v", err)
 	}
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -226,7 +225,7 @@ func (s *Service) AddOrganizationBucket(ctx context.Context, req *adminproto.Add
 		return nil, status.Errorf(codes.InvalidArgument, "invalid organization_id: %v", err)
 	}
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -263,7 +262,7 @@ func (s *Service) DeleteOrganizationBucket(ctx context.Context, req *adminproto.
 		return nil, status.Errorf(codes.InvalidArgument, "invalid organization_id: %v", err)
 	}
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -285,7 +284,7 @@ func (s *Service) DeleteOrganizationBucket(ctx context.Context, req *adminproto.
 
 // ListBucketConfigurations lists all bucket configurations
 func (s *Service) ListBucketConfigurations(ctx context.Context, req *adminproto.ListBucketConfigurationsRequest) (*adminproto.ListBucketConfigurationsResponse, error) {
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -328,7 +327,7 @@ func (s *Service) CreateBucketConfiguration(ctx context.Context, req *adminproto
 		return nil, status.Error(codes.InvalidArgument, "bucket_name is required")
 	}
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -379,7 +378,7 @@ func (s *Service) DeleteBucketConfiguration(ctx context.Context, req *adminproto
 		return nil, status.Error(codes.InvalidArgument, "bucket_name is required")
 	}
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -399,7 +398,7 @@ func (s *Service) DeleteBucketConfiguration(ctx context.Context, req *adminproto
 
 // ListBucketPrefixMappings lists bucket prefix mappings
 func (s *Service) ListBucketPrefixMappings(ctx context.Context, req *adminproto.ListBucketPrefixMappingsRequest) (*adminproto.ListBucketPrefixMappingsResponse, error) {
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -454,7 +453,7 @@ func (s *Service) CreateBucketPrefixMapping(ctx context.Context, req *adminproto
 		return nil, status.Errorf(codes.InvalidArgument, "invalid organization_id: %v", err)
 	}
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
@@ -489,7 +488,7 @@ func (s *Service) DeleteBucketPrefixMapping(ctx context.Context, req *adminproto
 		return nil, status.Errorf(codes.InvalidArgument, "invalid id: %v", err)
 	}
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to config database", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to connect to database")
