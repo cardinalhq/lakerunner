@@ -83,7 +83,6 @@ jobs:
             -e AWS_SECRET_ACCESS_KEY="${{ env.AWS_SECRET_ACCESS_KEY }}" \
             -e AWS_SESSION_TOKEN="${{ env.AWS_SESSION_TOKEN }}" \
             -e AWS_REGION="${{ env.AWS_REGION }}" \
-            -e DUCKDB_SDK_VERSION="v1.3.2" \
             lakerunner-build \
             release --clean --split --config .goreleaser.rc.yaml
 
@@ -152,7 +151,6 @@ jobs:
             -e AWS_SECRET_ACCESS_KEY="${{ env.AWS_SECRET_ACCESS_KEY }}" \
             -e AWS_SESSION_TOKEN="${{ env.AWS_SESSION_TOKEN }}" \
             -e AWS_REGION="${{ env.AWS_REGION }}" \
-            -e DUCKDB_SDK_VERSION="v1.3.2" \
             lakerunner-build \
             continue --merge
 
