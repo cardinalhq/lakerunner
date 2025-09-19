@@ -29,7 +29,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/configdb"
 )
 
@@ -149,6 +148,12 @@ func GetOrganizationsCmd() *cobra.Command {
 	}
 	orgCmd.AddCommand(renameCmd)
 
+	// Add new subcommands for organization resources
+	orgCmd.AddCommand(getAPIKeysCmd())
+	orgCmd.AddCommand(getBucketsCmd())
+	orgCmd.AddCommand(getPrefixMappingsCmd())
+	orgCmd.AddCommand(getBucketConfigsCmd())
+
 	return orgCmd
 }
 
@@ -163,7 +168,7 @@ func runLocalOrganizationsList() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to configdb: %w", err)
 	}
@@ -225,7 +230,7 @@ func runLocalOrganizationsCreate(name string, enabled bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to configdb: %w", err)
 	}
@@ -271,7 +276,7 @@ func runLocalOrganizationsUpdate(id string, name *string, enabled *bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to configdb: %w", err)
 	}

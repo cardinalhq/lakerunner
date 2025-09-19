@@ -29,10 +29,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 var (
@@ -82,7 +82,7 @@ type sweeper struct {
 }
 
 func New(instanceID int64, syncLegacyTables bool) *sweeper {
-	cdb, err := dbopen.ConfigDBStore(context.Background())
+	cdb, err := configdb.ConfigDBStore(context.Background())
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
 		os.Exit(1)
@@ -109,21 +109,21 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	ctx, cancel := context.WithCancel(doneCtx)
 	defer cancel()
 
-	mdb, err := dbopen.LRDBStore(ctx)
+	mdb, err := lrdb.LRDBStore(ctx)
 	if err != nil {
 		return err
 	}
 
 	// Always initialize cdb as it's needed for cleanup loops
 	var cdb configdb.QuerierFull
-	cdb, err = dbopen.ConfigDBStore(ctx)
+	cdb, err = configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return err
 	}
 
 	var cdbPool *pgxpool.Pool
 	if cmd.syncLegacyTables {
-		cdbPool, err = dbopen.ConnectToConfigDB(ctx)
+		cdbPool, err = configdb.ConnectToConfigDB(ctx)
 		if err != nil {
 			return err
 		}

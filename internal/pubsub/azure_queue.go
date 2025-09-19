@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"log/slog"
 	"os"
 	"time"
@@ -29,7 +30,6 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/azureclient"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -53,7 +53,7 @@ func NewAzureQueueService(ctx context.Context, cfg *config.Config, kafkaFactory 
 		return nil, fmt.Errorf("failed to create Azure manager: %w", err)
 	}
 
-	cdb, err := dbopen.ConfigDBStore(ctx)
+	cdb, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)

@@ -22,14 +22,14 @@ import (
 	"strings"
 )
 
-// getDatabaseURLFromEnv constructs a PostgreSQL URL from environment
+// GetDatabaseURLFromEnv constructs a PostgreSQL URL from environment
 // variables named PREFIX_HOST, PREFIX_PORT, PREFIX_USER, PREFIX_PASSWORD,
 // PREFIX_DBNAME, and optionally PREFIX_SSLMODE. If PREFIX does not end in
 // "_", it will be added automatically.
 //
 // It requires at minimum HOST and DBNAME, and will default PORT to 5432.
 // Returns an error listing any missing required variables.
-func getDatabaseURLFromEnv(prefix string) (string, error) {
+func GetDatabaseURLFromEnv(prefix string) (string, error) {
 	if !strings.HasSuffix(prefix, "_") {
 		prefix += "_"
 	}

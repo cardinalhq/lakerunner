@@ -25,7 +25,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -72,9 +71,9 @@ func runMetricEstimatesSummary(local bool) error {
 	var store lrdb.StoreFull
 	var err error
 	if local {
-		store, err = dbopen.LRDBStore(ctx)
+		store, err = lrdb.LRDBStore(ctx)
 	} else {
-		store, err = dbopen.LRDBStoreForAdmin(ctx)
+		store, err = lrdb.LRDBStoreForAdmin(ctx)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to connect to lrdb: %w", err)

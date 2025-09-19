@@ -25,10 +25,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/cmd/initialize"
 	"github.com/cardinalhq/lakerunner/configdb"
 	configdbmigrations "github.com/cardinalhq/lakerunner/configdb/migrations"
+	"github.com/cardinalhq/lakerunner/internal/dbopen"
+	"github.com/cardinalhq/lakerunner/lrdb"
 	mdbmigrations "github.com/cardinalhq/lakerunner/lrdb/migrations"
 )
 
@@ -102,7 +103,7 @@ func migrate(_ *cobra.Command, _ []string) error {
 func migratelrdb() error {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(5*time.Minute))
 	defer cancel()
-	pool, err := dbopen.ConnectTolrdb(ctx, dbopen.SkipMigrationCheck())
+	pool, err := lrdb.ConnectTolrdb(ctx, dbopen.SkipMigrationCheck())
 	if err != nil {
 		return err
 	}
@@ -113,7 +114,7 @@ func migrateconfigdb() error {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(5*time.Minute))
 	defer cancel()
 
-	pool, err := dbopen.ConnectToConfigDB(ctx, dbopen.SkipMigrationCheck())
+	pool, err := configdb.ConnectToConfigDB(ctx, dbopen.SkipMigrationCheck())
 	if err != nil {
 		if errors.Is(err, dbopen.ErrDatabaseNotConfigured) {
 			slog.Info("ConfigDB not configured, skipping migration")
@@ -127,7 +128,7 @@ func migrateconfigdb() error {
 func initializeIfNeededFunc() error {
 	ctx := context.Background()
 
-	configDBPool, err := dbopen.ConnectToConfigDB(ctx, dbopen.SkipMigrationCheck())
+	configDBPool, err := configdb.ConnectToConfigDB(ctx, dbopen.SkipMigrationCheck())
 	if err != nil {
 		if errors.Is(err, dbopen.ErrDatabaseNotConfigured) {
 			slog.Info("ConfigDB not configured, skipping initialization")

@@ -28,7 +28,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/adminconfig"
@@ -139,7 +138,7 @@ func (s *Service) InQueueStatus(ctx context.Context, req *adminproto.InQueueStat
 func (s *Service) ListOrganizations(ctx context.Context, _ *adminproto.ListOrganizationsRequest) (*adminproto.ListOrganizationsResponse, error) {
 	slog.Debug("Received list organizations request")
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
 	}
@@ -160,7 +159,7 @@ func (s *Service) ListOrganizations(ctx context.Context, _ *adminproto.ListOrgan
 func (s *Service) CreateOrganization(ctx context.Context, req *adminproto.CreateOrganizationRequest) (*adminproto.CreateOrganizationResponse, error) {
 	slog.Debug("Received create organization request", slog.String("name", req.Name))
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
 	}
@@ -176,7 +175,7 @@ func (s *Service) CreateOrganization(ctx context.Context, req *adminproto.Create
 func (s *Service) UpdateOrganization(ctx context.Context, req *adminproto.UpdateOrganizationRequest) (*adminproto.UpdateOrganizationResponse, error) {
 	slog.Debug("Received update organization request", slog.String("id", req.Id))
 
-	store, err := dbopen.ConfigDBStore(ctx)
+	store, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
 	}

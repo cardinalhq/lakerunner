@@ -88,6 +88,16 @@ func (q *Queries) DeleteOrganizationAPIKey(ctx context.Context, id uuid.UUID) er
 	return err
 }
 
+const deleteOrganizationAPIKeyMapping = `-- name: DeleteOrganizationAPIKeyMapping :exec
+DELETE FROM organization_api_key_mappings
+WHERE api_key_id = $1
+`
+
+func (q *Queries) DeleteOrganizationAPIKeyMapping(ctx context.Context, apiKeyID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteOrganizationAPIKeyMapping, apiKeyID)
+	return err
+}
+
 const getAllCOrganizationAPIKeysForSync = `-- name: GetAllCOrganizationAPIKeysForSync :many
 SELECT organization_id, api_key, name, enabled
 FROM c_organization_api_keys
@@ -226,6 +236,45 @@ func (q *Queries) GetOrganizationAPIKeyByID(ctx context.Context, apiKeyID uuid.U
 		&i.OrganizationID,
 	)
 	return i, err
+}
+
+const listOrganizationAPIKeysByOrg = `-- name: ListOrganizationAPIKeysByOrg :many
+SELECT ak.id, ak.name, ak.key_hash, ak.description
+FROM organization_api_keys ak
+JOIN organization_api_key_mappings ako ON ak.id = ako.api_key_id
+WHERE ako.organization_id = $1
+`
+
+type ListOrganizationAPIKeysByOrgRow struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	KeyHash     string    `json:"key_hash"`
+	Description *string   `json:"description"`
+}
+
+func (q *Queries) ListOrganizationAPIKeysByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationAPIKeysByOrgRow, error) {
+	rows, err := q.db.Query(ctx, listOrganizationAPIKeysByOrg, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrganizationAPIKeysByOrgRow
+	for rows.Next() {
+		var i ListOrganizationAPIKeysByOrgRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.KeyHash,
+			&i.Description,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertOrganizationAPIKey = `-- name: UpsertOrganizationAPIKey :one

@@ -15,6 +15,8 @@
 package configdb
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,4 +56,43 @@ func NewStore(connPool *pgxpool.Pool) *Store {
 	s.connPool = connPool
 	s.Queries = New(connPool)
 	return s
+}
+
+// GetPool returns the underlying connection pool
+func (s *Store) GetPool() *pgxpool.Pool {
+	return s.connPool
+}
+
+// execTx executes a function within a database transaction (internal use only)
+func (store *Store) execTx(ctx context.Context, fn func(*Store) error) (err error) {
+	closed := false
+	tx, err := store.connPool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if !closed {
+			if rbErr := tx.Rollback(ctx); rbErr != nil {
+				err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
+			}
+		}
+	}()
+
+	txStore := &Store{
+		connPool:                           store.connPool,
+		Queries:                            New(tx),
+		storageProfileCache:                store.storageProfileCache,
+		storageProfileByCollectorNameCache: store.storageProfileByCollectorNameCache,
+		storageProfilesByBucketNameCache:   store.storageProfilesByBucketNameCache,
+	}
+
+	if err = fn(txStore); err != nil {
+		return
+	}
+
+	err = tx.Commit(ctx)
+	if err == nil {
+		closed = true
+	}
+	return
 }

@@ -16,32 +16,33 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/cardinalhq/lakerunner/lrdb"
 	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/admin"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+)
+
+var (
+	adminGRPCPort string
 )
 
 func init() {
-	cmd := &cobra.Command{
-		Use:   "boxer-compact-metrics",
-		Short: "Metrics compaction boxer",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			helpers.SetupTempDir()
+	adminAPICmd := &cobra.Command{
+		Use:   "admin-api",
+		Short: "Admin API services",
+	}
 
-			servicename := "lakerunner-boxer-metrics-compact"
-			addlAttrs := attribute.NewSet(
-				attribute.String("signal", "metrics"),
-				attribute.String("action", "boxer"),
-			)
+	serveCmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start the admin gRPC server",
+		Long:  `Starts a gRPC server that provides administrative operations for Lakerunner.`,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			servicename := "admin-api"
+			addlAttrs := attribute.NewSet()
 			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
@@ -53,6 +54,7 @@ func init() {
 				}
 			}()
 
+			// Start disk usage monitoring
 			go diskUsageLoop(ctx)
 
 			// Start pprof server
@@ -68,33 +70,26 @@ func init() {
 				}
 			}()
 
-			// Get main config
-			cfg, err := config.Load()
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
-			// Create database connection
-			mdb, err := lrdb.LRDBStore(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to open LRDB store: %w", err)
-			}
-
-			// Create Kafka factory
-			kafkaFactory := fly.NewFactory(&cfg.Kafka)
-
-			// Create Kafka-based compaction boxer consumer
-			consumer, err := metricsprocessing.NewMetricCompactionBoxerConsumer(ctx, kafkaFactory, mdb, cfg)
-			if err != nil {
-				return fmt.Errorf("failed to create compaction boxer consumer: %w", err)
-			}
-			defer func() { _ = consumer.Close() }()
-
+			// Mark as healthy immediately
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			return consumer.Run(ctx)
+			// Create and start the admin service
+			service, err := admin.NewService(adminGRPCPort)
+			if err != nil {
+				slog.Error("Failed to create admin service", slog.Any("error", err))
+				return fmt.Errorf("failed to create admin service: %w", err)
+			}
+
+			// Mark as ready now that the service is initialized
+			healthServer.SetReady(true)
+			healthServer.SetStatus(healthcheck.StatusHealthy)
+
+			// Run the admin service
+			return service.Run(ctx)
 		},
 	}
 
-	rootCmd.AddCommand(cmd)
+	serveCmd.Flags().StringVar(&adminGRPCPort, "grpc-port", ":9091", "gRPC server port")
+	adminAPICmd.AddCommand(serveCmd)
+	rootCmd.AddCommand(adminAPICmd)
 }

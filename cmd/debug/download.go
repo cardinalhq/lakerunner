@@ -26,7 +26,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -92,13 +91,13 @@ func runDownload(ctx context.Context, orgStr, signal string, hours int, endpoint
 		frequencyMs = int32(frequency.Milliseconds())
 	}
 
-	lrStore, err := dbopen.LRDBStore(ctx)
+	lrStore, err := lrdb.LRDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to open lrdb: %w", err)
 	}
 	defer lrStore.Close()
 
-	configPool, err := dbopen.ConnectToConfigDB(ctx)
+	configPool, err := configdb.ConnectToConfigDB(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to open configdb: %w", err)
 	}

@@ -33,12 +33,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AdminService_Ping_FullMethodName               = "/adminproto.AdminService/Ping"
-	AdminService_InQueueStatus_FullMethodName      = "/adminproto.AdminService/InQueueStatus"
-	AdminService_ListOrganizations_FullMethodName  = "/adminproto.AdminService/ListOrganizations"
-	AdminService_CreateOrganization_FullMethodName = "/adminproto.AdminService/CreateOrganization"
-	AdminService_UpdateOrganization_FullMethodName = "/adminproto.AdminService/UpdateOrganization"
-	AdminService_GetConsumerLag_FullMethodName     = "/adminproto.AdminService/GetConsumerLag"
+	AdminService_Ping_FullMethodName                      = "/adminproto.AdminService/Ping"
+	AdminService_InQueueStatus_FullMethodName             = "/adminproto.AdminService/InQueueStatus"
+	AdminService_ListOrganizations_FullMethodName         = "/adminproto.AdminService/ListOrganizations"
+	AdminService_CreateOrganization_FullMethodName        = "/adminproto.AdminService/CreateOrganization"
+	AdminService_UpdateOrganization_FullMethodName        = "/adminproto.AdminService/UpdateOrganization"
+	AdminService_GetConsumerLag_FullMethodName            = "/adminproto.AdminService/GetConsumerLag"
+	AdminService_ListOrganizationAPIKeys_FullMethodName   = "/adminproto.AdminService/ListOrganizationAPIKeys"
+	AdminService_CreateOrganizationAPIKey_FullMethodName  = "/adminproto.AdminService/CreateOrganizationAPIKey"
+	AdminService_DeleteOrganizationAPIKey_FullMethodName  = "/adminproto.AdminService/DeleteOrganizationAPIKey"
+	AdminService_ListOrganizationBuckets_FullMethodName   = "/adminproto.AdminService/ListOrganizationBuckets"
+	AdminService_AddOrganizationBucket_FullMethodName     = "/adminproto.AdminService/AddOrganizationBucket"
+	AdminService_DeleteOrganizationBucket_FullMethodName  = "/adminproto.AdminService/DeleteOrganizationBucket"
+	AdminService_ListBucketConfigurations_FullMethodName  = "/adminproto.AdminService/ListBucketConfigurations"
+	AdminService_CreateBucketConfiguration_FullMethodName = "/adminproto.AdminService/CreateBucketConfiguration"
+	AdminService_DeleteBucketConfiguration_FullMethodName = "/adminproto.AdminService/DeleteBucketConfiguration"
+	AdminService_ListBucketPrefixMappings_FullMethodName  = "/adminproto.AdminService/ListBucketPrefixMappings"
+	AdminService_CreateBucketPrefixMapping_FullMethodName = "/adminproto.AdminService/CreateBucketPrefixMapping"
+	AdminService_DeleteBucketPrefixMapping_FullMethodName = "/adminproto.AdminService/DeleteBucketPrefixMapping"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -57,6 +69,22 @@ type AdminServiceClient interface {
 	UpdateOrganization(ctx context.Context, in *UpdateOrganizationRequest, opts ...grpc.CallOption) (*UpdateOrganizationResponse, error)
 	// Get Kafka consumer group lag information
 	GetConsumerLag(ctx context.Context, in *GetConsumerLagRequest, opts ...grpc.CallOption) (*GetConsumerLagResponse, error)
+	// Organization API Keys Management
+	ListOrganizationAPIKeys(ctx context.Context, in *ListOrganizationAPIKeysRequest, opts ...grpc.CallOption) (*ListOrganizationAPIKeysResponse, error)
+	CreateOrganizationAPIKey(ctx context.Context, in *CreateOrganizationAPIKeyRequest, opts ...grpc.CallOption) (*CreateOrganizationAPIKeyResponse, error)
+	DeleteOrganizationAPIKey(ctx context.Context, in *DeleteOrganizationAPIKeyRequest, opts ...grpc.CallOption) (*DeleteOrganizationAPIKeyResponse, error)
+	// Organization Buckets Management
+	ListOrganizationBuckets(ctx context.Context, in *ListOrganizationBucketsRequest, opts ...grpc.CallOption) (*ListOrganizationBucketsResponse, error)
+	AddOrganizationBucket(ctx context.Context, in *AddOrganizationBucketRequest, opts ...grpc.CallOption) (*AddOrganizationBucketResponse, error)
+	DeleteOrganizationBucket(ctx context.Context, in *DeleteOrganizationBucketRequest, opts ...grpc.CallOption) (*DeleteOrganizationBucketResponse, error)
+	// Bucket Configuration Management
+	ListBucketConfigurations(ctx context.Context, in *ListBucketConfigurationsRequest, opts ...grpc.CallOption) (*ListBucketConfigurationsResponse, error)
+	CreateBucketConfiguration(ctx context.Context, in *CreateBucketConfigurationRequest, opts ...grpc.CallOption) (*CreateBucketConfigurationResponse, error)
+	DeleteBucketConfiguration(ctx context.Context, in *DeleteBucketConfigurationRequest, opts ...grpc.CallOption) (*DeleteBucketConfigurationResponse, error)
+	// Bucket Prefix Mappings Management
+	ListBucketPrefixMappings(ctx context.Context, in *ListBucketPrefixMappingsRequest, opts ...grpc.CallOption) (*ListBucketPrefixMappingsResponse, error)
+	CreateBucketPrefixMapping(ctx context.Context, in *CreateBucketPrefixMappingRequest, opts ...grpc.CallOption) (*CreateBucketPrefixMappingResponse, error)
+	DeleteBucketPrefixMapping(ctx context.Context, in *DeleteBucketPrefixMappingRequest, opts ...grpc.CallOption) (*DeleteBucketPrefixMappingResponse, error)
 }
 
 type adminServiceClient struct {
@@ -127,6 +155,126 @@ func (c *adminServiceClient) GetConsumerLag(ctx context.Context, in *GetConsumer
 	return out, nil
 }
 
+func (c *adminServiceClient) ListOrganizationAPIKeys(ctx context.Context, in *ListOrganizationAPIKeysRequest, opts ...grpc.CallOption) (*ListOrganizationAPIKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListOrganizationAPIKeysResponse)
+	err := c.cc.Invoke(ctx, AdminService_ListOrganizationAPIKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) CreateOrganizationAPIKey(ctx context.Context, in *CreateOrganizationAPIKeyRequest, opts ...grpc.CallOption) (*CreateOrganizationAPIKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateOrganizationAPIKeyResponse)
+	err := c.cc.Invoke(ctx, AdminService_CreateOrganizationAPIKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) DeleteOrganizationAPIKey(ctx context.Context, in *DeleteOrganizationAPIKeyRequest, opts ...grpc.CallOption) (*DeleteOrganizationAPIKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteOrganizationAPIKeyResponse)
+	err := c.cc.Invoke(ctx, AdminService_DeleteOrganizationAPIKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) ListOrganizationBuckets(ctx context.Context, in *ListOrganizationBucketsRequest, opts ...grpc.CallOption) (*ListOrganizationBucketsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListOrganizationBucketsResponse)
+	err := c.cc.Invoke(ctx, AdminService_ListOrganizationBuckets_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) AddOrganizationBucket(ctx context.Context, in *AddOrganizationBucketRequest, opts ...grpc.CallOption) (*AddOrganizationBucketResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddOrganizationBucketResponse)
+	err := c.cc.Invoke(ctx, AdminService_AddOrganizationBucket_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) DeleteOrganizationBucket(ctx context.Context, in *DeleteOrganizationBucketRequest, opts ...grpc.CallOption) (*DeleteOrganizationBucketResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteOrganizationBucketResponse)
+	err := c.cc.Invoke(ctx, AdminService_DeleteOrganizationBucket_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) ListBucketConfigurations(ctx context.Context, in *ListBucketConfigurationsRequest, opts ...grpc.CallOption) (*ListBucketConfigurationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBucketConfigurationsResponse)
+	err := c.cc.Invoke(ctx, AdminService_ListBucketConfigurations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) CreateBucketConfiguration(ctx context.Context, in *CreateBucketConfigurationRequest, opts ...grpc.CallOption) (*CreateBucketConfigurationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateBucketConfigurationResponse)
+	err := c.cc.Invoke(ctx, AdminService_CreateBucketConfiguration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) DeleteBucketConfiguration(ctx context.Context, in *DeleteBucketConfigurationRequest, opts ...grpc.CallOption) (*DeleteBucketConfigurationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteBucketConfigurationResponse)
+	err := c.cc.Invoke(ctx, AdminService_DeleteBucketConfiguration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) ListBucketPrefixMappings(ctx context.Context, in *ListBucketPrefixMappingsRequest, opts ...grpc.CallOption) (*ListBucketPrefixMappingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBucketPrefixMappingsResponse)
+	err := c.cc.Invoke(ctx, AdminService_ListBucketPrefixMappings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) CreateBucketPrefixMapping(ctx context.Context, in *CreateBucketPrefixMappingRequest, opts ...grpc.CallOption) (*CreateBucketPrefixMappingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateBucketPrefixMappingResponse)
+	err := c.cc.Invoke(ctx, AdminService_CreateBucketPrefixMapping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) DeleteBucketPrefixMapping(ctx context.Context, in *DeleteBucketPrefixMappingRequest, opts ...grpc.CallOption) (*DeleteBucketPrefixMappingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteBucketPrefixMappingResponse)
+	err := c.cc.Invoke(ctx, AdminService_DeleteBucketPrefixMapping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -143,6 +291,22 @@ type AdminServiceServer interface {
 	UpdateOrganization(context.Context, *UpdateOrganizationRequest) (*UpdateOrganizationResponse, error)
 	// Get Kafka consumer group lag information
 	GetConsumerLag(context.Context, *GetConsumerLagRequest) (*GetConsumerLagResponse, error)
+	// Organization API Keys Management
+	ListOrganizationAPIKeys(context.Context, *ListOrganizationAPIKeysRequest) (*ListOrganizationAPIKeysResponse, error)
+	CreateOrganizationAPIKey(context.Context, *CreateOrganizationAPIKeyRequest) (*CreateOrganizationAPIKeyResponse, error)
+	DeleteOrganizationAPIKey(context.Context, *DeleteOrganizationAPIKeyRequest) (*DeleteOrganizationAPIKeyResponse, error)
+	// Organization Buckets Management
+	ListOrganizationBuckets(context.Context, *ListOrganizationBucketsRequest) (*ListOrganizationBucketsResponse, error)
+	AddOrganizationBucket(context.Context, *AddOrganizationBucketRequest) (*AddOrganizationBucketResponse, error)
+	DeleteOrganizationBucket(context.Context, *DeleteOrganizationBucketRequest) (*DeleteOrganizationBucketResponse, error)
+	// Bucket Configuration Management
+	ListBucketConfigurations(context.Context, *ListBucketConfigurationsRequest) (*ListBucketConfigurationsResponse, error)
+	CreateBucketConfiguration(context.Context, *CreateBucketConfigurationRequest) (*CreateBucketConfigurationResponse, error)
+	DeleteBucketConfiguration(context.Context, *DeleteBucketConfigurationRequest) (*DeleteBucketConfigurationResponse, error)
+	// Bucket Prefix Mappings Management
+	ListBucketPrefixMappings(context.Context, *ListBucketPrefixMappingsRequest) (*ListBucketPrefixMappingsResponse, error)
+	CreateBucketPrefixMapping(context.Context, *CreateBucketPrefixMappingRequest) (*CreateBucketPrefixMappingResponse, error)
+	DeleteBucketPrefixMapping(context.Context, *DeleteBucketPrefixMappingRequest) (*DeleteBucketPrefixMappingResponse, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -170,6 +334,42 @@ func (UnimplementedAdminServiceServer) UpdateOrganization(context.Context, *Upda
 }
 func (UnimplementedAdminServiceServer) GetConsumerLag(context.Context, *GetConsumerLagRequest) (*GetConsumerLagResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetConsumerLag not implemented")
+}
+func (UnimplementedAdminServiceServer) ListOrganizationAPIKeys(context.Context, *ListOrganizationAPIKeysRequest) (*ListOrganizationAPIKeysResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListOrganizationAPIKeys not implemented")
+}
+func (UnimplementedAdminServiceServer) CreateOrganizationAPIKey(context.Context, *CreateOrganizationAPIKeyRequest) (*CreateOrganizationAPIKeyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateOrganizationAPIKey not implemented")
+}
+func (UnimplementedAdminServiceServer) DeleteOrganizationAPIKey(context.Context, *DeleteOrganizationAPIKeyRequest) (*DeleteOrganizationAPIKeyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteOrganizationAPIKey not implemented")
+}
+func (UnimplementedAdminServiceServer) ListOrganizationBuckets(context.Context, *ListOrganizationBucketsRequest) (*ListOrganizationBucketsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListOrganizationBuckets not implemented")
+}
+func (UnimplementedAdminServiceServer) AddOrganizationBucket(context.Context, *AddOrganizationBucketRequest) (*AddOrganizationBucketResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AddOrganizationBucket not implemented")
+}
+func (UnimplementedAdminServiceServer) DeleteOrganizationBucket(context.Context, *DeleteOrganizationBucketRequest) (*DeleteOrganizationBucketResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteOrganizationBucket not implemented")
+}
+func (UnimplementedAdminServiceServer) ListBucketConfigurations(context.Context, *ListBucketConfigurationsRequest) (*ListBucketConfigurationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListBucketConfigurations not implemented")
+}
+func (UnimplementedAdminServiceServer) CreateBucketConfiguration(context.Context, *CreateBucketConfigurationRequest) (*CreateBucketConfigurationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateBucketConfiguration not implemented")
+}
+func (UnimplementedAdminServiceServer) DeleteBucketConfiguration(context.Context, *DeleteBucketConfigurationRequest) (*DeleteBucketConfigurationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteBucketConfiguration not implemented")
+}
+func (UnimplementedAdminServiceServer) ListBucketPrefixMappings(context.Context, *ListBucketPrefixMappingsRequest) (*ListBucketPrefixMappingsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListBucketPrefixMappings not implemented")
+}
+func (UnimplementedAdminServiceServer) CreateBucketPrefixMapping(context.Context, *CreateBucketPrefixMappingRequest) (*CreateBucketPrefixMappingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateBucketPrefixMapping not implemented")
+}
+func (UnimplementedAdminServiceServer) DeleteBucketPrefixMapping(context.Context, *DeleteBucketPrefixMappingRequest) (*DeleteBucketPrefixMappingResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteBucketPrefixMapping not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -300,6 +500,222 @@ func _AdminService_GetConsumerLag_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_ListOrganizationAPIKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListOrganizationAPIKeysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).ListOrganizationAPIKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_ListOrganizationAPIKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).ListOrganizationAPIKeys(ctx, req.(*ListOrganizationAPIKeysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_CreateOrganizationAPIKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateOrganizationAPIKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).CreateOrganizationAPIKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_CreateOrganizationAPIKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).CreateOrganizationAPIKey(ctx, req.(*CreateOrganizationAPIKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_DeleteOrganizationAPIKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteOrganizationAPIKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).DeleteOrganizationAPIKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_DeleteOrganizationAPIKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).DeleteOrganizationAPIKey(ctx, req.(*DeleteOrganizationAPIKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_ListOrganizationBuckets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListOrganizationBucketsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).ListOrganizationBuckets(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_ListOrganizationBuckets_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).ListOrganizationBuckets(ctx, req.(*ListOrganizationBucketsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_AddOrganizationBucket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddOrganizationBucketRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).AddOrganizationBucket(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_AddOrganizationBucket_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).AddOrganizationBucket(ctx, req.(*AddOrganizationBucketRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_DeleteOrganizationBucket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteOrganizationBucketRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).DeleteOrganizationBucket(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_DeleteOrganizationBucket_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).DeleteOrganizationBucket(ctx, req.(*DeleteOrganizationBucketRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_ListBucketConfigurations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListBucketConfigurationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).ListBucketConfigurations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_ListBucketConfigurations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).ListBucketConfigurations(ctx, req.(*ListBucketConfigurationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_CreateBucketConfiguration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateBucketConfigurationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).CreateBucketConfiguration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_CreateBucketConfiguration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).CreateBucketConfiguration(ctx, req.(*CreateBucketConfigurationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_DeleteBucketConfiguration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteBucketConfigurationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).DeleteBucketConfiguration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_DeleteBucketConfiguration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).DeleteBucketConfiguration(ctx, req.(*DeleteBucketConfigurationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_ListBucketPrefixMappings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListBucketPrefixMappingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).ListBucketPrefixMappings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_ListBucketPrefixMappings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).ListBucketPrefixMappings(ctx, req.(*ListBucketPrefixMappingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_CreateBucketPrefixMapping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateBucketPrefixMappingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).CreateBucketPrefixMapping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_CreateBucketPrefixMapping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).CreateBucketPrefixMapping(ctx, req.(*CreateBucketPrefixMappingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_DeleteBucketPrefixMapping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteBucketPrefixMappingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).DeleteBucketPrefixMapping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_DeleteBucketPrefixMapping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).DeleteBucketPrefixMapping(ctx, req.(*DeleteBucketPrefixMappingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -330,6 +746,54 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetConsumerLag",
 			Handler:    _AdminService_GetConsumerLag_Handler,
+		},
+		{
+			MethodName: "ListOrganizationAPIKeys",
+			Handler:    _AdminService_ListOrganizationAPIKeys_Handler,
+		},
+		{
+			MethodName: "CreateOrganizationAPIKey",
+			Handler:    _AdminService_CreateOrganizationAPIKey_Handler,
+		},
+		{
+			MethodName: "DeleteOrganizationAPIKey",
+			Handler:    _AdminService_DeleteOrganizationAPIKey_Handler,
+		},
+		{
+			MethodName: "ListOrganizationBuckets",
+			Handler:    _AdminService_ListOrganizationBuckets_Handler,
+		},
+		{
+			MethodName: "AddOrganizationBucket",
+			Handler:    _AdminService_AddOrganizationBucket_Handler,
+		},
+		{
+			MethodName: "DeleteOrganizationBucket",
+			Handler:    _AdminService_DeleteOrganizationBucket_Handler,
+		},
+		{
+			MethodName: "ListBucketConfigurations",
+			Handler:    _AdminService_ListBucketConfigurations_Handler,
+		},
+		{
+			MethodName: "CreateBucketConfiguration",
+			Handler:    _AdminService_CreateBucketConfiguration_Handler,
+		},
+		{
+			MethodName: "DeleteBucketConfiguration",
+			Handler:    _AdminService_DeleteBucketConfiguration_Handler,
+		},
+		{
+			MethodName: "ListBucketPrefixMappings",
+			Handler:    _AdminService_ListBucketPrefixMappings_Handler,
+		},
+		{
+			MethodName: "CreateBucketPrefixMapping",
+			Handler:    _AdminService_CreateBucketPrefixMapping_Handler,
+		},
+		{
+			MethodName: "DeleteBucketPrefixMapping",
+			Handler:    _AdminService_DeleteBucketPrefixMapping_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -17,6 +17,7 @@ package pubsub
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"log/slog"
 	"os"
 
@@ -28,7 +29,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/api/option"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
@@ -67,7 +67,7 @@ func NewGCPPubSubService(ctx context.Context, cfg *config.Config, kafkaFactory *
 
 	sub := client.Subscriber(subscriptionID)
 
-	cdb, err := dbopen.ConfigDBStore(ctx)
+	cdb, err := configdb.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)

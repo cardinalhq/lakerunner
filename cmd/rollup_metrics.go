@@ -16,12 +16,13 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
@@ -70,12 +71,12 @@ func init() {
 				}
 			}()
 
-			mdb, err := dbopen.LRDBStore(ctx)
+			mdb, err := lrdb.LRDBStore(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to open LRDB store: %w", err)
 			}
 
-			cdb, err := dbopen.ConfigDBStore(ctx)
+			cdb, err := configdb.ConfigDBStore(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to open ConfigDB store: %w", err)
 			}
