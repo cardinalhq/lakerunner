@@ -24,7 +24,6 @@ func TestLoadEnvOverride(t *testing.T) {
 	t.Setenv("LAKERUNNER_FLY_BROKERS", "broker1:9092,broker2:9092")
 	t.Setenv("LAKERUNNER_FLY_SASL_ENABLED", "true")
 	t.Setenv("LAKERUNNER_FLY_SASL_USERNAME", "alice")
-	t.Setenv("LAKERUNNER_METRICS_INGESTION_PROCESS_EXEMPLARS", "false")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -32,7 +31,6 @@ func TestLoadEnvOverride(t *testing.T) {
 	require.Equal(t, []string{"broker1:9092", "broker2:9092"}, cfg.Kafka.Brokers)
 	require.True(t, cfg.Kafka.SASLEnabled)
 	require.Equal(t, "alice", cfg.Kafka.SASLUsername)
-	require.False(t, cfg.Metrics.Ingestion.ProcessExemplars)
 }
 
 func TestKafkaEnvarsOverFlyEnvars(t *testing.T) {

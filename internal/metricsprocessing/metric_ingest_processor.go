@@ -70,13 +70,10 @@ type MetricIngestProcessor struct {
 func newMetricIngestProcessor(
 	cfg *config.Config,
 	store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
-	var exemplarProcessor *exemplars.Processor
-	if cfg.Metrics.Ingestion.ProcessExemplars {
-		exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
-		exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
-			return processMetricsExemplarsDirect(ctx, organizationID, exemplars, store)
-		})
-	}
+	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
+	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
+		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, store)
+	})
 
 	return &MetricIngestProcessor{
 		store:             store,

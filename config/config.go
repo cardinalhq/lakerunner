@@ -151,7 +151,6 @@ type CompactionConfig struct {
 
 // IngestionConfig holds ingestion feature toggles.
 type IngestionConfig struct {
-	ProcessExemplars   bool `mapstructure:"process_exemplars"`
 	SingleInstanceMode bool `mapstructure:"single_instance_mode"`
 }
 
@@ -197,7 +196,6 @@ func Load() (*Config, error) {
 		Kafka: DefaultKafkaConfig(),
 		Metrics: MetricsConfig{
 			Ingestion: IngestionConfig{
-				ProcessExemplars:   true,
 				SingleInstanceMode: false,
 			},
 		},
@@ -219,13 +217,11 @@ func Load() (*Config, error) {
 		},
 		Logs: LogsConfig{
 			Ingestion: IngestionConfig{
-				ProcessExemplars:   true,
 				SingleInstanceMode: false,
 			},
 		},
 		Traces: TracesConfig{
 			Ingestion: IngestionConfig{
-				ProcessExemplars:   true,
 				SingleInstanceMode: false,
 			},
 		},
