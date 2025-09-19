@@ -91,7 +91,7 @@ func getPingCmd() *cobra.Command {
 
 func attachAPIKey(ctx context.Context) context.Context {
 	if adminAPIKey != "" {
-		md := metadata.New(map[string]string{"authorization": adminAPIKey})
+		md := metadata.New(map[string]string{"authorization": "Bearer " + adminAPIKey})
 		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
 	return ctx
