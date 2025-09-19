@@ -63,7 +63,7 @@ func getBucketsCmd() *cobra.Command {
 	addCmd.Flags().StringVar(&bucketName, "bucket-name", "", "Bucket name (required)")
 	addCmd.Flags().Int32Var(&instanceNum, "instance-num", 0, "Instance number")
 	addCmd.Flags().StringVar(&collectorName, "collector-name", "", "Collector name")
-	addCmd.MarkFlagRequired("bucket-name")
+	_ = addCmd.MarkFlagRequired("bucket-name")
 	bucketsCmd.AddCommand(addCmd)
 
 	// Delete bucket
@@ -79,7 +79,7 @@ func getBucketsCmd() *cobra.Command {
 	deleteCmd.Flags().StringVar(&bucketName, "bucket-name", "", "Bucket name (required)")
 	deleteCmd.Flags().Int32Var(&instanceNum, "instance-num", 0, "Instance number")
 	deleteCmd.Flags().StringVar(&collectorName, "collector-name", "", "Collector name")
-	deleteCmd.MarkFlagRequired("bucket-name")
+	_ = deleteCmd.MarkFlagRequired("bucket-name")
 	bucketsCmd.AddCommand(deleteCmd)
 
 	return bucketsCmd
@@ -115,11 +115,11 @@ func runListBuckets(orgID string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "BUCKET_NAME\tINSTANCE_NUM\tCOLLECTOR_NAME")
+	_, _ = fmt.Fprintln(w, "BUCKET_NAME\tINSTANCE_NUM\tCOLLECTOR_NAME")
 	for _, bucket := range resp.Buckets {
-		fmt.Fprintf(w, "%s\t%d\t%s\n", bucket.BucketName, bucket.InstanceNum, bucket.CollectorName)
+		_, _ = fmt.Fprintf(w, "%s\t%d\t%s\n", bucket.BucketName, bucket.InstanceNum, bucket.CollectorName)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }

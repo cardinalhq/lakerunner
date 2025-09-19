@@ -112,13 +112,13 @@ func runListBucketConfigs() error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "BUCKET_NAME\tPROVIDER\tREGION\tENDPOINT\tROLE\tPATH_STYLE\tINSECURE_TLS")
+	_, _ = fmt.Fprintln(w, "BUCKET_NAME\tPROVIDER\tREGION\tENDPOINT\tROLE\tPATH_STYLE\tINSECURE_TLS")
 	for _, cfg := range resp.Configurations {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%t\t%t\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%t\t%t\n",
 			cfg.BucketName, cfg.CloudProvider, cfg.Region,
 			cfg.Endpoint, cfg.Role, cfg.UsePathStyle, cfg.InsecureTls)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }

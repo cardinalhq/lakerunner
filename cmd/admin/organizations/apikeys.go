@@ -29,7 +29,6 @@ import (
 var (
 	apiKeyName        string
 	apiKeyDescription string
-	apiKeyID          string
 )
 
 func getAPIKeysCmd() *cobra.Command {
@@ -62,7 +61,7 @@ func getAPIKeysCmd() *cobra.Command {
 	}
 	createCmd.Flags().StringVar(&apiKeyName, "name", "", "API key name (required)")
 	createCmd.Flags().StringVar(&apiKeyDescription, "description", "", "API key description")
-	createCmd.MarkFlagRequired("name")
+	_ = createCmd.MarkFlagRequired("name")
 	apiKeysCmd.AddCommand(createCmd)
 
 	// Delete API key
@@ -110,11 +109,11 @@ func runListAPIKeys(orgID string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tDESCRIPTION\tKEY_PREVIEW")
+	_, _ = fmt.Fprintln(w, "ID\tNAME\tDESCRIPTION\tKEY_PREVIEW")
 	for _, key := range resp.ApiKeys {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s...\n", key.Id, key.Name, key.Description, key.KeyPreview)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s...\n", key.Id, key.Name, key.Description, key.KeyPreview)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }

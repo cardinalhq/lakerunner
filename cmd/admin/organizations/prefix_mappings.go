@@ -64,10 +64,10 @@ func getPrefixMappingsCmd() *cobra.Command {
 	createCmd.Flags().StringVar(&filterOrg, "organization-id", "", "Organization ID (required)")
 	createCmd.Flags().StringVar(&pathPrefix, "path-prefix", "", "Path prefix (required)")
 	createCmd.Flags().StringVar(&signal, "signal", "", "Signal type (logs/metrics/traces) (required)")
-	createCmd.MarkFlagRequired("bucket-name")
-	createCmd.MarkFlagRequired("organization-id")
-	createCmd.MarkFlagRequired("path-prefix")
-	createCmd.MarkFlagRequired("signal")
+	_ = createCmd.MarkFlagRequired("bucket-name")
+	_ = createCmd.MarkFlagRequired("organization-id")
+	_ = createCmd.MarkFlagRequired("path-prefix")
+	_ = createCmd.MarkFlagRequired("signal")
 	prefixCmd.AddCommand(createCmd)
 
 	// Delete prefix mapping
@@ -116,13 +116,13 @@ func runListPrefixMappings() error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tBUCKET_NAME\tORGANIZATION_ID\tPATH_PREFIX\tSIGNAL")
+	_, _ = fmt.Fprintln(w, "ID\tBUCKET_NAME\tORGANIZATION_ID\tPATH_PREFIX\tSIGNAL")
 	for _, mapping := range resp.Mappings {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			mapping.Id, mapping.BucketName, mapping.OrganizationId,
 			mapping.PathPrefix, mapping.Signal)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }
