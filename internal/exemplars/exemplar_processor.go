@@ -167,6 +167,7 @@ func (p *Processor) createLogsCallback(ctx context.Context, organizationID strin
 
 			resourceAttributes := entry.value.ResourceLogs().At(0).Resource().Attributes()
 			attributes := p.toAttributes(resourceAttributes)
+			attributes["fingerprint"] = strconv.FormatInt(getLogFingerprint(entry.value.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)), 10)
 
 			exemplarData = append(exemplarData, &ExemplarData{
 				Attributes:  attributes,

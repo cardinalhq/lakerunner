@@ -171,10 +171,22 @@ test-only:
 	go test -race ./...
 
 .PHONY: test-integration
-test-integration:
+test-integration: bin/lakerunner
 	@echo "Running integration tests (requires test databases)..."
-	LRDB_HOST=localhost LRDB_DBNAME=testing_lrdb \
-	CONFIGDB_HOST=localhost CONFIGDB_DBNAME=testing_configdb \
+	@echo "Running database migrations..."
+	LRDB_HOST=$${LRDB_HOST:-localhost} \
+	LRDB_USER=$${LRDB_USER:-$${USER}} \
+	LRDB_PASSWORD=$${LRDB_PASSWORD} \
+	LRDB_DBNAME=$${LRDB_DBNAME:-testing_lrdb} \
+		./bin/lakerunner migrate --databases=lrdb
+	CONFIGDB_HOST=$${CONFIGDB_HOST:-localhost} \
+	CONFIGDB_USER=$${CONFIGDB_USER:-$${USER}} \
+	CONFIGDB_PASSWORD=$${CONFIGDB_PASSWORD} \
+	CONFIGDB_DBNAME=$${CONFIGDB_DBNAME:-testing_configdb} \
+		./bin/lakerunner migrate --databases=configdb
+	@echo "Running tests..."
+	LRDB_HOST=$${LRDB_HOST:-localhost} LRDB_DBNAME=$${LRDB_DBNAME:-testing_lrdb} \
+	CONFIGDB_HOST=$${CONFIGDB_HOST:-localhost} CONFIGDB_DBNAME=$${CONFIGDB_DBNAME:-testing_configdb} \
 	go test -race -tags=integration ./...
 
 # Run Kafka integration tests (with containerized Kafka via Gnomock)
