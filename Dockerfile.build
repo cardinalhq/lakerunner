@@ -1,0 +1,81 @@
+# Copyright (C) 2025 CardinalHQ, Inc
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, version 3.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+# Build environment based on Debian 12 for consistent glibc
+FROM debian:12-slim
+
+# Install system dependencies for building Go applications with CGO
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    pkg-config \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI
+RUN curl -fsSL https://get.docker.com | sh
+
+# Install AWS CLI
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install && \
+    rm -rf awscliv2.zip aws
+
+# Install Go 1.25.1
+RUN ARCH=$(dpkg --print-architecture) && \
+    rm -rf /usr/local/go && \
+    curl -fsSL https://go.dev/dl/go1.25.1.linux-${ARCH}.tar.gz | tar -C /usr/local -xzf -
+ENV PATH="/usr/local/go/bin:${PATH}"
+ENV GOPATH="/go"
+ENV GOPROXY="https://proxy.golang.org,direct"
+ENV GOSUMDB="sum.golang.org"
+
+# Install GoReleaser Pro
+RUN echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | tee /etc/apt/sources.list.d/goreleaser.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends goreleaser-pro && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy the GoReleaser entrypoint script
+COPY docker/goreleaser-entrypoint.sh /usr/local/bin/goreleaser-entrypoint.sh
+RUN chmod +x /usr/local/bin/goreleaser-entrypoint.sh
+
+# Create workspace
+WORKDIR /workspace
+
+# Verify Go and GoReleaser installations
+RUN go version && goreleaser --version
+
+# Create /go directory structure with proper permissions
+RUN mkdir -p /go/pkg /go/bin /go/src && chmod -R 777 /go
+
+# Set up build environment
+ENV CGO_ENABLED=1
+ENV GOOS=linux
+
+# Create a user with UID 1001 to match GitHub Actions runner
+# Docker group membership will be handled at runtime via --user UID:GID
+RUN useradd -u 1001 -m -s /bin/bash builder
+
+# Configure git globally for both root and builder users
+RUN git config --system --add safe.directory '*' && \
+    echo "[safe]" > /home/builder/.gitconfig && \
+    echo "    directory = *" >> /home/builder/.gitconfig && \
+    chown builder:builder /home/builder/.gitconfig
+
+# Set default entrypoint to handle git configuration
+ENTRYPOINT ["/usr/local/bin/goreleaser-entrypoint.sh"]
+CMD ["/bin/bash"]
