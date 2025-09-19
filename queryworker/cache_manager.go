@@ -183,13 +183,13 @@ func EvaluatePushDown[T promql.Timestamped](
 
 	// Create a cancellable context for producers that MergeSorted can cancel when limit is reached
 	producerCtx, producerCancel := context.WithCancel(ctx)
-	defer producerCancel() // Ensure cleanup if we return early with error
 
 	// Build channels per (org, instance)
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
 			profile, err := w.getProfile(ctx, orgId, instanceNum)
 			if err != nil {
+				producerCancel()
 				return nil, err
 			}
 
@@ -250,6 +250,7 @@ func EvaluatePushDown[T promql.Timestamped](
 				userSQL,
 				mapper)
 			if err != nil {
+				producerCancel()
 				return nil, fmt.Errorf("stream from S3: %w", err)
 			}
 			outs = append(outs, s3Channels...)
