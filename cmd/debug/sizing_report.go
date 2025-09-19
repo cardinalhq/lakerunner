@@ -323,44 +323,43 @@ func printSizingReport(reports []FileReport, summary SummaryReport, detailed boo
 	fmt.Printf("  Total records: %s\n", formatNumber(summary.TotalRecords))
 	fmt.Printf("\n")
 
-	// Total Sizes Table
-	fmt.Printf("TOTAL SIZES\n")
-	fmt.Printf("%-20s %15s\n", strings.Repeat("-", 20), strings.Repeat("-", 15))
-	fmt.Printf("%-20s %15s\n", "Format", "Size")
-	fmt.Printf("%-20s %15s\n", strings.Repeat("-", 20), strings.Repeat("-", 15))
-	fmt.Printf("%-20s %15s\n", "Parquet", formatBytes(summary.TotalParquetSize))
-	fmt.Printf("%-20s %15s\n", "JSON", formatBytes(summary.TotalJSONSize))
-	fmt.Printf("%-20s %15s\n", "JSON.gz", formatBytes(summary.TotalGZSize))
-	fmt.Printf("%-20s %15s\n", strings.Repeat("-", 20), strings.Repeat("-", 15))
+	// Combined metrics table with formats as columns
+	fmt.Printf("SIZE COMPARISON\n")
+	fmt.Printf("%-25s %15s %15s %15s\n", strings.Repeat("-", 25), strings.Repeat("-", 15), strings.Repeat("-", 15), strings.Repeat("-", 15))
+	fmt.Printf("%-25s %15s %15s %15s\n", "Metric", "Parquet", "JSON", "JSON.gz")
+	fmt.Printf("%-25s %15s %15s %15s\n", strings.Repeat("-", 25), strings.Repeat("-", 15), strings.Repeat("-", 15), strings.Repeat("-", 15))
+
+	// Total sizes row
+	fmt.Printf("%-25s %15s %15s %15s\n", "Total Size",
+		formatBytes(summary.TotalParquetSize),
+		formatBytes(summary.TotalJSONSize),
+		formatBytes(summary.TotalGZSize))
+
+	// Bytes per record row
+	fmt.Printf("%-25s %15.1f %15.1f %15.1f\n", "Avg Bytes/Record",
+		summary.AvgBytesPerRecPQ,
+		summary.AvgBytesPerRecJSON,
+		summary.AvgBytesPerRecGZ)
+
+	fmt.Printf("%-25s %15s %15s %15s\n", strings.Repeat("-", 25), strings.Repeat("-", 15), strings.Repeat("-", 15), strings.Repeat("-", 15))
 	fmt.Printf("\n")
 
-	// Bytes per Record Table
-	fmt.Printf("AVERAGE BYTES PER RECORD\n")
-	fmt.Printf("%-20s %15s\n", strings.Repeat("-", 20), strings.Repeat("-", 15))
-	fmt.Printf("%-20s %15s\n", "Format", "Bytes/Record")
-	fmt.Printf("%-20s %15s\n", strings.Repeat("-", 20), strings.Repeat("-", 15))
-	fmt.Printf("%-20s %15.1f\n", "Parquet", summary.AvgBytesPerRecPQ)
-	fmt.Printf("%-20s %15.1f\n", "JSON", summary.AvgBytesPerRecJSON)
-	fmt.Printf("%-20s %15.1f\n", "JSON.gz", summary.AvgBytesPerRecGZ)
-	fmt.Printf("%-20s %15s\n", strings.Repeat("-", 20), strings.Repeat("-", 15))
-	fmt.Printf("\n")
-
-	// Space Reduction Table
-	fmt.Printf("SPACE REDUCTION (Parquet vs other formats)\n")
-	fmt.Printf("%-20s %15s\n", strings.Repeat("-", 20), strings.Repeat("-", 15))
-	fmt.Printf("%-20s %15s\n", "Comparison", "Reduction")
-	fmt.Printf("%-20s %15s\n", strings.Repeat("-", 20), strings.Repeat("-", 15))
+	// Parquet space savings table
+	fmt.Printf("PARQUET SPACE SAVINGS\n")
+	fmt.Printf("%-25s %15s\n", strings.Repeat("-", 25), strings.Repeat("-", 15))
+	fmt.Printf("%-25s %15s\n", "Comparison", "Reduction")
+	fmt.Printf("%-25s %15s\n", strings.Repeat("-", 25), strings.Repeat("-", 15))
 	if summary.OverallPQvsJSON >= 0 {
-		fmt.Printf("%-20s %14.1f%%\n", "vs JSON", summary.OverallPQvsJSON)
+		fmt.Printf("%-25s %14.1f%%\n", "Parquet vs JSON", summary.OverallPQvsJSON)
 	} else {
-		fmt.Printf("%-20s %14.1f%%\n", "vs JSON", -summary.OverallPQvsJSON)
+		fmt.Printf("%-25s %14.1f%% larger\n", "Parquet vs JSON", -summary.OverallPQvsJSON)
 	}
 	if summary.OverallPQvsGZ >= 0 {
-		fmt.Printf("%-20s %14.1f%%\n", "vs JSON.gz", summary.OverallPQvsGZ)
+		fmt.Printf("%-25s %14.1f%%\n", "Parquet vs JSON.gz", summary.OverallPQvsGZ)
 	} else {
-		fmt.Printf("%-20s %14.1f%%\n", "vs JSON.gz", -summary.OverallPQvsGZ)
+		fmt.Printf("%-25s %14.1f%% larger\n", "Parquet vs JSON.gz", -summary.OverallPQvsGZ)
 	}
-	fmt.Printf("%-20s %15s\n", strings.Repeat("-", 20), strings.Repeat("-", 15))
+	fmt.Printf("%-25s %15s\n", strings.Repeat("-", 25), strings.Repeat("-", 15))
 
 	if detailed && len(reports) > 0 {
 		fmt.Printf("\n%s\n", strings.Repeat("=", 100))
