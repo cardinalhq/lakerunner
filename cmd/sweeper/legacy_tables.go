@@ -233,19 +233,26 @@ func syncBucketData(ctx context.Context, qtx SyncQuerier) error {
 	}
 
 	// Process bucket configurations from c_ tables
+	// Use the configuration with a role if available, otherwise use the first one
 	seenBuckets := make(map[string]configdb.GetAllCBucketDataRow)
 	for _, data := range cBucketData {
 		if existing, exists := seenBuckets[data.BucketName]; !exists {
 			seenBuckets[data.BucketName] = data
 		} else {
-			// Ensure consistent bucket configuration
-			if existing.CloudProvider != data.CloudProvider ||
-				existing.Region != data.Region ||
-				existing.Role != data.Role {
+			// If we find a configuration with a role and current doesn't have one, use it
+			if existing.Role == nil && data.Role != nil {
+				seenBuckets[data.BucketName] = data
+				ll.Debug("Updated bucket configuration to use entry with role",
+					slog.String("bucket", data.BucketName),
+					slog.Any("role", data.Role))
+			} else if existing.CloudProvider != data.CloudProvider || existing.Region != data.Region {
+				// Only warn if provider or region are actually different
 				ll.Warn("Inconsistent bucket configuration",
 					slog.String("bucket", data.BucketName),
-					slog.String("provider1", existing.CloudProvider),
-					slog.String("provider2", data.CloudProvider))
+					slog.String("existing_provider", existing.CloudProvider),
+					slog.String("new_provider", data.CloudProvider),
+					slog.String("existing_region", existing.Region),
+					slog.String("new_region", data.Region))
 			}
 		}
 	}
