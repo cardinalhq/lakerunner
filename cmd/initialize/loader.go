@@ -49,11 +49,7 @@ func (r OSFileReader) Getenv(key string) string {
 
 // DatabaseQueries interface for testable database operations
 type DatabaseQueries interface {
-	SyncOrganizations(ctx context.Context) error
 	HasExistingStorageProfiles(ctx context.Context) (bool, error)
-	ClearBucketPrefixMappings(ctx context.Context) error
-	ClearOrganizationBuckets(ctx context.Context) error
-	ClearBucketConfigurations(ctx context.Context) error
 	UpsertBucketConfiguration(ctx context.Context, arg configdb.UpsertBucketConfigurationParams) (configdb.BucketConfiguration, error)
 	UpsertOrganizationBucket(ctx context.Context, arg configdb.UpsertOrganizationBucketParams) error
 	UpsertOrganization(ctx context.Context, arg configdb.UpsertOrganizationParams) (configdb.Organization, error)
@@ -146,18 +142,12 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 
 	ll.Info("Loaded storage profile configuration", slog.Int("profiles", len(profiles)))
 
-	// In replace mode, clear existing data first (mirror sync like sweeper)
+	// Even in replace mode, we use non-destructive sync to preserve:
+	// 1. Manual bucket_prefix_mappings entries (custom path routing)
+	// 2. Foreign key relationships (bucket_prefix_mappings -> bucket_configurations)
+	// The upsert operations will add new entries and update existing ones
 	if replace {
-		if err := qtx.ClearBucketPrefixMappings(ctx); err != nil {
-			return fmt.Errorf("failed to clear bucket prefix mappings: %w", err)
-		}
-		if err := qtx.ClearOrganizationBuckets(ctx); err != nil {
-			return fmt.Errorf("failed to clear organization buckets: %w", err)
-		}
-		if err := qtx.ClearBucketConfigurations(ctx); err != nil {
-			return fmt.Errorf("failed to clear bucket configurations: %w", err)
-		}
-		ll.Info("Cleared existing storage profile configuration for replace")
+		ll.Info("Using non-destructive sync (preserving bucket prefix mappings)")
 	}
 
 	// Group profiles by bucket to create bucket configurations

@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
@@ -339,11 +340,25 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 		return nil, fmt.Errorf("failed to create log reader: %w", err)
 	}
 
-	translator := &LogTranslator{
-		orgID:    orgID,
-		bucket:   bucket,
-		objectID: objectID,
+	// Check if the file is a Parquet file to determine which translator to use
+	var translator filereader.RowTranslator
+	if strings.HasSuffix(tmpFilename, ".parquet") {
+		// Use specialized Parquet translator that handles timestamp detection and fingerprinting
+		translator = &ParquetLogTranslator{
+			OrgID:             orgID,
+			Bucket:            bucket,
+			ObjectID:          objectID,
+			ExemplarProcessor: p.exemplarProcessor,
+		}
+	} else {
+		// Use standard translator for other formats (json, binpb, etc.)
+		translator = &LogTranslator{
+			orgID:    orgID,
+			bucket:   bucket,
+			objectID: objectID,
+		}
 	}
+
 	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
 	if err != nil {
 		_ = reader.Close()

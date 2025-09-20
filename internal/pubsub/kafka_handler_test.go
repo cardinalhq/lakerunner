@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
@@ -217,5 +218,150 @@ func TestConvertItemsToKafkaMessages_NonOtelRawPath(t *testing.T) {
 	assert.Equal(t, int64(2048), notification.FileSize)
 
 	// Verify mocks were called as expected
+	mockSP.AssertExpectations(t)
+}
+
+func TestGetFileExtensionCategory(t *testing.T) {
+	tests := []struct {
+		name     string
+		objectID string
+		want     string
+	}{
+		{"json file", "logs/file.json", "json"},
+		{"JSON uppercase", "logs/FILE.JSON", "json"},
+		{"json.gz file", "logs/file.json.gz", "json.gz"},
+		{"JSON.GZ uppercase", "logs/FILE.JSON.GZ", "json.gz"},
+		{"binpb file", "metrics/data.binpb", "binpb"},
+		{"binpb.gz file", "metrics/data.binpb.gz", "binpb.gz"},
+		{"parquet file", "traces/data.parquet", "parquet"},
+		{"PARQUET uppercase", "traces/DATA.PARQUET", "parquet"},
+		{"unknown extension", "data.txt", "other"},
+		{"no extension", "datafile", "other"},
+		{"csv file", "data.csv", "other"},
+		{"tar.gz file", "archive.tar.gz", "other"},
+		{"complex path json", "org1/2024/01/15/data.json", "json"},
+		{"complex path json.gz", "org1/2024/01/15/data.json.gz", "json.gz"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getFileExtensionCategory(tt.objectID)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestConvertItemsToKafkaMessages_FileTypeCounting(t *testing.T) {
+	ctx := context.Background()
+	orgID := uuid.New()
+
+	// Create test items with various file types
+	// Using otel-raw prefix to skip ResolveOrganization call
+	items := []IngestItem{
+		{
+			Bucket:         "test-bucket",
+			ObjectID:       "otel-raw/logs/file1.json",
+			FileSize:       1024,
+			Signal:         "logs",
+			OrganizationID: orgID,
+			InstanceNum:    1,
+		},
+		{
+			Bucket:         "test-bucket",
+			ObjectID:       "otel-raw/logs/file2.json.gz",
+			FileSize:       2048,
+			Signal:         "logs",
+			OrganizationID: orgID,
+			InstanceNum:    1,
+		},
+		{
+			Bucket:         "test-bucket",
+			ObjectID:       "otel-raw/metrics/data1.binpb",
+			FileSize:       3072,
+			Signal:         "metrics",
+			OrganizationID: orgID,
+			InstanceNum:    1,
+		},
+		{
+			Bucket:         "test-bucket",
+			ObjectID:       "otel-raw/metrics/data2.binpb.gz",
+			FileSize:       4096,
+			Signal:         "metrics",
+			OrganizationID: orgID,
+			InstanceNum:    1,
+		},
+		{
+			Bucket:         "test-bucket",
+			ObjectID:       "otel-raw/traces/span1.parquet",
+			FileSize:       5120,
+			Signal:         "traces",
+			OrganizationID: orgID,
+			InstanceNum:    1,
+		},
+		{
+			Bucket:         "test-bucket",
+			ObjectID:       "otel-raw/traces/span2.parquet",
+			FileSize:       6144,
+			Signal:         "traces",
+			OrganizationID: orgID,
+			InstanceNum:    1,
+		},
+		{
+			Bucket:         "test-bucket",
+			ObjectID:       "otel-raw/logs/unknown.txt",
+			FileSize:       7168,
+			Signal:         "logs",
+			OrganizationID: orgID,
+			InstanceNum:    1,
+		},
+	}
+
+	// Set up mock storage profile provider
+	mockSP := new(mockStorageProfileProvider)
+	mockProfile := storageprofile.StorageProfile{
+		OrganizationID: orgID,
+		InstanceNum:    1,
+		CollectorName:  "test-collector",
+		Bucket:         "test-bucket",
+	}
+	mockSP.On("GetLowestInstanceStorageProfile", ctx, orgID, "test-bucket").Return(mockProfile, nil)
+
+	// Call the function
+	result, err := convertItemsToKafkaMessages(ctx, items, mockSP)
+
+	// Assertions
+	require.NoError(t, err)
+	assert.Equal(t, 7, result.ItemsProcessed)
+	assert.Equal(t, 0, result.ItemsSkipped)
+
+	// Check file type counts for logs
+	assert.Equal(t, 1, result.FileTypeCounts["logs"]["json"])
+	assert.Equal(t, 1, result.FileTypeCounts["logs"]["json.gz"])
+	assert.Equal(t, 1, result.FileTypeCounts["logs"]["other"])
+	assert.Equal(t, 0, result.FileTypeCounts["logs"]["binpb"])
+	assert.Equal(t, 0, result.FileTypeCounts["logs"]["binpb.gz"])
+	assert.Equal(t, 0, result.FileTypeCounts["logs"]["parquet"])
+
+	// Check file type counts for metrics
+	assert.Equal(t, 1, result.FileTypeCounts["metrics"]["binpb"])
+	assert.Equal(t, 1, result.FileTypeCounts["metrics"]["binpb.gz"])
+	assert.Equal(t, 0, result.FileTypeCounts["metrics"]["json"])
+	assert.Equal(t, 0, result.FileTypeCounts["metrics"]["json.gz"])
+	assert.Equal(t, 0, result.FileTypeCounts["metrics"]["parquet"])
+	assert.Equal(t, 0, result.FileTypeCounts["metrics"]["other"])
+
+	// Check file type counts for traces
+	assert.Equal(t, 2, result.FileTypeCounts["traces"]["parquet"])
+	assert.Equal(t, 0, result.FileTypeCounts["traces"]["json"])
+	assert.Equal(t, 0, result.FileTypeCounts["traces"]["json.gz"])
+	assert.Equal(t, 0, result.FileTypeCounts["traces"]["binpb"])
+	assert.Equal(t, 0, result.FileTypeCounts["traces"]["binpb.gz"])
+	assert.Equal(t, 0, result.FileTypeCounts["traces"]["other"])
+
+	// Verify notifications were created
+	assert.Len(t, result.NotificationsBySignal["logs"], 3)
+	assert.Len(t, result.NotificationsBySignal["metrics"], 2)
+	assert.Len(t, result.NotificationsBySignal["traces"], 2)
+
 	mockSP.AssertExpectations(t)
 }
