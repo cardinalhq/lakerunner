@@ -135,10 +135,21 @@ func Open(dataSourceName string, opts ...option) (*DB, error) {
 	config := Config{
 		MetricsPeriod: 10 * time.Second,
 		pollerContext: context.Background(),
-		// Default extensions - httpfs is commonly needed for S3 access
+		// Default extensions - load all available extensions for air-gapped deployments
 		Extensions: []ExtensionConfig{
 			{Name: "httpfs"},
+			{Name: "aws"},
+			{Name: "azure"},
 		},
+	}
+
+	// Auto-configure extensions path from environment for air-gapped mode
+	// If not set, try to auto-discover for development/testing
+	if extensionsPath := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); extensionsPath != "" {
+		config.ExtensionsPath = extensionsPath
+	} else {
+		// Try to auto-discover extensions for testing (same logic as S3DB)
+		config.ExtensionsPath = discoverExtensionsPath()
 	}
 
 	for _, opt := range opts {

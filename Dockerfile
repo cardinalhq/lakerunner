@@ -14,13 +14,11 @@
 
 # Build arguments
 ARG TARGETARCH
-ARG DUCKDB_VERSION=v1.3.2
 
-# ========= Extension Download Stage =========
+# ========= Extensions Stage (copy pre-downloaded extensions) =========
 FROM debian:bookworm-slim AS extensions
 
 ARG TARGETARCH
-ARG DUCKDB_VERSION
 
 # Install curl and copy all its runtime dependencies
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* && \
@@ -33,35 +31,27 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* && 
         fi; \
     done
 
-# Download httpfs, aws, and azure extensions
-RUN mkdir -p /app/extensions && \
-    curl -fsSL "https://extensions.duckdb.org/${DUCKDB_VERSION}/linux_${TARGETARCH}/httpfs.duckdb_extension.gz" \
-    | gunzip -c > /app/extensions/httpfs.duckdb_extension && \
-    curl -fsSL "https://extensions.duckdb.org/${DUCKDB_VERSION}/linux_${TARGETARCH}/aws.duckdb_extension.gz" \
-    | gunzip -c > /app/extensions/aws.duckdb_extension && \
-    curl -fsSL "https://extensions.duckdb.org/${DUCKDB_VERSION}/linux_${TARGETARCH}/azure.duckdb_extension.gz" \
-    | gunzip -c > /app/extensions/azure.duckdb_extension
+# Decompress DuckDB extensions
+COPY docker/duckdb-extensions/linux_${TARGETARCH}/*.duckdb_extension.gz /tmp/extensions/
+RUN mkdir -p /app/extensions && for i in /tmp/extensions/*.gz; do gunzip < "$i" > /app/extensions/"$(basename "$i" .gz)"; done
 
 # ========= Runtime Image =========
 FROM gcr.io/distroless/cc-debian12:nonroot
+
+ARG TARGETARCH
 
 # Copy the pre-built binary from goreleaser
 COPY --chmod=755 lakerunner /app/bin/lakerunner
 COPY --chmod=755 lakectl /app/bin/lakectl
 
-# Copy httpfs, aws, and azure extensions
-COPY --from=extensions /app/extensions/httpfs.duckdb_extension /app/extensions/httpfs.duckdb_extension
-COPY --from=extensions /app/extensions/aws.duckdb_extension /app/extensions/aws.duckdb_extension
-COPY --from=extensions /app/extensions/azure.duckdb_extension /app/extensions/azure.duckdb_extension
+# Copy decompressed DuckDB extensions from staging layer
+COPY --from=extensions /app/extensions/ /app/extensions/
 
 # Copy curl binary and its runtime dependencies
 COPY --from=extensions /usr/bin/curl /usr/bin/curl
 COPY --from=extensions /runtime-deps/ /
 
-# Set environment variables for DuckDB extension configuration
-ENV LAKERUNNER_DUCKDB_EXTENSIONS_PATH=/app/extensions
-ENV LAKERUNNER_DUCKDB_HTTPFS_EXTENSION=/app/extensions/httpfs.duckdb_extension
-ENV LAKERUNNER_DUCKDB_AWS_EXTENSION=/app/extensions/aws.duckdb_extension
-ENV LAKERUNNER_DUCKDB_AZURE_EXTENSION=/app/extensions/azure.duckdb_extension
+# Set environment variable for DuckDB extension path
+ENV LAKERUNNER_EXTENSIONS_PATH=/app/extensions
 
 CMD ["/app/bin/lakerunner"]

@@ -25,7 +25,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
 )
@@ -34,143 +33,178 @@ import (
 // DuckDB extension loading & DDL may crash when done concurrently in many engines.
 var duckdbDDLMu sync.Mutex
 
-// S3DB manages per-bucket pools of DuckDB *instances* (one DB+Conn per item).
+// S3DB manages a pool of DuckDB connections to a single shared on-disk database.
+// All connections open the same file and thus share the same in-process database instance.
+// Credentials are set per-bucket on each connection acquisition to support multiple buckets.
 type S3DB struct {
-	dsn string
+	dbPath string // single on-disk database file for all connections
 
-	// config
+	// config (applied once to the shared database instance)
 	memoryLimitMB int64
 	tempDir       string
 	maxTempSize   string
+	poolSize      int
+	threads       int // total threads for the shared database instance
 
-	poolSize       int
-	ttl            time.Duration
-	totalCores     int
-	threadsPerConn int
+	// one-time setup
+	setupOnce sync.Once
+	setupErr  error
 
-	installOnce sync.Once
-	installErr  error
-
-	poolsMu sync.Mutex
-	pools   map[string]*bucketPool
+	// Single global pool
+	pool *connectionPool
 }
 
-type bucketPool struct {
-	parent   *S3DB
-	bucket   string
-	region   string
-	endpoint string
-	size     int
-	ttl      time.Duration
+type connectionPool struct {
+	parent *S3DB
+	size   int
 
 	mu  sync.Mutex
 	cur int
 
-	ch   chan *pooledConn
-	init sync.Once
+	ch chan *pooledConn
 }
 
 type pooledConn struct {
-	db      *sql.DB
-	conn    *sql.Conn
-	expires time.Time
+	db   *sql.DB
+	conn *sql.Conn
 }
 
-func NewS3DB(dataSourceName string) (*S3DB, error) {
-	// Prefer in-memory DB unless the caller really wants a file;
-	// treat legacy "s3" as a hint for in-memory.
-	if dataSourceName == "s3" {
-		dataSourceName = ""
+// s3DBConfig holds configuration options for S3DB
+type s3DBConfig struct {
+	dbPath   *string
+	inMemory bool
+}
+
+// S3DBOption is a functional option for configuring S3DB
+type S3DBOption func(*s3DBConfig)
+
+// WithDatabasePath sets the database path for S3DB.
+// The path must not be empty - use WithInMemory() for in-memory databases.
+func WithDatabasePath(path string) S3DBOption {
+	return func(cfg *s3DBConfig) {
+		if path == "" {
+			panic("WithDatabasePath: path must not be empty, use WithInMemory() for in-memory databases")
+		}
+		cfg.dbPath = &path
+	}
+}
+
+// WithInMemory creates in-memory databases (isolated per connection, not pooled).
+func WithInMemory() S3DBOption {
+	return func(cfg *s3DBConfig) {
+		cfg.inMemory = true
+		empty := ""
+		cfg.dbPath = &empty
+	}
+}
+
+// NewS3DB creates a new S3DB instance with a shared database.
+// Database location behavior:
+//   - No options provided: creates a temporary file database (persistent across connections)
+//   - WithInMemory(): creates in-memory databases (isolated per connection, not pooled)
+//   - WithDatabasePath("/path/to/db"): uses specified file database (persistent across connections)
+func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
+	cfg := &s3DBConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	var dbPath string
+	if cfg.inMemory {
+		dbPath = ""
+	} else if cfg.dbPath != nil {
+		dbPath = *cfg.dbPath
+	} else {
+		// No options provided - create a temp file
+		dbDir, err := os.MkdirTemp("", "")
+		if err != nil {
+			return nil, fmt.Errorf("create temp dir for S3DB: %w", err)
+		}
+		dbPath = filepath.Join(dbDir, "global.ddb")
 	}
 
 	memoryMB := envInt64("DUCKDB_MEMORY_LIMIT", 0)
 
 	// Default pool: half the cores, capped at 8, min 2.
-	// (Avoid oversubscription when each connection has multiple threads.)
 	poolDefault := min(8, max(2, runtime.GOMAXPROCS(0)/2))
 	poolSize := envIntClamp("DUCKDB_S3_POOL_SIZE", poolDefault, 1, 512)
 
-	ttl := envDurationSeconds("DUCKDB_S3_CONN_TTL_SECONDS", 240)
-
 	total := runtime.GOMAXPROCS(0)
-	// Split cores across connections by default; allow explicit override.
-	perConnDefault := max(1, total/max(1, poolSize))
-	threadsPerConn := envIntClamp("DUCKDB_THREADS_PER_CONN", perConnDefault, 1, 256)
-	slog.Info("duckdbx:",
-		"dsn", dataSourceName,
+	// All connections share the same database, so threads setting applies to the shared instance
+	threads := envIntClamp("DUCKDB_THREADS", total, 1, 256)
+
+	dbType := "file"
+	displayPath := dbPath
+	if dbPath == "" {
+		dbType = "memory"
+		displayPath = ":memory:"
+	}
+
+	slog.Info("duckdbx: single shared database",
+		"type", dbType,
+		"dbPath", displayPath,
 		"memoryLimitMB", memoryMB,
 		"tempDir", os.Getenv("DUCKDB_TEMP_DIRECTORY"),
 		"maxTempSize", os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
 		"poolSize", poolSize,
-		"ttl", ttl.String(),
-		"totalCores", total,
-		"threadsPerConn", threadsPerConn)
+		"threads", threads)
 
-	return &S3DB{
-		dsn:            dataSourceName,
-		memoryLimitMB:  memoryMB,
-		tempDir:        os.Getenv("DUCKDB_TEMP_DIRECTORY"),
-		maxTempSize:    os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
-		poolSize:       poolSize,
-		ttl:            ttl,
-		totalCores:     total,
-		threadsPerConn: threadsPerConn,
-		pools:          make(map[string]*bucketPool, 32),
-	}, nil
+	s3db := &S3DB{
+		dbPath:        dbPath,
+		memoryLimitMB: memoryMB,
+		tempDir:       os.Getenv("DUCKDB_TEMP_DIRECTORY"),
+		maxTempSize:   os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
+		poolSize:      poolSize,
+		threads:       threads,
+	}
+
+	s3db.pool = &connectionPool{
+		parent: s3db,
+		size:   poolSize,
+		ch:     make(chan *pooledConn, poolSize),
+	}
+
+	return s3db, nil
 }
 
 func (s *S3DB) Close() error {
-	s.poolsMu.Lock()
-	for _, p := range s.pools {
-		p.closeAll()
+	if s.pool != nil {
+		s.pool.closeAll()
 	}
-	s.pools = map[string]*bucketPool{}
-	s.poolsMu.Unlock()
+
+	if s.dbPath != "" {
+		dbDir := filepath.Dir(s.dbPath)
+		_ = os.RemoveAll(dbDir)
+	}
 	return nil
 }
 
-func (s *S3DB) GetConnection(ctx context.Context, bucket, region string, endpoint string) (*sql.Conn, func(), error) {
+// GetConnection returns a connection for local database queries (no S3 authentication).
+func (s *S3DB) GetConnection(ctx context.Context) (*sql.Conn, func(), error) {
+	return s.pool.acquireLocal(ctx)
+}
+
+// GetConnectionForBucket returns a connection configured with S3 credentials for the specified bucket.
+func (s *S3DB) GetConnectionForBucket(ctx context.Context, bucket, region string, endpoint string) (*sql.Conn, func(), error) {
 	if bucket == "" {
 		return nil, nil, fmt.Errorf("bucket is required")
 	}
-	s.poolsMu.Lock()
-	p := s.pools[bucket]
-	if p == nil {
-		p = &bucketPool{
-			parent:   s,
-			bucket:   bucket,
-			region:   region,
-			endpoint: endpoint,
-			size:     s.poolSize,
-			ttl:      s.ttl,
-			ch:       make(chan *pooledConn, s.poolSize),
-		}
-		s.pools[bucket] = p
-	}
-	s.poolsMu.Unlock()
-	return p.acquire(ctx)
+	return s.pool.acquireForBucket(ctx, bucket, region, endpoint)
 }
 
-func (p *bucketPool) acquire(ctx context.Context) (*sql.Conn, func(), error) {
-	p.init.Do(func() {})
-	now := time.Now()
+// acquireLocal gets a connection for local database queries (no S3 authentication needed).
+func (p *connectionPool) acquireLocal(ctx context.Context) (*sql.Conn, func(), error) {
+	// Ensure extensions are loaded and database is set up before any connection is used
+	if err := p.parent.ensureSetup(ctx); err != nil {
+		return nil, nil, err
+	}
 
-	// try pooled
 	select {
 	case pc := <-p.ch:
-		if now.After(pc.expires) {
-			_ = pc.conn.Close()
-			_ = pc.db.Close()
-			p.mu.Lock()
-			p.cur--
-			p.mu.Unlock()
-		} else {
-			return pc.conn, func() { p.release(pc) }, nil
-		}
+		return pc.conn, func() { p.release(pc) }, nil
 	default:
 	}
 
-	// create new if capacity
 	p.mu.Lock()
 	canCreate := p.cur < p.size
 	if canCreate {
@@ -179,7 +213,7 @@ func (p *bucketPool) acquire(ctx context.Context) (*sql.Conn, func(), error) {
 	p.mu.Unlock()
 
 	if canCreate {
-		pc, err := p.newConn(ctx)
+		pc, err := p.newConnLocal(ctx)
 		if err != nil {
 			p.mu.Lock()
 			p.cur--
@@ -189,25 +223,83 @@ func (p *bucketPool) acquire(ctx context.Context) (*sql.Conn, func(), error) {
 		return pc.conn, func() { p.release(pc) }, nil
 	}
 
-	// wait for one
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
 	case pc := <-p.ch:
-		if time.Now().After(pc.expires) {
+		return pc.conn, func() { p.release(pc) }, nil
+	}
+}
+
+// acquireForBucket gets a connection configured with S3 credentials for the specified bucket.
+func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, endpoint string) (*sql.Conn, func(), error) {
+	// Ensure extensions are loaded and database is set up before any connection is used
+	if err := p.parent.ensureSetup(ctx); err != nil {
+		return nil, nil, err
+	}
+
+	// Helper function to ensure credentials are set for the bucket
+	ensureCredentials := func(conn *sql.Conn) error {
+		// Create/replace the secret for this bucket
+		// This is idempotent - CREATE OR REPLACE will update if needed
+		return seedCloudSecretFromEnv(ctx, conn, bucket, region, endpoint)
+	}
+
+	select {
+	case pc := <-p.ch:
+		// Ensure credentials are configured for this specific bucket
+		if err := ensureCredentials(pc.conn); err != nil {
+			// If we can't set credentials, close this connection and try to create a new one
 			_ = pc.conn.Close()
 			_ = pc.db.Close()
 			p.mu.Lock()
 			p.cur--
 			p.mu.Unlock()
-			return p.acquire(ctx)
+			return nil, nil, err
+		}
+		return pc.conn, func() { p.release(pc) }, nil
+	default:
+	}
+
+	p.mu.Lock()
+	canCreate := p.cur < p.size
+	if canCreate {
+		p.cur++
+	}
+	p.mu.Unlock()
+
+	if canCreate {
+		pc, err := p.newConnForBucket(ctx, bucket, region, endpoint)
+		if err != nil {
+			p.mu.Lock()
+			p.cur--
+			p.mu.Unlock()
+			return nil, nil, err
+		}
+		return pc.conn, func() { p.release(pc) }, nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	case pc := <-p.ch:
+		// Ensure credentials are configured for this specific bucket
+		if err := ensureCredentials(pc.conn); err != nil {
+			// If we can't set credentials, close this connection and try again
+			_ = pc.conn.Close()
+			_ = pc.db.Close()
+			p.mu.Lock()
+			p.cur--
+			p.mu.Unlock()
+			return nil, nil, err
 		}
 		return pc.conn, func() { p.release(pc) }, nil
 	}
 }
 
-func (p *bucketPool) release(pc *pooledConn) {
-	if time.Now().After(pc.expires) {
+func (p *connectionPool) release(pc *pooledConn) {
+	// For in-memory databases, don't return to pool - just close
+	if p.parent.dbPath == "" {
 		_ = pc.conn.Close()
 		_ = pc.db.Close()
 		p.mu.Lock()
@@ -215,21 +307,35 @@ func (p *bucketPool) release(pc *pooledConn) {
 		p.mu.Unlock()
 		return
 	}
-	p.ch <- pc
+
+	// For file-based databases, return to pool
+	select {
+	case p.ch <- pc:
+		// returned to pool
+	default:
+		// pool is full (shouldn't happen), close this connection
+		_ = pc.conn.Close()
+		_ = pc.db.Close()
+		p.mu.Lock()
+		p.cur--
+		p.mu.Unlock()
+	}
 }
 
-func (p *bucketPool) newConn(ctx context.Context) (*pooledConn, error) {
-	// best-effort global INSTALL for dev mode
-	if err := p.parent.ensureInstall(ctx); err != nil {
+// newConnLocal creates a new connection for local database queries (no S3 authentication).
+func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) {
+	// Ensure extensions are installed and database-wide settings are applied (once)
+	if err := p.parent.ensureSetup(ctx); err != nil {
 		return nil, err
 	}
 
-	// brand-new DB instance for this pooled item
-	db, err := sql.Open("duckdb", p.parent.dsn)
+	// Open a connection to the shared database file
+	// All connections opening the same file share the same in-process database instance
+	db, err := sql.Open("duckdb", p.parent.dbPath)
 	if err != nil {
 		return nil, err
 	}
-	// one physical connection per DB instance
+	// one physical connection per DB handle
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
@@ -239,28 +345,81 @@ func (p *bucketPool) newConn(ctx context.Context) (*pooledConn, error) {
 		return nil, err
 	}
 
-	// per-connection setup
-	if err := p.parent.setupConn(ctx, conn); err != nil {
+	// Disable automatic extension loading/downloading for this connection
+	// These are connection-level settings that need to be set on each connection
+	if _, err := conn.ExecContext(ctx, "SET autoinstall_known_extensions = false;"); err != nil {
+		slog.Warn("Failed to disable automatic extension installation", "error", err)
+	}
+	if _, err := conn.ExecContext(ctx, "SET autoload_known_extensions = false;"); err != nil {
+		slog.Warn("Failed to disable automatic extension loading", "error", err)
+	}
+
+	// Load extensions for this connection (they need to be loaded per-connection)
+	if err := p.parent.loadExtensionsForConnection(ctx, conn); err != nil {
 		_ = conn.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("load extensions for connection: %w", err)
+	}
+
+	return &pooledConn{
+		conn: conn,
+		db:   db,
+	}, nil
+}
+
+// newConnForBucket creates a new connection configured with S3 credentials for the specified bucket.
+func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, endpoint string) (*pooledConn, error) {
+	// Ensure extensions are installed and database-wide settings are applied (once)
+	if err := p.parent.ensureSetup(ctx); err != nil {
+		return nil, err
+	}
+
+	// Open a connection to the shared database file
+	// All connections opening the same file share the same in-process database instance
+	db, err := sql.Open("duckdb", p.parent.dbPath)
+	if err != nil {
+		return nil, err
+	}
+	// one physical connection per DB handle
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 
+	// Disable automatic extension loading/downloading for this connection
+	// These are connection-level settings that need to be set on each connection
+	if _, err := conn.ExecContext(ctx, "SET autoinstall_known_extensions = false;"); err != nil {
+		slog.Warn("Failed to disable automatic extension installation", "error", err)
+	}
+	if _, err := conn.ExecContext(ctx, "SET autoload_known_extensions = false;"); err != nil {
+		slog.Warn("Failed to disable automatic extension loading", "error", err)
+	}
+
+	// Load extensions for this connection (they need to be loaded per-connection)
+	if err := p.parent.loadExtensionsForConnection(ctx, conn); err != nil {
+		_ = conn.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("load extensions for connection: %w", err)
+	}
+
 	// create cloud storage secret for this bucket (serialize DDL)
-	if err := seedCloudSecretFromEnv(ctx, conn, p.bucket, p.region, p.endpoint); err != nil {
+	if err := seedCloudSecretFromEnv(ctx, conn, bucket, region, endpoint); err != nil {
 		_ = conn.Close()
 		_ = db.Close()
 		return nil, err
 	}
 
 	return &pooledConn{
-		db:      db,
-		conn:    conn,
-		expires: time.Now().Add(p.ttl),
+		db:   db,
+		conn: conn,
 	}, nil
 }
 
-func (p *bucketPool) closeAll() {
+func (p *connectionPool) closeAll() {
 	for {
 		select {
 		case pc := <-p.ch:
@@ -272,82 +431,90 @@ func (p *bucketPool) closeAll() {
 	}
 }
 
-func (s *S3DB) setupConn(ctx context.Context, conn *sql.Conn) error {
-	if s.memoryLimitMB > 0 {
-		slog.Info("Setting memory limit for DuckDB", "memoryLimitMB", s.memoryLimitMB)
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", s.memoryLimitMB)); err != nil {
-			return fmt.Errorf("set memory_limit: %w", err)
-		}
-	}
-	if s.tempDir != "" {
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET temp_directory = '%s';", escapeSingle(s.tempDir))); err != nil {
-			return fmt.Errorf("set temp_directory: %w", err)
-		}
-	}
-	if s.maxTempSize != "" {
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET max_temp_directory_size = '%s';", escapeSingle(s.maxTempSize))); err != nil {
-			return fmt.Errorf("set max_temp_directory_size: %w", err)
-		}
-	}
-
-	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA threads=%d;", s.threadsPerConn)); err != nil {
-		return fmt.Errorf("set threads: %w", err)
-	}
-	// Keep DuckDB's object cache on to reduce repeated S3 GETs for metadata/manifest.
-	if _, err := conn.ExecContext(ctx, "PRAGMA enable_object_cache;"); err != nil {
-		return fmt.Errorf("enable_object_cache: %w", err)
-	}
-
-	// LOAD extensions (serialize LOAD across engines)
-	duckdbDDLMu.Lock()
-	err := s.loadExtensions(ctx, conn)
-	duckdbDDLMu.Unlock()
-	return err
-}
-
-// Dev-mode best-effort INSTALL once. Air-gapped: only LOAD.
-func (s *S3DB) ensureInstall(ctx context.Context) error {
-	if os.Getenv("LAKERUNNER_EXTENSIONS_PATH") != "" {
-		return nil
-	}
-	s.installOnce.Do(func() {
-		db, err := sql.Open("duckdb", s.dsn)
+// ensureSetup runs once to configure the shared database instance and load extensions
+func (s *S3DB) ensureSetup(ctx context.Context) error {
+	s.setupOnce.Do(func() {
+		// Open a temporary connection to configure the database
+		db, err := sql.Open("duckdb", s.dbPath)
 		if err != nil {
-			s.installErr = err
+			s.setupErr = fmt.Errorf("open db for setup: %w", err)
 			return
 		}
-		defer func(db *sql.DB) {
-			err := db.Close()
-			if err != nil {
-				slog.Warn("duckdb.Close", "error", err)
-			}
-		}(db)
-		db.SetMaxOpenConns(1)
-		db.SetMaxIdleConns(1)
+		defer func() { _ = db.Close() }()
+
 		conn, err := db.Conn(ctx)
 		if err != nil {
-			s.installErr = err
+			s.setupErr = fmt.Errorf("get conn for setup: %w", err)
 			return
 		}
-		defer func(conn *sql.Conn) {
-			err := conn.Close()
-			if err != nil {
-				slog.Warn("duckdb.Conn.Close", "error", err)
-			}
-		}(conn)
-		if s.memoryLimitMB > 0 {
-			_, _ = conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", s.memoryLimitMB))
+		defer func() { _ = conn.Close() }()
+
+		// Configure database-wide settings (these affect the shared instance)
+
+		// Set extension_directory to prevent loading from ~/.duckdb/extensions
+		// Use the same directory as our database file or the configured extensions path
+		extensionDir := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+		if extensionDir == "" {
+			// Use a subdirectory next to the database file
+			extensionDir = filepath.Join(filepath.Dir(s.dbPath), "extensions")
 		}
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET extension_directory='%s';", escapeSingle(extensionDir))); err != nil {
+			slog.Warn("Failed to set extension_directory", "error", err)
+		}
+
+		// Set home_directory to prevent using ~/.duckdb
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET home_directory='%s';", escapeSingle(filepath.Dir(s.dbPath)))); err != nil {
+			slog.Warn("Failed to set home_directory", "error", err)
+		}
+
+		if s.memoryLimitMB > 0 {
+			slog.Info("Setting memory limit for shared DuckDB instance", "memoryLimitMB", s.memoryLimitMB)
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", s.memoryLimitMB)); err != nil {
+				s.setupErr = fmt.Errorf("set memory_limit: %w", err)
+				return
+			}
+		}
+		if s.tempDir != "" {
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET temp_directory = '%s';", escapeSingle(s.tempDir))); err != nil {
+				s.setupErr = fmt.Errorf("set temp_directory: %w", err)
+				return
+			}
+		}
+		if s.maxTempSize != "" {
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET max_temp_directory_size = '%s';", escapeSingle(s.maxTempSize))); err != nil {
+				s.setupErr = fmt.Errorf("set max_temp_directory_size: %w", err)
+				return
+			}
+		}
+
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA threads=%d;", s.threads)); err != nil {
+			s.setupErr = fmt.Errorf("set threads: %w", err)
+			return
+		}
+		// Enable object cache for S3 operations
+		if _, err := conn.ExecContext(ctx, "PRAGMA enable_object_cache;"); err != nil {
+			s.setupErr = fmt.Errorf("enable_object_cache: %w", err)
+			return
+		}
+
+		// LOAD extensions from local files (serialize LOAD across engines)
 		duckdbDDLMu.Lock()
-		_, _ = conn.ExecContext(ctx, "INSTALL httpfs;")
-		_, _ = conn.ExecContext(ctx, "INSTALL azure;")
+		err = s.loadExtensions(ctx, conn)
 		duckdbDDLMu.Unlock()
+		if err != nil {
+			s.setupErr = err
+			return
+		}
 	})
-	return s.installErr
+	return s.setupErr
 }
 
 func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
+	// Load extensions from local files only
 	if err := s.loadHTTPFS(ctx, conn); err != nil {
+		return err
+	}
+	if err := s.loadAWS(ctx, conn); err != nil {
 		return err
 	}
 	if err := s.loadAzure(ctx, conn); err != nil {
@@ -356,51 +523,147 @@ func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
 	return nil
 }
 
-func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
-	if base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); base != "" {
-		path := os.Getenv("LAKERUNNER_HTTPFS_EXTENSION")
-		if path == "" {
-			path = filepath.Join(base, "httpfs.duckdb_extension")
-		}
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("httpfs extension not found at %s: %w", path, err)
-		}
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
-			return fmt.Errorf("LOAD httpfs (air-gapped): %w", err)
-		}
-		return nil
+// loadExtensionsForConnection loads extensions for a specific connection.
+// Extensions need to be loaded per-connection in DuckDB, even if they were loaded
+// in the setup phase for other connections.
+func (s *S3DB) loadExtensionsForConnection(ctx context.Context, conn *sql.Conn) error {
+	// Load extensions for this connection - they need to be loaded from disk if not already available
+	// Use the same loading logic as in setup, but without the DDL mutex (not needed for LOAD operations)
+	if err := s.loadHTTPFS(ctx, conn); err != nil {
+		return fmt.Errorf("load httpfs for connection: %w", err)
 	}
-	if _, err := conn.ExecContext(ctx, "LOAD httpfs;"); err != nil {
-		return fmt.Errorf("LOAD httpfs: %w", err)
+	if err := s.loadAWS(ctx, conn); err != nil {
+		return fmt.Errorf("load aws for connection: %w", err)
+	}
+	if err := s.loadAzure(ctx, conn); err != nil {
+		return fmt.Errorf("load azure for connection: %w", err)
 	}
 	return nil
 }
 
-func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
-	if base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); base != "" {
-		path := os.Getenv("LAKERUNNER_AZURE_EXTENSION")
-		if path == "" {
-			path = filepath.Join(base, "azure.duckdb_extension")
-		}
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("azure extension not found at %s: %w", path, err)
-		}
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
-			return fmt.Errorf("LOAD azure (air-gapped): %w", err)
-		}
-		// Configure Azure transport to use curl for better compatibility
-		if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
-			return fmt.Errorf("set azure transport option: %w", err)
+func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
+	// Check if httpfs is already available (built-in or installed)
+	var loaded, installed bool
+	row := conn.QueryRowContext(ctx, `SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = 'httpfs'`)
+	if err := row.Scan(&loaded, &installed); err == nil && (loaded || installed) {
+		if !loaded && installed {
+			// Extension is installed but not loaded, load it
+			if _, err := conn.ExecContext(ctx, "LOAD httpfs"); err != nil {
+				slog.Warn("Failed to load installed httpfs extension", "error", err)
+			} else {
+				slog.Info("Loaded installed httpfs extension")
+			}
+		} else {
+			slog.Debug("httpfs extension already available", "loaded", loaded, "installed", installed)
 		}
 		return nil
 	}
-	if _, err := conn.ExecContext(ctx, "LOAD azure;"); err != nil {
+
+	// Extension not available, try to load from disk
+	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+	if base == "" {
+		// Try to auto-discover extensions for testing
+		base = discoverExtensionsPath()
+		if base == "" {
+			return fmt.Errorf("httpfs extension required but not found: LAKERUNNER_EXTENSIONS_PATH not set and could not auto-discover extensions in docker/duckdb-extensions")
+		}
+		slog.Debug("Auto-discovered extensions path", "path", base)
+	}
+
+	path := filepath.Join(base, "httpfs.duckdb_extension")
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("httpfs extension file not found at %s: %w", path, err)
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
+		return fmt.Errorf("LOAD httpfs: %w", err)
+	}
+	slog.Info("Loaded httpfs extension from disk", "path", path)
+	return nil
+}
+
+func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
+	// Check if aws is already available (built-in or installed)
+	var loaded, installed bool
+	row := conn.QueryRowContext(ctx, `SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = 'aws'`)
+	if err := row.Scan(&loaded, &installed); err == nil && (loaded || installed) {
+		if !loaded && installed {
+			// Extension is installed but not loaded, load it
+			if _, err := conn.ExecContext(ctx, "LOAD aws"); err != nil {
+				slog.Warn("Failed to load installed aws extension", "error", err)
+			} else {
+				slog.Info("Loaded installed aws extension")
+			}
+		} else {
+			slog.Debug("aws extension already available", "loaded", loaded, "installed", installed)
+		}
+		return nil
+	}
+
+	// Extension not available, try to load from disk
+	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+	if base == "" {
+		// Try to auto-discover extensions for testing
+		base = discoverExtensionsPath()
+		if base == "" {
+			return fmt.Errorf("aws extension required but not found: LAKERUNNER_EXTENSIONS_PATH not set and could not auto-discover extensions in docker/duckdb-extensions")
+		}
+	}
+
+	path := filepath.Join(base, "aws.duckdb_extension")
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("aws extension file not found at %s: %w", path, err)
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
+		return fmt.Errorf("LOAD aws: %w", err)
+	}
+	slog.Info("Loaded aws extension from disk", "path", path)
+	return nil
+}
+
+func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
+	// Check if azure is already available (built-in or installed)
+	var loaded, installed bool
+	row := conn.QueryRowContext(ctx, `SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = 'azure'`)
+	if err := row.Scan(&loaded, &installed); err == nil && (loaded || installed) {
+		if !loaded && installed {
+			// Extension is installed but not loaded, load it
+			if _, err := conn.ExecContext(ctx, "LOAD azure"); err != nil {
+				slog.Warn("Failed to load installed azure extension", "error", err)
+			} else {
+				slog.Info("Loaded installed azure extension")
+			}
+		} else {
+			slog.Debug("azure extension already available", "loaded", loaded, "installed", installed)
+		}
+		// Configure Azure transport to use curl for better compatibility
+		if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
+			slog.Warn("Failed to set azure transport option", "error", err)
+		}
+		return nil
+	}
+
+	// Extension not available, try to load from disk
+	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+	if base == "" {
+		// Try to auto-discover extensions for testing
+		base = discoverExtensionsPath()
+		if base == "" {
+			return fmt.Errorf("azure extension required but not found: LAKERUNNER_EXTENSIONS_PATH not set and could not auto-discover extensions in docker/duckdb-extensions")
+		}
+	}
+
+	path := filepath.Join(base, "azure.duckdb_extension")
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("azure extension file not found at %s: %w", path, err)
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
 		return fmt.Errorf("LOAD azure: %w", err)
 	}
 	// Configure Azure transport to use curl for better compatibility
 	if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
-		return fmt.Errorf("set azure transport option: %w", err)
+		slog.Warn("Failed to set azure transport option", "error", err)
 	}
+	slog.Info("Loaded azure extension from disk", "path", path)
 	return nil
 }
 
@@ -423,7 +686,7 @@ func hasAzureCredentials() bool {
 }
 
 // CREATE OR REPLACE SECRET for Azure Blob Storage (serialized).
-func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, region string, endpoint string) error {
+func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, _ string, endpoint string) error {
 	authType := os.Getenv("AZURE_AUTH_TYPE")
 	if authType == "" {
 		authType = "credential_chain" // Default to credential chain
@@ -494,7 +757,19 @@ func extractStorageAccountFromEndpoint(endpoint string) string {
 	return endpoint
 }
 
-// CREATE OR REPLACE SECRET for AWS S3 (serialized).
+// S3SecretConfig holds the configuration for creating an S3 secret in DuckDB.
+type S3SecretConfig struct {
+	Bucket       string
+	Region       string
+	Endpoint     string
+	KeyID        string
+	Secret       string
+	SessionToken string
+	URLStyle     string
+	UseSSL       bool
+}
+
+// seedS3SecretFromEnv fetches S3 credentials from environment and creates a DuckDB secret.
 func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
 	keyID := os.Getenv("S3_ACCESS_KEY_ID")
 	secret := os.Getenv("S3_SECRET_ACCESS_KEY")
@@ -513,17 +788,16 @@ func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region str
 		}
 	}
 
-	useSSL := "true"
-
+	useSSL := true
 	if endpoint == "" {
 		endpoint = fmt.Sprintf("s3.%s.amazonaws.com", region)
 	} else {
-		if strings.HasPrefix(endpoint, "http://") {
-			endpoint = strings.TrimPrefix(endpoint, "http://")
-			useSSL = "false"
-		} else if strings.HasPrefix(endpoint, "https://") {
-			endpoint = strings.TrimPrefix(endpoint, "https://")
-			useSSL = "true"
+		if after, ok := strings.CutPrefix(endpoint, "http://"); ok {
+			endpoint = after
+			useSSL = false
+		} else if after, ok = strings.CutPrefix(endpoint, "https://"); ok {
+			endpoint = after
+			useSSL = true
 		}
 	}
 
@@ -532,27 +806,127 @@ func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region str
 		urlStyle = "path"
 	}
 
-	secretName := "secret_" + strings.ReplaceAll(bucket, "-", "_")
+	config := S3SecretConfig{
+		Bucket:       bucket,
+		Region:       region,
+		Endpoint:     endpoint,
+		KeyID:        keyID,
+		Secret:       secret,
+		SessionToken: session,
+		URLStyle:     urlStyle,
+		UseSSL:       useSSL,
+	}
+
+	return createS3Secret(ctx, conn, config)
+}
+
+// createS3Secret creates or replaces an S3 secret in DuckDB with the given configuration.
+// This function is testable as it doesn't depend on environment variables.
+func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig) error {
+	if config.KeyID == "" || config.Secret == "" {
+		return fmt.Errorf("missing AWS credentials: KeyID and Secret are required")
+	}
+	if config.Bucket == "" {
+		return fmt.Errorf("bucket is required")
+	}
+	if config.Region == "" {
+		config.Region = "us-east-1"
+	}
+	if config.URLStyle == "" {
+		config.URLStyle = "path"
+	}
+
+	secretName := "secret_" + strings.ReplaceAll(config.Bucket, "-", "_")
+	useSSLStr := "false"
+	if config.UseSSL {
+		useSSLStr = "true"
+	}
 
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "CREATE OR REPLACE SECRET %s (\n", quoteIdent(secretName))
 	_, _ = fmt.Fprintf(&b, "  TYPE S3,\n")
-	_, _ = fmt.Fprintf(&b, "  ENDPOINT '%s',\n", escapeSingle(endpoint))
-	_, _ = fmt.Fprintf(&b, "  URL_STYLE '%s',\n", escapeSingle(urlStyle))
-	_, _ = fmt.Fprintf(&b, "  USE_SSL '%s',\n", escapeSingle(useSSL))
-	_, _ = fmt.Fprintf(&b, "  KEY_ID '%s',\n", escapeSingle(keyID))
-	_, _ = fmt.Fprintf(&b, "  SECRET '%s',\n", escapeSingle(secret))
-	if session != "" {
-		_, _ = fmt.Fprintf(&b, "  SESSION_TOKEN '%s',\n", escapeSingle(session))
+	_, _ = fmt.Fprintf(&b, "  ENDPOINT '%s',\n", escapeSingle(config.Endpoint))
+	_, _ = fmt.Fprintf(&b, "  URL_STYLE '%s',\n", escapeSingle(config.URLStyle))
+	_, _ = fmt.Fprintf(&b, "  USE_SSL '%s',\n", escapeSingle(useSSLStr))
+	_, _ = fmt.Fprintf(&b, "  KEY_ID '%s',\n", escapeSingle(config.KeyID))
+	_, _ = fmt.Fprintf(&b, "  SECRET '%s',\n", escapeSingle(config.Secret))
+	if config.SessionToken != "" {
+		_, _ = fmt.Fprintf(&b, "  SESSION_TOKEN '%s',\n", escapeSingle(config.SessionToken))
 	}
-	_, _ = fmt.Fprintf(&b, "  REGION '%s',\n", escapeSingle(region))
-	_, _ = fmt.Fprintf(&b, "  SCOPE 's3://%s'\n", escapeSingle(bucket))
+	_, _ = fmt.Fprintf(&b, "  REGION '%s',\n", escapeSingle(config.Region))
+	_, _ = fmt.Fprintf(&b, "  SCOPE 's3://%s'\n", escapeSingle(config.Bucket))
 	_, _ = fmt.Fprintf(&b, ");")
 
 	duckdbDDLMu.Lock()
 	_, err := conn.ExecContext(ctx, b.String())
 	duckdbDDLMu.Unlock()
+
 	return err
+}
+
+// discoverExtensionsPath attempts to find DuckDB extensions in the repository.
+// This is primarily for testing purposes when LAKERUNNER_EXTENSIONS_PATH is not set.
+// It walks up from the current directory looking for docker/duckdb-extensions.
+func discoverExtensionsPath() string {
+	// Start from current working directory
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	// Determine platform-specific subdirectory
+	platform := getPlatformDir()
+	if platform == "" {
+		return ""
+	}
+
+	// Walk up the directory tree looking for the extensions
+	for {
+		// Check if docker/duckdb-extensions/platform exists
+		extensionsPath := filepath.Join(dir, "docker", "duckdb-extensions", platform)
+		if info, err := os.Stat(extensionsPath); err == nil && info.IsDir() {
+			// Verify at least one extension exists
+			httpfsPath := filepath.Join(extensionsPath, "httpfs.duckdb_extension")
+			if _, err := os.Stat(httpfsPath); err == nil {
+				return extensionsPath
+			}
+		}
+
+		// Move up one directory
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached root
+			break
+		}
+		dir = parent
+
+		// Safety check: don't go too far up (max 10 levels)
+		if strings.Count(dir, string(filepath.Separator)) < 2 {
+			break
+		}
+	}
+
+	return ""
+}
+
+// getPlatformDir returns the platform-specific directory name for DuckDB extensions
+func getPlatformDir() string {
+	goos := runtime.GOOS
+	goarch := runtime.GOARCH
+
+	switch {
+	case goos == "darwin" && goarch == "arm64":
+		return "osx_arm64"
+	case goos == "darwin" && goarch == "amd64":
+		return "osx_amd64"
+	case goos == "linux" && goarch == "arm64":
+		return "linux_arm64"
+	case goos == "linux" && goarch == "amd64":
+		return "linux_amd64"
+	default:
+		// Unsupported platform
+		return ""
+	}
 }
 
 func escapeSingle(s string) string { return strings.ReplaceAll(s, `'`, `''`) }
@@ -579,17 +953,6 @@ func envIntClamp(name string, def, minv, maxv int) int {
 		}
 	}
 	return def
-}
-func envDurationSeconds(name string, defSec int) time.Duration {
-	if v := os.Getenv(name); v != "" {
-		if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-			return time.Duration(iv) * time.Second
-		}
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return time.Duration(defSec) * time.Second
 }
 
 // small helpers (int)

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,26 +49,33 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 		segmentIDs[i] = int64(1000 + i) // dummy segment IDs
 	}
 
-	// Step 3: Create fresh DDBSink (in-memory or file-backed)
-	sink, err := NewDDBSink("metrics", ctx)
+	// Step 3: Create a shared S3DB pool for testing
+	s3Pool, err := duckdbx.NewS3DB()
+	require.NoError(t, err, "failed to create S3DB pool")
+	defer func() { _ = s3Pool.Close() }()
+
+	// Step 4: Create fresh DDBSink (in-memory or file-backed)
+	sink, err := NewDDBSink("metrics", ctx, s3Pool)
 	require.NoError(t, err, "failed to create DDBSink")
 	defer func() { _ = sink.Close() }()
 
-	// Step 4: Ingest parquet files
+	// Step 5: Ingest parquet files
 	err = sink.IngestParquetBatch(ctx, parquetPaths, segmentIDs)
 	require.NoError(t, err, "failed to ingest parquet batch")
 
-	// Step 5: Validate row count
+	// Step 6: Validate row count
 	rowCount := sink.RowCount()
 	t.Logf("Ingested %d rows", rowCount)
 	require.Greater(t, rowCount, int64(0), "no rows ingested")
 
 	// Step 6: Optionally query segment_id column to check distinct values
-	db := sink.db
-	rows, conn, err := db.QueryContext(ctx, `SELECT DISTINCT segment_id FROM metrics_cached`)
+	conn, release, err := s3Pool.GetConnection(ctx)
+	require.NoError(t, err, "get connection failed")
+	defer release()
+
+	rows, err := conn.QueryContext(ctx, `SELECT DISTINCT segment_id FROM metrics_cached`)
 	require.NoError(t, err, "query segment_id failed")
 	defer func() { _ = rows.Close() }()
-	defer func() { _ = conn.Close() }()
 
 	var seenIDs []int64
 	for rows.Next() {
@@ -77,4 +85,66 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 	}
 	require.Equal(t, len(seenIDs), len(parquetPaths), "no segment_id values found")
 	t.Logf("Seen segment_ids: %v", seenIDs)
+}
+
+// TestDDBSink_IngestParquetBatch_ManyChunks tests that we don't exhaust the connection pool
+// when processing many chunks (more than pool size). This verifies the fix for the PR feedback
+// about releasing connections immediately after each chunk.
+func TestDDBSink_IngestParquetBatch_ManyChunks(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	// Set a small pool size to test that we don't exhaust it
+	oldVal := os.Getenv("DUCKDB_S3_POOL_SIZE")
+	_ = os.Setenv("DUCKDB_S3_POOL_SIZE", "2") // Small pool
+	defer func() {
+		if oldVal != "" {
+			_ = os.Setenv("DUCKDB_S3_POOL_SIZE", oldVal)
+		} else {
+			_ = os.Unsetenv("DUCKDB_S3_POOL_SIZE")
+		}
+	}()
+
+	// Create S3DB with small pool
+	s3Pool, err := duckdbx.NewS3DB()
+	require.NoError(t, err, "failed to create S3DB pool")
+	defer func() { _ = s3Pool.Close() }()
+
+	// Create DDBSink
+	sink, err := NewDDBSink("metrics", ctx, s3Pool)
+	require.NoError(t, err, "failed to create DDBSink")
+	defer func() { _ = sink.Close() }()
+
+	// Create many small batches (more than pool size) to simulate processing many chunks
+	// Each batch will require a connection from the pool
+	parquetDir := "./testdata/db"
+	var allPaths []string
+	var allSegmentIDs []int64
+
+	// Find one parquet file to use repeatedly
+	err = filepath.Walk(parquetDir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".parquet") && len(allPaths) == 0 {
+			// Use the same file multiple times to simulate multiple chunks
+			for i := 0; i < 5; i++ { // 5 chunks > 2 pool size
+				allPaths = append(allPaths, fmt.Sprintf("./%s", path))
+				allSegmentIDs = append(allSegmentIDs, int64(2000+i))
+			}
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, allPaths, "no parquet files found")
+
+	// Override chunk size temporarily by modifying the constant
+	// Since we can't modify the const, we'll process files one by one
+	for i := range allPaths {
+		err = sink.IngestParquetBatch(ctx, allPaths[i:i+1], allSegmentIDs[i:i+1])
+		require.NoError(t, err, "failed to ingest chunk %d", i)
+	}
+
+	// Verify all data was ingested
+	rowCount := sink.RowCount()
+	t.Logf("Ingested %d rows across %d chunks with pool size of 2", rowCount, len(allPaths))
+	require.Greater(t, rowCount, int64(0), "no rows ingested")
 }
