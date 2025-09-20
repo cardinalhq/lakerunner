@@ -32,14 +32,36 @@ type Querier interface {
 	DeleteOrganization(ctx context.Context, id uuid.UUID) error
 	DeleteOrganizationAPIKey(ctx context.Context, id uuid.UUID) error
 	DeleteOrganizationAPIKeyMapping(ctx context.Context, apiKeyID uuid.UUID) error
+	// Delete API key mapping by hash
+	DeleteOrganizationAPIKeyMappingByHash(ctx context.Context, arg DeleteOrganizationAPIKeyMappingByHashParams) error
 	DeleteOrganizationBucket(ctx context.Context, arg DeleteOrganizationBucketParams) error
+	// Delete organization bucket mappings not in c_ tables
+	DeleteOrganizationBucketMappings(ctx context.Context, arg DeleteOrganizationBucketMappingsParams) error
+	// Delete organizations not in c_ tables
+	DeleteOrganizationsNotInList(ctx context.Context, idsToDelete []uuid.UUID) error
 	GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (AdminApiKey, error)
 	GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (AdminApiKey, error)
 	GetAllAdminAPIKeys(ctx context.Context) ([]AdminApiKey, error)
+	// Get all our bucket configurations
+	GetAllBucketConfigurations(ctx context.Context) ([]GetAllBucketConfigurationsRow, error)
+	// Get all bucket configurations from c_ tables with org mappings
+	GetAllCBucketData(ctx context.Context) ([]GetAllCBucketDataRow, error)
+	// Get all API keys from c_ tables
+	GetAllCOrganizationAPIKeys(ctx context.Context) ([]GetAllCOrganizationAPIKeysRow, error)
 	GetAllCOrganizationAPIKeysForSync(ctx context.Context) ([]GetAllCOrganizationAPIKeysForSyncRow, error)
+	// This file contains queries for syncing data from legacy c_ tables (managed externally)
+	// to our own tables that we control.
+	// Fetch all organizations from c_ tables
+	GetAllCOrganizations(ctx context.Context) ([]GetAllCOrganizationsRow, error)
 	// Legacy table sync operations
 	GetAllCStorageProfilesForSync(ctx context.Context) ([]GetAllCStorageProfilesForSyncRow, error)
+	// Get all our API key mappings
+	GetAllOrganizationAPIKeyMappings(ctx context.Context) ([]GetAllOrganizationAPIKeyMappingsRow, error)
 	GetAllOrganizationAPIKeys(ctx context.Context) ([]GetAllOrganizationAPIKeysRow, error)
+	// Get all our organization bucket mappings
+	GetAllOrganizationBucketMappings(ctx context.Context) ([]GetAllOrganizationBucketMappingsRow, error)
+	// Fetch all our organizations
+	GetAllOrganizations(ctx context.Context) ([]GetAllOrganizationsRow, error)
 	GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error)
 	GetBucketConfiguration(ctx context.Context, bucketName string) (BucketConfiguration, error)
 	GetBucketConfigurationByName(ctx context.Context, bucketName string) (BucketConfiguration, error)
@@ -64,16 +86,14 @@ type Querier interface {
 	ListOrganizationAPIKeysByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationAPIKeysByOrgRow, error)
 	ListOrganizationBucketsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationBucketsByOrgRow, error)
 	ListOrganizations(ctx context.Context) ([]Organization, error)
-	SyncOrganizationBuckets(ctx context.Context) error
-	// This file contains queries for syncing data from legacy c_ tables (managed externally)
-	// to our own tables that we control.
-	SyncOrganizations(ctx context.Context) error
 	UpsertAdminAPIKey(ctx context.Context, arg UpsertAdminAPIKeyParams) (AdminApiKey, error)
 	UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (BucketConfiguration, error)
 	UpsertOrganization(ctx context.Context, arg UpsertOrganizationParams) (Organization, error)
 	UpsertOrganizationAPIKey(ctx context.Context, arg UpsertOrganizationAPIKeyParams) (OrganizationApiKey, error)
 	UpsertOrganizationAPIKeyMapping(ctx context.Context, arg UpsertOrganizationAPIKeyMappingParams) error
 	UpsertOrganizationBucket(ctx context.Context, arg UpsertOrganizationBucketParams) error
+	// Upsert organization
+	UpsertOrganizationSync(ctx context.Context, arg UpsertOrganizationSyncParams) error
 }
 
 var _ Querier = (*Queries)(nil)

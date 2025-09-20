@@ -49,7 +49,6 @@ func (r OSFileReader) Getenv(key string) string {
 
 // DatabaseQueries interface for testable database operations
 type DatabaseQueries interface {
-	SyncOrganizations(ctx context.Context) error
 	HasExistingStorageProfiles(ctx context.Context) (bool, error)
 	UpsertBucketConfiguration(ctx context.Context, arg configdb.UpsertBucketConfigurationParams) (configdb.BucketConfiguration, error)
 	UpsertOrganizationBucket(ctx context.Context, arg configdb.UpsertOrganizationBucketParams) error
