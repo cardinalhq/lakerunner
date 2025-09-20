@@ -345,10 +345,10 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 	if strings.HasSuffix(tmpFilename, ".parquet") {
 		// Use specialized Parquet translator that handles timestamp detection and fingerprinting
 		translator = &ParquetLogTranslator{
-			orgID:             orgID,
-			bucket:            bucket,
-			objectID:          objectID,
-			exemplarProcessor: p.exemplarProcessor,
+			OrgID:             orgID,
+			Bucket:            bucket,
+			ObjectID:          objectID,
+			ExemplarProcessor: p.exemplarProcessor,
 		}
 	} else {
 		// Use standard translator for other formats (json, binpb, etc.)

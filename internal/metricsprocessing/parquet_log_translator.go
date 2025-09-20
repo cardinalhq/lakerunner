@@ -31,10 +31,10 @@ import (
 
 // ParquetLogTranslator handles Parquet-specific log translation with timestamp detection and fingerprinting
 type ParquetLogTranslator struct {
-	orgID             string
-	bucket            string
-	objectID          string
-	exemplarProcessor *exemplars.Processor
+	OrgID             string
+	Bucket            string
+	ObjectID          string
+	ExemplarProcessor *exemplars.Processor
 }
 
 // flattenValue recursively flattens nested structures into dot-notation fields
@@ -320,8 +320,9 @@ func (t *ParquetLogTranslator) TranslateRow(row *filereader.Row) error {
 		specialFields[wkk.NewRowKey(field)] = true
 	}
 
-	// Process all other fields as attributes (matching Scala behavior)
-	// First, flatten any nested structures
+	// Process all other fields as attributes (matching OTLP collector behavior)
+	// First pass: collect all fields that need processing
+	fieldsToProcess := make(map[wkk.RowKey]any)
 	for key, value := range *row {
 		// Get the string representation of the key
 		keyStr := wkk.RowKeyValue(key)
@@ -330,34 +331,45 @@ func (t *ParquetLogTranslator) TranslateRow(row *filereader.Row) error {
 			continue
 		}
 
-		// Skip and remove special fields and _cardinalhq fields
+		// Skip special fields, _cardinalhq fields, and fields already with resource. prefix
 		if specialFields[key] || strings.HasPrefix(keyStr, "_cardinalhq.") || strings.HasPrefix(keyStr, "resource.") || keyStr[0] == '_' {
-			// Remove special fields, underscore fields, and pre-existing _cardinalhq/resource fields
-			if specialFields[key] || keyStr[0] == '_' || strings.HasPrefix(keyStr, "resource.") {
+			// Remove special fields and underscore fields
+			if specialFields[key] || keyStr[0] == '_' {
 				delete(*row, key)
 			}
+			// Keep existing resource. fields as-is
 			continue
 		}
 
-		// If it's a nested structure, flatten it
+		// This field needs to be processed and prefixed with resource.
+		fieldsToProcess[key] = value
+		delete(*row, key) // Remove the original field
+	}
+
+	// Second pass: process and add back with resource. prefix
+	for key, value := range fieldsToProcess {
+		keyStr := wkk.RowKeyValue(key)
+
+		// If it's a nested structure, flatten it with resource. prefix
 		switch v := value.(type) {
 		case map[string]any:
 			flattened := make(map[wkk.RowKey]any)
-			t.flattenValue(keyStr, v, flattened)
+			t.flattenValue("resource."+keyStr, v, flattened)
 			maps.Copy((*row), flattened)
-			delete(*row, key)
 		case []any:
 			flattened := make(map[wkk.RowKey]any)
-			t.flattenValue(keyStr, v, flattened)
+			t.flattenValue("resource."+keyStr, v, flattened)
 			maps.Copy((*row), flattened)
-			delete(*row, key)
+		default:
+			// Simple value - add with resource. prefix
+			(*row)[wkk.NewRowKey("resource."+keyStr)] = value
 		}
 	}
 
 	// Add standard resource fields
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.Bucket
+	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.ObjectID
+	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.ObjectID)
 
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"
@@ -373,8 +385,8 @@ func (t *ParquetLogTranslator) TranslateRow(row *filereader.Row) error {
 	(*row)[messageKey] = message
 
 	// Fingerprint the message if we have one and an exemplar processor
-	if message != "" && t.exemplarProcessor != nil {
-		tenant := t.exemplarProcessor.GetTenant(context.Background(), t.orgID)
+	if message != "" && t.ExemplarProcessor != nil {
+		tenant := t.ExemplarProcessor.GetTenant(context.Background(), t.OrgID)
 		if tenant != nil {
 			trieClusterManager := tenant.GetTrieClusterManager()
 			fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)

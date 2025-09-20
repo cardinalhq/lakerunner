@@ -21,15 +21,18 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func getParquetArrowCatSubCmd() *cobra.Command {
 	var limit int
+	var translator string
 
 	cmd := &cobra.Command{
 		Use:   "arrow-cat",
@@ -40,17 +43,23 @@ func getParquetArrowCatSubCmd() *cobra.Command {
 				return errors.New("file is required")
 			}
 
-			return runParquetArrowCat(filename, limit)
+			// Validate translator option
+			if translator != "" && translator != "ingest-logs" {
+				return fmt.Errorf("invalid translator: %s (supported: ingest-logs)", translator)
+			}
+
+			return runParquetArrowCat(filename, limit, translator)
 		},
 	}
 
 	cmd.Flags().String("file", "", "The parquet file to read")
 	cmd.Flags().IntVar(&limit, "limit", 0, "Limit the number of rows to output (0 for no limit)")
+	cmd.Flags().StringVar(&translator, "translator", "", "Apply a translator to the rows (options: ingest-logs)")
 
 	return cmd
 }
 
-func runParquetArrowCat(filename string, limit int) error {
+func runParquetArrowCat(filename string, limit int, translatorType string) error {
 	file, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", filename, err)
@@ -64,6 +73,25 @@ func runParquetArrowCat(filename string, limit int) error {
 		return fmt.Errorf("failed to create arrow reader: %w", err)
 	}
 	defer func() { _ = ar.Close() }()
+
+	// Create translator if requested
+	var logTranslator *metricsprocessing.ParquetLogTranslator
+	if translatorType == "ingest-logs" {
+		// Extract bucket and object ID from filename for translator
+		// This is just for debug purposes, so we use simple defaults
+		objectID := filepath.Base(filename)
+		bucket := "debug-bucket"
+		orgID := "debug-org"
+
+		logTranslator = &metricsprocessing.ParquetLogTranslator{
+			OrgID:    orgID,
+			Bucket:   bucket,
+			ObjectID: objectID,
+			// ExemplarProcessor is nil for debug mode
+		}
+
+		fmt.Fprintf(os.Stderr, "Using ingest-logs translator (org: %s, bucket: %s, object: %s)\n", orgID, bucket, objectID)
+	}
 
 	// Print schema information
 	schema, err := ar.GetSchema()
@@ -94,6 +122,14 @@ func runParquetArrowCat(filename string, limit int) error {
 			}
 
 			row := batch.Get(i)
+
+			// Apply translator if configured
+			if logTranslator != nil {
+				if err := logTranslator.TranslateRow(&row); err != nil {
+					return fmt.Errorf("error translating row: %w", err)
+				}
+			}
+
 			// Convert row to regular map for JSON marshaling
 			jsonRow := make(map[string]any)
 			for k, v := range row {

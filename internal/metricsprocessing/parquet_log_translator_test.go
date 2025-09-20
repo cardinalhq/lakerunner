@@ -28,9 +28,9 @@ import (
 
 func TestParquetLogTranslator_TranslateRow_NilRow(t *testing.T) {
 	translator := &ParquetLogTranslator{
-		orgID:    "test-org",
-		bucket:   "test-bucket",
-		objectID: "test.parquet",
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "test.parquet",
 	}
 
 	err := translator.TranslateRow(nil)
@@ -140,9 +140,9 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			translator := &ParquetLogTranslator{
-				orgID:    "test-org",
-				bucket:   "test-bucket",
-				objectID: "test.parquet",
+				OrgID:    "test-org",
+				Bucket:   "test-bucket",
+				ObjectID: "test.parquet",
 			}
 
 			// Create a copy of the row to avoid mutation
@@ -252,9 +252,9 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			translator := &ParquetLogTranslator{
-				orgID:    "test-org",
-				bucket:   "test-bucket",
-				objectID: "test.parquet",
+				OrgID:    "test-org",
+				Bucket:   "test-bucket",
+				ObjectID: "test.parquet",
 			}
 
 			// Create a copy of the row
@@ -295,9 +295,9 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 				},
 			},
 			expected: map[string]any{
-				"metadata.user":         "john",
-				"metadata.details.age":  30,
-				"metadata.details.city": "NYC",
+				"resource.metadata.user":         "john",
+				"resource.metadata.details.age":  30,
+				"resource.metadata.details.city": "NYC",
 			},
 		},
 		{
@@ -308,9 +308,9 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 				wkk.NewRowKey("tags"):      []any{"tag1", "tag2", "tag3"},
 			},
 			expected: map[string]any{
-				"tags[0]": "tag1",
-				"tags[1]": "tag2",
-				"tags[2]": "tag3",
+				"resource.tags[0]": "tag1",
+				"resource.tags[1]": "tag2",
+				"resource.tags[2]": "tag3",
 			},
 		},
 		{
@@ -329,10 +329,10 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 				},
 			},
 			expected: map[string]any{
-				"data.type":                        "click",
-				"data.properties.button":           "submit",
-				"data.properties.coordinates[0].x": 100,
-				"data.properties.coordinates[0].y": 200,
+				"resource.data.type":                        "click",
+				"resource.data.properties.button":           "submit",
+				"resource.data.properties.coordinates[0].x": 100,
+				"resource.data.properties.coordinates[0].y": 200,
 			},
 		},
 	}
@@ -340,9 +340,9 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			translator := &ParquetLogTranslator{
-				orgID:    "test-org",
-				bucket:   "test-bucket",
-				objectID: "test.parquet",
+				OrgID:    "test-org",
+				Bucket:   "test-bucket",
+				ObjectID: "test.parquet",
 			}
 
 			// Create a copy of the row
@@ -381,9 +381,9 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 
 func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing.T) {
 	translator := &ParquetLogTranslator{
-		orgID:    "test-org",
-		bucket:   "test-bucket",
-		objectID: "test.parquet",
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "test.parquet",
 	}
 
 	row := filereader.Row{
@@ -403,8 +403,8 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 		// _cardinalhq fields should be skipped
 		wkk.NewRowKey("_cardinalhq.test"): "skip me too",
 
-		// resource fields should be skipped (will be overwritten)
-		wkk.NewRowKey("resource.old"): "skip",
+		// resource fields should be kept as-is
+		wkk.NewRowKey("resource.old"): "keep",
 	}
 
 	err := translator.TranslateRow(&row)
@@ -421,25 +421,26 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 	_, hasInternal := row[wkk.NewRowKey("_internal")]
 	assert.False(t, hasInternal, "_internal should be skipped")
 
-	// Check that old resource field was skipped
-	_, hasOldResource := row[wkk.NewRowKey("resource.old")]
-	assert.False(t, hasOldResource, "resource.old should be skipped")
+	// Check that existing resource field was kept
+	oldResource, hasOldResource := row[wkk.NewRowKey("resource.old")]
+	assert.True(t, hasOldResource, "resource.old should be kept")
+	assert.Equal(t, "keep", oldResource)
 
-	// Check that regular attributes are present
-	level, hasLevel := row[wkk.NewRowKey("level")]
-	assert.True(t, hasLevel, "Should have level attribute")
+	// Check that regular attributes are present with resource. prefix
+	level, hasLevel := row[wkk.NewRowKey("resource.level")]
+	assert.True(t, hasLevel, "Should have resource.level attribute")
 	assert.Equal(t, "info", level)
 
-	service, hasService := row[wkk.NewRowKey("service")]
-	assert.True(t, hasService, "Should have service attribute")
+	service, hasService := row[wkk.NewRowKey("resource.service")]
+	assert.True(t, hasService, "Should have resource.service attribute")
 	assert.Equal(t, "api", service)
 }
 
 func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 	translator := &ParquetLogTranslator{
-		orgID:    "test-org",
-		bucket:   "test-bucket",
-		objectID: "logs/2024/01/data.parquet",
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "logs/2024/01/data.parquet",
 	}
 
 	row := filereader.Row{
@@ -475,9 +476,9 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 
 func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
 	translator := &ParquetLogTranslator{
-		orgID:    "test-org",
-		bucket:   "test-bucket",
-		objectID: "test.parquet",
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "test.parquet",
 	}
 
 	// Create a row with an empty key (edge case)
@@ -502,9 +503,9 @@ func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
 
 func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.T) {
 	translator := &ParquetLogTranslator{
-		orgID:    "test-org",
-		bucket:   "test-bucket",
-		objectID: "test.parquet",
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "test.parquet",
 	}
 
 	row := filereader.Row{
@@ -522,12 +523,12 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 	err := translator.TranslateRow(&row)
 	require.NoError(t, err)
 
-	// Check that all non-special fields are preserved
-	assert.Equal(t, "error", row[wkk.NewRowKey("level")])
-	assert.Equal(t, "auth-service", row[wkk.NewRowKey("service.name")])
-	assert.Equal(t, "abc123", row[wkk.NewRowKey("trace.id")])
-	assert.Equal(t, "def456", row[wkk.NewRowKey("span.id")])
-	assert.Equal(t, "POST", row[wkk.NewRowKey("http.method")])
-	assert.Equal(t, int64(500), row[wkk.NewRowKey("http.status")])
-	assert.Equal(t, float64(123.45), row[wkk.NewRowKey("duration.ms")])
+	// Check that all non-special fields are preserved with resource. prefix
+	assert.Equal(t, "error", row[wkk.NewRowKey("resource.level")])
+	assert.Equal(t, "auth-service", row[wkk.NewRowKey("resource.service.name")])
+	assert.Equal(t, "abc123", row[wkk.NewRowKey("resource.trace.id")])
+	assert.Equal(t, "def456", row[wkk.NewRowKey("resource.span.id")])
+	assert.Equal(t, "POST", row[wkk.NewRowKey("resource.http.method")])
+	assert.Equal(t, int64(500), row[wkk.NewRowKey("resource.http.status")])
+	assert.Equal(t, float64(123.45), row[wkk.NewRowKey("resource.duration.ms")])
 }
