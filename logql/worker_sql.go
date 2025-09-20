@@ -334,7 +334,10 @@ func emitParsers(
 		return m
 	}
 
-	for _, p := range be.Parsers {
+	// IMPORTANT: index-based loop so we can look ahead
+	for i := range be.Parsers {
+		p := be.Parsers[i]
+
 		switch strings.ToLower(p.Type) {
 
 		case "regexp":
@@ -386,13 +389,43 @@ func emitParsers(
 			}
 
 		case "json":
-			// Keys needed by filters + group-by + unwrap, excluding future label_format.
+			// Keys needed by filters + group-by + unwrap.
 			baseFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
 			needKeys := uniqLabels(baseFilters)
 			needKeys = append(needKeys, groupKeys...)
 			for f := range unwrapNeeded {
 				needKeys = append(needKeys, f)
 			}
+
+			// LOOK-AHEAD: include deps referenced by any *later* line_format / label_format
+			for j := i + 1; j < len(be.Parsers); j++ {
+				pj := be.Parsers[j]
+				switch strings.ToLower(pj.Type) {
+				case "line_format", "line-format", "lineformat":
+					if t := strings.TrimSpace(pj.Params["template"]); t != "" {
+						for _, d := range collectTemplateDeps(t) {
+							d = normalizeLabelName(d)
+							if !isBaseCol(quoteIdent(d)) {
+								needKeys = append(needKeys, d)
+							}
+						}
+					}
+				case "label_format", "label-format", "labelformat":
+					for _, tmpl := range pj.Params {
+						if strings.TrimSpace(tmpl) == "" {
+							continue
+						}
+						for _, d := range collectTemplateDeps(tmpl) {
+							d = normalizeLabelName(d)
+							if !isBaseCol(quoteIdent(d)) {
+								needKeys = append(needKeys, d)
+							}
+						}
+					}
+				}
+			}
+
+			// Exclude future-created (label_format) outputs and dedupe
 			needKeys = dedupeStrings(excludeFuture(needKeys))
 
 			// s*: project keys from JSON (mappings first)
@@ -419,7 +452,11 @@ func emitParsers(
 				if _, ok := created[k]; ok {
 					continue
 				}
+				// Use nested JSONPath for dotted keys
 				path := jsonPathForKey(k)
+				if strings.Contains(k, ".") {
+					path = jsonPathFromMapping(k)
+				}
 				sel = append(sel, fmt.Sprintf(
 					"json_extract_string(%s, %s) AS %s",
 					bodyCol, sqlQuote(path), quoteIdent(k),
@@ -452,6 +489,35 @@ func emitParsers(
 			for f := range unwrapNeeded {
 				needKeys = append(needKeys, f)
 			}
+
+			// LOOK-AHEAD for later templates
+			for j := i + 1; j < len(be.Parsers); j++ {
+				pj := be.Parsers[j]
+				switch strings.ToLower(pj.Type) {
+				case "line_format", "line-format", "lineformat":
+					if t := strings.TrimSpace(pj.Params["template"]); t != "" {
+						for _, d := range collectTemplateDeps(t) {
+							d = normalizeLabelName(d)
+							if !isBaseCol(quoteIdent(d)) {
+								needKeys = append(needKeys, d)
+							}
+						}
+					}
+				case "label_format", "label-format", "labelformat":
+					for _, tmpl := range pj.Params {
+						if strings.TrimSpace(tmpl) == "" {
+							continue
+						}
+						for _, d := range collectTemplateDeps(tmpl) {
+							d = normalizeLabelName(d)
+							if !isBaseCol(quoteIdent(d)) {
+								needKeys = append(needKeys, d)
+							}
+						}
+					}
+				}
+			}
+
 			needKeys = dedupeStrings(excludeFuture(needKeys))
 
 			sel := []string{pb.top() + ".*"}

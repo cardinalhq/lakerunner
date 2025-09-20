@@ -1401,3 +1401,99 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField_UnderscoreCompat(t *testing
 		t.Fatalf("wrong row selected: resource.service.name=%q", svc)
 	}
 }
+
+func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
+	db := openDuckDB(t)
+	t.Cleanup(func() { mustDropTable(db, "logs") })
+
+	// Base table with:
+	// - selector column normalized from resource_service_name -> "resource.service.name"
+	// - message column that will be rewritten twice by line_format stages
+	// - a base column containing JSON but with special characters in the name
+	mustExec(t, db, `CREATE TABLE logs(
+		"resource.service.name" TEXT,
+		"_cardinalhq.message"   TEXT,
+		"log.@OrderResult"      TEXT
+	);`)
+
+	// Insert two rows; only the 'accounting' row should match the selector.
+	// The JSON mirrors your target structure.
+	mustExec(t, db, `INSERT INTO logs VALUES
+		('accounting', 'orig msg (to be replaced)', '{"orderId":"O-123","shippingCost":{"currencyCode":"USD","units":12,"nanos":500000000}}'),
+		('billing',    'orig msg (ignored)',        '{"orderId":"O-999","shippingCost":{"currencyCode":"EUR","units":7,"nanos":0}}');`)
+
+	// Your intended LogQL:
+	//  - stage1 line_format: move base column value into message via index key with underscore
+	//  - json: extract fields from that message
+	//  - stage2 line_format: reformat message from extracted fields
+	q := `{resource_service_name="accounting"} ` +
+		`| line_format "{{ index . \"log_@OrderResult\" }}" ` +
+		`| json ` +
+		`| line_format "orderId={{.orderId}} currency={{.shippingCost.currencyCode}} units={{.shippingCost.units}} nanos={{.shippingCost.nanos}}"`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+
+	// Sanity checks on generated SQL:
+	// 1) selector WHERE clause
+	if !strings.Contains(sql, `"resource.service.name" = 'accounting'`) {
+		t.Fatalf("missing selector on resource.service.name:\n%s", sql)
+	}
+	// 2) base column with special chars is hoisted (so it can be indexed in template)
+	if !strings.Contains(sql, `"log.@OrderResult"`) {
+		t.Fatalf("expected hoisted base column \"log.@OrderResult\" in SQL:\n%s", sql)
+	}
+	// 3) final rewrite of _cardinalhq.message via second line_format
+	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq.message"`) {
+		t.Fatalf("expected rewrite of _cardinalhq.message via line_format:\n%s", sql)
+	}
+	// 4) json projections for the accessed fields should appear
+	//    (depending on your compiler they may alias or inline; check for common forms)
+	wantJsonBits := []string{
+		`json_extract_string("_cardinalhq.message", '$.orderId')`,
+		`json_extract_string("_cardinalhq.message", '$.shippingCost.currencyCode')`,
+		`json_extract("_cardinalhq.message", '$.shippingCost.units')`,
+		`json_extract("_cardinalhq.message", '$.shippingCost.nanos')`,
+	}
+	foundJsonAny := false
+	for _, bit := range wantJsonBits {
+		if strings.Contains(sql, bit) {
+			foundJsonAny = true
+			break
+		}
+	}
+	if !foundJsonAny {
+		// Not fatal in some implementations, but very useful signal while evolving the compiler.
+		t.Logf("note: JSON projections not explicitly visible in SQL (compiler may inline), sql:\n%s", sql)
+	}
+
+	// Execute and validate the single matching row and its final formatted message.
+	rows := queryAll(t, db, sql)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row (service=accounting), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
+	}
+
+	// After both line_format stages, the message should be the composed string:
+	wantMsg := "orderId=O-123 currency=USD units=12 nanos=500000000"
+	gotMsg := getString(rows[0][`_cardinalhq.message`])
+	if gotMsg != wantMsg {
+		t.Fatalf("final _cardinalhq.message mismatch:\n  got:  %q\n  want: %q", gotMsg, wantMsg)
+	}
+
+	// Confirm we indeed selected the accounting row.
+	if svc := getString(rows[0][`resource.service.name`]); svc != "accounting" {
+		t.Fatalf("wrong row selected: resource.service.name=%q", svc)
+	}
+}

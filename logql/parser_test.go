@@ -815,7 +815,6 @@ and
 		t.Fatalf("right rhs: want scalar 2, got %#v", right.BinOp.RHS)
 	}
 
-	// Ensure somewhere inside the right LHS we have a RangeAgg with offset 1h.
 	var sawOffset bool
 	var walk func(n LogAST)
 	walk = func(n LogAST) {
