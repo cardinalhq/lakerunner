@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,7 +41,33 @@ type ConversionResult struct {
 	NotificationsBySignal map[string][]messages.ObjStoreNotificationMessage
 	ItemsSkipped          int
 	ItemsProcessed        int
-	SkipReasons           map[string]int // reason -> count
+	SkipReasons           map[string]int            // reason -> count
+	FileTypeCounts        map[string]map[string]int // signal -> extension -> count
+}
+
+// getFileExtensionCategory returns a normalized extension category for counting
+func getFileExtensionCategory(objectID string) string {
+	ext := strings.ToLower(filepath.Ext(objectID))
+
+	// Handle compound extensions first
+	if strings.HasSuffix(strings.ToLower(objectID), ".json.gz") {
+		return "json.gz"
+	}
+	if strings.HasSuffix(strings.ToLower(objectID), ".binpb.gz") {
+		return "binpb.gz"
+	}
+
+	// Handle simple extensions
+	switch ext {
+	case ".json":
+		return "json"
+	case ".binpb":
+		return "binpb"
+	case ".parquet":
+		return "parquet"
+	default:
+		return "other"
+	}
 }
 
 // convertItemsToKafkaMessages processes parsed S3 items and converts them to Kafka notification messages
@@ -53,6 +80,7 @@ func convertItemsToKafkaMessages(
 	result := ConversionResult{
 		NotificationsBySignal: make(map[string][]messages.ObjStoreNotificationMessage),
 		SkipReasons:           make(map[string]int),
+		FileTypeCounts:        make(map[string]map[string]int),
 	}
 
 	for _, item := range items {
@@ -97,7 +125,7 @@ func convertItemsToKafkaMessages(
 		collectorName := profile.CollectorName
 		item.InstanceNum = instanceNum
 
-		slog.Debug("Processing item for Kafka",
+		slog.Info("Processing item for Kafka",
 			slog.String("bucket", item.Bucket),
 			slog.String("object_id", item.ObjectID),
 			slog.String("telemetry_type", item.Signal),
@@ -118,6 +146,13 @@ func convertItemsToKafkaMessages(
 		// Add to the appropriate signal group
 		result.NotificationsBySignal[item.Signal] = append(result.NotificationsBySignal[item.Signal], notification)
 		result.ItemsProcessed++
+
+		// Count file types by signal
+		if result.FileTypeCounts[item.Signal] == nil {
+			result.FileTypeCounts[item.Signal] = make(map[string]int)
+		}
+		extCategory := getFileExtensionCategory(item.ObjectID)
+		result.FileTypeCounts[item.Signal][extCategory]++
 	}
 
 	return result, nil
@@ -159,6 +194,30 @@ func handleMessageWithKafka(
 	result, err := convertItemsToKafkaMessages(ctx, dedupedItems, sp)
 	if err != nil {
 		return err
+	}
+
+	// Log file type counts per signal
+	for signal, extCounts := range result.FileTypeCounts {
+		logAttrs := []any{
+			slog.String("signal", signal),
+			slog.Int("json", extCounts["json"]),
+			slog.Int("json.gz", extCounts["json.gz"]),
+			slog.Int("binpb", extCounts["binpb"]),
+			slog.Int("binpb.gz", extCounts["binpb.gz"]),
+			slog.Int("parquet", extCounts["parquet"]),
+			slog.Int("other", extCounts["other"]),
+		}
+
+		switch signal {
+		case "logs":
+			slog.Info("Log file type counts", logAttrs...)
+		case "metrics":
+			slog.Info("Metric file type counts", logAttrs...)
+		case "traces":
+			slog.Info("Trace file type counts", logAttrs...)
+		default:
+			slog.Info("File type counts", logAttrs...)
+		}
 	}
 
 	// Update metrics based on conversion results
