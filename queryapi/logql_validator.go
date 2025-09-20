@@ -51,12 +51,13 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if _, err := ValidateLogQLAgainstExemplar(r.Context(), req.Query, req.Exemplar); err != nil {
+	vr, err := ValidateLogQLAgainstExemplar(r.Context(), req.Query, req.Exemplar)
+	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ValidationFailed, "validation failed: "+err.Error())
 		return
 	}
 
-	_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: true})
+	_ = json.NewEncoder(w).Encode(vr)
 }
 
 func (q *QuerierService) sendError(w http.ResponseWriter, err error) {

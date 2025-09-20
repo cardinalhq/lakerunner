@@ -512,3 +512,118 @@ func (p *QueryPlan) AttachLogLeaves(rr RewriteResult) {
 	}
 	walk(p.Root)
 }
+
+func FinalGroupingFromPlan(p QueryPlan) (by []string, without []string, has bool) {
+	type gmode int
+	const (
+		modeNone gmode = iota
+		modeBy
+		modeWithout
+		modeGlobal // agg with neither by nor without
+	)
+
+	type grouping struct {
+		mode   gmode
+		labels []string // for by/without only
+	}
+
+	clone := func(ss []string) []string {
+		if len(ss) == 0 {
+			return nil
+		}
+		cp := make([]string, len(ss))
+		copy(cp, ss)
+		return cp
+	}
+	sortCopy := func(ss []string) []string {
+		cp := clone(ss)
+		if len(cp) > 1 {
+			sort.Strings(cp)
+		}
+		return cp
+	}
+	equalSet := func(a, b []string) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		if len(a) == 0 {
+			return true
+		}
+		ac, bc := sortCopy(a), sortCopy(b)
+		for i := range ac {
+			if ac[i] != bc[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	var walk func(n ExecNode) (grouping, bool)
+	walk = func(n ExecNode) (grouping, bool) {
+		switch t := n.(type) {
+		case *AggNode:
+			if len(t.By) > 0 {
+				return grouping{mode: modeBy, labels: clone(t.By)}, true
+			}
+			if len(t.Without) > 0 {
+				return grouping{mode: modeWithout, labels: clone(t.Without)}, true
+			}
+			// Global aggregation (no by/without)
+			return grouping{mode: modeGlobal}, true
+
+		case *TopKNode:
+			return walk(t.Child)
+		case *BottomKNode:
+			return walk(t.Child)
+		case *QuantileNode:
+			return walk(t.Child)
+		case *ScalarOfNode:
+			return walk(t.Child)
+		case *UnaryNode:
+			return walk(t.Child)
+		case *ClampMinNode:
+			return walk(t.Child)
+		case *ClampMaxNode:
+			return walk(t.Child)
+
+		case *BinaryNode:
+			lg, lok := walk(t.LHS)
+			rg, rok := walk(t.RHS)
+			if !lok || !rok {
+				return grouping{}, false
+			}
+			if lg.mode != rg.mode {
+				return grouping{}, false
+			}
+			switch lg.mode {
+			case modeGlobal:
+				return grouping{mode: modeGlobal}, true
+			case modeBy, modeWithout:
+				if !equalSet(lg.labels, rg.labels) {
+					return grouping{}, false
+				}
+				return grouping{mode: lg.mode, labels: clone(lg.labels)}, true
+			default:
+				return grouping{}, false
+			}
+
+		default:
+			return grouping{}, false
+		}
+	}
+
+	g, ok := walk(p.Root)
+	if !ok {
+		return nil, nil, false
+	}
+	switch g.mode {
+	case modeBy:
+		return g.labels, nil, true
+	case modeWithout:
+		return nil, g.labels, true
+	case modeGlobal:
+		return nil, nil, true
+	default:
+		return nil, nil, false
+	}
+}
