@@ -57,21 +57,6 @@ func (m *MockDatabaseQueries) HasExistingStorageProfiles(ctx context.Context) (b
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockDatabaseQueries) ClearBucketPrefixMappings(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
-func (m *MockDatabaseQueries) ClearOrganizationBuckets(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
-func (m *MockDatabaseQueries) ClearBucketConfigurations(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
 func (m *MockDatabaseQueries) UpsertBucketConfiguration(ctx context.Context, arg configdb.UpsertBucketConfigurationParams) (configdb.BucketConfiguration, error) {
 	args := m.Called(ctx, arg)
 	return args.Get(0).(configdb.BucketConfiguration), args.Error(1)
@@ -214,10 +199,7 @@ func TestImportStorageProfiles_WithReplace(t *testing.T) {
   bucket: test-bucket-gcp
 `, orgID.String())
 
-	// Expect clear operations in replace mode
-	mockDB.On("ClearBucketPrefixMappings", ctx).Return(nil)
-	mockDB.On("ClearOrganizationBuckets", ctx).Return(nil)
-	mockDB.On("ClearBucketConfigurations", ctx).Return(nil)
+	// In replace mode, we now use non-destructive sync (no clears)
 
 	bucketConfig := configdb.BucketConfiguration{
 		ID:            bucketID,

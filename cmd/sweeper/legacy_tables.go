@@ -84,16 +84,11 @@ func runLegacyTablesSync(ctx context.Context, cdb configdb.QuerierFull, cdbPool 
 
 	qtx := configdb.New(tx)
 
-	// Clear existing bucket management tables (mirror mode)
-	if err = qtx.ClearBucketPrefixMappings(ctx); err != nil {
-		return
-	}
-	if err = qtx.ClearOrganizationBuckets(ctx); err != nil {
-		return
-	}
-	if err = qtx.ClearBucketConfigurations(ctx); err != nil {
-		return
-	}
+	// Sync strategy (non-destructive):
+	// - bucket_configurations: UPSERT ONLY - Never delete, only add/update from c_storage_profiles
+	// - organization_buckets: UPSERT ONLY - Never delete, only add/update from c_collectors
+	// - bucket_prefix_mappings: NEVER TOUCHED - These are manual entries only
+	// This preserves all manual entries and foreign key relationships
 
 	// Group profiles by bucket to ensure 1:1 mapping
 	bucketToProfile := make(map[string]configdb.GetAllCStorageProfilesForSyncRow)
@@ -108,9 +103,9 @@ func runLegacyTablesSync(ctx context.Context, cdb configdb.QuerierFull, cdbPool 
 		bucketToOrgs[profile.BucketName] = append(bucketToOrgs[profile.BucketName], profile.OrganizationID)
 	}
 
-	// Create bucket configurations and organization mappings
+	// Create/update bucket configurations from c_storage_profiles
 	for bucketName, profile := range bucketToProfile {
-		// Create/update bucket configuration
+		// Upsert bucket configuration (will update existing or create new)
 		_, err = qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
 			BucketName:    bucketName,
 			CloudProvider: profile.CloudProvider,
