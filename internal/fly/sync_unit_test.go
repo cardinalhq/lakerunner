@@ -237,7 +237,7 @@ func TestCreateDefaultTopicsConfig(t *testing.T) {
 	assert.Equal(t, topics[1].PartitionCount, config.Topics[1].PartitionCount)
 
 	// Verify operation timeout
-	assert.Equal(t, 30*time.Second, config.OperationTimeout)
+	assert.Equal(t, 5*time.Minute, config.OperationTimeout)
 
 	t.Logf("Created default config with %d topics", len(config.Topics))
 }
