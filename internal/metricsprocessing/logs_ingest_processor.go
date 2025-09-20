@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
@@ -38,6 +39,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/oteltools/pkg/translate"
 )
 
 // DateintBin represents a file group containing logs for a specific dateint
@@ -339,11 +342,25 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 		return nil, fmt.Errorf("failed to create log reader: %w", err)
 	}
 
-	translator := &LogTranslator{
-		orgID:    orgID,
-		bucket:   bucket,
-		objectID: objectID,
+	// Check if the file is a Parquet file to determine which translator to use
+	var translator filereader.RowTranslator
+	if strings.HasSuffix(tmpFilename, ".parquet") {
+		// Use specialized Parquet translator that handles timestamp detection and fingerprinting
+		translator = &ParquetLogTranslator{
+			orgID:             orgID,
+			bucket:            bucket,
+			objectID:          objectID,
+			exemplarProcessor: p.exemplarProcessor,
+		}
+	} else {
+		// Use standard translator for other formats (json, binpb, etc.)
+		translator = &LogTranslator{
+			orgID:    orgID,
+			bucket:   bucket,
+			objectID: objectID,
+		}
 	}
+
 	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
 	if err != nil {
 		_ = reader.Close()
@@ -623,6 +640,154 @@ func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"
 	(*row)[wkk.RowKeyCName] = "log.events"
+
+	return nil
+}
+
+// ParquetLogTranslator handles Parquet-specific log translation with timestamp detection and fingerprinting
+type ParquetLogTranslator struct {
+	orgID             string
+	bucket            string
+	objectID          string
+	exemplarProcessor *exemplars.Processor
+}
+
+// detectTimestampField attempts to find a timestamp field in the row
+func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (int64, bool) {
+	// Common timestamp field names to check (in priority order)
+	timestampFields := []string{
+		"timestamp",
+		"@timestamp",
+		"time",
+		"ts",
+		"datetime",
+		"date_time",
+		"event_time",
+		"event.time",
+		"log_timestamp",
+		"log.timestamp",
+		"timestamp_ms",
+		"timestamp_millis",
+	}
+
+	for _, field := range timestampFields {
+		key := wkk.NewRowKey(field)
+		if val, exists := (*row)[key]; exists {
+			// Try to convert to int64 (milliseconds)
+			switch v := val.(type) {
+			case int64:
+				return v, true
+			case int32:
+				return int64(v), true
+			case float64:
+				return int64(v), true
+			case float32:
+				return int64(v), true
+			case int:
+				return int64(v), true
+			}
+		}
+	}
+
+	// Also check for _cardinalhq.timestamp in case it's already present
+	if val, exists := (*row)[wkk.RowKeyCTimestamp]; exists {
+		if ts, ok := val.(int64); ok {
+			return ts, true
+		}
+	}
+
+	return 0, false
+}
+
+// detectMessageField attempts to find a message field in the row
+func (t *ParquetLogTranslator) detectMessageField(row *filereader.Row) (string, bool) {
+	// Common message field names to check (in priority order)
+	messageFields := []string{
+		"message",
+		"msg",
+		"body",
+		"log",
+		"log_message",
+		"log.message",
+		"text",
+		"content",
+		"event",
+		"event.message",
+		"raw",
+		"raw_message",
+	}
+
+	for _, field := range messageFields {
+		key := wkk.NewRowKey(field)
+		if val, exists := (*row)[key]; exists {
+			// Try to convert to string
+			switch v := val.(type) {
+			case string:
+				if v != "" {
+					return v, true
+				}
+			case []byte:
+				if len(v) > 0 {
+					return string(v), true
+				}
+			}
+		}
+	}
+
+	// Also check for _cardinalhq.message in case it's already present
+	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
+	if val, exists := (*row)[messageKey]; exists {
+		if msg, ok := val.(string); ok && msg != "" {
+			return msg, true
+		}
+	}
+
+	return "", false
+}
+
+// TranslateRow processes Parquet rows with timestamp detection and fingerprinting
+func (t *ParquetLogTranslator) TranslateRow(row *filereader.Row) error {
+	if row == nil {
+		return fmt.Errorf("row cannot be nil")
+	}
+
+	// Add standard resource fields
+	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
+	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
+	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
+
+	// Ensure required CardinalhQ fields are set
+	(*row)[wkk.RowKeyCTelemetryType] = "logs"
+	(*row)[wkk.RowKeyCName] = "log.events"
+
+	// Detect and set timestamp
+	if timestamp, found := t.detectTimestampField(row); found {
+		(*row)[wkk.RowKeyCTimestamp] = timestamp
+		// Set nanosecond timestamp (convert ms to ns)
+		(*row)[wkk.NewRowKey("_cardinalhq.tsns")] = timestamp * 1000000
+	}
+
+	// Detect and set message field
+	message, messageFound := t.detectMessageField(row)
+	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
+	if messageFound {
+		(*row)[messageKey] = message
+
+		// Fingerprint the message if we have an exemplar processor
+		if t.exemplarProcessor != nil {
+			tenant := t.exemplarProcessor.GetTenant(context.Background(), t.orgID)
+			if tenant != nil {
+				trieClusterManager := tenant.GetTrieClusterManager()
+				fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
+				if err == nil {
+					(*row)[wkk.NewRowKey(translate.CardinalFieldFingerprint)] = fingerprint
+				}
+			}
+		}
+	} else {
+		// Set empty message if not found
+		(*row)[messageKey] = ""
+	}
 
 	return nil
 }
