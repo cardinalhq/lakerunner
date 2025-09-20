@@ -25,164 +25,125 @@ import (
 func TestHandleLogQLValidate(t *testing.T) {
 	qs := &QuerierService{}
 
+	type okResp struct {
+		Valid bool `json:"valid"`
+	}
+	type errResp struct {
+		Status  int    `json:"status"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+
 	tests := []struct {
 		name           string
 		query          string
-		expectedValid  bool
 		expectedStatus int
+		expectValid    bool
+		expectErrCode  string
 	}{
 		{
 			name:           "Valid LogQL query",
 			query:          `{app="api"}`,
-			expectedValid:  true,
 			expectedStatus: http.StatusOK,
+			expectValid:    true,
 		},
 		{
 			name:           "Valid LogQL with pipeline",
 			query:          `{app="api"} | json | level="error"`,
-			expectedValid:  true,
 			expectedStatus: http.StatusOK,
+			expectValid:    true,
 		},
 		{
 			name:           "Valid LogQL with range aggregation",
 			query:          `rate({app="api"}[5m])`,
-			expectedValid:  true,
 			expectedStatus: http.StatusOK,
+			expectValid:    true,
 		},
 		{
 			name:           "Invalid LogQL - missing closing brace",
 			query:          `{app="api"`,
-			expectedValid:  false,
 			expectedStatus: http.StatusBadRequest,
+			expectErrCode:  "INVALID_EXPR",
 		},
 		{
 			name:           "Invalid LogQL - syntax error",
 			query:          `{invalid`,
-			expectedValid:  false,
 			expectedStatus: http.StatusBadRequest,
+			expectErrCode:  "INVALID_EXPR",
 		},
 		{
 			name:           "Empty query",
 			query:          "",
-			expectedValid:  false,
 			expectedStatus: http.StatusBadRequest,
+			expectErrCode:  "INVALID_JSON", // handler returns INVALID_JSON for empty/missing query field
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create request body
 			reqBody := map[string]string{"query": tt.query}
 			jsonBody, _ := json.Marshal(reqBody)
 
-			// Create HTTP request
 			req := httptest.NewRequest("POST", "/api/v1/logql/validate", bytes.NewReader(jsonBody))
 			req.Header.Set("Content-Type", "application/json")
 
-			// Create response recorder
 			w := httptest.NewRecorder()
-
-			// Call the handler
 			qs.handleLogQLValidate(w, req)
 
-			// Check status code
 			if w.Code != tt.expectedStatus {
-				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
+				t.Fatalf("expected status %d, got %d; body=%s", tt.expectedStatus, w.Code, w.Body.String())
 			}
 
-			// Parse response
-			var response map[string]interface{}
-			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-				t.Fatalf("Failed to parse response JSON: %v", err)
-			}
-
-			// Check valid field
-			valid, ok := response["valid"].(bool)
-			if !ok {
-				t.Fatalf("Response missing 'valid' field or not a boolean")
-			}
-
-			if valid != tt.expectedValid {
-				t.Errorf("Expected valid=%v, got valid=%v", tt.expectedValid, valid)
-			}
-
-			// For invalid queries, check that error field is present
-			if !tt.expectedValid && tt.expectedStatus == http.StatusOK {
-				if _, ok := response["error"]; !ok {
-					t.Error("Expected 'error' field in response for invalid query")
+			if tt.expectedStatus == http.StatusOK {
+				var ok okResp
+				if err := json.Unmarshal(w.Body.Bytes(), &ok); err != nil {
+					t.Fatalf("parse 200 JSON failed: %v; body=%s", err, w.Body.String())
 				}
+				if ok.Valid != tt.expectValid {
+					t.Fatalf("valid=%v, want %v", ok.Valid, tt.expectValid)
+				}
+				return
+			}
+
+			var er errResp
+			if err := json.Unmarshal(w.Body.Bytes(), &er); err != nil {
+				t.Fatalf("parse error JSON failed: %v; body=%s", err, w.Body.String())
+			}
+			if er.Code != tt.expectErrCode {
+				t.Fatalf("error code=%q, want %q; body=%s", er.Code, tt.expectErrCode, w.Body.String())
+			}
+			if er.Message == "" {
+				t.Fatalf("missing error message; body=%s", w.Body.String())
 			}
 		})
 	}
 }
 
-//func TestParseErrorPosition(t *testing.T) {
-//	tests := []struct {
-//		errMsg       string
-//		expectedLine int
-//		expectedCol  int
-//	}{
-//		{
-//			errMsg:       "parse error at line 1, col 9: syntax error: unexpected $end, expecting = or =~ or !~ or !=",
-//			expectedLine: 1,
-//			expectedCol:  9,
-//		},
-//		{
-//			errMsg:       "parse error at line 2, col 15: unexpected token",
-//			expectedLine: 2,
-//			expectedCol:  15,
-//		},
-//		{
-//			errMsg:       "some other error",
-//			expectedLine: 1,
-//			expectedCol:  1,
-//		},
-//	}
-//
-//	for _, tt := range tests {
-//		t.Run(tt.errMsg, func(t *testing.T) {
-//			line, col := parseErrorPosition(tt.errMsg)
-//			if line != tt.expectedLine {
-//				t.Errorf("Expected line %d, got %d", tt.expectedLine, line)
-//			}
-//			if col != tt.expectedCol {
-//				t.Errorf("Expected col %d, got %d", tt.expectedCol, col)
-//			}
-//		})
-//	}
-//}
-
 func TestHandleLogQLValidateInvalidJSON(t *testing.T) {
 	qs := &QuerierService{}
 
-	// Create HTTP request with invalid JSON
 	req := httptest.NewRequest("POST", "/api/v1/logql/validate", bytes.NewReader([]byte(`{invalid json}`)))
 	req.Header.Set("Content-Type", "application/json")
 
-	// Create response recorder
 	w := httptest.NewRecorder()
-
-	// Call the handler
 	qs.handleLogQLValidate(w, req)
 
-	// Check status code
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected status %d, got %d", http.StatusBadRequest, w.Code)
+		t.Fatalf("expected status %d, got %d; body=%s", http.StatusBadRequest, w.Code, w.Body.String())
 	}
 
-	// Parse response
-	var response map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("Failed to parse response JSON: %v", err)
+	var er struct {
+		Status  int    `json:"status"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
 	}
-
-	// Check valid field
-	valid, ok := response["valid"].(bool)
-	if !ok {
-		t.Fatalf("Response missing 'valid' field or not a boolean")
+	if err := json.Unmarshal(w.Body.Bytes(), &er); err != nil {
+		t.Fatalf("parse error JSON failed: %v; body=%s", err, w.Body.String())
 	}
-
-	if valid != false {
-		t.Errorf("Expected valid=false, got valid=%v", valid)
+	if er.Code != "INVALID_JSON" {
+		t.Fatalf("error code=%q, want INVALID_JSON; body=%s", er.Code, w.Body.String())
+	}
+	if er.Message == "" {
+		t.Fatalf("missing error message; body=%s", w.Body.String())
 	}
 }
