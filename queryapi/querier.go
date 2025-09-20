@@ -204,6 +204,7 @@ type APIErrorCode string
 const (
 	InvalidJSON           APIErrorCode = "INVALID_JSON"
 	ErrInvalidExpr        APIErrorCode = "INVALID_EXPR"
+	ValidationFailed      APIErrorCode = "VALIDATION_FAILED"
 	ErrCompileError       APIErrorCode = "COMPILE_ERROR"
 	ErrRewriteUnsupported APIErrorCode = "REWRITE_UNSUPPORTED"
 	ErrInternalError      APIErrorCode = "INTERNAL_ERROR"

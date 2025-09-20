@@ -52,8 +52,7 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 	}
 
 	if _, err := ValidateLogQLAgainstExemplar(r.Context(), req.Query, req.Exemplar); err != nil {
-		status, code := statusAndCodeForRuntimeError(err)
-		writeAPIError(w, status, code, "validation failed: "+err.Error())
+		writeAPIError(w, http.StatusBadRequest, ValidationFailed, "validation failed: "+err.Error())
 		return
 	}
 
