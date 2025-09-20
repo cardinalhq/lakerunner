@@ -61,12 +61,7 @@ func (m *mockStorageProfileProvider) GetLowestInstanceStorageProfile(ctx context
 	return args.Get(0).(storageprofile.StorageProfile), args.Error(1)
 }
 
-func (m *mockStorageProfileProvider) ResolveOrganization(ctx context.Context, bucketName, objectPath string) (uuid.UUID, error) {
-	args := m.Called(ctx, bucketName, objectPath)
-	return args.Get(0).(uuid.UUID), args.Error(1)
-}
-
-func (m *mockStorageProfileProvider) ResolveOrganizationWithSignal(ctx context.Context, bucketName, objectPath string) (storageprofile.OrganizationResolution, error) {
+func (m *mockStorageProfileProvider) ResolveOrganization(ctx context.Context, bucketName, objectPath string) (storageprofile.OrganizationResolution, error) {
 	args := m.Called(ctx, bucketName, objectPath)
 	return args.Get(0).(storageprofile.OrganizationResolution), args.Error(1)
 }
@@ -83,7 +78,6 @@ func (m *mockDeduplicator) CheckAndRecord(ctx context.Context, bucket, objectID,
 
 func TestConvertItemsToKafkaMessages_OtelRawPath(t *testing.T) {
 	ctx := context.Background()
-	source := "test-source"
 
 	orgID := uuid.New()
 
@@ -99,7 +93,7 @@ func TestConvertItemsToKafkaMessages_OtelRawPath(t *testing.T) {
 
 	// Mock deduplicator
 	mockDedup := &mockDeduplicator{}
-	mockDedup.On("CheckAndRecord", ctx, mock.AnythingOfType("*IngestItem"), source).Return(true, nil)
+	mockDedup.On("CheckAndRecord", ctx, mock.AnythingOfType("*IngestItem")).Return(true, nil)
 
 	// Test input
 	items := []IngestItem{
@@ -114,7 +108,7 @@ func TestConvertItemsToKafkaMessages_OtelRawPath(t *testing.T) {
 	}
 
 	// Call the function
-	result, err := convertItemsToKafkaMessages(ctx, items, source, mockSP)
+	result, err := convertItemsToKafkaMessages(ctx, items, mockSP)
 
 	// Assertions
 	assert.NoError(t, err)
@@ -137,7 +131,6 @@ func TestConvertItemsToKafkaMessages_OtelRawPath(t *testing.T) {
 
 func TestConvertItemsToKafkaMessages_DatabaseFileSkipped(t *testing.T) {
 	ctx := context.Background()
-	source := "test-source"
 
 	mockSP := &mockStorageProfileProvider{}
 	mockDedup := &mockDeduplicator{}
@@ -155,7 +148,7 @@ func TestConvertItemsToKafkaMessages_DatabaseFileSkipped(t *testing.T) {
 	}
 
 	// Call the function
-	result, err := convertItemsToKafkaMessages(ctx, items, source, mockSP)
+	result, err := convertItemsToKafkaMessages(ctx, items, mockSP)
 
 	// Assertions
 	assert.NoError(t, err)
@@ -171,13 +164,12 @@ func TestConvertItemsToKafkaMessages_DatabaseFileSkipped(t *testing.T) {
 
 func TestConvertItemsToKafkaMessages_NonOtelRawPath(t *testing.T) {
 	ctx := context.Background()
-	source := "test-source"
 
 	orgID := uuid.New()
 
 	// Mock storage profile provider
 	mockSP := &mockStorageProfileProvider{}
-	mockSP.On("ResolveOrganizationWithSignal", ctx, "test-bucket", "custom/path/file.json").Return(
+	mockSP.On("ResolveOrganization", ctx, "test-bucket", "custom/path/file.json").Return(
 		storageprofile.OrganizationResolution{
 			OrganizationID: orgID,
 			Signal:         "metrics",
@@ -192,7 +184,7 @@ func TestConvertItemsToKafkaMessages_NonOtelRawPath(t *testing.T) {
 
 	// Mock deduplicator
 	mockDedup := &mockDeduplicator{}
-	mockDedup.On("CheckAndRecord", ctx, mock.AnythingOfType("*IngestItem"), source).Return(true, nil)
+	mockDedup.On("CheckAndRecord", ctx, mock.AnythingOfType("*IngestItem")).Return(true, nil)
 
 	// Test input with non-otel-raw path
 	items := []IngestItem{
@@ -207,7 +199,7 @@ func TestConvertItemsToKafkaMessages_NonOtelRawPath(t *testing.T) {
 	}
 
 	// Call the function
-	result, err := convertItemsToKafkaMessages(ctx, items, source, mockSP)
+	result, err := convertItemsToKafkaMessages(ctx, items, mockSP)
 
 	// Assertions
 	assert.NoError(t, err)

@@ -48,7 +48,6 @@ type ConversionResult struct {
 func convertItemsToKafkaMessages(
 	ctx context.Context,
 	items []IngestItem,
-	source string,
 	sp storageprofile.StorageProfileProvider,
 ) (ConversionResult, error) {
 	result := ConversionResult{
@@ -68,7 +67,7 @@ func convertItemsToKafkaMessages(
 		// For otel-raw paths, org and signal were already extracted in parser
 		if !strings.HasPrefix(item.ObjectID, "otel-raw/") {
 			// Use new organization resolution logic that also returns the signal from prefix mapping
-			resolution, err := sp.ResolveOrganizationWithSignal(ctx, item.Bucket, item.ObjectID)
+			resolution, err := sp.ResolveOrganization(ctx, item.Bucket, item.ObjectID)
 			if err != nil {
 				slog.Error("Failed to resolve organization with signal",
 					slog.Any("error", err),
@@ -156,7 +155,7 @@ func handleMessageWithKafka(
 	}
 
 	// Convert items to Kafka messages
-	result, err := convertItemsToKafkaMessages(ctx, dedupedItems, source, sp)
+	result, err := convertItemsToKafkaMessages(ctx, dedupedItems, sp)
 	if err != nil {
 		return err
 	}
