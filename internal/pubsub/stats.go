@@ -117,25 +117,50 @@ func (sa *StatsAggregator) reportStats() {
 		return
 	}
 
-	// Calculate totals
+	// Calculate totals and collect signals in consistent order
 	var totalProcessed, totalFailed, totalSkipped int64
 	signalDetails := make([]any, 0)
 
-	for signal, stats := range sa.stats {
-		if stats.processed > 0 || stats.failed > 0 || stats.skipped > 0 {
+	// Define consistent order for signals
+	signalOrder := []string{"logs", "metrics", "traces"}
+
+	// First process known signals in order
+	for _, signal := range signalOrder {
+		if stats, exists := sa.stats[signal]; exists && (stats.processed > 0 || stats.failed > 0 || stats.skipped > 0) {
 			totalProcessed += stats.processed
 			totalFailed += stats.failed
 			totalSkipped += stats.skipped
 
-			// Only add to details if there's actual activity
-			if stats.processed > 0 {
-				signalDetails = append(signalDetails,
-					slog.Group(signal,
-						slog.Int64("processed", stats.processed),
-						slog.Int64("failed", stats.failed),
-						slog.Int64("skipped", stats.skipped),
-					))
+			signalDetails = append(signalDetails,
+				slog.Group(signal,
+					slog.Int64("processed", stats.processed),
+					slog.Int64("failed", stats.failed),
+					slog.Int64("skipped", stats.skipped),
+				))
+		}
+	}
+
+	// Then process any unknown signals (shouldn't happen but defensive)
+	for signal, stats := range sa.stats {
+		// Skip if already processed
+		isKnown := false
+		for _, known := range signalOrder {
+			if signal == known {
+				isKnown = true
+				break
 			}
+		}
+		if !isKnown && (stats.processed > 0 || stats.failed > 0 || stats.skipped > 0) {
+			totalProcessed += stats.processed
+			totalFailed += stats.failed
+			totalSkipped += stats.skipped
+
+			signalDetails = append(signalDetails,
+				slog.Group(signal,
+					slog.Int64("processed", stats.processed),
+					slog.Int64("failed", stats.failed),
+					slog.Int64("skipped", stats.skipped),
+				))
 		}
 	}
 
