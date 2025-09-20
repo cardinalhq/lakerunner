@@ -58,7 +58,7 @@ func convertItemsToKafkaMessages(
 	for _, item := range items {
 		// Skip database files
 		if strings.HasPrefix(item.ObjectID, "db/") {
-			slog.Info("Skipping database file", slog.String("objectID", item.ObjectID))
+			slog.Debug("Skipping database file", slog.String("objectID", item.ObjectID))
 			result.ItemsSkipped++
 			result.SkipReasons["database_file"]++
 			continue
@@ -97,7 +97,7 @@ func convertItemsToKafkaMessages(
 		collectorName := profile.CollectorName
 		item.InstanceNum = instanceNum
 
-		slog.Info("Processing item for Kafka",
+		slog.Debug("Processing item for Kafka",
 			slog.String("bucket", item.Bucket),
 			slog.String("object_id", item.ObjectID),
 			slog.String("telemetry_type", item.Signal),
@@ -131,6 +131,7 @@ func handleMessageWithKafka(
 	sp storageprofile.StorageProfileProvider,
 	kafkaSender KafkaNotificationSender,
 	deduplicator Deduplicator,
+	stats *StatsAggregator,
 ) error {
 	if len(msg) == 0 {
 		return fmt.Errorf("empty message received")
@@ -169,20 +170,34 @@ func handleMessageWithKafka(
 		}
 	}
 
-	for signal, notifications := range result.NotificationsBySignal {
-		for _, notification := range notifications {
-			itemsProcessed.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("bucket", notification.Bucket),
-				attribute.String("telemetry_type", signal),
-				attribute.String("source", source),
-			))
+	// Track skipped items in stats
+	for _, count := range result.SkipReasons {
+		if stats != nil && count > 0 {
+			stats.RecordSkipped("unknown", count)
 		}
 	}
 
 	// Send notifications grouped by signal to appropriate topics
 	for signal, signalNotifications := range result.NotificationsBySignal {
 		if err := kafkaSender.SendBatch(ctx, signal, signalNotifications); err != nil {
+			// Record failed items in stats
+			if stats != nil {
+				stats.RecordFailed(signal, len(signalNotifications))
+			}
 			return fmt.Errorf("failed to send notifications to Kafka for signal %s: %w", signal, err)
+		}
+
+		// Record successful items in stats and metrics
+		if stats != nil {
+			stats.RecordProcessed(signal, len(signalNotifications))
+		}
+
+		for _, notification := range signalNotifications {
+			itemsProcessed.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("bucket", notification.Bucket),
+				attribute.String("telemetry_type", signal),
+				attribute.String("source", source),
+			))
 		}
 	}
 
@@ -195,6 +210,7 @@ type KafkaHandler struct {
 	source       string
 	sp           storageprofile.StorageProfileProvider
 	deduplicator Deduplicator
+	stats        *StatsAggregator
 }
 
 // NewKafkaHandler creates a new Kafka handler for pubsub notifications
@@ -208,11 +224,16 @@ func NewKafkaHandler(
 ) (*KafkaHandler, error) {
 	manager := fly.NewObjStoreNotificationManager(ctx, cfg, factory)
 
+	// Create stats aggregator with 20 second reporting interval
+	stats := NewStatsAggregator(20 * time.Second)
+	stats.Start(ctx)
+
 	return &KafkaHandler{
 		manager:      manager,
 		source:       source,
 		sp:           sp,
 		deduplicator: deduplicator,
+		stats:        stats,
 	}, nil
 }
 
@@ -223,10 +244,13 @@ func (h *KafkaHandler) HandleMessage(ctx context.Context, msg []byte) error {
 		return fmt.Errorf("failed to get Kafka producer: %w", err)
 	}
 
-	return handleMessageWithKafka(ctx, msg, h.source, h.sp, producer, h.deduplicator)
+	return handleMessageWithKafka(ctx, msg, h.source, h.sp, producer, h.deduplicator, h.stats)
 }
 
 // Close closes the Kafka handler
 func (h *KafkaHandler) Close() error {
+	if h.stats != nil {
+		h.stats.Stop()
+	}
 	return h.manager.Close()
 }

@@ -228,7 +228,7 @@ func (ps *SQSService) processMessagesConcurrently(doneCtx context.Context, sqsCl
 		}
 
 		if successCount > 0 || failureCount > 0 {
-			slog.Info("Batch processing completed",
+			slog.Debug("Batch processing completed",
 				slog.Int("successful", successCount),
 				slog.Int("failed", failureCount))
 		}
