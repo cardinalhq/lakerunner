@@ -243,7 +243,7 @@ func TestReaderForFile(t *testing.T) {
 			filename:      filepath.Join(testdataDir, "logs", "logs_1747427310000_667024137.parquet"),
 			signalType:    SignalTypeLogs,
 			expectSuccess: true,
-			expectedType:  "*filereader.ParquetRawReader",
+			expectedType:  "*filereader.ArrowRawReader",
 			description:   "Logs parquet file with logs signal type",
 		},
 		{
@@ -252,7 +252,7 @@ func TestReaderForFile(t *testing.T) {
 			signalType:    SignalTypeMetrics,
 			expectSuccess: true,
 			expectedType:  "*filereader.ParquetRawReader",
-			description:   "Parquet file with metrics signal type (parquet readers work for all signals)",
+			description:   "Parquet file with metrics signal type (uses ParquetRawReader)",
 		},
 		{
 			name:          "ParquetWithTracesSignalType",
@@ -260,7 +260,7 @@ func TestReaderForFile(t *testing.T) {
 			signalType:    SignalTypeTraces,
 			expectSuccess: true,
 			expectedType:  "*filereader.ParquetRawReader",
-			description:   "Parquet file with traces signal type (parquet readers work for all signals)",
+			description:   "Parquet file with traces signal type (uses ParquetRawReader)",
 		},
 
 		// JSON.gz files (should work for all signal types)

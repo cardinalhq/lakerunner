@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -124,7 +125,9 @@ func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, erro
 	}
 }
 
-// createParquetReader creates a ParquetRawReader for the given file.
+// createParquetReader creates a ParquetRawReader or ArrowRawReader for the given file.
+// Uses Apache Arrow for log signal type to handle NULL-type columns gracefully.
+// Uses parquet-go for other signal types to minimize blast radius.
 func createParquetReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -137,6 +140,19 @@ func createParquetReader(filename string, opts ReaderOptions) (Reader, error) {
 		return nil, fmt.Errorf("failed to stat parquet file: %w", err)
 	}
 
+	// Use Arrow reader only for log ingestion to handle NULL-type columns
+	if opts.SignalType == SignalTypeLogs {
+		ctx := context.Background()
+		// os.File already implements parquet.ReaderAtSeeker (io.ReaderAt + io.Seeker)
+		reader, err := NewArrowRawReader(ctx, file, opts.BatchSize)
+		if err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		return reader, nil
+	}
+
+	// Use standard parquet-go reader for metrics and traces to minimize risk
 	reader, err := NewParquetRawReader(file, stat.Size(), opts.BatchSize)
 	if err != nil {
 		_ = file.Close()
