@@ -16,9 +16,9 @@ package queryapi
 
 import (
 	"encoding/json"
-	"net/http"
-
 	"github.com/cardinalhq/lakerunner/logql"
+	"net/http"
+	"strings"
 )
 
 type logQLValidateRequest struct {
@@ -35,33 +35,28 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 
 	var req logQLValidateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Query == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(logQLValidateResponse{
-			Valid: false, Error: `Missing or invalid JSON body; expected {"query":"...", "exemplar":"... (optional)"}`,
-		})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Query) == "" {
+		writeAPIError(w, http.StatusBadRequest, InvalidJSON,
+			`missing or invalid JSON body; expected {"query":"...", "exemplar":"... (optional)"}`)
 		return
 	}
 
-	// If there’s no exemplar, we just check the syntax/compile path.
-	if req.Exemplar == "" {
-		// Basic compile sanity (no DB work).
-		if _, err := logql.FromLogQL(req.Query); err != nil {
-			q.sendError(w, err)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
+	if _, err := logql.FromLogQL(req.Query); err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid LogQL: "+err.Error())
+		return
+	}
+
+	if strings.TrimSpace(req.Exemplar) == "" {
 		_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: true})
 		return
 	}
 
-	// Full-path validation with exemplar → ingest → run worker SQL.
 	if _, err := ValidateLogQLAgainstExemplar(r.Context(), req.Query, req.Exemplar); err != nil {
-		q.sendError(w, err)
+		status, code := statusAndCodeForRuntimeError(err)
+		writeAPIError(w, status, code, "validation failed: "+err.Error())
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: true})
 }
 

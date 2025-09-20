@@ -202,6 +202,7 @@ func (q *QuerierService) sendEvalResults(r *http.Request, w http.ResponseWriter,
 type APIErrorCode string
 
 const (
+	InvalidJSON           APIErrorCode = "INVALID_JSON"
 	ErrInvalidExpr        APIErrorCode = "INVALID_EXPR"
 	ErrCompileError       APIErrorCode = "COMPILE_ERROR"
 	ErrRewriteUnsupported APIErrorCode = "REWRITE_UNSUPPORTED"
