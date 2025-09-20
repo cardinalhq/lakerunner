@@ -25,7 +25,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -34,52 +33,60 @@ type DedupInserter interface {
 	PubSubMessageHistoryInsert(ctx context.Context, params lrdb.PubSubMessageHistoryInsertParams) (pgconn.CommandTag, error)
 }
 
-// Deduplicator handles message deduplication using database
-type Deduplicator struct {
+// Deduplicator defines the interface for message deduplication
+type Deduplicator interface {
+	CheckAndRecord(ctx context.Context, bucket, objectID, source string) (bool, error)
+}
+
+// DatabaseDeduplicator handles message deduplication using database
+type DatabaseDeduplicator struct {
 	store DedupInserter
 }
 
-// NewDeduplicator creates a new deduplicator instance
-func NewDeduplicator(store DedupInserter) *Deduplicator {
-	return &Deduplicator{
+// NewDatabaseDeduplicator creates a new database deduplicator instance
+func NewDatabaseDeduplicator(store DedupInserter) *DatabaseDeduplicator {
+	return &DatabaseDeduplicator{
 		store: store,
 	}
 }
 
+// NewDeduplicator creates a new deduplicator instance (returns interface)
+func NewDeduplicator(store DedupInserter) Deduplicator {
+	return NewDatabaseDeduplicator(store)
+}
+
 // CheckAndRecord checks if a message is a duplicate and records it if not
 // Returns true if the message should be processed (not a duplicate)
-func (d *Deduplicator) CheckAndRecord(ctx context.Context, item *ingest.IngestItem, source string) (bool, error) {
+func (d *DatabaseDeduplicator) CheckAndRecord(ctx context.Context, bucket, objectID, source string) (bool, error) {
 	// Try to insert into database - only succeeds if not a duplicate
 	result, err := d.store.PubSubMessageHistoryInsert(ctx, lrdb.PubSubMessageHistoryInsertParams{
-		OrganizationID: item.OrganizationID,
-		InstanceNum:    item.InstanceNum,
-		Bucket:         item.Bucket,
-		ObjectID:       item.ObjectID,
-		Source:         source,
+		Bucket:   bucket,
+		ObjectID: objectID,
+		Source:   source,
 	})
 
 	if err != nil {
 		// Database error - fail closed (don't process message)
 		slog.Error("Failed to check message deduplication",
 			slog.Any("error", err),
-			slog.String("bucket", item.Bucket),
-			slog.String("object_id", item.ObjectID))
+			slog.String("bucket", bucket),
+			slog.String("object_id", objectID))
 		return false, fmt.Errorf("deduplication check failed: %w", err)
 	}
 
 	wasInserted := result.RowsAffected() > 0
 	if wasInserted {
 		slog.Debug("New message recorded in dedup table",
-			slog.String("bucket", item.Bucket),
-			slog.String("object_id", item.ObjectID))
+			slog.String("bucket", bucket),
+			slog.String("object_id", objectID))
 		return true, nil
 	}
 
 	slog.Info("Duplicate message detected, skipping",
-		slog.String("bucket", item.Bucket),
-		slog.String("object_id", item.ObjectID),
+		slog.String("bucket", bucket),
+		slog.String("object_id", objectID),
 		slog.String("source", source))
-	recordDuplicate(ctx, item.Bucket, source)
+	recordDuplicate(ctx, bucket, source)
 	return false, nil
 }
 

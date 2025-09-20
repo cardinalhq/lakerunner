@@ -64,10 +64,13 @@ func (m *mockBucketManagementFetcher) CheckOrgBucketAccess(ctx context.Context, 
 	return m.hasAccess, m.hasAccessErr
 }
 
-func (m *mockBucketManagementFetcher) GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error) {
+func (m *mockBucketManagementFetcher) GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (configdb.GetLongestPrefixMatchRow, error) {
 	// Store parameters for validation
 	m.lastPrefixMatchParams = &arg
-	return m.prefixMatch, m.prefixMatchErr
+	return configdb.GetLongestPrefixMatchRow{
+		OrganizationID: m.prefixMatch,
+		Signal:         "logs", // Default signal for tests
+	}, m.prefixMatchErr
 }
 
 func (m *mockBucketManagementFetcher) GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error) {
@@ -668,7 +671,6 @@ func TestDatabaseProvider_ResolveOrganization_SignalBasedPrefixMatching(t *testi
 
 			// Validate the parameters that were passed to GetLongestPrefixMatch
 			if mock.lastPrefixMatchParams != nil {
-				assert.Equal(t, tt.expectedSignalArg, mock.lastPrefixMatchParams.Signal, "Expected signal to match extracted signal")
 				assert.Equal(t, tt.bucketName, mock.lastPrefixMatchParams.BucketName)
 				assert.Equal(t, tt.objectPath, mock.lastPrefixMatchParams.ObjectPath)
 			}

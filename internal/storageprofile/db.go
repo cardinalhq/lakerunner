@@ -43,7 +43,7 @@ type ConfigDBStoreageProfileFetcher interface {
 	GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.BucketConfiguration, error)
 	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
 	CheckOrgBucketAccess(ctx context.Context, arg configdb.CheckOrgBucketAccessParams) (bool, error)
-	GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error)
+	GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (configdb.GetLongestPrefixMatchRow, error)
 	GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error)
 	GetOrganizationBucketByInstance(ctx context.Context, arg configdb.GetOrganizationBucketByInstanceParams) (configdb.GetOrganizationBucketByInstanceRow, error)
 	GetOrganizationBucketByCollector(ctx context.Context, arg configdb.GetOrganizationBucketByCollectorParams) (configdb.GetOrganizationBucketByCollectorRow, error)
@@ -192,19 +192,6 @@ func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, 
 
 	pathParts := strings.Split(strings.Trim(objectPath, "/"), "/")
 
-	// Extract signal from first path segment
-	var signal string
-	if len(pathParts) >= 1 {
-		switch pathParts[0] {
-		case "logs", "metrics", "traces":
-			signal = pathParts[0]
-		default:
-			signal = "logs" // Default fallback
-		}
-	} else {
-		signal = "logs" // Default fallback
-	}
-
 	// 1. Try to extract UUID from second path segment (signal/UUID)
 	if len(pathParts) >= 2 {
 		if orgID, err := uuid.Parse(pathParts[1]); err == nil {
@@ -225,16 +212,15 @@ func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, 
 		}
 	}
 
-	// 2. Try longest prefix match with signal
-	orgID, err := p.cdb.GetLongestPrefixMatch(ctx, configdb.GetLongestPrefixMatchParams{
+	// 2. Try longest prefix match
+	result, err := p.cdb.GetLongestPrefixMatch(ctx, configdb.GetLongestPrefixMatchParams{
 		BucketName: bucketName,
-		Signal:     signal,
 		ObjectPath: objectPath,
 	})
 	if err == nil {
 		// Cache positive response
-		p.cacheResolveOrg.Set(cacheKey, orgID, ttlcache.DefaultTTL)
-		return orgID, nil
+		p.cacheResolveOrg.Set(cacheKey, result.OrganizationID, ttlcache.DefaultTTL)
+		return result.OrganizationID, nil
 	}
 
 	// 3. If single org owns the bucket, use that
@@ -249,6 +235,72 @@ func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, 
 	}
 
 	return uuid.Nil, fmt.Errorf("unable to resolve organization for path %s in bucket %s: %d organizations found", objectPath, bucketName, len(orgs))
+}
+
+func (p *databaseProvider) ResolveOrganizationWithSignal(ctx context.Context, bucketName, objectPath string) (OrganizationResolution, error) {
+	// For now, we'll compute this fresh each time, but we could add caching later
+
+	// 1. Try to extract UUID from second path segment (signal/UUID) - for otel-raw style paths
+	pathParts := strings.Split(strings.Trim(objectPath, "/"), "/")
+
+	// Extract signal from first path segment
+	var signal string
+	if len(pathParts) >= 1 {
+		switch pathParts[0] {
+		case "logs", "metrics", "traces":
+			signal = pathParts[0]
+		default:
+			signal = "logs" // Default fallback
+		}
+	} else {
+		signal = "logs" // Default fallback
+	}
+
+	if len(pathParts) >= 2 {
+		if orgID, err := uuid.Parse(pathParts[1]); err == nil {
+			// Verify this org has access to the bucket
+			hasAccess, err := p.cdb.CheckOrgBucketAccess(ctx, configdb.CheckOrgBucketAccessParams{
+				OrgID:      orgID,
+				BucketName: bucketName,
+			})
+			if err != nil {
+				return OrganizationResolution{}, fmt.Errorf("failed to check org bucket access: %w", err)
+			}
+			if hasAccess {
+				return OrganizationResolution{
+					OrganizationID: orgID,
+					Signal:         signal,
+				}, nil
+			}
+			// If UUID is valid but org doesn't have access, continue to prefix matching
+		}
+	}
+
+	// 2. Try longest prefix match - this will return both org and signal from the prefix mapping
+	result, err := p.cdb.GetLongestPrefixMatch(ctx, configdb.GetLongestPrefixMatchParams{
+		BucketName: bucketName,
+		ObjectPath: objectPath,
+	})
+	if err == nil {
+		return OrganizationResolution{
+			OrganizationID: result.OrganizationID,
+			Signal:         result.Signal,
+		}, nil
+	}
+
+	// 3. If single org owns the bucket, use that with inferred signal
+	orgs, err := p.cdb.GetOrganizationsByBucket(ctx, bucketName)
+	if err != nil {
+		return OrganizationResolution{}, fmt.Errorf("failed to get organizations for bucket: %w", err)
+	}
+	if len(orgs) == 1 {
+		return OrganizationResolution{
+			OrganizationID: orgs[0],
+			Signal:         signal, // Use the inferred signal from path
+		}, nil
+	}
+
+	return OrganizationResolution{}, fmt.Errorf("unable to resolve organization for path %s in bucket %s: %d organizations found", objectPath, bucketName, len(orgs))
 }
 
 func (p *databaseProvider) GetStorageProfileForOrganizationAndInstance(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error) {

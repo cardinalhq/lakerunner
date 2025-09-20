@@ -38,7 +38,7 @@ type HTTPService struct {
 	workChan     chan []byte
 	tracer       trace.Tracer
 	kafkaHandler *KafkaHandler
-	deduplicator *Deduplicator
+	deduplicator Deduplicator
 }
 
 func NewHTTPService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Factory) (*HTTPService, error) {

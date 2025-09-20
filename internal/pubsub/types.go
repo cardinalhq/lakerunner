@@ -16,6 +16,9 @@ package pubsub
 
 import (
 	"context"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // Service defines the interface for pubsub services
@@ -36,4 +39,16 @@ const (
 type Backend interface {
 	Service
 	GetName() string
+}
+
+// IngestItem represents a work item for ingestion processing.
+type IngestItem struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	Bucket         string    `json:"bucket"`
+	ObjectID       string    `json:"object_id"`
+	Signal         string    `json:"signal"`
+	FileSize       int64     `json:"file_size"`
+	QueuedAt       time.Time `json:"queued_at"`
+	CollectorName  string    `json:"collector_name"`
 }

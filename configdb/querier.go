@@ -44,7 +44,7 @@ type Querier interface {
 	GetBucketConfiguration(ctx context.Context, bucketName string) (BucketConfiguration, error)
 	GetBucketConfigurationByName(ctx context.Context, bucketName string) (BucketConfiguration, error)
 	GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (GetDefaultOrganizationBucketRow, error)
-	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (uuid.UUID, error)
+	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (GetLongestPrefixMatchRow, error)
 	GetLowestInstanceOrganizationBucket(ctx context.Context, arg GetLowestInstanceOrganizationBucketParams) (GetLowestInstanceOrganizationBucketRow, error)
 	GetOrganization(ctx context.Context, id uuid.UUID) (Organization, error)
 	GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (GetOrganizationAPIKeyByHashRow, error)

@@ -41,7 +41,7 @@ type SQSService struct {
 	awsMgr       *awsclient.Manager
 	sp           storageprofile.StorageProfileProvider
 	kafkaHandler *KafkaHandler
-	deduplicator *Deduplicator
+	deduplicator Deduplicator
 
 	// Async Kafka handling
 	maxOutstanding int
