@@ -309,6 +309,40 @@ func (q *Queries) GetBucketConfigurationByName(ctx context.Context, bucketName s
 	return i, err
 }
 
+const getBucketPrefixMappings = `-- name: GetBucketPrefixMappings :many
+SELECT bpm.organization_id, bpm.path_prefix, bpm.signal
+FROM bucket_prefix_mappings bpm
+JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
+WHERE bc.bucket_name = $1
+ORDER BY LENGTH(bpm.path_prefix) DESC
+`
+
+type GetBucketPrefixMappingsRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PathPrefix     string    `json:"path_prefix"`
+	Signal         string    `json:"signal"`
+}
+
+func (q *Queries) GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]GetBucketPrefixMappingsRow, error) {
+	rows, err := q.db.Query(ctx, getBucketPrefixMappings, bucketName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetBucketPrefixMappingsRow
+	for rows.Next() {
+		var i GetBucketPrefixMappingsRow
+		if err := rows.Scan(&i.OrganizationID, &i.PathPrefix, &i.Signal); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDefaultOrganizationBucket = `-- name: GetDefaultOrganizationBucket :one
 SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
 FROM organization_buckets ob

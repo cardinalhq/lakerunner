@@ -57,6 +57,13 @@ FROM bucket_prefix_mappings bpm
 JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
 ORDER BY bc.bucket_name, bpm.path_prefix;
 
+-- name: GetBucketPrefixMappings :many
+SELECT bpm.organization_id, bpm.path_prefix, bpm.signal
+FROM bucket_prefix_mappings bpm
+JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
+WHERE bc.bucket_name = @bucket_name
+ORDER BY LENGTH(bpm.path_prefix) DESC;
+
 -- name: DeleteBucketPrefixMapping :exec
 DELETE FROM bucket_prefix_mappings WHERE id = @id;
 

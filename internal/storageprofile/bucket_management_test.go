@@ -137,6 +137,10 @@ func (m *mockBucketManagementFetcher) GetLowestInstanceOrganizationBucket(ctx co
 	}, m.bucketErr
 }
 
+func (m *mockBucketManagementFetcher) GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]configdb.GetBucketPrefixMappingsRow, error) {
+	return []configdb.GetBucketPrefixMappingsRow{}, nil
+}
+
 func TestDatabaseProvider_ResolveOrganization_UUIDExtraction(t *testing.T) {
 	orgID := uuid.New()
 

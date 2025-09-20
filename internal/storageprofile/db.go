@@ -35,6 +35,7 @@ type databaseProvider struct {
 	cacheOrgInstance    *ttlcache.Cache[string, *StorageProfile]
 	cacheOrgCollector   *ttlcache.Cache[string, *StorageProfile]
 	cacheLowestInstance *ttlcache.Cache[string, *StorageProfile]
+	cachePrefixMappings *ttlcache.Cache[string, []configdb.GetBucketPrefixMappingsRow]
 }
 
 var _ StorageProfileProvider = (*databaseProvider)(nil)
@@ -49,9 +50,35 @@ type ConfigDBStoreageProfileFetcher interface {
 	GetOrganizationBucketByCollector(ctx context.Context, arg configdb.GetOrganizationBucketByCollectorParams) (configdb.GetOrganizationBucketByCollectorRow, error)
 	GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (configdb.GetDefaultOrganizationBucketRow, error)
 	GetLowestInstanceOrganizationBucket(ctx context.Context, arg configdb.GetLowestInstanceOrganizationBucketParams) (configdb.GetLowestInstanceOrganizationBucketRow, error)
+	GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]configdb.GetBucketPrefixMappingsRow, error)
 }
 
 var _ ConfigDBStoreageProfileFetcher = (*configdb.Store)(nil)
+
+// PrefixMapping represents a bucket prefix mapping for path matching
+type PrefixMapping struct {
+	OrganizationID uuid.UUID
+	PathPrefix     string
+	Signal         string
+}
+
+// FindLongestPrefixMatch finds the longest matching prefix for a given object path
+func FindLongestPrefixMatch(objectPath string, mappings []PrefixMapping) *PrefixMapping {
+	var longestMatch *PrefixMapping
+	longestLength := 0
+
+	for i := range mappings {
+		mapping := &mappings[i]
+		if strings.HasPrefix(objectPath, mapping.PathPrefix) {
+			if len(mapping.PathPrefix) > longestLength {
+				longestMatch = mapping
+				longestLength = len(mapping.PathPrefix)
+			}
+		}
+	}
+
+	return longestMatch
+}
 
 func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvider {
 	ttl := 1 * time.Minute
@@ -64,6 +91,7 @@ func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvi
 		cacheOrgInstance:    ttlcache.New(ttlcache.WithTTL[string, *StorageProfile](ttl)),
 		cacheOrgCollector:   ttlcache.New(ttlcache.WithTTL[string, *StorageProfile](ttl)),
 		cacheLowestInstance: ttlcache.New(ttlcache.WithTTL[string, *StorageProfile](ttl)),
+		cachePrefixMappings: ttlcache.New(ttlcache.WithTTL[string, []configdb.GetBucketPrefixMappingsRow](ttl)),
 	}
 }
 
@@ -237,10 +265,46 @@ func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, 
 	return uuid.Nil, fmt.Errorf("unable to resolve organization for path %s in bucket %s: %d organizations found", objectPath, bucketName, len(orgs))
 }
 
-func (p *databaseProvider) ResolveOrganizationWithSignal(ctx context.Context, bucketName, objectPath string) (OrganizationResolution, error) {
-	// For now, we'll compute this fresh each time, but we could add caching later
+// getBucketPrefixMappings gets bucket prefix mappings from cache or database
+func (p *databaseProvider) getBucketPrefixMappings(ctx context.Context, bucketName string) ([]PrefixMapping, error) {
+	// Check cache first
+	if item := p.cachePrefixMappings.Get(bucketName); item != nil {
+		// Convert from database rows to our PrefixMapping type
+		rows := item.Value()
+		mappings := make([]PrefixMapping, len(rows))
+		for i, row := range rows {
+			mappings[i] = PrefixMapping{
+				OrganizationID: row.OrganizationID,
+				PathPrefix:     row.PathPrefix,
+				Signal:         row.Signal,
+			}
+		}
+		return mappings, nil
+	}
 
-	// 1. Try to extract UUID from second path segment (signal/UUID) - for otel-raw style paths
+	// Fetch from database
+	rows, err := p.cdb.GetBucketPrefixMappings(ctx, bucketName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bucket prefix mappings: %w", err)
+	}
+
+	// Cache the database rows
+	p.cachePrefixMappings.Set(bucketName, rows, ttlcache.DefaultTTL)
+
+	// Convert to our PrefixMapping type
+	mappings := make([]PrefixMapping, len(rows))
+	for i, row := range rows {
+		mappings[i] = PrefixMapping{
+			OrganizationID: row.OrganizationID,
+			PathPrefix:     row.PathPrefix,
+			Signal:         row.Signal,
+		}
+	}
+
+	return mappings, nil
+}
+
+func (p *databaseProvider) ResolveOrganizationWithSignal(ctx context.Context, bucketName, objectPath string) (OrganizationResolution, error) {
 	pathParts := strings.Split(strings.Trim(objectPath, "/"), "/")
 
 	// Extract signal from first path segment
@@ -276,16 +340,15 @@ func (p *databaseProvider) ResolveOrganizationWithSignal(ctx context.Context, bu
 		}
 	}
 
-	// 2. Try longest prefix match - this will return both org and signal from the prefix mapping
-	result, err := p.cdb.GetLongestPrefixMatch(ctx, configdb.GetLongestPrefixMatchParams{
-		BucketName: bucketName,
-		ObjectPath: objectPath,
-	})
+	// 2. Try longest prefix match using cached mappings
+	mappings, err := p.getBucketPrefixMappings(ctx, bucketName)
 	if err == nil {
-		return OrganizationResolution{
-			OrganizationID: result.OrganizationID,
-			Signal:         result.Signal,
-		}, nil
+		if match := FindLongestPrefixMatch(objectPath, mappings); match != nil {
+			return OrganizationResolution{
+				OrganizationID: match.OrganizationID,
+				Signal:         match.Signal,
+			}, nil
+		}
 	}
 
 	// 3. If single org owns the bucket, use that with inferred signal
@@ -300,7 +363,7 @@ func (p *databaseProvider) ResolveOrganizationWithSignal(ctx context.Context, bu
 		}, nil
 	}
 
-	return OrganizationResolution{}, fmt.Errorf("unable to resolve organization for path %s in bucket %s: %d organizations found", objectPath, bucketName, len(orgs))
+	return OrganizationResolution{}, fmt.Errorf("unable to infer organization for path %s in bucket %s: %d organizations found", objectPath, bucketName, len(orgs))
 }
 
 func (p *databaseProvider) GetStorageProfileForOrganizationAndInstance(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error) {

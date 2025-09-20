@@ -190,6 +190,13 @@ func (m *mockConfigDBStoreageProfileFetcher) GetLowestInstanceOrganizationBucket
 	}, nil
 }
 
+func (m *mockConfigDBStoreageProfileFetcher) GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]configdb.GetBucketPrefixMappingsRow, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return []configdb.GetBucketPrefixMappingsRow{}, nil
+}
+
 func TestDatabaseProvider_Get_SuccessWithRole(t *testing.T) {
 	orgID := uuid.New()
 	role := "admin"
@@ -373,6 +380,13 @@ func (m *multiOrgMockFetcher) GetDefaultOrganizationBucket(ctx context.Context, 
 
 func (m *multiOrgMockFetcher) GetLowestInstanceOrganizationBucket(ctx context.Context, arg configdb.GetLowestInstanceOrganizationBucketParams) (configdb.GetLowestInstanceOrganizationBucketRow, error) {
 	return configdb.GetLowestInstanceOrganizationBucketRow{}, errors.New("not implemented")
+}
+
+func (m *multiOrgMockFetcher) GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]configdb.GetBucketPrefixMappingsRow, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return []configdb.GetBucketPrefixMappingsRow{}, nil
 }
 
 func TestDatabaseProvider_ResolveOrganization(t *testing.T) {
@@ -640,4 +654,73 @@ func TestDatabaseProvider_rowToStorageProfile(t *testing.T) {
 // Helper function to create string pointers
 func stringPtr(s string) *string {
 	return &s
+}
+
+func TestFindLongestPrefixMatch(t *testing.T) {
+	testOrgID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
+	otherOrgID := uuid.MustParse("987fcdeb-51a2-43d7-b890-123456789abc")
+
+	tests := []struct {
+		name       string
+		objectPath string
+		mappings   []PrefixMapping
+		want       *PrefixMapping
+	}{
+		{
+			name:       "exact match",
+			objectPath: "logs/app1/file.json",
+			mappings: []PrefixMapping{
+				{OrganizationID: testOrgID, PathPrefix: "logs/app1/", Signal: "logs"},
+				{OrganizationID: otherOrgID, PathPrefix: "logs/", Signal: "logs"},
+			},
+			want: &PrefixMapping{OrganizationID: testOrgID, PathPrefix: "logs/app1/", Signal: "logs"},
+		},
+		{
+			name:       "longest prefix wins",
+			objectPath: "metrics/service1/cpu.parquet",
+			mappings: []PrefixMapping{
+				{OrganizationID: testOrgID, PathPrefix: "metrics/service1/", Signal: "metrics"},
+				{OrganizationID: otherOrgID, PathPrefix: "metrics/", Signal: "metrics"},
+				{OrganizationID: otherOrgID, PathPrefix: "m", Signal: "metrics"},
+			},
+			want: &PrefixMapping{OrganizationID: testOrgID, PathPrefix: "metrics/service1/", Signal: "metrics"},
+		},
+		{
+			name:       "no match",
+			objectPath: "traces/span1/data.json",
+			mappings: []PrefixMapping{
+				{OrganizationID: testOrgID, PathPrefix: "logs/", Signal: "logs"},
+				{OrganizationID: otherOrgID, PathPrefix: "metrics/", Signal: "metrics"},
+			},
+			want: nil,
+		},
+		{
+			name:       "empty mappings",
+			objectPath: "any/path/file.json",
+			mappings:   []PrefixMapping{},
+			want:       nil,
+		},
+		{
+			name:       "single character prefix",
+			objectPath: "logs/file.json",
+			mappings: []PrefixMapping{
+				{OrganizationID: testOrgID, PathPrefix: "l", Signal: "logs"},
+			},
+			want: &PrefixMapping{OrganizationID: testOrgID, PathPrefix: "l", Signal: "logs"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FindLongestPrefixMatch(tt.objectPath, tt.mappings)
+			if tt.want == nil {
+				assert.Nil(t, got)
+			} else {
+				assert.NotNil(t, got)
+				assert.Equal(t, tt.want.OrganizationID, got.OrganizationID)
+				assert.Equal(t, tt.want.PathPrefix, got.PathPrefix)
+				assert.Equal(t, tt.want.Signal, got.Signal)
+			}
+		})
+	}
 }
