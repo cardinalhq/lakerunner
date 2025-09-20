@@ -410,38 +410,21 @@ func quoteIdent(s string) string {
 }
 
 func regexCaptureNames(pattern string) []string {
-	// Find all capture groups (both named and unnamed) left→right
-	// This regex matches:
-	// - Named capture groups: (?P<name>...)
-	// - Unnamed capture groups: (...)
-	// We need to be careful to not match non-capturing groups: (?:...)
-	re := regexp.MustCompile(`\(`)
-	m := re.FindAllStringIndex(pattern, -1)
-	if len(m) == 0 {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		// On invalid pattern, return nil so callers can treat as "no captures"
 		return nil
 	}
-	names := make([]string, 0)
-	unnamedIndex := 0
-	for _, idx := range m {
-		start := idx[0]
-		// non-capturing?
-		if start+2 < len(pattern) && pattern[start:start+3] == "(?:" {
-			continue
+	names := re.SubexpNames() // len = #groups + 1; index 0 is whole match
+	out := make([]string, 0, len(names)-1)
+	for i := 1; i < len(names); i++ {
+		n := names[i]
+		if n == "" {
+			n = fmt.Sprintf("__var_%d", i) // synthesize for unnamed
 		}
-		// named?
-		if start+3 < len(pattern) && pattern[start:start+3] == "(?P" {
-			nameEnd := strings.Index(pattern[start+3:], ">")
-			if nameEnd != -1 {
-				name := pattern[start+4 : start+3+nameEnd]
-				names = append(names, name)
-				continue
-			}
-		}
-		// unnamed capture
-		names = append(names, fmt.Sprintf("__var_%d", unnamedIndex))
-		unnamedIndex++
+		out = append(out, n)
 	}
-	return names
+	return out
 }
 
 func buildLineFilterWhere(lfs []LineFilter, bodyCol string) []string {

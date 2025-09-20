@@ -441,6 +441,8 @@ func buildSelector(sel logql.LogSelectorExpr) (LogSelector, error) {
 		return LogSelector{}, err
 	}
 
+	//ls.Parsers = MergeConsecutiveKeyParsers(ls.Parsers)
+
 	sort.Slice(ls.Matchers, func(i, j int) bool { return ls.Matchers[i].Label < ls.Matchers[j].Label })
 	return ls, nil
 }
