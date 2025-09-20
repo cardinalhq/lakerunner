@@ -26,6 +26,7 @@ import (
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
@@ -37,7 +38,7 @@ type TelemetryType string
 type Tenant struct {
 	metricCache *LRUCache[pmetric.Metrics]
 	logCache    *LRUCache[plog.Logs]
-	// traceCache will be added when traces are implemented
+	traceCache  *LRUCache[ptrace.Traces]
 
 	// TrieClusterManager for fingerprinting (one per organization)
 	trieClusterManager *fingerprinter.TrieClusterManager
@@ -56,6 +57,9 @@ type Processor struct {
 
 	// Callback for logs exemplars
 	sendLogsExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
+
+	// Callback for traces exemplars
+	sendTracesExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
 
 	// Configuration for all telemetry types
 	config Config
@@ -95,7 +99,7 @@ func DefaultConfig() Config {
 			BatchSize:      100,
 		},
 		Traces: TelemetryConfig{
-			Enabled:        false,
+			Enabled:        true,
 			CacheSize:      1000,
 			Expiry:         5 * time.Minute,
 			ReportInterval: 1 * time.Minute,
@@ -141,8 +145,11 @@ func (p *Processor) GetTenant(ctx context.Context, organizationID string) *Tenan
 	}
 
 	if p.config.Traces.Enabled {
-		// Traces not implemented yet
-		ll.Debug("Traces processing not implemented yet")
+		tenant.traceCache = NewLRUCache(
+			p.config.Traces.CacheSize,
+			p.config.Traces.Expiry,
+			p.config.Traces.ReportInterval,
+			p.createTracesCallback(ctx, organizationID))
 	}
 
 	p.tenants.Store(organizationID, tenant)
@@ -236,6 +243,47 @@ func (p *Processor) createMetricsCallback(ctx context.Context, organizationID st
 	}
 }
 
+// createTracesCallback creates a callback function for traces exemplars for a specific organization
+func (p *Processor) createTracesCallback(ctx context.Context, organizationID string) func([]*Entry[ptrace.Traces]) {
+	return func(entries []*Entry[ptrace.Traces]) {
+		ll := logctx.FromContext(ctx)
+		ll.Info("Processing traces exemplars",
+			slog.String("organization_id", organizationID),
+			slog.Int("count", len(entries)))
+
+		exemplarData := make([]*ExemplarData, 0, len(entries))
+		for _, entry := range entries {
+			data, err := p.marshalTraces(entry.value)
+			if err != nil {
+				ll.Error("Failed to marshal traces data", slog.Any("error", err))
+				continue
+			}
+
+			resourceAttributes := entry.value.ResourceSpans().At(0).Resource().Attributes()
+			attributes := p.toAttributes(resourceAttributes)
+			attributes["fingerprint"] = strconv.FormatInt(getTraceFingerprint(entry.value.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)), 10)
+			attributes["span.name"] = entry.value.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Name()
+			attributes["span.kind"] = entry.value.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Kind().String()
+
+			exemplarData = append(exemplarData, &ExemplarData{
+				Attributes:  attributes,
+				PartitionId: 0,
+				Payload:     data,
+			})
+		}
+
+		if len(exemplarData) == 0 {
+			return
+		}
+
+		if p.sendTracesExemplars != nil {
+			if err := p.sendTracesExemplars(context.Background(), organizationID, exemplarData); err != nil {
+				ll.Error("Failed to send traces exemplars to database", slog.Any("error", err))
+			}
+		}
+	}
+}
+
 // pmetric.Metrics -> JSON string
 // plog.Logs -> JSON string
 func (p *Processor) marshalLogs(ld plog.Logs) (string, error) {
@@ -251,6 +299,16 @@ func (p *Processor) marshalLogs(ld plog.Logs) (string, error) {
 func (p *Processor) marshalMetrics(md pmetric.Metrics) (string, error) {
 	marshaller := &pmetric.JSONMarshaler{}
 	bytes, err := marshaller.MarshalMetrics(md)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
+
+// ptrace.Traces -> JSON string
+func (p *Processor) marshalTraces(td ptrace.Traces) (string, error) {
+	marshaller := &ptrace.JSONMarshaler{}
+	bytes, err := marshaller.MarshalTraces(td)
 	if err != nil {
 		return "", err
 	}
@@ -284,6 +342,21 @@ func (p *Processor) ProcessMetrics(ctx context.Context, organizationID string, r
 	}
 
 	p.addMetricsExemplar(tenant, rm, sm, m, m.Name(), m.Type())
+	return nil
+}
+
+// ProcessTraces processes traces and generates exemplars for a specific organization
+func (p *Processor) ProcessTraces(ctx context.Context, organizationID string, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) error {
+	if !p.config.Traces.Enabled {
+		return nil
+	}
+
+	tenant := p.GetTenant(ctx, organizationID)
+	if tenant.traceCache == nil {
+		return nil
+	}
+
+	p.addTraceExemplar(tenant, rs, ss, span)
 	return nil
 }
 
@@ -321,6 +394,23 @@ func (p *Processor) addMetricsExemplar(tenant *Tenant, rm pmetric.ResourceMetric
 	tenant.metricCache.Put(key, exemplarRecord)
 }
 
+// add a traces exemplar to the organization's cache
+func (p *Processor) addTraceExemplar(tenant *Tenant, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) {
+	// Get fingerprint from span attributes (if exists from collector)
+	fingerprint := getTraceFingerprint(span)
+	resource := rs.Resource()
+	clusterName := getFromResource(resource.Attributes(), clusterNameKey)
+	namespaceName := getFromResource(resource.Attributes(), namespaceNameKey)
+	serviceName := getFromResource(resource.Attributes(), serviceNameKey)
+	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + strconv.FormatInt(fingerprint, 10)
+	if tenant.traceCache.Contains(key) {
+		return
+	}
+
+	exemplarRecord := toTraceExemplar(rs, ss, span)
+	tenant.traceCache.Put(key, exemplarRecord)
+}
+
 func (p *Processor) Close() error {
 	p.tenants.Range(func(key, value interface{}) bool {
 		if tenant, ok := value.(*Tenant); ok {
@@ -334,7 +424,11 @@ func (p *Processor) Close() error {
 				tenant.logCache.FlushPending()
 				tenant.logCache.Close()
 			}
-			// traceCache will be handled when traces are implemented
+			if tenant.traceCache != nil {
+				// Force flush all pending exemplars before closing
+				tenant.traceCache.FlushPending()
+				tenant.traceCache.Close()
+			}
 		}
 		return true
 	})
@@ -349,4 +443,9 @@ func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organi
 // SetLogsCallback updates the sendLogsExemplars callback function
 func (p *Processor) SetLogsCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
 	p.sendLogsExemplars = callback
+}
+
+// SetTracesCallback updates the sendTracesExemplars callback function
+func (p *Processor) SetTracesCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
+	p.sendTracesExemplars = callback
 }

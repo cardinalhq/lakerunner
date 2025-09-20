@@ -249,7 +249,7 @@ func createProtoReaderWithOptions(reader io.Reader, opts ReaderOptions) (Reader,
 	case SignalTypeMetrics:
 		return NewIngestProtoMetricsReader(reader, opts)
 	case SignalTypeTraces:
-		return NewProtoTracesReader(reader, opts.BatchSize)
+		return NewIngestProtoTracesReader(reader, opts)
 	default:
 		return nil, fmt.Errorf("unsupported signal type for protobuf: %s", opts.SignalType.String())
 	}

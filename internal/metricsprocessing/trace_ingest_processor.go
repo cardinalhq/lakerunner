@@ -185,13 +185,10 @@ type TraceIngestProcessor struct {
 func newTraceIngestProcessor(
 	cfg *config.Config,
 	store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
-	var exemplarProcessor *exemplars.Processor
-	// if cfg.Traces.Ingestion.ProcessExemplars {
-	// 	exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
-	// 	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
-	// 		return processTracesExemplarsDirect(ctx, organizationID, exemplars, store)
-	// 	})
-	// }
+	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
+	exemplarProcessor.SetTracesCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
+		return processTracesExemplarsDirect(ctx, organizationID, exemplars, store)
+	})
 
 	return &TraceIngestProcessor{
 		store:             store,
