@@ -7,45 +7,364 @@ package configdb
 
 import (
 	"context"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const syncOrganizationBuckets = `-- name: SyncOrganizationBuckets :exec
-INSERT INTO organization_buckets (organization_id, bucket_id, instance_num, collector_name)
-SELECT 
-  c.organization_id,
-  bc.id as bucket_id,
-  c.instance_num,
-  c.external_id as collector_name
-FROM c_collectors c
-JOIN c_storage_profiles sp ON c.storage_profile_id = sp.id
-JOIN bucket_configurations bc ON sp.bucket = bc.bucket_name
-WHERE c.deleted_at IS NULL
-  AND c.organization_id IS NOT NULL
-  AND c.storage_profile_id IS NOT NULL
-  AND c.instance_num IS NOT NULL
-  AND c.external_id IS NOT NULL
-ON CONFLICT (organization_id, bucket_id, instance_num, collector_name) DO NOTHING
+const deleteOrganizationAPIKeyMappingByHash = `-- name: DeleteOrganizationAPIKeyMappingByHash :exec
+DELETE FROM organization_api_key_mappings
+WHERE organization_id = $1
+AND api_key_id = (SELECT id FROM organization_api_keys WHERE key_hash = $2)
 `
 
-func (q *Queries) SyncOrganizationBuckets(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, syncOrganizationBuckets)
+type DeleteOrganizationAPIKeyMappingByHashParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	KeyHash        string    `json:"key_hash"`
+}
+
+// Delete API key mapping by hash
+func (q *Queries) DeleteOrganizationAPIKeyMappingByHash(ctx context.Context, arg DeleteOrganizationAPIKeyMappingByHashParams) error {
+	_, err := q.db.Exec(ctx, deleteOrganizationAPIKeyMappingByHash, arg.OrganizationID, arg.KeyHash)
 	return err
 }
 
-const syncOrganizations = `-- name: SyncOrganizations :exec
+const deleteOrganizationBucketMappings = `-- name: DeleteOrganizationBucketMappings :exec
+DELETE FROM organization_buckets
+WHERE (organization_id, instance_num, collector_name) IN (
+  SELECT unnest($1::uuid[]),
+         unnest($2::smallint[]),
+         unnest($3::text[])
+)
+`
 
-INSERT INTO organizations (id, name, enabled, created_at, synced_at)
-SELECT id, name, COALESCE(enabled, true), COALESCE(created_at, NOW()), NOW()
+type DeleteOrganizationBucketMappingsParams struct {
+	OrgIds         []uuid.UUID `json:"org_ids"`
+	InstanceNums   []int16     `json:"instance_nums"`
+	CollectorNames []string    `json:"collector_names"`
+}
+
+// Delete organization bucket mappings not in c_ tables
+func (q *Queries) DeleteOrganizationBucketMappings(ctx context.Context, arg DeleteOrganizationBucketMappingsParams) error {
+	_, err := q.db.Exec(ctx, deleteOrganizationBucketMappings, arg.OrgIds, arg.InstanceNums, arg.CollectorNames)
+	return err
+}
+
+const deleteOrganizationsNotInList = `-- name: DeleteOrganizationsNotInList :exec
+DELETE FROM organizations
+WHERE id = ANY($1::uuid[])
+`
+
+// Delete organizations not in c_ tables
+func (q *Queries) DeleteOrganizationsNotInList(ctx context.Context, idsToDelete []uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteOrganizationsNotInList, idsToDelete)
+	return err
+}
+
+const getAllBucketConfigurations = `-- name: GetAllBucketConfigurations :many
+SELECT id, bucket_name, cloud_provider, region, role
+FROM bucket_configurations
+`
+
+type GetAllBucketConfigurationsRow struct {
+	ID            uuid.UUID `json:"id"`
+	BucketName    string    `json:"bucket_name"`
+	CloudProvider string    `json:"cloud_provider"`
+	Region        string    `json:"region"`
+	Role          *string   `json:"role"`
+}
+
+// Get all our bucket configurations
+func (q *Queries) GetAllBucketConfigurations(ctx context.Context) ([]GetAllBucketConfigurationsRow, error) {
+	rows, err := q.db.Query(ctx, getAllBucketConfigurations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllBucketConfigurationsRow
+	for rows.Next() {
+		var i GetAllBucketConfigurationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketName,
+			&i.CloudProvider,
+			&i.Region,
+			&i.Role,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllCBucketData = `-- name: GetAllCBucketData :many
+SELECT DISTINCT
+  sp.bucket AS bucket_name,
+  sp.cloud_provider,
+  sp.region,
+  sp.role,
+  c.organization_id,
+  c.instance_num,
+  c.external_id AS collector_name
+FROM c_storage_profiles sp
+LEFT JOIN c_collectors c ON c.storage_profile_id = sp.id
+WHERE c.deleted_at IS NULL
+  AND c.organization_id IS NOT NULL
+`
+
+type GetAllCBucketDataRow struct {
+	BucketName     string      `json:"bucket_name"`
+	CloudProvider  string      `json:"cloud_provider"`
+	Region         string      `json:"region"`
+	Role           *string     `json:"role"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	InstanceNum    pgtype.Int2 `json:"instance_num"`
+	CollectorName  *string     `json:"collector_name"`
+}
+
+// Get all bucket configurations from c_ tables with org mappings
+func (q *Queries) GetAllCBucketData(ctx context.Context) ([]GetAllCBucketDataRow, error) {
+	rows, err := q.db.Query(ctx, getAllCBucketData)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllCBucketDataRow
+	for rows.Next() {
+		var i GetAllCBucketDataRow
+		if err := rows.Scan(
+			&i.BucketName,
+			&i.CloudProvider,
+			&i.Region,
+			&i.Role,
+			&i.OrganizationID,
+			&i.InstanceNum,
+			&i.CollectorName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllCOrganizationAPIKeys = `-- name: GetAllCOrganizationAPIKeys :many
+SELECT id, organization_id, name, api_key, enabled
+FROM c_organization_api_keys
+WHERE organization_id IS NOT NULL AND api_key IS NOT NULL
+`
+
+type GetAllCOrganizationAPIKeysRow struct {
+	ID             uuid.UUID   `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Name           *string     `json:"name"`
+	ApiKey         *string     `json:"api_key"`
+	Enabled        pgtype.Bool `json:"enabled"`
+}
+
+// Get all API keys from c_ tables
+func (q *Queries) GetAllCOrganizationAPIKeys(ctx context.Context) ([]GetAllCOrganizationAPIKeysRow, error) {
+	rows, err := q.db.Query(ctx, getAllCOrganizationAPIKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllCOrganizationAPIKeysRow
+	for rows.Next() {
+		var i GetAllCOrganizationAPIKeysRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Name,
+			&i.ApiKey,
+			&i.Enabled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllCOrganizations = `-- name: GetAllCOrganizations :many
+
+SELECT id, name, enabled, created_at
 FROM c_organizations
+`
+
+type GetAllCOrganizationsRow struct {
+	ID        uuid.UUID        `json:"id"`
+	Name      *string          `json:"name"`
+	Enabled   pgtype.Bool      `json:"enabled"`
+	CreatedAt pgtype.Timestamp `json:"created_at"`
+}
+
+// This file contains queries for syncing data from legacy c_ tables (managed externally)
+// to our own tables that we control.
+// Fetch all organizations from c_ tables
+func (q *Queries) GetAllCOrganizations(ctx context.Context) ([]GetAllCOrganizationsRow, error) {
+	rows, err := q.db.Query(ctx, getAllCOrganizations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllCOrganizationsRow
+	for rows.Next() {
+		var i GetAllCOrganizationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Enabled,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllOrganizationAPIKeyMappings = `-- name: GetAllOrganizationAPIKeyMappings :many
+SELECT
+  oakm.organization_id,
+  oak.key_hash,
+  oak.name
+FROM organization_api_key_mappings oakm
+JOIN organization_api_keys oak ON oakm.api_key_id = oak.id
+`
+
+type GetAllOrganizationAPIKeyMappingsRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	KeyHash        string    `json:"key_hash"`
+	Name           string    `json:"name"`
+}
+
+// Get all our API key mappings
+func (q *Queries) GetAllOrganizationAPIKeyMappings(ctx context.Context) ([]GetAllOrganizationAPIKeyMappingsRow, error) {
+	rows, err := q.db.Query(ctx, getAllOrganizationAPIKeyMappings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllOrganizationAPIKeyMappingsRow
+	for rows.Next() {
+		var i GetAllOrganizationAPIKeyMappingsRow
+		if err := rows.Scan(&i.OrganizationID, &i.KeyHash, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllOrganizationBucketMappings = `-- name: GetAllOrganizationBucketMappings :many
+SELECT
+  ob.organization_id,
+  ob.instance_num,
+  ob.collector_name,
+  bc.bucket_name
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id
+`
+
+type GetAllOrganizationBucketMappingsRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
+	BucketName     string    `json:"bucket_name"`
+}
+
+// Get all our organization bucket mappings
+func (q *Queries) GetAllOrganizationBucketMappings(ctx context.Context) ([]GetAllOrganizationBucketMappingsRow, error) {
+	rows, err := q.db.Query(ctx, getAllOrganizationBucketMappings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllOrganizationBucketMappingsRow
+	for rows.Next() {
+		var i GetAllOrganizationBucketMappingsRow
+		if err := rows.Scan(
+			&i.OrganizationID,
+			&i.InstanceNum,
+			&i.CollectorName,
+			&i.BucketName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllOrganizations = `-- name: GetAllOrganizations :many
+SELECT id, name, enabled
+FROM organizations
+`
+
+type GetAllOrganizationsRow struct {
+	ID      uuid.UUID `json:"id"`
+	Name    string    `json:"name"`
+	Enabled bool      `json:"enabled"`
+}
+
+// Fetch all our organizations
+func (q *Queries) GetAllOrganizations(ctx context.Context) ([]GetAllOrganizationsRow, error) {
+	rows, err := q.db.Query(ctx, getAllOrganizations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllOrganizationsRow
+	for rows.Next() {
+		var i GetAllOrganizationsRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Enabled); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const upsertOrganizationSync = `-- name: UpsertOrganizationSync :exec
+INSERT INTO organizations (id, name, enabled, synced_at)
+VALUES ($1, $2, $3, NOW())
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
   enabled = EXCLUDED.enabled,
   synced_at = NOW()
 `
 
-// This file contains queries for syncing data from legacy c_ tables (managed externally)
-// to our own tables that we control.
-func (q *Queries) SyncOrganizations(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, syncOrganizations)
+type UpsertOrganizationSyncParams struct {
+	ID      uuid.UUID `json:"id"`
+	Name    string    `json:"name"`
+	Enabled bool      `json:"enabled"`
+}
+
+// Upsert organization
+func (q *Queries) UpsertOrganizationSync(ctx context.Context, arg UpsertOrganizationSyncParams) error {
+	_, err := q.db.Exec(ctx, upsertOrganizationSync, arg.ID, arg.Name, arg.Enabled)
 	return err
 }

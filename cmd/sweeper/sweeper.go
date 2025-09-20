@@ -150,7 +150,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		wg.Go(func() {
 			slog.Info("Starting legacy table sync goroutine", slog.Duration("period", legacyTablesSyncPeriod))
 			if err := periodicLoop(ctx, legacyTablesSyncPeriod, func(c context.Context) error {
-				return runLegacyTablesSync(c, cdb, cdbPool)
+				return runLegacyTablesSync(c, cdbPool)
 			}); err != nil && !errors.Is(err, context.Canceled) {
 				errCh <- err
 			}
