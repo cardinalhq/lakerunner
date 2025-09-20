@@ -14,11 +14,10 @@ JOIN bucket_configurations bc ON ob.bucket_id = bc.id
 WHERE ob.organization_id = @org_id AND bc.bucket_name = @bucket_name;
 
 -- name: GetLongestPrefixMatch :one
-SELECT bpm.organization_id
+SELECT bpm.organization_id, bpm.signal
 FROM bucket_prefix_mappings bpm
 JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
-WHERE bc.bucket_name = @bucket_name 
-  AND bpm.signal = @signal
+WHERE bc.bucket_name = @bucket_name
   AND @object_path LIKE bpm.path_prefix || '%'
 ORDER BY LENGTH(bpm.path_prefix) DESC
 LIMIT 1;
@@ -57,6 +56,13 @@ SELECT bpm.id, bc.bucket_name, bpm.organization_id, bpm.path_prefix, bpm.signal
 FROM bucket_prefix_mappings bpm
 JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
 ORDER BY bc.bucket_name, bpm.path_prefix;
+
+-- name: GetBucketPrefixMappings :many
+SELECT bpm.organization_id, bpm.path_prefix, bpm.signal
+FROM bucket_prefix_mappings bpm
+JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
+WHERE bc.bucket_name = @bucket_name
+ORDER BY LENGTH(bpm.path_prefix) DESC;
 
 -- name: DeleteBucketPrefixMapping :exec
 DELETE FROM bucket_prefix_mappings WHERE id = @id;

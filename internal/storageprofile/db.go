@@ -35,6 +35,7 @@ type databaseProvider struct {
 	cacheOrgInstance    *ttlcache.Cache[string, *StorageProfile]
 	cacheOrgCollector   *ttlcache.Cache[string, *StorageProfile]
 	cacheLowestInstance *ttlcache.Cache[string, *StorageProfile]
+	cachePrefixMappings *ttlcache.Cache[string, []configdb.GetBucketPrefixMappingsRow]
 }
 
 var _ StorageProfileProvider = (*databaseProvider)(nil)
@@ -43,15 +44,41 @@ type ConfigDBStoreageProfileFetcher interface {
 	GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.BucketConfiguration, error)
 	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
 	CheckOrgBucketAccess(ctx context.Context, arg configdb.CheckOrgBucketAccessParams) (bool, error)
-	GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error)
+	GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (configdb.GetLongestPrefixMatchRow, error)
 	GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error)
 	GetOrganizationBucketByInstance(ctx context.Context, arg configdb.GetOrganizationBucketByInstanceParams) (configdb.GetOrganizationBucketByInstanceRow, error)
 	GetOrganizationBucketByCollector(ctx context.Context, arg configdb.GetOrganizationBucketByCollectorParams) (configdb.GetOrganizationBucketByCollectorRow, error)
 	GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (configdb.GetDefaultOrganizationBucketRow, error)
 	GetLowestInstanceOrganizationBucket(ctx context.Context, arg configdb.GetLowestInstanceOrganizationBucketParams) (configdb.GetLowestInstanceOrganizationBucketRow, error)
+	GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]configdb.GetBucketPrefixMappingsRow, error)
 }
 
 var _ ConfigDBStoreageProfileFetcher = (*configdb.Store)(nil)
+
+// PrefixMapping represents a bucket prefix mapping for path matching
+type PrefixMapping struct {
+	OrganizationID uuid.UUID
+	PathPrefix     string
+	Signal         string
+}
+
+// findLongestPrefixMatch finds the longest matching prefix for a given object path
+func findLongestPrefixMatch(objectPath string, mappings []PrefixMapping) *PrefixMapping {
+	var longestMatch *PrefixMapping
+	longestLength := 0
+
+	for i := range mappings {
+		mapping := &mappings[i]
+		if strings.HasPrefix(objectPath, mapping.PathPrefix) {
+			if len(mapping.PathPrefix) > longestLength {
+				longestMatch = mapping
+				longestLength = len(mapping.PathPrefix)
+			}
+		}
+	}
+
+	return longestMatch
+}
 
 func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvider {
 	ttl := 1 * time.Minute
@@ -64,13 +91,13 @@ func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvi
 		cacheOrgInstance:    ttlcache.New(ttlcache.WithTTL[string, *StorageProfile](ttl)),
 		cacheOrgCollector:   ttlcache.New(ttlcache.WithTTL[string, *StorageProfile](ttl)),
 		cacheLowestInstance: ttlcache.New(ttlcache.WithTTL[string, *StorageProfile](ttl)),
+		cachePrefixMappings: ttlcache.New(ttlcache.WithTTL[string, []configdb.GetBucketPrefixMappingsRow](ttl)),
 	}
 }
 
 func (p *databaseProvider) GetStorageProfileForBucket(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error) {
 	cacheKey := fmt.Sprintf("%s:%s", organizationID, bucketName)
 
-	// Check cache first
 	if item := p.cacheBucket.Get(cacheKey); item != nil {
 		if item.Value() == nil {
 			// Cached negative response
@@ -107,7 +134,6 @@ func (p *databaseProvider) GetStorageProfileForBucket(ctx context.Context, organ
 func (p *databaseProvider) GetStorageProfileForOrganization(ctx context.Context, organizationID uuid.UUID) (StorageProfile, error) {
 	cacheKey := organizationID.String()
 
-	// Check cache first
 	if item := p.cacheOrg.Get(cacheKey); item != nil {
 		if item.Value() == nil {
 			// Cached negative response
@@ -140,7 +166,6 @@ func (p *databaseProvider) GetStorageProfileForOrganization(ctx context.Context,
 func (p *databaseProvider) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]StorageProfile, error) {
 	cacheKey := bucketName
 
-	// Check cache first
 	if item := p.cacheBucketList.Get(cacheKey); item != nil {
 		return item.Value(), nil
 	}
@@ -182,82 +207,77 @@ func (p *databaseProvider) GetStorageProfilesByBucketName(ctx context.Context, b
 	return ret, nil
 }
 
-func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, objectPath string) (uuid.UUID, error) {
-	cacheKey := fmt.Sprintf("%s:%s", bucketName, objectPath)
-
-	// Check cache first
-	if item := p.cacheResolveOrg.Get(cacheKey); item != nil {
-		return item.Value(), nil
-	}
-
-	pathParts := strings.Split(strings.Trim(objectPath, "/"), "/")
-
-	// Extract signal from first path segment
-	var signal string
-	if len(pathParts) >= 1 {
-		switch pathParts[0] {
-		case "logs", "metrics", "traces":
-			signal = pathParts[0]
-		default:
-			signal = "logs" // Default fallback
-		}
-	} else {
-		signal = "logs" // Default fallback
-	}
-
-	// 1. Try to extract UUID from second path segment (signal/UUID)
-	if len(pathParts) >= 2 {
-		if orgID, err := uuid.Parse(pathParts[1]); err == nil {
-			// Verify this org has access to the bucket
-			hasAccess, err := p.cdb.CheckOrgBucketAccess(ctx, configdb.CheckOrgBucketAccessParams{
-				OrgID:      orgID,
-				BucketName: bucketName,
-			})
-			if err != nil {
-				return uuid.Nil, fmt.Errorf("failed to check org bucket access: %w", err)
+// getBucketPrefixMappings gets bucket prefix mappings from cache or database
+func (p *databaseProvider) getBucketPrefixMappings(ctx context.Context, bucketName string) ([]PrefixMapping, error) {
+	if item := p.cachePrefixMappings.Get(bucketName); item != nil {
+		rows := item.Value()
+		mappings := make([]PrefixMapping, len(rows))
+		for i, row := range rows {
+			mappings[i] = PrefixMapping{
+				OrganizationID: row.OrganizationID,
+				PathPrefix:     row.PathPrefix,
+				Signal:         row.Signal,
 			}
-			if hasAccess {
-				// Cache positive response
-				p.cacheResolveOrg.Set(cacheKey, orgID, ttlcache.DefaultTTL)
-				return orgID, nil
-			}
-			// If UUID is valid but org doesn't have access, continue to prefix matching
 		}
+		return mappings, nil
 	}
 
-	// 2. Try longest prefix match with signal
-	orgID, err := p.cdb.GetLongestPrefixMatch(ctx, configdb.GetLongestPrefixMatchParams{
-		BucketName: bucketName,
-		Signal:     signal,
-		ObjectPath: objectPath,
-	})
-	if err == nil {
-		// Cache positive response
-		p.cacheResolveOrg.Set(cacheKey, orgID, ttlcache.DefaultTTL)
-		return orgID, nil
-	}
-
-	// 3. If single org owns the bucket, use that
-	orgs, err := p.cdb.GetOrganizationsByBucket(ctx, bucketName)
+	rows, err := p.cdb.GetBucketPrefixMappings(ctx, bucketName)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("failed to get organizations for bucket: %w", err)
-	}
-	if len(orgs) == 1 {
-		// Cache positive response
-		p.cacheResolveOrg.Set(cacheKey, orgs[0], ttlcache.DefaultTTL)
-		return orgs[0], nil
+		return nil, fmt.Errorf("failed to get bucket prefix mappings: %w", err)
 	}
 
-	return uuid.Nil, fmt.Errorf("unable to resolve organization for path %s in bucket %s: %d organizations found", objectPath, bucketName, len(orgs))
+	p.cachePrefixMappings.Set(bucketName, rows, ttlcache.DefaultTTL)
+
+	// Convert to our PrefixMapping type
+	mappings := make([]PrefixMapping, len(rows))
+	for i, row := range rows {
+		mappings[i] = PrefixMapping{
+			OrganizationID: row.OrganizationID,
+			PathPrefix:     row.PathPrefix,
+			Signal:         row.Signal,
+		}
+	}
+
+	return mappings, nil
+}
+
+func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, objectPath string) (OrganizationResolution, error) {
+	// Get prefix mappings and find the longest match
+	mappings, err := p.getBucketPrefixMappings(ctx, bucketName)
+	if err != nil {
+		return OrganizationResolution{}, fmt.Errorf("failed to get bucket prefix mappings: %w", err)
+	}
+
+	match := findLongestPrefixMatch(objectPath, mappings)
+	if match == nil {
+		return OrganizationResolution{}, fmt.Errorf("no prefix mapping found for path %s in bucket %s", objectPath, bucketName)
+	}
+
+	// Verify the organization has access to the bucket
+	hasAccess, err := p.cdb.CheckOrgBucketAccess(ctx, configdb.CheckOrgBucketAccessParams{
+		OrgID:      match.OrganizationID,
+		BucketName: bucketName,
+	})
+	if err != nil {
+		return OrganizationResolution{}, fmt.Errorf("failed to check org bucket access: %w", err)
+	}
+	if !hasAccess {
+		return OrganizationResolution{}, fmt.Errorf("organization %s does not have access to bucket %s", match.OrganizationID, bucketName)
+	}
+
+	return OrganizationResolution{
+		OrganizationID: match.OrganizationID,
+		Signal:         match.Signal, // Use the signal from the prefix mapping
+	}, nil
 }
 
 func (p *databaseProvider) GetStorageProfileForOrganizationAndInstance(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error) {
 	cacheKey := fmt.Sprintf("%s:%d", organizationID, instanceNum)
 
-	// Check cache first
 	if item := p.cacheOrgInstance.Get(cacheKey); item != nil {
 		if item.Value() == nil {
-			// Cached negative response
+			// Cached negative
 			return StorageProfile{}, fmt.Errorf("cached negative response for organization %s instance %d", organizationID, instanceNum)
 		}
 		return *item.Value(), nil
@@ -286,7 +306,6 @@ func (p *databaseProvider) GetStorageProfileForOrganizationAndInstance(ctx conte
 func (p *databaseProvider) GetStorageProfileForOrganizationAndCollector(ctx context.Context, organizationID uuid.UUID, collectorName string) (StorageProfile, error) {
 	cacheKey := fmt.Sprintf("%s:%s", organizationID, collectorName)
 
-	// Check cache first
 	if item := p.cacheOrgCollector.Get(cacheKey); item != nil {
 		if item.Value() == nil {
 			// Cached negative response
@@ -295,7 +314,6 @@ func (p *databaseProvider) GetStorageProfileForOrganizationAndCollector(ctx cont
 		return *item.Value(), nil
 	}
 
-	// Get organization bucket configuration by collector name
 	result, err := p.cdb.GetOrganizationBucketByCollector(ctx, configdb.GetOrganizationBucketByCollectorParams{
 		OrganizationID: organizationID,
 		CollectorName:  collectorName,
@@ -318,7 +336,6 @@ func (p *databaseProvider) GetStorageProfileForOrganizationAndCollector(ctx cont
 func (p *databaseProvider) GetLowestInstanceStorageProfile(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error) {
 	cacheKey := fmt.Sprintf("%s:%s", organizationID, bucketName)
 
-	// Check cache first
 	if item := p.cacheLowestInstance.Get(cacheKey); item != nil {
 		if item.Value() == nil {
 			// Cached negative response
@@ -347,7 +364,6 @@ func (p *databaseProvider) GetLowestInstanceStorageProfile(ctx context.Context, 
 	return profile, nil
 }
 
-// Helper function to convert query result row to StorageProfile
 func (p *databaseProvider) rowToStorageProfile(organizationID uuid.UUID, instanceNum int16, collectorName, bucketName, cloudProvider, region string, role, endpoint *string, usePathStyle, insecureTLS bool) StorageProfile {
 	ret := StorageProfile{
 		OrganizationID: organizationID,

@@ -104,11 +104,11 @@ func (m *mockConfigDBStoreageProfileFetcher) CheckOrgBucketAccess(ctx context.Co
 	return arg.OrgID == m.profile.OrganizationID, nil
 }
 
-func (m *mockConfigDBStoreageProfileFetcher) GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error) {
+func (m *mockConfigDBStoreageProfileFetcher) GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (configdb.GetLongestPrefixMatchRow, error) {
 	if m.err != nil {
-		return uuid.Nil, m.err
+		return configdb.GetLongestPrefixMatchRow{}, m.err
 	}
-	return uuid.Nil, errors.New("no prefix match found")
+	return configdb.GetLongestPrefixMatchRow{}, errors.New("no prefix match found")
 }
 
 func (m *mockConfigDBStoreageProfileFetcher) GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error) {
@@ -188,6 +188,13 @@ func (m *mockConfigDBStoreageProfileFetcher) GetLowestInstanceOrganizationBucket
 		UsePathStyle:   false,
 		InsecureTls:    false,
 	}, nil
+}
+
+func (m *mockConfigDBStoreageProfileFetcher) GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]configdb.GetBucketPrefixMappingsRow, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return []configdb.GetBucketPrefixMappingsRow{}, nil
 }
 
 func TestDatabaseProvider_Get_SuccessWithRole(t *testing.T) {
@@ -311,7 +318,191 @@ func TestDatabaseProvider_GetStorageProfilesByBucketName(t *testing.T) {
 	}
 }
 
+// multiOrgMockFetcher is a mock that returns multiple organizations for testing
+
+func TestDatabaseProvider_rowToStorageProfile(t *testing.T) {
+	tests := []struct {
+		name           string
+		organizationID uuid.UUID
+		instanceNum    int16
+		collectorName  string
+		bucketName     string
+		cloudProvider  string
+		region         string
+		role           *string
+		endpoint       *string
+		usePathStyle   bool
+		insecureTLS    bool
+		want           StorageProfile
+	}{
+		{
+			name:           "complete profile with role and endpoint",
+			organizationID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
+			instanceNum:    42,
+			collectorName:  "test-collector",
+			bucketName:     "my-bucket",
+			cloudProvider:  "aws",
+			region:         "us-east-1",
+			role:           stringPtr("arn:aws:iam::123456789012:role/MyRole"),
+			endpoint:       stringPtr("https://s3.amazonaws.com"),
+			usePathStyle:   true,
+			insecureTLS:    false,
+			want: StorageProfile{
+				OrganizationID: uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
+				InstanceNum:    42,
+				CollectorName:  "test-collector",
+				CloudProvider:  "aws",
+				Region:         "us-east-1",
+				Bucket:         "my-bucket",
+				Role:           "arn:aws:iam::123456789012:role/MyRole",
+				Endpoint:       "https://s3.amazonaws.com",
+				UsePathStyle:   true,
+				InsecureTLS:    false,
+			},
+		},
+		{
+			name:           "minimal profile without role and endpoint",
+			organizationID: uuid.MustParse("987fcdeb-51a2-43d7-b890-123456789abc"),
+			instanceNum:    1,
+			collectorName:  "minimal-collector",
+			bucketName:     "simple-bucket",
+			cloudProvider:  "gcp",
+			region:         "us-central1",
+			role:           nil,
+			endpoint:       nil,
+			usePathStyle:   false,
+			insecureTLS:    true,
+			want: StorageProfile{
+				OrganizationID: uuid.MustParse("987fcdeb-51a2-43d7-b890-123456789abc"),
+				InstanceNum:    1,
+				CollectorName:  "minimal-collector",
+				CloudProvider:  "gcp",
+				Region:         "us-central1",
+				Bucket:         "simple-bucket",
+				Role:           "",
+				Endpoint:       "",
+				UsePathStyle:   false,
+				InsecureTLS:    true,
+			},
+		},
+		{
+			name:           "profile with role but no endpoint",
+			organizationID: uuid.MustParse("456789ab-cdef-1234-5678-90abcdef1234"),
+			instanceNum:    0,
+			collectorName:  "partial-collector",
+			bucketName:     "role-only-bucket",
+			cloudProvider:  "azure",
+			region:         "eastus",
+			role:           stringPtr("storage-admin"),
+			endpoint:       nil,
+			usePathStyle:   true,
+			insecureTLS:    false,
+			want: StorageProfile{
+				OrganizationID: uuid.MustParse("456789ab-cdef-1234-5678-90abcdef1234"),
+				InstanceNum:    0,
+				CollectorName:  "partial-collector",
+				CloudProvider:  "azure",
+				Region:         "eastus",
+				Bucket:         "role-only-bucket",
+				Role:           "storage-admin",
+				Endpoint:       "",
+				UsePathStyle:   true,
+				InsecureTLS:    false,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &databaseProvider{}
+			got := provider.rowToStorageProfile(
+				tt.organizationID,
+				tt.instanceNum,
+				tt.collectorName,
+				tt.bucketName,
+				tt.cloudProvider,
+				tt.region,
+				tt.role,
+				tt.endpoint,
+				tt.usePathStyle,
+				tt.insecureTLS,
+			)
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 // Helper function to create string pointers
 func stringPtr(s string) *string {
 	return &s
+}
+
+func TestFindLongestPrefixMatch(t *testing.T) {
+	testOrgID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
+	otherOrgID := uuid.MustParse("987fcdeb-51a2-43d7-b890-123456789abc")
+
+	tests := []struct {
+		name       string
+		objectPath string
+		mappings   []PrefixMapping
+		want       *PrefixMapping
+	}{
+		{
+			name:       "exact match",
+			objectPath: "logs/app1/file.json",
+			mappings: []PrefixMapping{
+				{OrganizationID: testOrgID, PathPrefix: "logs/app1/", Signal: "logs"},
+				{OrganizationID: otherOrgID, PathPrefix: "logs/", Signal: "logs"},
+			},
+			want: &PrefixMapping{OrganizationID: testOrgID, PathPrefix: "logs/app1/", Signal: "logs"},
+		},
+		{
+			name:       "longest prefix wins",
+			objectPath: "metrics/service1/cpu.parquet",
+			mappings: []PrefixMapping{
+				{OrganizationID: testOrgID, PathPrefix: "metrics/service1/", Signal: "metrics"},
+				{OrganizationID: otherOrgID, PathPrefix: "metrics/", Signal: "metrics"},
+				{OrganizationID: otherOrgID, PathPrefix: "m", Signal: "metrics"},
+			},
+			want: &PrefixMapping{OrganizationID: testOrgID, PathPrefix: "metrics/service1/", Signal: "metrics"},
+		},
+		{
+			name:       "no match",
+			objectPath: "traces/span1/data.json",
+			mappings: []PrefixMapping{
+				{OrganizationID: testOrgID, PathPrefix: "logs/", Signal: "logs"},
+				{OrganizationID: otherOrgID, PathPrefix: "metrics/", Signal: "metrics"},
+			},
+			want: nil,
+		},
+		{
+			name:       "empty mappings",
+			objectPath: "any/path/file.json",
+			mappings:   []PrefixMapping{},
+			want:       nil,
+		},
+		{
+			name:       "single character prefix",
+			objectPath: "logs/file.json",
+			mappings: []PrefixMapping{
+				{OrganizationID: testOrgID, PathPrefix: "l", Signal: "logs"},
+			},
+			want: &PrefixMapping{OrganizationID: testOrgID, PathPrefix: "l", Signal: "logs"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findLongestPrefixMatch(tt.objectPath, tt.mappings)
+			if tt.want == nil {
+				assert.Nil(t, got)
+			} else {
+				assert.NotNil(t, got)
+				assert.Equal(t, tt.want.OrganizationID, got.OrganizationID)
+				assert.Equal(t, tt.want.PathPrefix, got.PathPrefix)
+				assert.Equal(t, tt.want.Signal, got.Signal)
+			}
+		})
+	}
 }

@@ -39,7 +39,7 @@ type GCPPubSubService struct {
 	client       *pubsub.Client
 	sub          *pubsub.Subscriber
 	kafkaHandler *KafkaHandler
-	deduplicator *Deduplicator
+	deduplicator Deduplicator
 }
 
 // Ensure GCPPubSubService implements Backend interface

@@ -9,14 +9,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const pubSubMessageHistoryCleanup = `-- name: PubSubMessageHistoryCleanup :execresult
 DELETE FROM pubsub_message_history
-WHERE (organization_id, instance_num, bucket, object_id, source) IN (
-    SELECT pmh.organization_id, pmh.instance_num, pmh.bucket, pmh.object_id, pmh.source
+WHERE (bucket, object_id, source) IN (
+    SELECT pmh.bucket, pmh.object_id, pmh.source
     FROM pubsub_message_history pmh
     WHERE pmh.received_at < $1
     ORDER BY pmh.received_at
@@ -47,26 +46,18 @@ func (q *Queries) PubSubMessageHistoryCount(ctx context.Context) (int64, error) 
 
 const pubSubMessageHistoryInsert = `-- name: PubSubMessageHistoryInsert :execresult
 INSERT INTO pubsub_message_history (
-    organization_id, instance_num, bucket, object_id, source
+    bucket, object_id, source
 ) VALUES (
-    $1, $2, $3, $4, $5
-) ON CONFLICT (organization_id, instance_num, bucket, object_id, source) DO NOTHING
+    $1, $2, $3
+) ON CONFLICT (bucket, object_id, source) DO NOTHING
 `
 
 type PubSubMessageHistoryInsertParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	Bucket         string    `json:"bucket"`
-	ObjectID       string    `json:"object_id"`
-	Source         string    `json:"source"`
+	Bucket   string `json:"bucket"`
+	ObjectID string `json:"object_id"`
+	Source   string `json:"source"`
 }
 
 func (q *Queries) PubSubMessageHistoryInsert(ctx context.Context, arg PubSubMessageHistoryInsertParams) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, pubSubMessageHistoryInsert,
-		arg.OrganizationID,
-		arg.InstanceNum,
-		arg.Bucket,
-		arg.ObjectID,
-		arg.Source,
-	)
+	return q.db.Exec(ctx, pubSubMessageHistoryInsert, arg.Bucket, arg.ObjectID, arg.Source)
 }

@@ -39,7 +39,7 @@ type AzureQueueService struct {
 	azureMgr     *azureclient.Manager
 	sp           storageprofile.StorageProfileProvider
 	kafkaHandler *KafkaHandler
-	deduplicator *Deduplicator
+	deduplicator Deduplicator
 }
 
 var _ Backend = (*AzureQueueService)(nil)

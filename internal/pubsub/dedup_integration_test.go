@@ -18,61 +18,29 @@ package pubsub
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
-
-// getEnvOrDefault returns environment variable value or default
-func getEnvOrDefault(envVar, defaultValue string) string {
-	if value := os.Getenv(envVar); value != "" {
-		return value
-	}
-	return defaultValue
-}
 
 // setupIntegrationTest creates a test database connection and returns cleanup function
 func setupIntegrationTest(t *testing.T) (*lrdb.Store, func()) {
 	ctx := context.Background()
 
-	// Get connection details from environment
-	host := getEnvOrDefault("LRDB_HOST", "localhost")
-	port := getEnvOrDefault("LRDB_PORT", "5432")
-	user := getEnvOrDefault("LRDB_USER", os.Getenv("USER"))
-	dbname := getEnvOrDefault("LRDB_DBNAME", "testing_lrdb")
-	password := os.Getenv("LRDB_PASSWORD")
-
-	// Build connection string
-	var connStr string
-	if password != "" {
-		connStr = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable", user, password, host, port, dbname)
-	} else {
-		connStr = fmt.Sprintf("postgresql://%s@%s:%s/%s?sslmode=disable", user, host, port, dbname)
-	}
-
-	// Create test database connection using pgxpool
-	config, err := pgxpool.ParseConfig(connStr)
+	// Use the existing LRDB connection helper with warning on migration mismatches
+	// This is suitable for integration tests
+	store, err := lrdb.LRDBStoreForAdmin(ctx)
 	require.NoError(t, err)
-
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	require.NoError(t, err)
-
-	store := lrdb.NewStore(pool)
 
 	// Clean up any existing test data
-	_, err = pool.Exec(ctx, "DELETE FROM pubsub_message_history")
+	_, err = store.Pool().Exec(ctx, "DELETE FROM pubsub_message_history")
 	require.NoError(t, err)
 
 	cleanup := func() {
-		pool.Close()
+		store.Pool().Close()
 	}
 
 	return store, cleanup
@@ -92,24 +60,17 @@ func TestDeduplicationIntegration(t *testing.T) {
 	// Create deduplicator
 	dedup := NewDeduplicator(store)
 
-	orgID := uuid.New()
-	item := &ingest.IngestItem{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "logs-raw/2023/01/01/file1.gz",
-		Signal:         "logs",
-		FileSize:       1024,
-		QueuedAt:       time.Now(),
-	}
+	bucket := "test-bucket"
+	objectID := "logs-raw/2023/01/01/file1.gz"
+	source := "test"
 
 	// First time should process
-	shouldProcess, err := dedup.CheckAndRecord(ctx, item, "test")
+	shouldProcess, err := dedup.CheckAndRecord(ctx, bucket, objectID, source)
 	require.NoError(t, err)
 	require.True(t, shouldProcess, "First occurrence should be processed")
 
 	// Second time should be duplicate
-	shouldProcess, err = dedup.CheckAndRecord(ctx, item, "test")
+	shouldProcess, err = dedup.CheckAndRecord(ctx, bucket, objectID, source)
 	require.NoError(t, err)
 	require.False(t, shouldProcess, "Second occurrence should be duplicate")
 
@@ -133,29 +94,22 @@ func TestDeduplicationWithoutCache(t *testing.T) {
 	// Create deduplicator
 	dedup := NewDeduplicator(store)
 
-	orgID := uuid.New()
-	item := &ingest.IngestItem{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "logs-raw/2023/01/01/file1.gz",
-		Signal:         "logs",
-		FileSize:       1024,
-		QueuedAt:       time.Now(),
-	}
+	bucket := "test-bucket"
+	objectID := "logs-raw/2023/01/01/file1.gz"
+	source := "test"
 
 	// First time should process and add to DB
-	shouldProcess, err := dedup.CheckAndRecord(ctx, item, "test")
+	shouldProcess, err := dedup.CheckAndRecord(ctx, bucket, objectID, source)
 	require.NoError(t, err)
 	require.True(t, shouldProcess)
 
 	// Second time should be detected as duplicate via database
-	shouldProcess, err = dedup.CheckAndRecord(ctx, item, "test")
+	shouldProcess, err = dedup.CheckAndRecord(ctx, bucket, objectID, source)
 	require.NoError(t, err)
 	require.False(t, shouldProcess)
 
 	// Third time should also be detected as duplicate
-	shouldProcess, err = dedup.CheckAndRecord(ctx, item, "test")
+	shouldProcess, err = dedup.CheckAndRecord(ctx, bucket, objectID, source)
 	require.NoError(t, err)
 	require.False(t, shouldProcess)
 }
@@ -171,16 +125,11 @@ func TestDeduplicationCleanup(t *testing.T) {
 	store, cleanup := setupIntegrationTest(t)
 	defer cleanup()
 
-	// Create some old records for cleanup testing
-	orgID := uuid.New()
-
-	// Insert an old record directly into the database
+	// Insert an old record using the new simplified structure
 	_, err := store.PubSubMessageHistoryInsert(ctx, lrdb.PubSubMessageHistoryInsertParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "old-file.gz",
-		Source:         "test",
+		Bucket:   "test-bucket",
+		ObjectID: "old-file.gz",
+		Source:   "test",
 	})
 	require.NoError(t, err)
 
@@ -188,8 +137,8 @@ func TestDeduplicationCleanup(t *testing.T) {
 	_, err = store.Pool().Exec(ctx, `
 		UPDATE pubsub_message_history
 		SET received_at = $1
-		WHERE organization_id = $2 AND object_id = $3
-	`, time.Now().Add(-25*time.Hour), orgID, "old-file.gz")
+		WHERE bucket = $2 AND object_id = $3
+	`, time.Now().Add(-25*time.Hour), "test-bucket", "old-file.gz")
 	require.NoError(t, err)
 
 	// Count records before cleanup
@@ -225,32 +174,17 @@ func TestDeduplicationDifferentItems(t *testing.T) {
 	// Create deduplicator
 	dedup := NewDeduplicator(store)
 
-	orgID := uuid.New()
-
-	item1 := &ingest.IngestItem{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "logs-raw/2023/01/01/file1.gz",
-		Signal:         "logs",
-		FileSize:       1024,
-	}
-
-	item2 := &ingest.IngestItem{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "logs-raw/2023/01/01/file2.gz", // Different file
-		Signal:         "logs",
-		FileSize:       1024,
-	}
+	bucket := "test-bucket"
+	objectID1 := "logs-raw/2023/01/01/file1.gz"
+	objectID2 := "logs-raw/2023/01/01/file2.gz" // Different file
+	source := "test"
 
 	// Both items should process since they're different
-	shouldProcess1, err := dedup.CheckAndRecord(ctx, item1, "test")
+	shouldProcess1, err := dedup.CheckAndRecord(ctx, bucket, objectID1, source)
 	require.NoError(t, err)
 	require.True(t, shouldProcess1)
 
-	shouldProcess2, err := dedup.CheckAndRecord(ctx, item2, "test")
+	shouldProcess2, err := dedup.CheckAndRecord(ctx, bucket, objectID2, source)
 	require.NoError(t, err)
 	require.True(t, shouldProcess2)
 
@@ -274,19 +208,12 @@ func TestCheckAndRecord_NewMessage_Integration(t *testing.T) {
 	// Create deduplicator
 	dedup := NewDeduplicator(store)
 
-	orgID := uuid.New()
-	item := &ingest.IngestItem{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "logs-raw/2023/01/01/file1.gz",
-		Signal:         "logs",
-		FileSize:       1024,
-		QueuedAt:       time.Now(),
-	}
+	bucket := "test-bucket"
+	objectID := "logs-raw/2023/01/01/file1.gz"
+	source := "sqs"
 
 	// First call should return true (new message)
-	shouldProcess, err := dedup.CheckAndRecord(ctx, item, "sqs")
+	shouldProcess, err := dedup.CheckAndRecord(ctx, bucket, objectID, source)
 	require.NoError(t, err)
 	require.True(t, shouldProcess, "New message should be processed")
 
@@ -310,24 +237,16 @@ func TestCheckAndRecord_DuplicateMessage_Integration(t *testing.T) {
 	// Create deduplicator
 	dedup := NewDeduplicator(store)
 
-	orgID := uuid.New()
-	item := &ingest.IngestItem{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "logs-raw/2023/01/01/file1.gz",
-		Signal:         "logs",
-		FileSize:       1024,
-		QueuedAt:       time.Now(),
-	}
+	bucket := "test-bucket"
+	objectID := "logs-raw/2023/01/01/file1.gz"
 
 	// First call should return true (new message)
-	shouldProcess, err := dedup.CheckAndRecord(ctx, item, "gcp")
+	shouldProcess, err := dedup.CheckAndRecord(ctx, bucket, objectID, "gcp")
 	require.NoError(t, err)
 	require.True(t, shouldProcess, "New message should be processed")
 
 	// Second call should return false (duplicate)
-	shouldProcess, err = dedup.CheckAndRecord(ctx, item, "gcp")
+	shouldProcess, err = dedup.CheckAndRecord(ctx, bucket, objectID, "gcp")
 	require.NoError(t, err)
 	require.False(t, shouldProcess, "Duplicate message should not be processed")
 
@@ -351,31 +270,23 @@ func TestCheckAndRecord_DifferentSources_Integration(t *testing.T) {
 	// Create deduplicator
 	dedup := NewDeduplicator(store)
 
-	orgID := uuid.New()
-	item := &ingest.IngestItem{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "logs-raw/2023/01/01/file1.gz",
-		Signal:         "logs",
-		FileSize:       1024,
-		QueuedAt:       time.Now(),
-	}
+	bucket := "test-bucket"
+	objectID := "logs-raw/2023/01/01/file1.gz"
 
 	// Same message from different sources should both be processed
-	shouldProcess1, err := dedup.CheckAndRecord(ctx, item, "sqs")
+	shouldProcess1, err := dedup.CheckAndRecord(ctx, bucket, objectID, "sqs")
 	require.NoError(t, err)
 	require.True(t, shouldProcess1, "Message from SQS should be processed")
 
-	shouldProcess2, err := dedup.CheckAndRecord(ctx, item, "gcp")
+	shouldProcess2, err := dedup.CheckAndRecord(ctx, bucket, objectID, "gcp")
 	require.NoError(t, err)
 	require.True(t, shouldProcess2, "Same message from GCP should also be processed")
 
-	shouldProcess3, err := dedup.CheckAndRecord(ctx, item, "azure")
+	shouldProcess3, err := dedup.CheckAndRecord(ctx, bucket, objectID, "azure")
 	require.NoError(t, err)
 	require.True(t, shouldProcess3, "Same message from Azure should also be processed")
 
-	shouldProcess4, err := dedup.CheckAndRecord(ctx, item, "http")
+	shouldProcess4, err := dedup.CheckAndRecord(ctx, bucket, objectID, "http")
 	require.NoError(t, err)
 	require.True(t, shouldProcess4, "Same message from HTTP should also be processed")
 
@@ -385,11 +296,11 @@ func TestCheckAndRecord_DifferentSources_Integration(t *testing.T) {
 	require.Equal(t, int64(4), count, "Should have four records (one per source)")
 
 	// Duplicates from same sources should be rejected
-	shouldProcess, err := dedup.CheckAndRecord(ctx, item, "sqs")
+	shouldProcess, err := dedup.CheckAndRecord(ctx, bucket, objectID, "sqs")
 	require.NoError(t, err)
 	require.False(t, shouldProcess, "Duplicate SQS message should be rejected")
 
-	shouldProcess, err = dedup.CheckAndRecord(ctx, item, "gcp")
+	shouldProcess, err = dedup.CheckAndRecord(ctx, bucket, objectID, "gcp")
 	require.NoError(t, err)
 	require.False(t, shouldProcess, "Duplicate GCP message should be rejected")
 
@@ -416,19 +327,11 @@ func TestCheckAndRecord_DatabaseConnection_Integration(t *testing.T) {
 	// Create deduplicator with closed connection
 	dedup := NewDeduplicator(store)
 
-	orgID := uuid.New()
-	item := &ingest.IngestItem{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "logs-raw/2023/01/01/file1.gz",
-		Signal:         "logs",
-		FileSize:       1024,
-		QueuedAt:       time.Now(),
-	}
+	bucket := "test-bucket"
+	objectID := "logs-raw/2023/01/01/file1.gz"
 
 	// Should fail closed (return false, error)
-	shouldProcess, err := dedup.CheckAndRecord(ctx, item, "test")
+	shouldProcess, err := dedup.CheckAndRecord(ctx, bucket, objectID, "test")
 	require.Error(t, err)
 	require.False(t, shouldProcess, "Should fail closed when database is unavailable")
 	require.Contains(t, err.Error(), "deduplication check failed")
@@ -448,38 +351,22 @@ func TestDeduplication_ErrorPropagation_Integration(t *testing.T) {
 	// Create deduplicator with working database first
 	deduplicator := NewDeduplicator(store)
 
-	orgID := uuid.New()
-	item := &ingest.IngestItem{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "logs-raw/2023/01/01/file1.gz",
-		Signal:         "logs",
-		FileSize:       1024,
-		QueuedAt:       time.Now(),
-	}
+	bucket := "test-bucket"
+	objectID := "logs-raw/2023/01/01/file1.gz"
 
 	// First verify normal operation works
-	shouldProcess, err := deduplicator.CheckAndRecord(ctx, item, "test")
+	shouldProcess, err := deduplicator.CheckAndRecord(ctx, bucket, objectID, "test")
 	require.NoError(t, err)
 	require.True(t, shouldProcess, "First message should be processed")
 
 	// Now close the database connection to simulate failure
 	store.Pool().Close()
 
-	// Create new item to test error propagation
-	item2 := &ingest.IngestItem{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		Bucket:         "test-bucket",
-		ObjectID:       "logs-raw/2023/01/01/file2.gz", // Different file
-		Signal:         "logs",
-		FileSize:       1024,
-		QueuedAt:       time.Now(),
-	}
+	// Create new objectID to test error propagation
+	objectID2 := "logs-raw/2023/01/01/file2.gz" // Different file
 
 	// Should return error when database is unavailable
-	shouldProcess, err = deduplicator.CheckAndRecord(ctx, item2, "test")
+	shouldProcess, err = deduplicator.CheckAndRecord(ctx, bucket, objectID2, "test")
 	require.Error(t, err, "Should return error when database is unavailable")
 	require.False(t, shouldProcess, "Should fail closed when database is unavailable")
 	require.Contains(t, err.Error(), "deduplication check failed", "Error should indicate deduplication failure")
