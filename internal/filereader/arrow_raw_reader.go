@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -194,12 +195,10 @@ func convertArrowValue(col arrow.Array, i int) any {
 		return c.Value(i)
 	case *array.String:
 		// Copy the string to avoid holding reference to Arrow buffer memory
-		s := c.Value(i)
-		return string([]byte(s))
+		return strings.Clone(c.Value(i))
 	case *array.LargeString:
 		// Copy the string to avoid holding reference to Arrow buffer memory
-		s := c.Value(i)
-		return string([]byte(s))
+		return strings.Clone(c.Value(i))
 	case *array.Binary:
 		// Copy the bytes to avoid holding reference to Arrow buffer memory
 		b := c.Value(i)
