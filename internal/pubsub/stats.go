@@ -31,9 +31,10 @@ type StatsAggregator struct {
 }
 
 type signalStats struct {
-	processed int64
-	failed    int64
-	skipped   int64
+	processed      int64
+	failed         int64
+	skipped        int64
+	fileTypeCounts map[string]int64 // extension -> count
 }
 
 // NewStatsAggregator creates a new stats aggregator with the specified reporting interval
@@ -80,7 +81,9 @@ func (sa *StatsAggregator) RecordProcessed(signal string, count int) {
 	defer sa.mu.Unlock()
 
 	if sa.stats[signal] == nil {
-		sa.stats[signal] = &signalStats{}
+		sa.stats[signal] = &signalStats{
+			fileTypeCounts: make(map[string]int64),
+		}
 	}
 	sa.stats[signal].processed += int64(count)
 }
@@ -91,7 +94,9 @@ func (sa *StatsAggregator) RecordFailed(signal string, count int) {
 	defer sa.mu.Unlock()
 
 	if sa.stats[signal] == nil {
-		sa.stats[signal] = &signalStats{}
+		sa.stats[signal] = &signalStats{
+			fileTypeCounts: make(map[string]int64),
+		}
 	}
 	sa.stats[signal].failed += int64(count)
 }
@@ -102,9 +107,27 @@ func (sa *StatsAggregator) RecordSkipped(signal string, count int) {
 	defer sa.mu.Unlock()
 
 	if sa.stats[signal] == nil {
-		sa.stats[signal] = &signalStats{}
+		sa.stats[signal] = &signalStats{
+			fileTypeCounts: make(map[string]int64),
+		}
 	}
 	sa.stats[signal].skipped += int64(count)
+}
+
+// RecordFileTypes records file type counts for a signal type
+func (sa *StatsAggregator) RecordFileTypes(signal string, fileTypeCounts map[string]int) {
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+
+	if sa.stats[signal] == nil {
+		sa.stats[signal] = &signalStats{
+			fileTypeCounts: make(map[string]int64),
+		}
+	}
+
+	for ext, count := range fileTypeCounts {
+		sa.stats[signal].fileTypeCounts[ext] += int64(count)
+	}
 }
 
 // reportStats reports and resets statistics
@@ -131,12 +154,27 @@ func (sa *StatsAggregator) reportStats() {
 			totalFailed += stats.failed
 			totalSkipped += stats.skipped
 
+			attrs := []any{
+				slog.Int64("processed", stats.processed),
+				slog.Int64("failed", stats.failed),
+				slog.Int64("skipped", stats.skipped),
+			}
+
+			// Add file type counts if present
+			if len(stats.fileTypeCounts) > 0 {
+				fileTypes := []any{
+					slog.Int64("json", stats.fileTypeCounts["json"]),
+					slog.Int64("json.gz", stats.fileTypeCounts["json.gz"]),
+					slog.Int64("binpb", stats.fileTypeCounts["binpb"]),
+					slog.Int64("binpb.gz", stats.fileTypeCounts["binpb.gz"]),
+					slog.Int64("parquet", stats.fileTypeCounts["parquet"]),
+					slog.Int64("other", stats.fileTypeCounts["other"]),
+				}
+				attrs = append(attrs, slog.Group("file_types", fileTypes...))
+			}
+
 			signalDetails = append(signalDetails,
-				slog.Group(signal,
-					slog.Int64("processed", stats.processed),
-					slog.Int64("failed", stats.failed),
-					slog.Int64("skipped", stats.skipped),
-				))
+				slog.Group(signal, attrs...))
 		}
 	}
 
@@ -155,12 +193,27 @@ func (sa *StatsAggregator) reportStats() {
 			totalFailed += stats.failed
 			totalSkipped += stats.skipped
 
+			attrs := []any{
+				slog.Int64("processed", stats.processed),
+				slog.Int64("failed", stats.failed),
+				slog.Int64("skipped", stats.skipped),
+			}
+
+			// Add file type counts if present
+			if len(stats.fileTypeCounts) > 0 {
+				fileTypes := []any{
+					slog.Int64("json", stats.fileTypeCounts["json"]),
+					slog.Int64("json.gz", stats.fileTypeCounts["json.gz"]),
+					slog.Int64("binpb", stats.fileTypeCounts["binpb"]),
+					slog.Int64("binpb.gz", stats.fileTypeCounts["binpb.gz"]),
+					slog.Int64("parquet", stats.fileTypeCounts["parquet"]),
+					slog.Int64("other", stats.fileTypeCounts["other"]),
+				}
+				attrs = append(attrs, slog.Group("file_types", fileTypes...))
+			}
+
 			signalDetails = append(signalDetails,
-				slog.Group(signal,
-					slog.Int64("processed", stats.processed),
-					slog.Int64("failed", stats.failed),
-					slog.Int64("skipped", stats.skipped),
-				))
+				slog.Group(signal, attrs...))
 		}
 	}
 

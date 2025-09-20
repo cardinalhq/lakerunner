@@ -196,27 +196,10 @@ func handleMessageWithKafka(
 		return err
 	}
 
-	// Log file type counts per signal
-	for signal, extCounts := range result.FileTypeCounts {
-		logAttrs := []any{
-			slog.String("signal", signal),
-			slog.Int("json", extCounts["json"]),
-			slog.Int("json.gz", extCounts["json.gz"]),
-			slog.Int("binpb", extCounts["binpb"]),
-			slog.Int("binpb.gz", extCounts["binpb.gz"]),
-			slog.Int("parquet", extCounts["parquet"]),
-			slog.Int("other", extCounts["other"]),
-		}
-
-		switch signal {
-		case "logs":
-			slog.Info("Log file type counts", logAttrs...)
-		case "metrics":
-			slog.Info("Metric file type counts", logAttrs...)
-		case "traces":
-			slog.Info("Trace file type counts", logAttrs...)
-		default:
-			slog.Info("File type counts", logAttrs...)
+	// Record file type counts in stats aggregator
+	if stats != nil {
+		for signal, extCounts := range result.FileTypeCounts {
+			stats.RecordFileTypes(signal, extCounts)
 		}
 	}
 
