@@ -243,21 +243,6 @@ func (p *databaseProvider) getBucketPrefixMappings(ctx context.Context, bucketNa
 }
 
 func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, objectPath string) (OrganizationResolution, error) {
-	pathParts := strings.Split(strings.Trim(objectPath, "/"), "/")
-
-	// Extract signal from first path segment
-	var signal string
-	if len(pathParts) >= 1 {
-		switch pathParts[0] {
-		case "logs", "metrics", "traces":
-			signal = pathParts[0]
-		default:
-			signal = "logs" // Default fallback
-		}
-	} else {
-		signal = "logs" // Default fallback
-	}
-
 	// Get prefix mappings and find the longest match
 	mappings, err := p.getBucketPrefixMappings(ctx, bucketName)
 	if err != nil {
@@ -283,7 +268,7 @@ func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, 
 
 	return OrganizationResolution{
 		OrganizationID: match.OrganizationID,
-		Signal:         signal, // Use the signal extracted from path, not from mapping
+		Signal:         match.Signal, // Use the signal from the prefix mapping
 	}, nil
 }
 
