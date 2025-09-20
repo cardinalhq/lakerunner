@@ -193,13 +193,25 @@ func convertArrowValue(col arrow.Array, i int) any {
 	case *array.Float64:
 		return c.Value(i)
 	case *array.String:
-		return c.Value(i)
+		// Copy the string to avoid holding reference to Arrow buffer memory
+		s := c.Value(i)
+		return string([]byte(s))
 	case *array.LargeString:
-		return c.Value(i)
+		// Copy the string to avoid holding reference to Arrow buffer memory
+		s := c.Value(i)
+		return string([]byte(s))
 	case *array.Binary:
-		return c.Value(i)
+		// Copy the bytes to avoid holding reference to Arrow buffer memory
+		b := c.Value(i)
+		copied := make([]byte, len(b))
+		copy(copied, b)
+		return copied
 	case *array.LargeBinary:
-		return c.Value(i)
+		// Copy the bytes to avoid holding reference to Arrow buffer memory
+		b := c.Value(i)
+		copied := make([]byte, len(b))
+		copy(copied, b)
+		return copied
 	case *array.Timestamp:
 		tsType := c.DataType().(*arrow.TimestampType)
 		ts := c.Value(i)
