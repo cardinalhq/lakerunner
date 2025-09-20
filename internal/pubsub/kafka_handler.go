@@ -42,6 +42,7 @@ func handleMessageWithKafka(
 	source string,
 	sp storageprofile.StorageProfileProvider,
 	kafkaSender KafkaNotificationSender,
+	deduplicator *Deduplicator,
 ) error {
 	if len(msg) == 0 {
 		return fmt.Errorf("empty message received")
@@ -104,6 +105,21 @@ func handleMessageWithKafka(
 			}
 		}
 
+		// Update instance number in item for deduplication
+		item.InstanceNum = instanceNum
+
+		// Check for duplicate message
+		shouldProcess, err := deduplicator.CheckAndRecord(ctx, &item, source)
+		if err != nil {
+			// Deduplication failure - return error to trigger message retry
+			return fmt.Errorf("deduplication check failed for bucket %s object %s: %w",
+				item.Bucket, item.ObjectID, err)
+		}
+		if !shouldProcess {
+			// Message is a duplicate, skip it
+			continue
+		}
+
 		slog.Info("Processing item for Kafka",
 			slog.String("bucket", item.Bucket),
 			slog.String("object_id", item.ObjectID),
@@ -144,9 +160,10 @@ func handleMessageWithKafka(
 
 // KafkaHandler wraps the Kafka notification manager for pubsub services
 type KafkaHandler struct {
-	manager *fly.ObjStoreNotificationManager
-	source  string
-	sp      storageprofile.StorageProfileProvider
+	manager      *fly.ObjStoreNotificationManager
+	source       string
+	sp           storageprofile.StorageProfileProvider
+	deduplicator *Deduplicator
 }
 
 // NewKafkaHandler creates a new Kafka handler for pubsub notifications
@@ -156,13 +173,15 @@ func NewKafkaHandler(
 	factory *fly.Factory,
 	source string,
 	sp storageprofile.StorageProfileProvider,
+	deduplicator *Deduplicator,
 ) (*KafkaHandler, error) {
 	manager := fly.NewObjStoreNotificationManager(ctx, cfg, factory)
 
 	return &KafkaHandler{
-		manager: manager,
-		source:  source,
-		sp:      sp,
+		manager:      manager,
+		source:       source,
+		sp:           sp,
+		deduplicator: deduplicator,
 	}, nil
 }
 
@@ -173,7 +192,7 @@ func (h *KafkaHandler) HandleMessage(ctx context.Context, msg []byte) error {
 		return fmt.Errorf("failed to get Kafka producer: %w", err)
 	}
 
-	return handleMessageWithKafka(ctx, msg, h.source, h.sp, producer)
+	return handleMessageWithKafka(ctx, msg, h.source, h.sp, producer, h.deduplicator)
 }
 
 // Close closes the Kafka handler

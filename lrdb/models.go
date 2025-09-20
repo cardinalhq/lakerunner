@@ -196,6 +196,15 @@ type PackEstimate struct {
 	Signal         string    `json:"signal"`
 }
 
+type PubsubMessageHistory struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	Bucket         string    `json:"bucket"`
+	ObjectID       string    `json:"object_id"`
+	Source         string    `json:"source"`
+	ReceivedAt     time.Time `json:"received_at"`
+}
+
 type TraceSeg struct {
 	OrganizationID uuid.UUID                 `json:"organization_id"`
 	Dateint        int32                     `json:"dateint"`

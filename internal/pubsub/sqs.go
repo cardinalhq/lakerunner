@@ -17,13 +17,10 @@ package pubsub
 import (
 	"context"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/configdb"
 	"log/slog"
 	"os"
 	"sync"
 	"time"
-
-	"github.com/cardinalhq/lakerunner/config"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -31,9 +28,12 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type SQSService struct {
@@ -41,6 +41,7 @@ type SQSService struct {
 	awsMgr       *awsclient.Manager
 	sp           storageprofile.StorageProfileProvider
 	kafkaHandler *KafkaHandler
+	deduplicator *Deduplicator
 
 	// Async Kafka handling
 	maxOutstanding int
@@ -64,7 +65,13 @@ func NewSQSService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Fa
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "sqs", sp)
+	lrdbStore, err := lrdb.LRDBStore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to lrdb for deduplication: %w", err)
+	}
+	deduplicator := NewDeduplicator(lrdbStore)
+
+	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "sqs", sp, deduplicator)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}
@@ -77,6 +84,7 @@ func NewSQSService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Fa
 		awsMgr:         awsMgr,
 		sp:             sp,
 		kafkaHandler:   kafkaHandler,
+		deduplicator:   deduplicator,
 		maxOutstanding: maxOutstanding,
 		outstanding:    make(chan struct{}, maxOutstanding),
 	}
