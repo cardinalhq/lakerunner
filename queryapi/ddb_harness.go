@@ -452,6 +452,7 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON strin
 	// 5) Build worker SQL from the leaf.
 	var workerSQL string
 	isAgg := ast.IsAggregateExpr()
+	fieldsToExpect := make(map[string]struct{})
 	if isAgg {
 		// Rewrite to PromQL & compile, attach log leaves.
 		rr, err := promql.RewriteToPromQL(lplan.Root)
@@ -463,6 +464,10 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON strin
 			return nil, fmt.Errorf("parse promql: %w", err)
 		}
 		pplan, err := promql.Compile(promExpr)
+		by, _, _ := promql.FinalGroupingFromPlan(pplan)
+		for _, b := range by {
+			fieldsToExpect[b] = struct{}{}
+		}
 		if err != nil {
 			return nil, fmt.Errorf("compile promql: %w", err)
 		}
@@ -483,6 +488,25 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON strin
 
 	// 6) Execute worker SQL and return rows.
 	rows, err := queryAllRows(cfg.db, workerSQL)
+	for f := range fieldsToExpect {
+		found := false
+		for _, r := range rows {
+			if v, ok := r[f]; ok {
+				if v == nil {
+					break
+				}
+				vStr, vOk := v.(string)
+				if vOk && strings.TrimSpace(vStr) == "" {
+					break
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("expected field %q not found in any result row", f)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("execute worker SQL: %w\nSQL was:\n%s", err, workerSQL)
 	}
@@ -554,24 +578,6 @@ func WithTable(name string) ValidateOption {
 // WithAggStep sets the step used when building aggregate worker SQL; default 10s.
 func WithAggStep(step time.Duration) ValidateOption {
 	return func(c *validateConfig) { c.aggStep = step }
-}
-
-// WithLogLeafSQL controls the non-aggregate leaf ToWorkerSQL() arguments.
-func WithLogLeafSQL(limit int, order string, extraOrderBy []string) ValidateOption {
-	return func(c *validateConfig) {
-		c.logLimit = limit
-		c.logOrder = order
-		c.extraOrderBy = extraOrderBy
-	}
-}
-
-// WithRange fixes the start/end placeholders instead of inferring from ingested data.
-func WithRange(startMillis, endMillis int64) ValidateOption {
-	return func(c *validateConfig) {
-		c.resolveRange = false
-		c.startMillis = startMillis
-		c.endMillis = endMillis
-	}
 }
 
 type rowstruct map[string]any

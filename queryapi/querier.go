@@ -22,6 +22,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"strings"
 
@@ -198,6 +199,82 @@ func (q *QuerierService) sendEvalResults(r *http.Request, w http.ResponseWriter,
 	}
 }
 
+type APIErrorCode string
+
+const (
+	InvalidJSON           APIErrorCode = "INVALID_JSON"
+	ErrInvalidExpr        APIErrorCode = "INVALID_EXPR"
+	ValidationFailed      APIErrorCode = "VALIDATION_FAILED"
+	ErrCompileError       APIErrorCode = "COMPILE_ERROR"
+	ErrRewriteUnsupported APIErrorCode = "REWRITE_UNSUPPORTED"
+	ErrInternalError      APIErrorCode = "INTERNAL_ERROR"
+	ErrClientClosed       APIErrorCode = "CLIENT_CLOSED"
+	ErrDeadlineExceeded   APIErrorCode = "DEADLINE_EXCEEDED"
+	ErrServiceUnavailable APIErrorCode = "SERVICE_UNAVAILABLE"
+	ErrForbidden          APIErrorCode = "FORBIDDEN"
+	ErrUnauthorized       APIErrorCode = "UNAUTHORIZED"
+	ErrNotFound           APIErrorCode = "NOT_FOUND"
+	ErrRateLimited        APIErrorCode = "RATE_LIMITED"
+	ErrSSEUnsupported     APIErrorCode = "SSE_UNSUPPORTED"
+)
+
+type APIError struct {
+	Status  int          `json:"status"`
+	Code    APIErrorCode `json:"code"`
+	Message string       `json:"message"`
+}
+
+func writeAPIError(w http.ResponseWriter, status int, code APIErrorCode, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(APIError{
+		Status:  status,
+		Code:    code,
+		Message: msg,
+	})
+}
+
+// Non-standard but used by many proxies for client disconnects.
+const statusClientClosedRequest = 499
+
+func statusAndCodeForRuntimeError(err error) (int, APIErrorCode) {
+	if err == nil {
+		return http.StatusOK, ""
+	}
+	if errors.Is(err, context.Canceled) {
+		return statusClientClosedRequest, ErrClientClosed
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout, ErrDeadlineExceeded
+	}
+
+	var ne net.Error
+	if errors.As(err, &ne) {
+		if ne.Timeout() {
+			return http.StatusGatewayTimeout, ErrDeadlineExceeded
+		}
+		// Treat temporary/transient as 503
+		type temporary interface{ Temporary() bool }
+		if t, ok := any(ne).(temporary); ok && t.Temporary() {
+			return http.StatusServiceUnavailable, ErrServiceUnavailable
+		}
+	}
+
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "permission") || strings.Contains(msg, "forbidden"):
+		return http.StatusForbidden, ErrForbidden
+	case strings.Contains(msg, "unauthorized") || strings.Contains(msg, "unauthenticated"):
+		return http.StatusUnauthorized, ErrUnauthorized
+	case strings.Contains(msg, "not found"):
+		return http.StatusNotFound, ErrNotFound
+	case strings.Contains(msg, "too many requests") || strings.Contains(msg, "rate limit"):
+		return http.StatusTooManyRequests, ErrRateLimited
+	}
+
+	return http.StatusInternalServerError, ErrInternalError
+}
+
 func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) {
 	qp := readQueryPayload(w, r, false)
 	if qp == nil {
@@ -206,39 +283,40 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 
 	logAst, err := logql.FromLogQL(qp.Q)
 	if err != nil {
-		http.Error(w, "invalid log query expression: "+qp.Q+" "+err.Error(), http.StatusBadRequest)
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid log query expression: "+err.Error())
 		return
 	}
 
 	lplan, err := logql.CompileLog(logAst)
 	if err != nil {
-		http.Error(w, "cannot compile LogQL: "+err.Error(), http.StatusBadRequest)
+		writeAPIError(w, http.StatusUnprocessableEntity, ErrCompileError, "cannot compile LogQL: "+err.Error())
 		return
 	}
 
 	if logAst.IsAggregateExpr() {
 		rr, err := promql.RewriteToPromQL(lplan.Root)
 		if err != nil {
-			http.Error(w, "cannot rewrite to PromQL: "+err.Error(), http.StatusBadRequest)
+			writeAPIError(w, http.StatusNotImplemented, ErrRewriteUnsupported, "cannot rewrite to PromQL: "+err.Error())
 			return
 		}
 
 		promExpr, err := promql.FromPromQL(rr.PromQL)
 		if err != nil {
-			http.Error(w, "cannot parse rewritten PromQL: "+err.Error(), http.StatusBadRequest)
+			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "cannot parse rewritten PromQL: "+err.Error())
 			return
 		}
 
 		plan, err := promql.Compile(promExpr)
 		if err != nil {
-			http.Error(w, "cannot compile rewritten PromQL: "+err.Error(), http.StatusBadRequest)
+			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "cannot compile rewritten PromQL: "+err.Error())
 			return
 		}
 		plan.AttachLogLeaves(rr)
 
 		evalResults, err := q.EvaluateMetricsQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
 		if err != nil {
-			http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
+			status, code := statusAndCodeForRuntimeError(err)
+			writeAPIError(w, status, code, "evaluate error: "+err.Error())
 			return
 		}
 		q.sendEvalResults(r, w, evalResults, plan)
@@ -248,6 +326,7 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 	// ---- Raw logs path (no rewrite) ----
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
+		writeAPIError(w, http.StatusNotAcceptable, ErrSSEUnsupported, "server-sent events not supported by client")
 		return
 	}
 
@@ -255,7 +334,8 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 		r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan, qp.Fields,
 	)
 	if err != nil {
-		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
+		status, code := statusAndCodeForRuntimeError(err)
+		writeAPIError(w, status, code, "evaluate error: "+err.Error())
 		return
 	}
 
