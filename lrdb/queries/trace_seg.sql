@@ -79,3 +79,21 @@ WHERE organization_id = @organization_id
   AND instance_num    = @instance_num
   AND segment_id      = ANY(@segment_ids::bigint[])
   AND compacted       = false;
+
+-- name: ListTraceSegmentsForQuery :many
+SELECT
+    t.fp::bigint                    AS fingerprint,
+    s.instance_num,
+    s.segment_id,
+    lower(s.ts_range)::bigint        AS start_ts,
+    (upper(s.ts_range) - 1)::bigint  AS end_ts
+FROM trace_seg AS s
+         CROSS JOIN LATERAL
+    unnest(s.fingerprints) AS t(fp)
+WHERE
+    s.organization_id = @organization_id
+  AND s.dateint       = @dateint
+  AND s.published     = true
+  AND s.fingerprints && @fingerprints::BIGINT[]
+  AND t.fp            = ANY(@fingerprints::BIGINT[])
+  AND ts_range && int8range(@s, @e, '[)');

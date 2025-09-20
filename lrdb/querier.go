@@ -46,6 +46,7 @@ type Querier interface {
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]interface{}, error)
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
+	ListTraceSegmentsForQuery(ctx context.Context, arg ListTraceSegmentsForQueryParams) ([]ListTraceSegmentsForQueryRow, error)
 	// Returns an estimate of the number of log segments, accounting for per-file overhead.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	LogSegmentCleanupBatchDelete(ctx context.Context, arg []LogSegmentCleanupBatchDeleteParams) *LogSegmentCleanupBatchDeleteBatchResults
