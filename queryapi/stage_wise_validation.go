@@ -68,7 +68,7 @@ func stageWiseValidation(
 
 		// If we have expected fields (from the most-recent parser),
 		// they must be present and non-empty in at least one returned row.
-		if sc.OK && len(expect) > 0 {
+		if len(expect) > 0 {
 			missing := missingOrEmptyFields(rows, expect)
 			if len(missing) > 0 {
 				sc.MissingFields = missing
@@ -99,33 +99,49 @@ func stageWiseValidation(
 		}
 	}
 
-	// --- Stage 1: matchers + independent label filters + ALL line filters ---
+	// --- Split line filters: without ParserIdx annotation we treat all line filters as:
+	//     - PRE if there are no parsers
+	//     - POST if there is at least one parser (so filters see the rewritten body)
+	preLF := append([]logql.LineFilter(nil), leaf.LineFilters...)
+	postLF := []logql.LineFilter(nil)
+	if len(leaf.Parsers) > 0 {
+		postLF = preLF
+		preLF = nil
+	}
+
+	// --- Stage 1: matchers + independent label filters + PRE-parser line filters only ---
 	stage1 := leaf
 	stage1.Parsers = nil
 	stage1.LabelFilters = independent
-	out = append(out, run(stage1, "matchers+independent+line_filters", nil))
-
+	stage1.LineFilters = preLF
+	out = append(out, run(stage1, "matchers+independent+pre_line_filters", nil))
 	if !out[len(out)-1].OK {
 		return out, nil
 	}
 
-	// --- Stage 2..: add parsers one by one; attach their label filters as the columns appear ---
+	// --- Stage 2..: add parsers one by one; attach their label filters; add POST line filters at the final parser ---
 	var cumulativeParsers []logql.ParserStage
 	for i, p := range leaf.Parsers {
 		cumulativeParsers = append(cumulativeParsers, p)
 
 		si := leaf
 		si.Parsers = append([]logql.ParserStage(nil), cumulativeParsers...)
-		// label filters attached to parsers up to i
+
+		// label filters attached to parsers up to i, plus independent ones
 		var upto []logql.LabelFilter
 		for _, lf := range leaf.LabelFilters {
 			if lf.AfterParser && lf.ParserIdx != nil && *lf.ParserIdx <= i {
 				upto = append(upto, lf)
 			}
 		}
-		// plus the already-known independent ones
-		upto = append(upto, independent...)
-		si.LabelFilters = upto
+		si.LabelFilters = append(upto, independent...)
+
+		// Only at the LAST parser stage do we apply POST line filters.
+		if i == len(leaf.Parsers)-1 {
+			si.LineFilters = postLF
+		} else {
+			si.LineFilters = nil
+		}
 
 		// fields this parser is expected to *create* at this step
 		expect := createdByParser(p)
@@ -146,6 +162,9 @@ func stageWiseValidation(
 func createdByParser(p logql.ParserStage) []string {
 	typ := strings.ToLower(p.Type)
 	switch typ {
+	case "line_format", "line-format", "lineformat":
+		return []string{"_cardinalhq.message"}
+
 	case "regexp":
 		pat := p.Params["pattern"]
 		names := captureNamesFromRegexp(pat)
@@ -157,6 +176,7 @@ func createdByParser(p logql.ParserStage) []string {
 			dst = append(dst, n)
 		}
 		return dedupeSorted(dst)
+
 	case "label_format", "label-format", "labelformat":
 		if len(p.LabelFormats) > 0 {
 			outs := make([]string, 0, len(p.LabelFormats))
@@ -165,14 +185,13 @@ func createdByParser(p logql.ParserStage) []string {
 			}
 			return dedupeSorted(outs)
 		}
-		// fall back to keys of Params
 		outs := make([]string, 0, len(p.Params))
 		for k := range p.Params {
 			outs = append(outs, k)
 		}
 		return dedupeSorted(outs)
+
 	case "json":
-		// Only the explicit mappings are statically knowable.
 		if len(p.Params) == 0 {
 			return nil
 		}
@@ -181,8 +200,8 @@ func createdByParser(p logql.ParserStage) []string {
 			outs = append(outs, k)
 		}
 		return dedupeSorted(outs)
+
 	case "logfmt":
-		// Same as json: we only know the explicit mappings.
 		if len(p.Params) == 0 {
 			return nil
 		}
@@ -191,9 +210,10 @@ func createdByParser(p logql.ParserStage) []string {
 			outs = append(outs, k)
 		}
 		return dedupeSorted(outs)
+
 	case "unwrap":
-		// We create a numeric value for window ops
 		return []string{"__unwrap_value"}
+
 	default:
 		return nil
 	}

@@ -30,9 +30,18 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 	groupKeys := dedupeStrings(be.OutBy)
 	parserCreated, hasJSON, hasLogFmt := analyzeParsers(be)
 
-	// If json/logfmt is present, treat all non-base groupKeys as parser-created
+	// If json/logfmt appear, only mark group keys as parser-created when the key:
+	//  - is not a base column, and
+	//  - is not referenced by a selector matcher.
 	if hasJSON || hasLogFmt {
+		matcherSet := map[string]struct{}{}
+		for _, m := range be.Matchers {
+			matcherSet[m.Label] = struct{}{}
+		}
 		for _, k := range groupKeys {
+			if _, isMatcher := matcherSet[k]; isMatcher {
+				continue
+			}
 			qk := quoteIdent(k)
 			if !isBaseCol(qk) {
 				parserCreated[k] = struct{}{}
@@ -68,7 +77,7 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 
 	// 5) Emit parsers left→right, pushing label filters as soon as labels exist
 	remainingLF := append([]LabelFilter(nil), be.LabelFilters...)
-	emitParsers(be, &pb, bodyCol, groupKeys, futureCreated, unwrapNeeded, &remainingLF)
+	emitParsers(be, &pb, bodyCol, groupKeys, futureCreated, unwrapNeeded, &remainingLF, fields, parserCreated)
 
 	// 6) Any remaining label filters (base columns) → apply at the end
 	if len(remainingLF) > 0 {
@@ -158,6 +167,7 @@ func analyzeParsers(be *LogLeaf) (parserCreated map[string]struct{}, hasJSON, ha
 				}
 			}
 		case "regexp":
+			// only named captures are considered "created" at this step
 			for _, name := range regexCaptureNames(p.Params["pattern"]) {
 				if !strings.HasPrefix(name, "__var_") {
 					parserCreated[name] = struct{}{}
@@ -172,7 +182,6 @@ func analyzeParsers(be *LogLeaf) (parserCreated map[string]struct{}, hasJSON, ha
 	return
 }
 
-// in logql/to_worker_sql.go (or wherever collectTemplateDeps lives)
 func collectTemplateDeps(tmpl string) []string {
 	deps := map[string]struct{}{}
 	_, _ = buildLabelFormatExprTemplate(tmpl, func(name string) string {
@@ -208,12 +217,10 @@ func computeS0Need(be *LogLeaf, groupKeys []string, parserCreated map[string]str
 		}
 	}
 
-	// NEW: hoist base columns referenced by label_format / line_format templates.
+	// Hoist base columns referenced by label_format / line_format templates.
 	for _, p := range be.Parsers {
 		switch strings.ToLower(p.Type) {
 		case "label_format", "label-format", "labelformat":
-			// If precompiled SQL in LabelFormats, we can't reliably recover deps.
-			// But Params case is common and covers templates.
 			for _, tmpl := range p.Params {
 				for _, dep := range collectTemplateDeps(tmpl) {
 					q := quoteIdent(dep)
@@ -304,7 +311,38 @@ func emitParsers(
 	futureCreated map[string]struct{},
 	unwrapNeeded map[string]struct{},
 	remainingLF *[]LabelFilter,
+	fields []string,
+	parserCreated map[string]struct{},
 ) {
+	// Track which logical columns currently exist (unquoted names).
+	present := make(map[string]struct{})
+	addPresent := func(names ...string) {
+		for _, n := range names {
+			if n != "" {
+				present[n] = struct{}{}
+			}
+		}
+	}
+
+	// base cols
+	addPresent("_cardinalhq.message", "_cardinalhq.timestamp", "_cardinalhq.id", "_cardinalhq.level", "_cardinalhq.fingerprint")
+	// matchers
+	for _, m := range be.Matchers {
+		addPresent(m.Label)
+	}
+	// non-parser group-by keys
+	for _, k := range groupKeys {
+		if _, created := parserCreated[k]; !created {
+			addPresent(k)
+		}
+	}
+	// non-parser fields
+	for _, f := range fields {
+		if _, created := parserCreated[f]; !created {
+			addPresent(f)
+		}
+	}
+
 	uniqLabels := func(lfs []LabelFilter) []string {
 		set := map[string]struct{}{}
 		for _, lf := range lfs {
@@ -334,7 +372,7 @@ func emitParsers(
 		return m
 	}
 
-	// IMPORTANT: index-based loop so we can look ahead
+	// index-based loop so we can look ahead
 	for i := range be.Parsers {
 		p := be.Parsers[i]
 
@@ -342,51 +380,79 @@ func emitParsers(
 
 		case "regexp":
 			pat := p.Params["pattern"]
-			names := regexCaptureNames(pat)
 
-			// s*: run regexp_extract to get a struct of captures (if any)
-			sel := []string{pb.top() + ".*"}
-			if len(names) > 0 {
-				quoted := make([]string, 0, len(names))
-				for _, name := range names {
-					quoted = append(quoted, fmt.Sprintf("'%s'", name))
-				}
-				sel = append(sel, fmt.Sprintf(
-					"regexp_extract(%s, %s, [%s]) AS __extracted_struct",
-					bodyCol, sqlQuote(pat), strings.Join(quoted, ", "),
-				))
-			}
-			pb.push(sel, pb.top(), nil)
-
-			// s*: project each capture as a top-level column
-			if len(names) > 0 {
-				extract := []string{pb.top() + ".*"}
-				for _, name := range names {
-					if strings.HasPrefix(name, "__var_") {
-						continue
-					}
-					extract = append(extract,
-						fmt.Sprintf("__extracted_struct.%s AS %s", quoteIdent(name), quoteIdent(name)))
-				}
-				pb.push(extract, pb.top(), nil)
-
-				// Apply filters that now have their columns created:
-				created := mkSet(names)
-				allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
-				now, later := partitionByNames(allFilters, created)
-
-				if len(now) > 0 {
-					where := buildLabelFilterWhere(now, nil)
-					if len(where) > 0 {
-						pb.push([]string{pb.top() + ".*"}, pb.top(), where)
-					}
-				}
-				*remainingLF = later
-			} else {
+			// Full capture order (all capturing groups). Unnamed groups are "__g#".
+			order := regexCaptureOrder(pat)
+			if len(order) == 0 {
+				// no capturing groups → pass through, carry filters
+				pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
 				if len(p.Filters) > 0 {
 					*remainingLF = append(*remainingLF, p.Filters...)
 				}
+				break
 			}
+
+			// Map named group -> 1-based index
+			nameToIdx := map[string]int{}
+			var named []string
+			for idx, n := range order {
+				if strings.HasPrefix(n, "__g") {
+					continue
+				}
+				if _, seen := nameToIdx[n]; !seen {
+					nameToIdx[n] = idx + 1
+					named = append(named, n)
+				}
+			}
+
+			if len(named) == 0 {
+				// only unnamed groups; nothing to create as labels
+				pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
+				if len(p.Filters) > 0 {
+					*remainingLF = append(*remainingLF, p.Filters...)
+				}
+				break
+			}
+
+			var replacePairs []string
+			var addCols []string
+			star := pb.top() + ".*"
+			created := make(map[string]struct{}, len(named))
+
+			for _, n := range named {
+				idx := nameToIdx[n]
+				expr := fmt.Sprintf("regexp_extract(%s, %s, %d) AS %s",
+					bodyCol, sqlQuote(pat), idx, quoteIdent(n),
+				)
+				if _, ok := present[n]; ok {
+					replacePairs = append(replacePairs, expr)
+				} else {
+					addCols = append(addCols, expr)
+				}
+				created[n] = struct{}{}
+			}
+
+			sel := []string{}
+			if len(replacePairs) > 0 {
+				sel = append(sel, star+" REPLACE("+strings.Join(replacePairs, ", ")+")")
+			} else {
+				sel = append(sel, star)
+			}
+			sel = append(sel, addCols...)
+			pb.push(sel, pb.top(), nil)
+
+			// mark created named groups as present, apply filters that now resolve
+			for n := range created {
+				addPresent(n)
+			}
+			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			now, later := partitionByNames(allFilters, created)
+			if len(now) > 0 {
+				if where := buildLabelFilterWhere(now, nil); len(where) > 0 {
+					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+				}
+			}
+			*remainingLF = later
 
 		case "json":
 			// Keys needed by filters + group-by + unwrap.
@@ -397,7 +463,7 @@ func emitParsers(
 				needKeys = append(needKeys, f)
 			}
 
-			// LOOK-AHEAD: include deps referenced by any *later* line_format / label_format
+			// LOOK-AHEAD: include deps referenced by later line_format / label_format
 			for j := i + 1; j < len(be.Parsers); j++ {
 				pj := be.Parsers[j]
 				switch strings.ToLower(pj.Type) {
@@ -428,10 +494,33 @@ func emitParsers(
 			// Exclude future-created (label_format) outputs and dedupe
 			needKeys = dedupeStrings(excludeFuture(needKeys))
 
-			// s*: project keys from JSON (mappings first)
-			sel := []string{pb.top() + ".*"}
+			// Filter: JSON should ONLY create non-base labels that truly need creation.
+			filtered := make([]string, 0, len(needKeys))
+			for _, k := range needKeys {
+				if isBaseCol(quoteIdent(k)) {
+					continue
+				}
+				if _, need := unwrapNeeded[k]; need {
+					filtered = append(filtered, k)
+					continue
+				}
+				if _, pc := parserCreated[k]; pc {
+					filtered = append(filtered, k)
+					continue
+				}
+				if _, already := present[k]; !already {
+					filtered = append(filtered, k)
+				}
+			}
+			needKeys = dedupeStrings(filtered)
+
+			var replacePairs []string
+			var addCols []string
+			star := pb.top() + ".*"
+
 			created := make(map[string]struct{})
 
+			// explicit mappings first
 			if len(p.Params) > 0 {
 				keys := sortedKeys(p.Params)
 				for _, out := range keys {
@@ -440,37 +529,56 @@ func emitParsers(
 						continue
 					}
 					path := jsonPathFromMapping(rawPath)
-					sel = append(sel, fmt.Sprintf(
-						"json_extract_string(%s, %s) AS %s",
+					expr := fmt.Sprintf("json_extract_string(%s, %s) AS %s",
 						bodyCol, sqlQuote(path), quoteIdent(out),
-					))
+					)
+					if _, ok := present[out]; ok {
+						replacePairs = append(replacePairs, expr)
+					} else {
+						addCols = append(addCols, expr)
+					}
 					created[out] = struct{}{}
 				}
 			}
 
+			// auto-projected keys (filtered)
 			for _, k := range needKeys {
 				if _, ok := created[k]; ok {
 					continue
 				}
-				// Use nested JSONPath for dotted keys
 				path := jsonPathForKey(k)
 				if strings.Contains(k, ".") {
 					path = jsonPathFromMapping(k)
 				}
-				sel = append(sel, fmt.Sprintf(
-					"json_extract_string(%s, %s) AS %s",
+				expr := fmt.Sprintf("json_extract_string(%s, %s) AS %s",
 					bodyCol, sqlQuote(path), quoteIdent(k),
-				))
+				)
+				if _, ok := present[k]; ok {
+					replacePairs = append(replacePairs, expr)
+				} else {
+					addCols = append(addCols, expr)
+				}
 				created[k] = struct{}{}
 			}
 
-			if len(created) == 0 {
+			sel := []string{}
+			if len(replacePairs) > 0 {
+				sel = append(sel, star+" REPLACE("+strings.Join(replacePairs, ", ")+")")
+			} else {
+				sel = append(sel, star)
+			}
+			if len(addCols) > 0 {
+				sel = append(sel, addCols...)
+			} else if len(created) == 0 {
+				// Fallback: explicit __json when nothing is extracted
 				sel = append(sel, fmt.Sprintf("to_json(%s) AS __json", bodyCol))
 			}
-
 			pb.push(sel, pb.top(), nil)
 
 			// Apply any filters whose columns now exist (global remaining + stage filters)
+			for k := range created {
+				addPresent(k)
+			}
 			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
 			now, later := partitionByNames(allFilters, created)
 			if len(now) > 0 {
@@ -482,7 +590,7 @@ func emitParsers(
 			*remainingLF = later
 
 		case "logfmt":
-			// Same logic as JSON
+			// Same logic as JSON for deciding which keys we need.
 			baseFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
 			needKeys := uniqLabels(baseFilters)
 			needKeys = append(needKeys, groupKeys...)
@@ -520,15 +628,58 @@ func emitParsers(
 
 			needKeys = dedupeStrings(excludeFuture(needKeys))
 
-			sel := []string{pb.top() + ".*"}
+			// Filter like JSON: never auto-project base; only create if needed.
+			filtered := make([]string, 0, len(needKeys))
+			for _, k := range needKeys {
+				if isBaseCol(quoteIdent(k)) {
+					continue
+				}
+				if _, need := unwrapNeeded[k]; need {
+					filtered = append(filtered, k)
+					continue
+				}
+				if _, pc := parserCreated[k]; pc {
+					filtered = append(filtered, k)
+					continue
+				}
+				if _, already := present[k]; !already {
+					filtered = append(filtered, k)
+				}
+			}
+			needKeys = dedupeStrings(filtered)
+
+			var replacePairs []string
+			var addCols []string
+			star := pb.top() + ".*"
+
 			for _, k := range needKeys {
 				reKey := fmt.Sprintf(`(?:^|\s)%s=([^\s]+)`, regexp.QuoteMeta(k))
-				sel = append(sel, fmt.Sprintf("regexp_extract(%s, %s, 1) AS %s",
-					bodyCol, sqlQuote(reKey), quoteIdent(k)))
+				expr := fmt.Sprintf(
+					"regexp_extract(%s, %s, 1) AS %s",
+					bodyCol, sqlQuote(reKey), quoteIdent(k),
+				)
+				if _, ok := present[k]; ok {
+					replacePairs = append(replacePairs, expr)
+				} else {
+					addCols = append(addCols, expr)
+				}
+			}
+
+			var sel []string
+			if len(replacePairs) > 0 {
+				sel = append(sel, star+" REPLACE("+strings.Join(replacePairs, ", ")+")")
+			} else {
+				sel = append(sel, star)
+			}
+			if len(addCols) > 0 {
+				sel = append(sel, addCols...)
 			}
 			pb.push(sel, pb.top(), nil)
 
 			if len(needKeys) > 0 {
+				for _, k := range needKeys {
+					addPresent(k)
+				}
 				created := mkSet(needKeys)
 				allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
 				now, later := partitionByNames(allFilters, created)
@@ -544,29 +695,54 @@ func emitParsers(
 			}
 
 		case "label_format", "label-format", "labelformat":
-			// s*: compute label_format outputs
-			sel := []string{pb.top() + ".*"}
+			// Compute label_format outputs; REPLACE if present else ADD
+			var replacePairs []string
+			var addCols []string
+			star := pb.top() + ".*"
+
 			created := make(map[string]struct{})
 
 			if len(p.LabelFormats) > 0 {
 				for _, lf := range p.LabelFormats {
-					sel = append(sel, fmt.Sprintf("(%s) AS %s", lf.SQL, quoteIdent(lf.Out)))
+					expr := fmt.Sprintf("(%s) AS %s", lf.SQL, quoteIdent(lf.Out))
+					if _, ok := present[lf.Out]; ok {
+						replacePairs = append(replacePairs, expr)
+					} else {
+						addCols = append(addCols, expr)
+					}
 					created[lf.Out] = struct{}{}
 				}
 			} else {
 				keys := sortedKeys(p.Params)
 				for _, out := range keys {
-					expr, err := buildLabelFormatExprTemplate(p.Params[out], func(s string) string { return quoteIdent(s) })
+					exprSQL, err := buildLabelFormatExprTemplate(p.Params[out], func(s string) string { return quoteIdent(s) })
 					if err != nil {
-						expr = "''"
+						exprSQL = "''"
 					}
-					sel = append(sel, fmt.Sprintf("(%s) AS %s", expr, quoteIdent(out)))
+					expr := fmt.Sprintf("(%s) AS %s", exprSQL, quoteIdent(out))
+					if _, ok := present[out]; ok {
+						replacePairs = append(replacePairs, expr)
+					} else {
+						addCols = append(addCols, expr)
+					}
 					created[out] = struct{}{}
 				}
 			}
+
+			sel := []string{}
+			if len(replacePairs) > 0 {
+				sel = append(sel, star+" REPLACE("+strings.Join(replacePairs, ", ")+")")
+			} else {
+				sel = append(sel, star)
+			}
+			sel = append(sel, addCols...)
 			pb.push(sel, pb.top(), nil)
 
-			// Filters: combine global + stage filters and apply the ones that now exist
+			for out := range created {
+				addPresent(out)
+			}
+
+			// Filters: apply those that now exist
 			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
 			now, later := partitionByNames(allFilters, created)
 			if len(now) > 0 {
@@ -578,7 +754,7 @@ func emitParsers(
 			*remainingLF = later
 
 		case "line_format":
-			// Build a SQL expr from the Go-template-like string (same compiler used by label_format)
+			// Build a SQL expr from the Go-template-like string
 			tmpl := strings.TrimSpace(p.Params["template"])
 			if tmpl == "" {
 				// No template → no-op pass-through, but still carry stage-level filters
@@ -606,13 +782,16 @@ func emitParsers(
 			}
 			pb.push(sel, pb.top(), nil)
 
+			// message still present
+			addPresent("_cardinalhq.message")
+
 			// line_format doesn't create new labels; any attached filters are carried forward
 			if len(p.Filters) > 0 {
 				*remainingLF = append(*remainingLF, p.Filters...)
 			}
 
 		case "unwrap":
-			// s*: compute __unwrap_value (DOUBLE)
+			// Compute __unwrap_value (DOUBLE) based on previously created label
 			field := strings.TrimSpace(p.Params["field"])
 			fn := strings.ToLower(strings.TrimSpace(p.Params["func"]))
 			if field == "" {
@@ -620,16 +799,25 @@ func emitParsers(
 				break
 			}
 			col := quoteIdent(field)
-			var expr string
+			var core string
 			switch fn {
 			case "duration":
-				expr = unwrapDurationExpr(col)
+				core = unwrapDurationExpr(col)
 			case "bytes":
-				expr = unwrapBytesExpr(col)
+				core = unwrapBytesExpr(col)
 			default:
-				expr = fmt.Sprintf("try_cast(%s AS DOUBLE)", col)
+				core = fmt.Sprintf("try_cast(%s AS DOUBLE)", col)
 			}
-			pb.push([]string{pb.top() + ".*", expr + " AS __unwrap_value"}, pb.top(), nil)
+			star := pb.top() + ".*"
+			sel := []string{}
+			if _, ok := present["__unwrap_value"]; ok {
+				sel = append(sel, star+" REPLACE("+core+" AS __unwrap_value)")
+			} else {
+				sel = append(sel, star, core+" AS __unwrap_value")
+			}
+			pb.push(sel, pb.top(), nil)
+
+			addPresent("__unwrap_value", field)
 
 			created := map[string]struct{}{"__unwrap_value": {}, field: {}}
 			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
@@ -716,4 +904,109 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+/* --- regex helpers --- */
+
+// regexCaptureOrder returns the *positional* list of all capturing groups,
+// in order of appearance. Unnamed groups are given placeholders "__g1", "__g2", ...
+// Named groups (?P<name>...) return "name".
+func regexCaptureOrder(pat string) []string {
+	if pat == "" {
+		return nil
+	}
+	var (
+		out        []string
+		inClass    bool // inside [...]
+		escape     bool // previous char was '\'
+		i          = 0
+		groupIndex = 0
+		runes      = []rune(pat)
+		runesLen   = len(runes)
+		nextIs     = func(s string) bool {
+			n := len([]rune(s))
+			if i+n > runesLen {
+				return false
+			}
+			return string(runes[i:i+n]) == s
+		}
+	)
+	for i = 0; i < runesLen; i++ {
+		ch := runes[i]
+
+		if escape {
+			escape = false
+			continue
+		}
+		if ch == '\\' {
+			escape = true
+			continue
+		}
+		if ch == '[' && !inClass {
+			inClass = true
+			continue
+		}
+		if ch == ']' && inClass {
+			inClass = false
+			continue
+		}
+		if inClass {
+			continue
+		}
+
+		if ch == '(' {
+			// look-ahead for "(?..."
+			if i+1 < runesLen && runes[i+1] == '?' {
+				// named capture? (?P<name>...)
+				if nextIs("(?P<") {
+					// parse name until '>'
+					j := i + len("(?P<")
+					nameStart := j
+					for j < runesLen && runes[j] != '>' {
+						j++
+					}
+					if j < runesLen && runes[j] == '>' {
+						name := string(runes[nameStart:j])
+						groupIndex++
+						out = append(out, name)
+					}
+					continue
+				}
+				// other (?...) constructs are *non-capturing*
+				continue
+			}
+			// a plain capturing group
+			groupIndex++
+			out = append(out, fmt.Sprintf("__g%d", groupIndex))
+			continue
+		}
+	}
+	return out
+}
+
+// regexCaptureNames returns only the *named* groups found.
+var reNamedGroup = regexp.MustCompile(`\(\?P<([A-Za-z_][A-Za-z0-9_]*)>`)
+
+func regexCaptureNames(pat string) []string {
+	if pat == "" {
+		return nil
+	}
+	m := reNamedGroup.FindAllStringSubmatch(pat, -1)
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	seen := map[string]struct{}{}
+	for _, g := range m {
+		if len(g) < 2 {
+			continue
+		}
+		k := g[1]
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, k)
+	}
+	return out
 }

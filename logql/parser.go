@@ -159,8 +159,9 @@ const (
 )
 
 type LineFilter struct {
-	Op    LineFilterOp `json:"op"`    // contains|not_contains|regex|not_regex
-	Match string       `json:"match"` // substring or regex
+	Op        LineFilterOp `json:"op"`
+	Match     string       `json:"match"`
+	ParserIdx *int         `json:"parserIdx,omitempty"`
 }
 
 type LineFilterOp string
@@ -430,18 +431,85 @@ func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 	return nil
 }
 
-func buildSelector(sel logql.LogSelectorExpr) (LogSelector, error) {
-	ls := LogSelector{
-		Matchers: toLabelMatches(sel.Matchers()),
+// Parse a single pipeline chunk into a line filter, if it is one.
+func tryParseLineFilterStage(stage string) (LineFilter, bool) {
+	s := cleanStage(stage)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return LineFilter{}, false
 	}
+	var op LineFilterOp
+	var rest string
+	switch {
+	case strings.HasPrefix(s, "|="):
+		op, rest = LineContains, strings.TrimSpace(s[2:])
+	case strings.HasPrefix(s, "!="):
+		op, rest = LineNotContains, strings.TrimSpace(s[2:])
+	case strings.HasPrefix(s, "|~"):
+		op, rest = LineRegex, strings.TrimSpace(s[2:])
+	case strings.HasPrefix(s, "!~"):
+		op, rest = LineNotRegex, strings.TrimSpace(s[2:])
+	default:
+		return LineFilter{}, false
+	}
+	// Unquote/backtick-normalize to match Loki’s Match payloads.
+	match := normalizeLabelFormatLiteral(rest)
+	return LineFilter{Op: op, Match: match}, true
+}
+
+func annotateLineFiltersParserIdxFromString(selStr string, ls *LogSelector) {
+	lastParser := -1
+
+	// quick finder for an existing (op,match) in ls.LineFilters
+	find := func(op LineFilterOp, match string) *LineFilter {
+		for i := range ls.LineFilters {
+			if ls.LineFilters[i].Op == op && ls.LineFilters[i].Match == match {
+				return &ls.LineFilters[i] // pointer to slice elem
+			}
+		}
+		return nil
+	}
+
+	for _, chunk := range splitPipelineStages(selStr) {
+		if typ, _, ok := looksLikeParser(chunk); ok {
+			lastParser++
+			_ = typ
+			continue
+		}
+		if lf, ok := tryParseLineFilterStage(chunk); ok {
+			if ex := find(lf.Op, lf.Match); ex != nil {
+				if lastParser >= 0 {
+					i := lastParser
+					ex.ParserIdx = &i
+				} else {
+					ex.ParserIdx = nil
+				}
+			} else {
+				if lastParser >= 0 {
+					i := lastParser
+					lf.ParserIdx = &i
+				}
+				ls.LineFilters = append(ls.LineFilters, lf)
+			}
+		}
+	}
+}
+
+func buildSelector(sel logql.LogSelectorExpr) (LogSelector, error) {
+	ls := LogSelector{Matchers: toLabelMatches(sel.Matchers())}
+
+	// Keep Loki’s extraction to populate the set (dedup semantics).
 	addLineFilterFromSyntax(&ls, logql.ExtractLineFilters(sel))
 
-	// Parse stages & label filters from the *string* pipeline (json/logfmt/regexp/etc.)
+	// Parsers & label filters (we already have this)
 	if err := addParsersAndLabelFiltersFromString(sel.String(), &ls); err != nil {
 		return LogSelector{}, err
 	}
 
-	//ls.Parsers = MergeConsecutiveKeyParsers(ls.Parsers)
+	// NEW: annotate each line filter with the parser index it follows.
+	annotateLineFiltersParserIdxFromString(sel.String(), &ls)
+
+	ls.Parsers = MergeConsecutiveKeyParsers(ls.Parsers)
 
 	sort.Slice(ls.Matchers, func(i, j int) bool { return ls.Matchers[i].Label < ls.Matchers[j].Label })
 	return ls, nil
@@ -1018,4 +1086,32 @@ func cleanStage(s string) string {
 		s = strings.TrimSpace(s[1:])
 	}
 	return s
+}
+
+// MergeConsecutiveKeyParsers merges adjacent json/logfmt stages by unioning their Params
+func MergeConsecutiveKeyParsers(parsers []ParserStage) []ParserStage {
+	if len(parsers) == 0 {
+		return parsers
+	}
+	out := make([]ParserStage, 0, len(parsers))
+	for _, p := range parsers {
+		if len(out) > 0 {
+			prev := &out[len(out)-1]
+			same := (p.Type == prev.Type) && (p.Type == "json" || p.Type == "logfmt")
+			if same {
+				if prev.Params == nil {
+					prev.Params = map[string]string{}
+				}
+				for k, v := range p.Params {
+					prev.Params[k] = v
+				}
+				if len(p.Filters) > 0 {
+					prev.Filters = append(prev.Filters, p.Filters...)
+				}
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	return out
 }

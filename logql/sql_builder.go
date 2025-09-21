@@ -409,24 +409,6 @@ func quoteIdent(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
-func regexCaptureNames(pattern string) []string {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		// On invalid pattern, return nil so callers can treat as "no captures"
-		return nil
-	}
-	names := re.SubexpNames() // len = #groups + 1; index 0 is whole match
-	out := make([]string, 0, len(names)-1)
-	for i := 1; i < len(names); i++ {
-		n := names[i]
-		if n == "" {
-			n = fmt.Sprintf("__var_%d", i) // synthesize for unnamed
-		}
-		out = append(out, n)
-	}
-	return out
-}
-
 func buildLineFilterWhere(lfs []LineFilter, bodyCol string) []string {
 	var where []string
 	for _, lf := range lfs {
