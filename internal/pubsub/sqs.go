@@ -186,17 +186,13 @@ func (ps *SQSService) processMessagesConcurrently(doneCtx context.Context, sqsCl
 	var wg sync.WaitGroup
 
 	// Start goroutine to handle SQS deletions based on Kafka completions
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		successCount := 0
 		failureCount := 0
 
 		for pending := range completions {
-			// Wait for Kafka completion
 			err := <-pending.kafkaComplete
 
-			// Release outstanding slot
 			<-ps.outstanding
 
 			if err != nil {
@@ -221,18 +217,9 @@ func (ps *SQSService) processMessagesConcurrently(doneCtx context.Context, sqsCl
 				slog.Error("Failed to delete SQS message after successful Kafka handling",
 					slog.Any("error", deleteErr),
 					slog.String("messageId", *pending.sqsMessage.MessageId))
-			} else {
-				slog.Debug("Successfully processed and deleted SQS message",
-					slog.String("messageId", *pending.sqsMessage.MessageId))
 			}
 		}
-
-		if successCount > 0 || failureCount > 0 {
-			slog.Debug("Batch processing completed",
-				slog.Int("successful", successCount),
-				slog.Int("failed", failureCount))
-		}
-	}()
+	})
 
 	// Queue all messages for Kafka processing immediately
 	for _, message := range messages {

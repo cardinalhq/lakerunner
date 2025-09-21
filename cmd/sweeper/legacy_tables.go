@@ -33,7 +33,26 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
-func runLegacyTablesSync(ctx context.Context, cdb configdb.QuerierFull, cdbPool *pgxpool.Pool) (err error) {
+// SyncQuerier interface for sync operations (testable)
+type SyncQuerier interface {
+	GetAllCOrganizations(ctx context.Context) ([]configdb.GetAllCOrganizationsRow, error)
+	GetAllOrganizations(ctx context.Context) ([]configdb.GetAllOrganizationsRow, error)
+	UpsertOrganizationSync(ctx context.Context, arg configdb.UpsertOrganizationSyncParams) error
+	DeleteOrganizationsNotInList(ctx context.Context, idsToDelete []uuid.UUID) error
+	GetAllCBucketData(ctx context.Context) ([]configdb.GetAllCBucketDataRow, error)
+	GetAllBucketConfigurations(ctx context.Context) ([]configdb.GetAllBucketConfigurationsRow, error)
+	GetAllOrganizationBucketMappings(ctx context.Context) ([]configdb.GetAllOrganizationBucketMappingsRow, error)
+	UpsertBucketConfiguration(ctx context.Context, arg configdb.UpsertBucketConfigurationParams) (configdb.BucketConfiguration, error)
+	UpsertOrganizationBucket(ctx context.Context, arg configdb.UpsertOrganizationBucketParams) error
+	DeleteOrganizationBucketMappings(ctx context.Context, arg configdb.DeleteOrganizationBucketMappingsParams) error
+	GetAllCOrganizationAPIKeys(ctx context.Context) ([]configdb.GetAllCOrganizationAPIKeysRow, error)
+	GetAllOrganizationAPIKeyMappings(ctx context.Context) ([]configdb.GetAllOrganizationAPIKeyMappingsRow, error)
+	UpsertOrganizationAPIKey(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyParams) (configdb.OrganizationApiKey, error)
+	UpsertOrganizationAPIKeyMapping(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyMappingParams) error
+	DeleteOrganizationAPIKeyMappingByHash(ctx context.Context, arg configdb.DeleteOrganizationAPIKeyMappingByHashParams) error
+}
+
+func runLegacyTablesSync(ctx context.Context, cdbPool *pgxpool.Pool) (err error) {
 	ll := logctx.FromContext(ctx)
 
 	start := time.Now()
@@ -51,23 +70,6 @@ func runLegacyTablesSync(ctx context.Context, cdb configdb.QuerierFull, cdbPool 
 
 	ll.Debug("Starting legacy table sync")
 
-	// Get all storage profiles from c_ tables
-	profiles, err := cdb.GetAllCStorageProfilesForSync(ctx)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			ll.Debug("No legacy storage profiles found")
-			return nil
-		}
-		return err
-	}
-
-	if len(profiles) == 0 {
-		ll.Debug("No legacy storage profiles to sync")
-		return nil
-	}
-
-	ll.Debug("Found legacy storage profiles to sync", slog.Int("count", len(profiles)))
-
 	// Start a transaction for atomic sync
 	closed := false
 	tx, err := cdbPool.Begin(ctx)
@@ -84,72 +86,19 @@ func runLegacyTablesSync(ctx context.Context, cdb configdb.QuerierFull, cdbPool 
 
 	qtx := configdb.New(tx)
 
-	// Clear existing bucket management tables (mirror mode)
-	if err = qtx.ClearBucketPrefixMappings(ctx); err != nil {
-		return
-	}
-	if err = qtx.ClearOrganizationBuckets(ctx); err != nil {
-		return
-	}
-	if err = qtx.ClearBucketConfigurations(ctx); err != nil {
-		return
+	// Sync organizations
+	if err = syncOrganizations(ctx, SyncQuerier(qtx)); err != nil {
+		return fmt.Errorf("failed to sync organizations: %w", err)
 	}
 
-	// Group profiles by bucket to ensure 1:1 mapping
-	bucketToProfile := make(map[string]configdb.GetAllCStorageProfilesForSyncRow)
-	bucketToOrgs := make(map[string][]uuid.UUID)
-
-	for _, profile := range profiles {
-		// Use first profile found for each bucket (1:1 mapping enforced)
-		if _, exists := bucketToProfile[profile.BucketName]; !exists {
-			bucketToProfile[profile.BucketName] = profile
-		}
-
-		bucketToOrgs[profile.BucketName] = append(bucketToOrgs[profile.BucketName], profile.OrganizationID)
+	// Sync bucket configurations and organization bucket mappings
+	if err = syncBucketData(ctx, SyncQuerier(qtx)); err != nil {
+		return fmt.Errorf("failed to sync bucket data: %w", err)
 	}
 
-	// Create bucket configurations and organization mappings
-	for bucketName, profile := range bucketToProfile {
-		// Create/update bucket configuration
-		_, err = qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
-			BucketName:    bucketName,
-			CloudProvider: profile.CloudProvider,
-			Region:        profile.Region,
-			Endpoint:      nil,
-			Role:          profile.Role,
-			UsePathStyle:  true,
-			InsecureTls:   false,
-		})
-		if err != nil {
-			return
-		}
-
-		ll.Debug("Synced bucket configuration",
-			slog.String("bucket", bucketName),
-			slog.String("provider", profile.CloudProvider),
-			slog.String("region", profile.Region))
-
-	}
-
-	// Sync organization buckets from c_collectors to our organization_buckets table
-	ll.Debug("Syncing organization buckets from c_collectors table")
-	if err = qtx.SyncOrganizationBuckets(ctx); err != nil {
-		err = fmt.Errorf("failed to sync organization buckets: %w", err)
-		return
-	}
-	ll.Debug("Successfully synced organization buckets")
-
-	// Sync organizations from c_organizations to our organizations table
-	ll.Debug("Syncing organizations from c_organizations table")
-	if err = qtx.SyncOrganizations(ctx); err != nil {
-		err = fmt.Errorf("failed to sync organizations: %w", err)
-		return
-	}
-	ll.Debug("Successfully synced organizations")
-
-	// Sync organization API keys from c_organization_api_keys to our organization tables
-	if err = syncOrganizationAPIKeys(ctx, qtx); err != nil {
-		return
+	// Sync API keys
+	if err = syncOrganizationAPIKeys(ctx, SyncQuerier(qtx)); err != nil {
+		return fmt.Errorf("failed to sync API keys: %w", err)
 	}
 
 	// Commit the transaction
@@ -158,93 +107,340 @@ func runLegacyTablesSync(ctx context.Context, cdb configdb.QuerierFull, cdbPool 
 	}
 	closed = true
 
-	ll.Debug("Legacy table sync completed successfully",
-		slog.Int("bucketsSync", len(bucketToProfile)),
-		slog.Int("totalProfiles", len(profiles)))
+	ll.Debug("Legacy table sync completed successfully")
+	return nil
+}
+
+func syncOrganizations(ctx context.Context, qtx SyncQuerier) error {
+	ll := logctx.FromContext(ctx)
+
+	// Step 1: Fetch all organizations from c_ tables
+	cOrgs, err := qtx.GetAllCOrganizations(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ll.Debug("No organizations in c_ tables")
+			cOrgs = []configdb.GetAllCOrganizationsRow{}
+		} else {
+			return err
+		}
+	}
+
+	// Step 2: Fetch all our organizations
+	ourOrgs, err := qtx.GetAllOrganizations(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ourOrgs = []configdb.GetAllOrganizationsRow{}
+		} else {
+			return err
+		}
+	}
+
+	// Create lookup maps
+	cOrgMap := make(map[uuid.UUID]configdb.GetAllCOrganizationsRow)
+	for _, org := range cOrgs {
+		cOrgMap[org.ID] = org
+	}
+
+	ourOrgMap := make(map[uuid.UUID]configdb.GetAllOrganizationsRow)
+	for _, org := range ourOrgs {
+		ourOrgMap[org.ID] = org
+	}
+
+	// Step 3: Add/Update organizations that exist in c_ tables
+	for id, cOrg := range cOrgMap {
+		name := ""
+		if cOrg.Name != nil {
+			name = *cOrg.Name
+		}
+		enabled := true
+		if cOrg.Enabled.Valid {
+			enabled = cOrg.Enabled.Bool
+		}
+
+		ourOrg, exists := ourOrgMap[id]
+		if !exists || ourOrg.Name != name || ourOrg.Enabled != enabled {
+			if err := qtx.UpsertOrganizationSync(ctx, configdb.UpsertOrganizationSyncParams{
+				ID:      id,
+				Name:    name,
+				Enabled: enabled,
+			}); err != nil {
+				return err
+			}
+			if !exists {
+				ll.Debug("Added organization", slog.String("id", id.String()), slog.String("name", name))
+			} else {
+				ll.Debug("Updated organization", slog.String("id", id.String()), slog.String("name", name))
+			}
+		}
+	}
+
+	// Step 4: Delete organizations that don't exist in c_ tables
+	var toDelete []uuid.UUID
+	for id := range ourOrgMap {
+		if _, exists := cOrgMap[id]; !exists {
+			toDelete = append(toDelete, id)
+		}
+	}
+
+	if len(toDelete) > 0 {
+		if err := qtx.DeleteOrganizationsNotInList(ctx, toDelete); err != nil {
+			return err
+		}
+		ll.Debug("Deleted organizations", slog.Int("count", len(toDelete)))
+	}
 
 	return nil
 }
 
-func syncOrganizationAPIKeys(ctx context.Context, qtx *configdb.Queries) error {
+func syncBucketData(ctx context.Context, qtx SyncQuerier) error {
+	ll := logctx.FromContext(ctx)
+
+	// Step 1: Fetch all bucket data from c_ tables
+	cBucketData, err := qtx.GetAllCBucketData(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ll.Debug("No bucket data in c_ tables")
+			cBucketData = []configdb.GetAllCBucketDataRow{}
+		} else {
+			return err
+		}
+	}
+
+	// Step 2: Fetch our bucket configurations
+	ourBuckets, err := qtx.GetAllBucketConfigurations(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ourBuckets = []configdb.GetAllBucketConfigurationsRow{}
+		} else {
+			return err
+		}
+	}
+
+	// Step 3: Fetch our organization bucket mappings
+	ourMappings, err := qtx.GetAllOrganizationBucketMappings(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ourMappings = []configdb.GetAllOrganizationBucketMappingsRow{}
+		} else {
+			return err
+		}
+	}
+
+	// Create bucket lookup map
+	bucketMap := make(map[string]uuid.UUID)
+	for _, bucket := range ourBuckets {
+		bucketMap[bucket.BucketName] = bucket.ID
+	}
+
+	// Process bucket configurations from c_ tables
+	// Use the configuration with a role if available, otherwise use the first one
+	seenBuckets := make(map[string]configdb.GetAllCBucketDataRow)
+	for _, data := range cBucketData {
+		if existing, exists := seenBuckets[data.BucketName]; !exists {
+			seenBuckets[data.BucketName] = data
+		} else {
+			// If we find a configuration with a role and current doesn't have one, use it
+			if existing.Role == nil && data.Role != nil {
+				seenBuckets[data.BucketName] = data
+				ll.Debug("Updated bucket configuration to use entry with role",
+					slog.String("bucket", data.BucketName),
+					slog.Any("role", data.Role))
+			} else if existing.CloudProvider != data.CloudProvider || existing.Region != data.Region {
+				// Only warn if provider or region are actually different
+				ll.Warn("Inconsistent bucket configuration",
+					slog.String("bucket", data.BucketName),
+					slog.String("existing_provider", existing.CloudProvider),
+					slog.String("new_provider", data.CloudProvider),
+					slog.String("existing_region", existing.Region),
+					slog.String("new_region", data.Region))
+			}
+		}
+	}
+
+	// Add/Update bucket configurations
+	for bucketName, data := range seenBuckets {
+		bucketConfig, err := qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
+			BucketName:    bucketName,
+			CloudProvider: data.CloudProvider,
+			Region:        data.Region,
+			Role:          data.Role,
+			Endpoint:      nil,
+			UsePathStyle:  true,
+			InsecureTls:   false,
+		})
+		if err != nil {
+			return err
+		}
+		bucketMap[bucketName] = bucketConfig.ID
+		ll.Debug("Synced bucket configuration", slog.String("bucket", bucketName))
+	}
+
+	// Process organization bucket mappings
+	type mappingKey struct {
+		OrgID         uuid.UUID
+		BucketName    string
+		InstanceNum   int16
+		CollectorName string
+	}
+
+	cMappings := make(map[mappingKey]bool)
+	for _, data := range cBucketData {
+		if data.OrganizationID.Valid && data.InstanceNum.Valid && data.CollectorName != nil {
+			orgUUID, err := uuid.FromBytes(data.OrganizationID.Bytes[:])
+			if err != nil {
+				ll.Warn("Invalid organization UUID", slog.Any("error", err))
+				continue
+			}
+
+			key := mappingKey{
+				OrgID:         orgUUID,
+				BucketName:    data.BucketName,
+				InstanceNum:   data.InstanceNum.Int16,
+				CollectorName: *data.CollectorName,
+			}
+			cMappings[key] = true
+
+			// Add/Update mapping
+			if bucketID, exists := bucketMap[data.BucketName]; exists {
+				if err := qtx.UpsertOrganizationBucket(ctx, configdb.UpsertOrganizationBucketParams{
+					OrganizationID: orgUUID,
+					BucketID:       bucketID,
+					InstanceNum:    data.InstanceNum.Int16,
+					CollectorName:  *data.CollectorName,
+				}); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// Delete mappings that don't exist in c_ tables
+	var deleteOrgIDs []uuid.UUID
+	var deleteInstanceNums []int16
+	var deleteCollectorNames []string
+
+	for _, mapping := range ourMappings {
+		key := mappingKey{
+			OrgID:         mapping.OrganizationID,
+			BucketName:    mapping.BucketName,
+			InstanceNum:   mapping.InstanceNum,
+			CollectorName: mapping.CollectorName,
+		}
+		if !cMappings[key] {
+			deleteOrgIDs = append(deleteOrgIDs, mapping.OrganizationID)
+			deleteInstanceNums = append(deleteInstanceNums, mapping.InstanceNum)
+			deleteCollectorNames = append(deleteCollectorNames, mapping.CollectorName)
+		}
+	}
+
+	if len(deleteOrgIDs) > 0 {
+		if err := qtx.DeleteOrganizationBucketMappings(ctx, configdb.DeleteOrganizationBucketMappingsParams{
+			OrgIds:         deleteOrgIDs,
+			InstanceNums:   deleteInstanceNums,
+			CollectorNames: deleteCollectorNames,
+		}); err != nil {
+			return err
+		}
+		ll.Debug("Deleted organization bucket mappings", slog.Int("count", len(deleteOrgIDs)))
+	}
+
+	return nil
+}
+
+func syncOrganizationAPIKeys(ctx context.Context, qtx SyncQuerier) error {
 	ll := logctx.FromContext(ctx)
 
 	ll.Debug("Starting organization API keys sync")
 
-	// Get all organization API keys from c_ table
-	cAPIKeys, err := qtx.GetAllCOrganizationAPIKeysForSync(ctx)
+	// Step 1: Get all API keys from c_ table
+	cAPIKeys, err := qtx.GetAllCOrganizationAPIKeys(ctx)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			ll.Debug("No legacy organization API keys found")
-			return nil
-		}
-		return err
-	}
-
-	if len(cAPIKeys) == 0 {
-		ll.Debug("No legacy organization API keys to sync")
-		return nil
-	}
-
-	ll.Debug("Found legacy organization API keys to sync", slog.Int("count", len(cAPIKeys)))
-
-	// Clear existing organization API key tables (mirror mode)
-	if err := qtx.ClearOrganizationAPIKeyMappings(ctx); err != nil {
-		return err
-	}
-	if err := qtx.ClearOrganizationAPIKeys(ctx); err != nil {
-		return err
-	}
-
-	// Sync API keys
-	for _, cAPIKey := range cAPIKeys {
-		if !cAPIKey.OrganizationID.Valid || cAPIKey.ApiKey == nil {
-			ll.Warn("Skipping API key with invalid data",
-				slog.Bool("hasOrgID", cAPIKey.OrganizationID.Valid),
-				slog.Bool("hasAPIKey", cAPIKey.ApiKey != nil))
-			continue
-		}
-
-		orgID := cAPIKey.OrganizationID.Bytes
-		orgUUID, err := uuid.FromBytes(orgID[:])
-		if err != nil {
-			ll.Warn("Skipping API key with invalid organization UUID", slog.Any("error", err))
-			continue
-		}
-
-		apiKey := *cAPIKey.ApiKey
-		keyHash := hashAPIKey(apiKey)
-
-		// Create organization API key
-		var name string
-		if cAPIKey.Name != nil && *cAPIKey.Name != "" {
-			name = *cAPIKey.Name
+			ll.Debug("No API keys in c_ tables")
+			cAPIKeys = []configdb.GetAllCOrganizationAPIKeysRow{}
 		} else {
-			name = fmt.Sprintf("synced-key-%s", apiKey[:min(8, len(apiKey))])
+			return err
 		}
-
-		apiKeyRow, err := qtx.UpsertOrganizationAPIKey(ctx, configdb.UpsertOrganizationAPIKeyParams{
-			KeyHash:     keyHash,
-			Name:        name,
-			Description: nil,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to sync organization API key for %s: %w", orgUUID, err)
-		}
-
-		// Create organization API key mapping
-		if err := qtx.UpsertOrganizationAPIKeyMapping(ctx, configdb.UpsertOrganizationAPIKeyMappingParams{
-			ApiKeyID:       apiKeyRow.ID,
-			OrganizationID: orgUUID,
-		}); err != nil {
-			return fmt.Errorf("failed to create API key mapping: %w", err)
-		}
-
-		ll.Debug("Synced organization API key",
-			slog.String("org_id", orgUUID.String()),
-			slog.String("key_name", name))
 	}
 
-	ll.Debug("Organization API keys sync completed successfully", slog.Int("keysSync", len(cAPIKeys)))
+	// Step 2: Get all our API key mappings
+	ourMappings, err := qtx.GetAllOrganizationAPIKeyMappings(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ourMappings = []configdb.GetAllOrganizationAPIKeyMappingsRow{}
+		} else {
+			return err
+		}
+	}
+
+	// Create lookup maps
+	type apiKeyMapping struct {
+		OrgID   uuid.UUID
+		KeyHash string
+	}
+
+	cAPIKeyMap := make(map[apiKeyMapping]bool)
+	for _, key := range cAPIKeys {
+		if key.OrganizationID.Valid && key.ApiKey != nil {
+			orgUUID, err := uuid.FromBytes(key.OrganizationID.Bytes[:])
+			if err != nil {
+				ll.Warn("Invalid organization UUID in API key", slog.Any("error", err))
+				continue
+			}
+
+			keyHash := hashAPIKey(*key.ApiKey)
+			mapping := apiKeyMapping{
+				OrgID:   orgUUID,
+				KeyHash: keyHash,
+			}
+			cAPIKeyMap[mapping] = true
+
+			// Add/Update API key
+			var name string
+			if key.Name != nil && *key.Name != "" {
+				name = *key.Name
+			} else {
+				name = fmt.Sprintf("synced-key-%s", (*key.ApiKey)[:min(8, len(*key.ApiKey))])
+			}
+
+			apiKeyRow, err := qtx.UpsertOrganizationAPIKey(ctx, configdb.UpsertOrganizationAPIKeyParams{
+				KeyHash:     keyHash,
+				Name:        name,
+				Description: nil,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to upsert API key: %w", err)
+			}
+
+			if err := qtx.UpsertOrganizationAPIKeyMapping(ctx, configdb.UpsertOrganizationAPIKeyMappingParams{
+				ApiKeyID:       apiKeyRow.ID,
+				OrganizationID: orgUUID,
+			}); err != nil {
+				return fmt.Errorf("failed to upsert API key mapping: %w", err)
+			}
+		}
+	}
+
+	// Delete mappings that don't exist in c_ tables
+	for _, mapping := range ourMappings {
+		key := apiKeyMapping{
+			OrgID:   mapping.OrganizationID,
+			KeyHash: mapping.KeyHash,
+		}
+		if !cAPIKeyMap[key] {
+			if err := qtx.DeleteOrganizationAPIKeyMappingByHash(ctx, configdb.DeleteOrganizationAPIKeyMappingByHashParams{
+				OrganizationID: mapping.OrganizationID,
+				KeyHash:        mapping.KeyHash,
+			}); err != nil {
+				return err
+			}
+			ll.Debug("Deleted API key mapping",
+				slog.String("org_id", mapping.OrganizationID.String()),
+				slog.String("key_hash", mapping.KeyHash[:8]))
+		}
+	}
+
+	ll.Debug("Organization API keys sync completed successfully")
 	return nil
 }
 
