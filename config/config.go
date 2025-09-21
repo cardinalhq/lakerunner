@@ -90,6 +90,7 @@ type PubSubDedupConfig struct {
 
 type ExpiryConfig struct {
 	DefaultMaxAgeDays map[string]int `mapstructure:"default_max_age_days"`
+	BatchSize         int            `mapstructure:"batch_size"`
 }
 
 // TopicCreationConfig holds configuration for creating Kafka topics
@@ -254,7 +255,7 @@ func Load() (*Config, error) {
 			Defaults: TopicCreationConfig{
 				PartitionCount:    intPtr(16),
 				ReplicationFactor: intPtr(3),
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"cleanup.policy": "delete",
 					"retention.ms":   "604800000", // 7 days
 				},
@@ -262,10 +263,11 @@ func Load() (*Config, error) {
 		},
 		Expiry: ExpiryConfig{
 			DefaultMaxAgeDays: map[string]int{
-				"logs":    0, // Disabled by default
-				"metrics": 0, // Disabled by default
-				"traces":  0, // Disabled by default
+				"logs":    0, // Disabled by default (0 = never expire)
+				"metrics": 0, // Disabled by default (0 = never expire)
+				"traces":  0, // Disabled by default (0 = never expire)
 			},
+			BatchSize: 20000, // Default batch size for expiry operations
 		},
 	}
 
@@ -483,7 +485,7 @@ func MergeKafkaTopicsOverride(base KafkaTopicsConfig, override *KafkaTopicsOverr
 	}
 	if len(override.Defaults.Options) > 0 {
 		if result.Defaults.Options == nil {
-			result.Defaults.Options = make(map[string]interface{})
+			result.Defaults.Options = make(map[string]any)
 		}
 		maps.Copy(result.Defaults.Options, override.Defaults.Options)
 	}

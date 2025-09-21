@@ -12,6 +12,8 @@ import (
 )
 
 type Querier interface {
+	CallExpirePublishedByIngestCutoff(ctx context.Context, arg CallExpirePublishedByIngestCutoffParams) (int64, error)
+	CallFindOrgPartition(ctx context.Context, arg CallFindOrgPartitionParams) (string, error)
 	CheckOrgBucketAccess(ctx context.Context, arg CheckOrgBucketAccessParams) (bool, error)
 	ClearAdminAPIKeys(ctx context.Context) error
 	ClearBucketConfigurations(ctx context.Context) error
@@ -39,6 +41,20 @@ type Querier interface {
 	DeleteOrganizationBucketMappings(ctx context.Context, arg DeleteOrganizationBucketMappingsParams) error
 	// Delete organizations not in c_ tables
 	DeleteOrganizationsNotInList(ctx context.Context, idsToDelete []uuid.UUID) error
+	// Copyright (C) 2025 CardinalHQ, Inc
+	//
+	// This program is free software: you can redistribute it and/or modify
+	// it under the terms of the GNU Affero General Public License as
+	// published by the Free Software Foundation, version 3.
+	//
+	// This program is distributed in the hope that it will be useful,
+	// but WITHOUT ANY WARRANTY; without even the implied warranty of
+	// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+	// GNU Affero General Public License for more details.
+	//
+	// You should have received a copy of the GNU Affero General Public License
+	// along with this program. If not, see <http://www.gnu.org/licenses/>.
+	GetActiveOrganizations(ctx context.Context) ([]GetActiveOrganizationsRow, error)
 	GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (AdminApiKey, error)
 	GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (AdminApiKey, error)
 	GetAllAdminAPIKeys(ctx context.Context) ([]AdminApiKey, error)
@@ -67,6 +83,8 @@ type Querier interface {
 	GetBucketConfigurationByName(ctx context.Context, bucketName string) (BucketConfiguration, error)
 	GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]GetBucketPrefixMappingsRow, error)
 	GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (GetDefaultOrganizationBucketRow, error)
+	// Get organizations that need expiry processing (not checked today)
+	GetExpiryToProcess(ctx context.Context) ([]GetExpiryToProcessRow, error)
 	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (GetLongestPrefixMatchRow, error)
 	GetLowestInstanceOrganizationBucket(ctx context.Context, arg GetLowestInstanceOrganizationBucketParams) (GetLowestInstanceOrganizationBucketRow, error)
 	GetOrganization(ctx context.Context, id uuid.UUID) (Organization, error)
@@ -75,6 +93,7 @@ type Querier interface {
 	GetOrganizationBucketByCollector(ctx context.Context, arg GetOrganizationBucketByCollectorParams) (GetOrganizationBucketByCollectorRow, error)
 	GetOrganizationBucketByInstance(ctx context.Context, arg GetOrganizationBucketByInstanceParams) (GetOrganizationBucketByInstanceRow, error)
 	GetOrganizationByName(ctx context.Context, name string) (Organization, error)
+	GetOrganizationExpiry(ctx context.Context, arg GetOrganizationExpiryParams) (OrganizationSignalExpiry, error)
 	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
 	GetStorageProfileByCollectorNameUncached(ctx context.Context, organizationID pgtype.UUID) (GetStorageProfileByCollectorNameRow, error)
 	GetStorageProfileUncached(ctx context.Context, arg GetStorageProfileParams) (GetStorageProfileRow, error)
@@ -86,12 +105,14 @@ type Querier interface {
 	ListOrganizationAPIKeysByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationAPIKeysByOrgRow, error)
 	ListOrganizationBucketsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationBucketsByOrgRow, error)
 	ListOrganizations(ctx context.Context) ([]Organization, error)
+	UpdateExpiryCheckedAt(ctx context.Context, arg UpdateExpiryCheckedAtParams) error
 	UpsertAdminAPIKey(ctx context.Context, arg UpsertAdminAPIKeyParams) (AdminApiKey, error)
 	UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (BucketConfiguration, error)
 	UpsertOrganization(ctx context.Context, arg UpsertOrganizationParams) (Organization, error)
 	UpsertOrganizationAPIKey(ctx context.Context, arg UpsertOrganizationAPIKeyParams) (OrganizationApiKey, error)
 	UpsertOrganizationAPIKeyMapping(ctx context.Context, arg UpsertOrganizationAPIKeyMappingParams) error
 	UpsertOrganizationBucket(ctx context.Context, arg UpsertOrganizationBucketParams) error
+	UpsertOrganizationExpiry(ctx context.Context, arg UpsertOrganizationExpiryParams) error
 	// Upsert organization
 	UpsertOrganizationSync(ctx context.Context, arg UpsertOrganizationSyncParams) error
 }
