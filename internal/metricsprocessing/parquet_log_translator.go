@@ -374,6 +374,7 @@ func (t *ParquetLogTranslator) TranslateRow(row *filereader.Row) error {
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"
 	(*row)[wkk.RowKeyCName] = "log.events"
+	(*row)[wkk.RowKeyCValue] = float64(1.0)
 
 	// Set timestamp fields with proper precision
 	(*row)[wkk.RowKeyCTimestamp] = timestampMs
