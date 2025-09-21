@@ -25,6 +25,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -37,10 +38,12 @@ type ProtoTracesReader struct {
 	batchSize int
 
 	// Streaming iterator state for traces
-	traces        *ptrace.Traces
-	resourceIndex int
-	scopeIndex    int
-	spanIndex     int
+	traces            *ptrace.Traces
+	resourceIndex     int
+	scopeIndex        int
+	spanIndex         int
+	exemplarProcessor *exemplars.Processor
+	orgId             string
 }
 
 // NewProtoTracesReader creates a new ProtoTracesReader for the given io.Reader.
@@ -52,6 +55,28 @@ func NewProtoTracesReader(reader io.Reader, batchSize int) (*ProtoTracesReader, 
 
 	protoReader := &ProtoTracesReader{
 		batchSize: batchSize,
+	}
+
+	traces, err := parseProtoToOtelTraces(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse proto to OTEL traces: %w", err)
+	}
+	protoReader.traces = traces
+
+	return protoReader, nil
+}
+
+// NewIngestProtoTracesReader creates a new ProtoTracesReader for ingestion with exemplar processing.
+func NewIngestProtoTracesReader(reader io.Reader, opts ReaderOptions) (*ProtoTracesReader, error) {
+	batchSize := opts.BatchSize
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
+	protoReader := &ProtoTracesReader{
+		batchSize:         batchSize,
+		exemplarProcessor: opts.ExemplarProcessor,
+		orgId:             opts.OrgID,
 	}
 
 	traces, err := parseProtoToOtelTraces(reader)
@@ -129,6 +154,12 @@ func (r *ProtoTracesReader) getTraceRow(ctx context.Context) (Row, error) {
 
 				// Build row for this span
 				row := r.buildSpanRow(ctx, rs, ss, span)
+
+				// Process exemplars if processor is available
+				if r.exemplarProcessor != nil {
+					_ = r.exemplarProcessor.ProcessTraces(ctx, r.orgId, rs, ss, span)
+					// Skip exemplar errors but continue processing
+				}
 
 				// Advance to next span
 				r.spanIndex++

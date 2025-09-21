@@ -185,13 +185,10 @@ type TraceIngestProcessor struct {
 func newTraceIngestProcessor(
 	cfg *config.Config,
 	store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
-	var exemplarProcessor *exemplars.Processor
-	// if cfg.Traces.Ingestion.ProcessExemplars {
-	// 	exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
-	// 	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
-	// 		return processTracesExemplarsDirect(ctx, organizationID, exemplars, store)
-	// 	})
-	// }
+	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
+	exemplarProcessor.SetTracesCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
+		return processTracesExemplarsDirect(ctx, organizationID, exemplars, store)
+	})
 
 	return &TraceIngestProcessor{
 		store:             store,
@@ -456,7 +453,7 @@ func (p *TraceIngestProcessor) GetTargetRecordCount(ctx context.Context, groupin
 
 // createTraceReaderStack creates a reader stack: Translation(TraceReader(file))
 func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
-	reader, err := p.createTraceReader(tmpFilename)
+	reader, err := p.createTraceReader(tmpFilename, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace reader: %w", err)
 	}
@@ -475,10 +472,11 @@ func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket
 	return reader, nil
 }
 
-func (p *TraceIngestProcessor) createTraceReader(filename string) (filereader.Reader, error) {
+func (p *TraceIngestProcessor) createTraceReader(filename, orgID string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
 		SignalType:        filereader.SignalTypeTraces,
 		BatchSize:         1000,
+		OrgID:             orgID,
 		ExemplarProcessor: p.exemplarProcessor,
 	}
 	return filereader.ReaderForFileWithOptions(filename, options)

@@ -73,7 +73,7 @@ func init() {
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			worker := queryworker.NewWorkerService(5, 5, 12, sp, cloudManagers)
+			worker := queryworker.NewWorkerService(5, 5, 5, 12, sp, cloudManagers)
 			return worker.Run(doneCtx)
 		},
 	}

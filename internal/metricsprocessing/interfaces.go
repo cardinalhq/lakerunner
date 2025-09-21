@@ -45,6 +45,8 @@ type TraceIngestStore interface {
 	OffsetTrackerStore
 	InsertTraceSegmentsBatch(ctx context.Context, segments []lrdb.InsertTraceSegmentParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error
 	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
+	BatchUpsertExemplarTraces(ctx context.Context, batch []lrdb.BatchUpsertExemplarTracesParams) *lrdb.BatchUpsertExemplarTracesBatchResults
+	UpsertServiceIdentifier(ctx context.Context, arg lrdb.UpsertServiceIdentifierParams) (lrdb.UpsertServiceIdentifierRow, error)
 }
 
 // LogCompactionStore defines database operations needed for log compaction

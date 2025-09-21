@@ -41,6 +41,7 @@ type PushDownRequest struct {
 	Fields   []string         `json:"fields,omitempty"`
 
 	TagName string `json:"tagName"` // Set this to a tag name to get distinct values for that tag
+	IsSpans bool   `json:"isSpans"` // Set this to true for spans queries
 }
 
 func (p *PushDownRequest) ToOrderString() string {
