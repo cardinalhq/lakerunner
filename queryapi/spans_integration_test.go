@@ -19,8 +19,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/logql"
 	_ "github.com/marcboeker/go-duckdb/v2"
+
+	"github.com/cardinalhq/lakerunner/logql"
 )
 
 // TestSpansQueryIntegration tests the full spans query flow from HTTP request to SQL execution

@@ -208,16 +208,16 @@ type KafkaSyncConfig struct {
 }
 
 type KafkaSyncDefaults struct {
-	PartitionCount    int                    `yaml:"partitionCount"`
-	ReplicationFactor int                    `yaml:"replicationFactor"`
-	TopicConfig       map[string]interface{} `yaml:"topicConfig"`
+	PartitionCount    int            `yaml:"partitionCount"`
+	ReplicationFactor int            `yaml:"replicationFactor"`
+	TopicConfig       map[string]any `yaml:"topicConfig"`
 }
 
 type KafkaSyncTopic struct {
-	Name              string                 `yaml:"name"`
-	PartitionCount    int                    `yaml:"partitionCount,omitempty"`
-	ReplicationFactor int                    `yaml:"replicationFactor,omitempty"`
-	TopicConfig       map[string]interface{} `yaml:"topicConfig,omitempty"`
+	Name              string         `yaml:"name"`
+	PartitionCount    int            `yaml:"partitionCount,omitempty"`
+	ReplicationFactor int            `yaml:"replicationFactor,omitempty"`
+	TopicConfig       map[string]any `yaml:"topicConfig,omitempty"`
 }
 
 // GenerateKafkaSyncConfig creates a kafka-sync compatible config from our KafkaTopicsConfig
@@ -226,7 +226,7 @@ func (tr *TopicRegistry) GenerateKafkaSyncConfig(config KafkaTopicsConfig) Kafka
 	defaults := KafkaSyncDefaults{
 		PartitionCount:    16, // Safe default
 		ReplicationFactor: 3,  // Safe default
-		TopicConfig:       make(map[string]interface{}),
+		TopicConfig:       make(map[string]any),
 	}
 
 	// Override with configured defaults
@@ -270,7 +270,7 @@ func (tr *TopicRegistry) GenerateKafkaSyncConfig(config KafkaTopicsConfig) Kafka
 				topic.ReplicationFactor = *serviceConfig.ReplicationFactor
 			}
 			if len(serviceConfig.Options) > 0 {
-				topic.TopicConfig = make(map[string]interface{})
+				topic.TopicConfig = make(map[string]any)
 				for k, v := range serviceConfig.Options {
 					topic.TopicConfig[k] = v
 				}

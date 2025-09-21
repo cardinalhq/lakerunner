@@ -17,11 +17,12 @@ package queryapi
 import (
 	"context"
 	"database/sql"
-	_ "github.com/marcboeker/go-duckdb/v2"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
 func TestIngestExemplarLogsJSONToDuckDB_Smoke(t *testing.T) {
