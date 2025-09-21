@@ -638,6 +638,7 @@ func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"
 	(*row)[wkk.RowKeyCName] = "log.events"
+	(*row)[wkk.RowKeyCValue] = float64(1.0)
 
 	return nil
 }
