@@ -458,3 +458,71 @@ func TestRunExpiryCleanup_ZeroDefaultNoExistingEntry(t *testing.T) {
 	assert.NoError(t, err)
 	mockDB.AssertExpectations(t)
 }
+
+func TestRunExpiryCleanup_ExpiryFailureNoRunTracking(t *testing.T) {
+	ctx := context.Background()
+	mockDB := new(MockExpiryQuerier)
+	orgID := uuid.New()
+	cfg := &config.Config{
+		Expiry: config.ExpiryConfig{
+			DefaultMaxAgeDays: map[string]int{
+				"logs": 30,
+			},
+			BatchSize: 1000,
+		},
+	}
+
+	// Setup expectations
+	orgs := []configdb.GetActiveOrganizationsRow{
+		{ID: orgID, Name: "TestOrg", Enabled: true},
+	}
+	mockDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
+
+	// Setup expiry configuration
+	yesterday := time.Now().AddDate(0, 0, -1)
+	expiry := configdb.OrganizationSignalExpiry{
+		OrganizationID: orgID,
+		SignalType:     "logs",
+		MaxAgeDays:     30,
+		CreatedAt:      yesterday,
+		UpdatedAt:      yesterday,
+	}
+
+	mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+		OrganizationID: orgID,
+		SignalType:     "logs",
+	}).Return(expiry, nil)
+
+	// Mock the last run check - needs to run
+	mockDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
+		OrganizationID: orgID,
+		SignalType:     "logs",
+	}).Return(configdb.ExpiryRunTracking{}, sql.ErrNoRows)
+
+	// Partition lookup succeeds
+	mockDB.On("CallFindOrgPartition", ctx, mock.MatchedBy(func(arg configdb.CallFindOrgPartitionParams) bool {
+		return arg.TableName == "log_seg" && arg.OrganizationID == orgID
+	})).Return("log_seg_org_partition", nil)
+
+	// Expiry call FAILS - simulate database error
+	mockDB.On("CallExpirePublishedByIngestCutoff", ctx, mock.MatchedBy(func(arg configdb.CallExpirePublishedByIngestCutoffParams) bool {
+		return arg.PartitionName == "log_seg_org_partition" && arg.OrganizationID == orgID
+	})).Return(int64(0), errors.New("database connection lost"))
+
+	// IMPORTANT: UpsertExpiryRunTracking should NOT be called when expiry fails
+
+	// For the other signal types that don't have policies
+	for _, signalType := range []string{"metrics", "traces"} {
+		mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+			OrganizationID: orgID,
+			SignalType:     signalType,
+		}).Return(configdb.OrganizationSignalExpiry{}, sql.ErrNoRows)
+	}
+
+	// Run the function
+	err := runExpiryCleanup(ctx, mockDB, cfg)
+
+	// Assertions
+	assert.NoError(t, err)       // Function should not fail overall
+	mockDB.AssertExpectations(t) // This will fail if UpsertExpiryRunTracking was called
+}

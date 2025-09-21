@@ -290,27 +290,29 @@ func runExpiryCleanup(ctx context.Context, cdb ExpiryQuerier, cfg *config.Config
 					attribute.String("org", orgName),
 					attribute.String("error", "expire_data"),
 				))
-			} else {
-				totalRowsExpired += rowsExpired
-
-				slog.Info("Successfully expired data",
-					slog.String("org", orgName),
-					slog.String("signal_type", signalType),
-					slog.Int64("rows_expired", rowsExpired))
-
-				expiryRowsCounter.Add(ctx, rowsExpired, metric.WithAttributes(
-					attribute.String("signal_type", signalType),
-					attribute.String("org", orgName),
-				))
-
-				expiryCleanupCounter.Add(ctx, 1, metric.WithAttributes(
-					attribute.String("status", "success"),
-					attribute.String("signal_type", signalType),
-					attribute.String("org", orgName),
-				))
+				// Don't update run tracking on failure - allow retry on next hourly pass
+				continue
 			}
 
-			// Update run tracking
+			totalRowsExpired += rowsExpired
+
+			slog.Info("Successfully expired data",
+				slog.String("org", orgName),
+				slog.String("signal_type", signalType),
+				slog.Int64("rows_expired", rowsExpired))
+
+			expiryRowsCounter.Add(ctx, rowsExpired, metric.WithAttributes(
+				attribute.String("signal_type", signalType),
+				attribute.String("org", orgName),
+			))
+
+			expiryCleanupCounter.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("status", "success"),
+				attribute.String("signal_type", signalType),
+				attribute.String("org", orgName),
+			))
+
+			// Only update run tracking on successful expiry
 			err = cdb.UpsertExpiryRunTracking(ctx, configdb.UpsertExpiryRunTrackingParams{
 				OrganizationID: orgID,
 				SignalType:     signalType,
