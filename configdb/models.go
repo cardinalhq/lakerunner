@@ -125,3 +125,12 @@ type OrganizationBucket struct {
 	InstanceNum    int16     `json:"instance_num"`
 	CollectorName  string    `json:"collector_name"`
 }
+
+type OrganizationSignalExpiry struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	SignalType     string    `json:"signal_type"`
+	MaxAgeDays     int32     `json:"max_age_days"`
+	LastCheckedAt  time.Time `json:"last_checked_at"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}

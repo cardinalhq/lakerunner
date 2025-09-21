@@ -41,6 +41,7 @@ type Config struct {
 	Admin       AdminConfig       `mapstructure:"admin"`
 	Scaling     ScalingConfig     `mapstructure:"scaling"`
 	PubSub      PubSubConfig      `mapstructure:"pubsub"`
+	Expiry      ExpiryConfig      `mapstructure:"expiry"`
 
 	// Derived fields (populated during Load())
 	TopicRegistry *TopicRegistry // Kafka topic registry based on prefix
@@ -85,6 +86,10 @@ type PubSubConfig struct {
 type PubSubDedupConfig struct {
 	RetentionDuration time.Duration `mapstructure:"retention_duration"`
 	CleanupBatchSize  int           `mapstructure:"cleanup_batch_size"`
+}
+
+type ExpiryConfig struct {
+	DefaultMaxAgeDays map[string]int `mapstructure:"default_max_age_days"`
 }
 
 // TopicCreationConfig holds configuration for creating Kafka topics
@@ -253,6 +258,13 @@ func Load() (*Config, error) {
 					"cleanup.policy": "delete",
 					"retention.ms":   "604800000", // 7 days
 				},
+			},
+		},
+		Expiry: ExpiryConfig{
+			DefaultMaxAgeDays: map[string]int{
+				"logs":    0, // Disabled by default
+				"metrics": 0, // Disabled by default
+				"traces":  0, // Disabled by default
 			},
 		},
 	}
