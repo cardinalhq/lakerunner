@@ -309,6 +309,40 @@ func (q *Queries) GetBucketConfigurationByName(ctx context.Context, bucketName s
 	return i, err
 }
 
+const getBucketPrefixMappings = `-- name: GetBucketPrefixMappings :many
+SELECT bpm.organization_id, bpm.path_prefix, bpm.signal
+FROM bucket_prefix_mappings bpm
+JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
+WHERE bc.bucket_name = $1
+ORDER BY LENGTH(bpm.path_prefix) DESC
+`
+
+type GetBucketPrefixMappingsRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PathPrefix     string    `json:"path_prefix"`
+	Signal         string    `json:"signal"`
+}
+
+func (q *Queries) GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]GetBucketPrefixMappingsRow, error) {
+	rows, err := q.db.Query(ctx, getBucketPrefixMappings, bucketName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetBucketPrefixMappingsRow
+	for rows.Next() {
+		var i GetBucketPrefixMappingsRow
+		if err := rows.Scan(&i.OrganizationID, &i.PathPrefix, &i.Signal); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDefaultOrganizationBucket = `-- name: GetDefaultOrganizationBucket :one
 SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
 FROM organization_buckets ob
@@ -350,27 +384,30 @@ func (q *Queries) GetDefaultOrganizationBucket(ctx context.Context, organization
 }
 
 const getLongestPrefixMatch = `-- name: GetLongestPrefixMatch :one
-SELECT bpm.organization_id
+SELECT bpm.organization_id, bpm.signal
 FROM bucket_prefix_mappings bpm
 JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
-WHERE bc.bucket_name = $1 
-  AND bpm.signal = $2
-  AND $3 LIKE bpm.path_prefix || '%'
+WHERE bc.bucket_name = $1
+  AND $2 LIKE bpm.path_prefix || '%'
 ORDER BY LENGTH(bpm.path_prefix) DESC
 LIMIT 1
 `
 
 type GetLongestPrefixMatchParams struct {
 	BucketName string `json:"bucket_name"`
-	Signal     string `json:"signal"`
 	ObjectPath string `json:"object_path"`
 }
 
-func (q *Queries) GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getLongestPrefixMatch, arg.BucketName, arg.Signal, arg.ObjectPath)
-	var organization_id uuid.UUID
-	err := row.Scan(&organization_id)
-	return organization_id, err
+type GetLongestPrefixMatchRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Signal         string    `json:"signal"`
+}
+
+func (q *Queries) GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (GetLongestPrefixMatchRow, error) {
+	row := q.db.QueryRow(ctx, getLongestPrefixMatch, arg.BucketName, arg.ObjectPath)
+	var i GetLongestPrefixMatchRow
+	err := row.Scan(&i.OrganizationID, &i.Signal)
+	return i, err
 }
 
 const getLowestInstanceOrganizationBucket = `-- name: GetLowestInstanceOrganizationBucket :one

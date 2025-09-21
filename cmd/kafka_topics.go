@@ -85,17 +85,10 @@ func ensureKafkaTopicsWithFile(ctx context.Context, flagKafkaTopicsFile string) 
 
 	slog.Info("Syncing Kafka topics", slog.Int("count", len(topicsConfig.Topics)))
 
-	// Create a context with timeout for the Kafka sync operation
-	// Use the connection timeout from config, or default to 60 seconds
-	timeout := 60 * time.Second
-	if appConfig.Kafka.ConnectionTimeout > 0 {
-		timeout = appConfig.Kafka.ConnectionTimeout
-	}
-	syncCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
+	// No timeout for Kafka sync - topic creation may take a long time
+	// The kafka-sync library will handle individual operation timeouts
 	// Sync topics (with fix mode enabled to create missing topics)
-	return syncer.SyncTopics(syncCtx, topicsConfig, true)
+	return syncer.SyncTopics(ctx, topicsConfig, true)
 }
 
 // fileExists checks if a file exists and is not a directory
@@ -126,8 +119,8 @@ func convertToKafkaSyncConfig(syncConfig config.KafkaSyncConfig) *kafkasync.Conf
 			TopicConfig:       topicConfig,
 		},
 		Topics:                    make([]kafkasync.Topic, len(syncConfig.Topics)),
-		OperationTimeout:          60 * time.Second, // Set a 60-second timeout for Kafka operations
-		RebalanceOperationTimeout: 60 * time.Second, // Set a 60-second timeout for rebalancing operations
+		OperationTimeout:          5 * time.Minute, // Increased timeout for Kafka operations
+		RebalanceOperationTimeout: 5 * time.Minute, // Increased timeout for rebalancing operations
 	}
 
 	for i, topic := range syncConfig.Topics {

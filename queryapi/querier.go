@@ -358,6 +358,86 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func (q *QuerierService) handleSpansQuery(w http.ResponseWriter, r *http.Request) {
+	qp := readQueryPayload(w, r, false)
+	if qp == nil {
+		return
+	}
+
+	logAst, err := logql.FromLogQL(qp.Q)
+	if err != nil {
+		http.Error(w, "invalid spans query expression: "+qp.Q+" "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	lplan, err := logql.CompileLog(logAst)
+	if err != nil {
+		http.Error(w, "cannot compile LogQL: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if logAst.IsAggregateExpr() {
+		rr, err := promql.RewriteToPromQL(lplan.Root)
+		if err != nil {
+			http.Error(w, "cannot rewrite to PromQL: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		promExpr, err := promql.FromPromQL(rr.PromQL)
+		if err != nil {
+			http.Error(w, "cannot parse rewritten PromQL: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		plan, err := promql.Compile(promExpr)
+		if err != nil {
+			http.Error(w, "cannot compile rewritten PromQL: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		plan.AttachLogLeaves(rr)
+
+		evalResults, err := q.EvaluateMetricsQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
+		if err != nil {
+			http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		q.sendEvalResults(r, w, evalResults, plan)
+		return
+	}
+
+	// ---- Raw spans path (no rewrite) ----
+	writeSSE, ok := q.sseWriter(w)
+	if !ok {
+		return
+	}
+
+	resultsCh, err := q.EvaluateSpansQuery(
+		r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan, qp.Fields,
+	)
+	if err != nil {
+		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	notify := r.Context().Done()
+	for {
+		select {
+		case <-notify:
+			slog.Info("client disconnected; stopping spans stream")
+			return
+		case res, more := <-resultsCh:
+			if !more {
+				_ = writeSSE("done", map[string]string{"status": "ok"})
+				return
+			}
+			if err := writeSSE("result", res); err != nil {
+				slog.Error("write SSE failed", "error", err)
+				return
+			}
+		}
+	}
+}
+
 func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
@@ -371,6 +451,8 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	mux.HandleFunc("/api/v1/logs/tags", q.apiKeyMiddleware(q.handleListLogQLTags))
 	mux.HandleFunc("/api/v1/logs/tagvalues", q.apiKeyMiddleware(q.handleGetLogTagValues))
 	mux.HandleFunc("/api/v1/logs/query", q.apiKeyMiddleware(q.handleLogQuery))
+
+	mux.HandleFunc("/api/v1/spans/query", q.apiKeyMiddleware(q.handleSpansQuery))
 
 	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
 	mux.HandleFunc("/api/v1/logql/validate", q.handleLogQLValidate)

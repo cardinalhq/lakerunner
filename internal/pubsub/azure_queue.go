@@ -18,21 +18,20 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/configdb"
 	"log/slog"
 	"os"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/config"
-
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue"
-
+	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/azureclient"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type AzureQueueService struct {
@@ -40,6 +39,7 @@ type AzureQueueService struct {
 	azureMgr     *azureclient.Manager
 	sp           storageprofile.StorageProfileProvider
 	kafkaHandler *KafkaHandler
+	deduplicator Deduplicator
 }
 
 var _ Backend = (*AzureQueueService)(nil)
@@ -60,7 +60,13 @@ func NewAzureQueueService(ctx context.Context, cfg *config.Config, kafkaFactory 
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "gcp", sp)
+	lrdbStore, err := lrdb.LRDBStore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to lrdb for deduplication: %w", err)
+	}
+	deduplicator := NewDeduplicator(lrdbStore)
+
+	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "azure", sp, deduplicator)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}
@@ -70,6 +76,7 @@ func NewAzureQueueService(ctx context.Context, cfg *config.Config, kafkaFactory 
 		azureMgr:     azureMgr,
 		sp:           sp,
 		kafkaHandler: kafkaHandler,
+		deduplicator: deduplicator,
 	}, nil
 }
 

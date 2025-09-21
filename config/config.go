@@ -40,6 +40,7 @@ type Config struct {
 	Azure       AzureConfig       `mapstructure:"azure"`
 	Admin       AdminConfig       `mapstructure:"admin"`
 	Scaling     ScalingConfig     `mapstructure:"scaling"`
+	PubSub      PubSubConfig      `mapstructure:"pubsub"`
 
 	// Derived fields (populated during Load())
 	TopicRegistry *TopicRegistry // Kafka topic registry based on prefix
@@ -75,6 +76,15 @@ type AzureConfig struct {
 
 type AdminConfig struct {
 	InitialAPIKey string `mapstructure:"initial_api_key"`
+}
+
+type PubSubConfig struct {
+	Dedup PubSubDedupConfig `mapstructure:"dedup"`
+}
+
+type PubSubDedupConfig struct {
+	RetentionDuration time.Duration `mapstructure:"retention_duration"`
+	CleanupBatchSize  int           `mapstructure:"cleanup_batch_size"`
 }
 
 // TopicCreationConfig holds configuration for creating Kafka topics
@@ -227,6 +237,12 @@ func Load() (*Config, error) {
 		},
 		Admin: AdminConfig{
 			InitialAPIKey: "",
+		},
+		PubSub: PubSubConfig{
+			Dedup: PubSubDedupConfig{
+				RetentionDuration: 24 * time.Hour, // Default 24 hours
+				CleanupBatchSize:  1000,           // Default batch size
+			},
 		},
 		KafkaTopics: KafkaTopicsConfig{
 			TopicPrefix: "lakerunner", // Default topic prefix

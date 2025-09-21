@@ -17,11 +17,8 @@ package pubsub
 import (
 	"context"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/configdb"
 	"log/slog"
 	"os"
-
-	"github.com/cardinalhq/lakerunner/config"
 
 	"cloud.google.com/go/pubsub/v2"
 	"go.opentelemetry.io/otel"
@@ -29,8 +26,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/api/option"
 
+	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type GCPPubSubService struct {
@@ -39,6 +39,7 @@ type GCPPubSubService struct {
 	client       *pubsub.Client
 	sub          *pubsub.Subscriber
 	kafkaHandler *KafkaHandler
+	deduplicator Deduplicator
 }
 
 // Ensure GCPPubSubService implements Backend interface
@@ -74,7 +75,13 @@ func NewGCPPubSubService(ctx context.Context, cfg *config.Config, kafkaFactory *
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "gcp", sp)
+	lrdbStore, err := lrdb.LRDBStore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to lrdb for deduplication: %w", err)
+	}
+	deduplicator := NewDeduplicator(lrdbStore)
+
+	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "gcp", sp, deduplicator)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}
@@ -85,6 +92,7 @@ func NewGCPPubSubService(ctx context.Context, cfg *config.Config, kafkaFactory *
 		client:       client,
 		sub:          sub,
 		kafkaHandler: kafkaHandler,
+		deduplicator: deduplicator,
 	}
 
 	slog.Info("GCP Pub/Sub service initialized with Kafka support")

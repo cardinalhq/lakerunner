@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -101,8 +100,8 @@ func migrate(_ *cobra.Command, _ []string) error {
 }
 
 func migratelrdb() error {
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(5*time.Minute))
-	defer cancel()
+	// No timeout for migrations - they may take a long time
+	ctx := context.Background()
 	pool, err := lrdb.ConnectTolrdb(ctx, dbopen.SkipMigrationCheck())
 	if err != nil {
 		return err
@@ -111,8 +110,8 @@ func migratelrdb() error {
 }
 
 func migrateconfigdb() error {
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(5*time.Minute))
-	defer cancel()
+	// No timeout for migrations - they may take a long time
+	ctx := context.Background()
 
 	pool, err := configdb.ConnectToConfigDB(ctx, dbopen.SkipMigrationCheck())
 	if err != nil {

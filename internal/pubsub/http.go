@@ -18,19 +18,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/configdb"
 	"io"
 	"log/slog"
 	"net/http"
 
-	"github.com/cardinalhq/lakerunner/config"
-
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type HTTPService struct {
@@ -38,6 +38,7 @@ type HTTPService struct {
 	workChan     chan []byte
 	tracer       trace.Tracer
 	kafkaHandler *KafkaHandler
+	deduplicator Deduplicator
 }
 
 func NewHTTPService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Factory) (*HTTPService, error) {
@@ -48,7 +49,13 @@ func NewHTTPService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.F
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "http", sp)
+	lrdbStore, err := lrdb.LRDBStore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to lrdb for deduplication: %w", err)
+	}
+	deduplicator := NewDeduplicator(lrdbStore)
+
+	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "http", sp, deduplicator)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}
@@ -58,6 +65,7 @@ func NewHTTPService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.F
 		workChan:     make(chan []byte, 100), // Buffered channel to handle incoming requests
 		tracer:       otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub"),
 		kafkaHandler: kafkaHandler,
+		deduplicator: deduplicator,
 	}
 
 	slog.Info("HTTP pubsub service initialized with Kafka support")

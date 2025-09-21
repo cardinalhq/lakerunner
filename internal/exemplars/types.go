@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/cardinalhq/oteltools/pkg/translate"
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
@@ -112,6 +113,28 @@ func toLogExemplar(rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) p
 	sl.Scope().CopyTo(copySl.Scope())
 	copyLr := copySl.LogRecords().AppendEmpty()
 	lr.CopyTo(copyLr)
+
+	return exemplarRecord
+}
+
+// getTraceFingerprint extracts an existing fingerprint from span attributes
+// Returns 0 if no fingerprint is found (e.g., traces not processed by collector)
+func getTraceFingerprint(span ptrace.Span) int64 {
+	if fingerprintField, found := span.Attributes().Get(translate.CardinalFieldFingerprint); found {
+		return fingerprintField.Int()
+	}
+	return 0
+}
+
+// toTraceExemplar creates a trace exemplar containing the full span
+func toTraceExemplar(rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) ptrace.Traces {
+	exemplarRecord := ptrace.NewTraces()
+	copyRs := exemplarRecord.ResourceSpans().AppendEmpty()
+	rs.Resource().CopyTo(copyRs.Resource())
+	copySs := copyRs.ScopeSpans().AppendEmpty()
+	ss.Scope().CopyTo(copySs.Scope())
+	copySpan := copySs.Spans().AppendEmpty()
+	span.CopyTo(copySpan)
 
 	return exemplarRecord
 }

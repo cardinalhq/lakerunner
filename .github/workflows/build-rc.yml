@@ -131,26 +131,20 @@ jobs:
           key: linux_arm64-${{ env.sha_short }}
           fail-on-cache-miss: true
 
-      - name: Build custom build environment
-        run: docker build -f Dockerfile.build -t lakerunner-build .
+      - name: Setup GoReleaser Pro
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser-pro
+          version: '~> v2'
+          install-only: true
+        env:
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
 
-      - name: Run GoReleaser Pro merge in custom container
-        run: |
-          DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-          docker run --rm \
-            -v $PWD:/workspace \
-            -v $PWD/.git:/workspace/.git \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -w /workspace \
-            --user 1001:$DOCKER_GID \
-            -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
-            -e GORELEASER_CURRENT_TAG="${{ github.ref_name }}" \
-            -e AWS_ACCESS_KEY_ID="${{ env.AWS_ACCESS_KEY_ID }}" \
-            -e AWS_SECRET_ACCESS_KEY="${{ env.AWS_SECRET_ACCESS_KEY }}" \
-            -e AWS_SESSION_TOKEN="${{ env.AWS_SESSION_TOKEN }}" \
-            -e AWS_REGION="${{ env.AWS_REGION }}" \
-            lakerunner-build \
-            continue --merge
+      - name: Run GoReleaser Pro merge
+        run: goreleaser continue --merge
+        env:
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
 
       - name: Output built images
         run: |

@@ -33,6 +33,11 @@ type StorageProfile struct {
 	InstanceNum    int16     `json:"instance_num"`
 }
 
+type OrganizationResolution struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Signal         string    `json:"signal"`
+}
+
 type StorageProfileProvider interface {
 	GetStorageProfileForBucket(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error)
 	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]StorageProfile, error)
@@ -40,7 +45,7 @@ type StorageProfileProvider interface {
 	GetStorageProfileForOrganizationAndInstance(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error)
 	GetStorageProfileForOrganizationAndCollector(ctx context.Context, organizationID uuid.UUID, collectorName string) (StorageProfile, error)
 	GetLowestInstanceStorageProfile(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error)
-	ResolveOrganization(ctx context.Context, bucketName, objectPath string) (uuid.UUID, error)
+	ResolveOrganization(ctx context.Context, bucketName, objectPath string) (OrganizationResolution, error)
 }
 
 func NewStorageProfileProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvider {

@@ -29,6 +29,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -73,15 +74,17 @@ func init() {
 const (
 	legacyTablesSyncPeriod     time.Duration = 5 * time.Minute
 	metricEstimateUpdatePeriod time.Duration = 10 * time.Minute
+	pubsubCleanupPeriod        time.Duration = 120 * time.Minute
 )
 
 type sweeper struct {
 	instanceID       int64
 	sp               storageprofile.StorageProfileProvider
 	syncLegacyTables bool
+	cfg              *config.Config
 }
 
-func New(instanceID int64, syncLegacyTables bool) *sweeper {
+func New(instanceID int64, syncLegacyTables bool, cfg *config.Config) *sweeper {
 	cdb, err := configdb.ConfigDBStore(context.Background())
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
@@ -102,6 +105,7 @@ func New(instanceID int64, syncLegacyTables bool) *sweeper {
 		instanceID:       instanceID,
 		sp:               sp,
 		syncLegacyTables: syncLegacyTables,
+		cfg:              cfg,
 	}
 }
 
@@ -143,77 +147,73 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 
 	// Periodic: legacy table sync if enabled
 	if cmd.syncLegacyTables {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			slog.Info("Starting legacy table sync goroutine", slog.Duration("period", legacyTablesSyncPeriod))
 			if err := periodicLoop(ctx, legacyTablesSyncPeriod, func(c context.Context) error {
-				return runLegacyTablesSync(c, cdb, cdbPool)
+				return runLegacyTablesSync(c, cdbPool)
 			}); err != nil && !errors.Is(err, context.Canceled) {
 				errCh <- err
 			}
-		}()
+		})
 	}
 
 	// Periodic: metric estimate updates
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
 			return runMetricEstimateUpdate(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
-	}()
+	})
 
 	// Periodic: log estimate updates
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
 			return runLogEstimateUpdate(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
-	}()
+	})
 
 	// Periodic: trace estimate updates
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
 			return runTraceEstimateUpdate(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
-	}()
+	})
 
 	// Metric segment cleanup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if err := runScheduledCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr, "metric"); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
-	}()
+	})
 
 	// Log segment cleanup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if err := runScheduledCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr, "log"); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
-	}()
+	})
 
 	// Trace segment cleanup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if err := runScheduledCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr, "trace"); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
-	}()
+	})
+
+	// PubSub message history cleanup
+	wg.Go(func() {
+		slog.Info("Starting PubSub history cleanup goroutine", slog.Duration("period", pubsubCleanupPeriod))
+		if err := periodicLoop(ctx, pubsubCleanupPeriod, func(c context.Context) error {
+			return runPubSubHistoryCleanup(c, mdb, cmd.cfg)
+		}); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	})
 
 	// Wait for cancellation or the first hard error
 	select {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,74 +36,94 @@ type KafkaNotificationSender interface {
 	SendBatch(ctx context.Context, signal string, notifications []messages.ObjStoreNotificationMessage) error
 }
 
-// handleMessageWithKafka processes object storage notifications and sends them to Kafka
-func handleMessageWithKafka(
+// ConversionResult holds the result of converting parsed items to Kafka notifications
+type ConversionResult struct {
+	NotificationsBySignal map[string][]messages.ObjStoreNotificationMessage
+	ItemsSkipped          int
+	ItemsProcessed        int
+	SkipReasons           map[string]int            // reason -> count
+	FileTypeCounts        map[string]map[string]int // signal -> extension -> count
+}
+
+// getFileExtensionCategory returns a normalized extension category for counting
+func getFileExtensionCategory(objectID string) string {
+	ext := strings.ToLower(filepath.Ext(objectID))
+
+	// Handle compound extensions first
+	if strings.HasSuffix(strings.ToLower(objectID), ".json.gz") {
+		return "json.gz"
+	}
+	if strings.HasSuffix(strings.ToLower(objectID), ".binpb.gz") {
+		return "binpb.gz"
+	}
+
+	// Handle simple extensions
+	switch ext {
+	case ".json":
+		return "json"
+	case ".binpb":
+		return "binpb"
+	case ".parquet":
+		return "parquet"
+	default:
+		return "other"
+	}
+}
+
+// convertItemsToKafkaMessages processes parsed S3 items and converts them to Kafka notification messages
+// This function is separated from sending to make it testable in isolation
+func convertItemsToKafkaMessages(
 	ctx context.Context,
-	msg []byte,
-	source string,
+	items []IngestItem,
 	sp storageprofile.StorageProfileProvider,
-	kafkaSender KafkaNotificationSender,
-) error {
-	if len(msg) == 0 {
-		return fmt.Errorf("empty message received")
+) (ConversionResult, error) {
+	result := ConversionResult{
+		NotificationsBySignal: make(map[string][]messages.ObjStoreNotificationMessage),
+		SkipReasons:           make(map[string]int),
+		FileTypeCounts:        make(map[string]map[string]int),
 	}
-
-	items, err := parseS3LikeEvents(msg)
-	if err != nil {
-		return fmt.Errorf("failed to parse S3-like events: %w", err)
-	}
-
-	// Group notifications by signal
-	notificationsBySignal := make(map[string][]messages.ObjStoreNotificationMessage)
 
 	for _, item := range items {
 		// Skip database files
 		if strings.HasPrefix(item.ObjectID, "db/") {
-			slog.Info("Skipping database file", slog.String("objectID", item.ObjectID))
-			itemsSkipped.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("reason", "database_file"),
-				attribute.String("bucket", item.Bucket),
-			))
+			slog.Debug("Skipping database file", slog.String("objectID", item.ObjectID))
+			result.ItemsSkipped++
+			result.SkipReasons["database_file"]++
 			continue
 		}
 
-		// Use new organization resolution logic
-		orgID, err := sp.ResolveOrganization(ctx, item.Bucket, item.ObjectID)
-		if err != nil {
-			slog.Error("Failed to resolve organization",
-				slog.Any("error", err),
-				slog.String("bucket", item.Bucket),
-				slog.String("object_id", item.ObjectID))
-			itemsSkipped.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("reason", "resolve_org_failed"),
-				attribute.String("bucket", item.Bucket),
-			))
-			continue
-		}
-
-		// For otel-raw paths, org and collector were already extracted in parser
-		// For other paths, we now have the resolved org
+		// For otel-raw paths, org and signal were already extracted in parser
 		if !strings.HasPrefix(item.ObjectID, "otel-raw/") {
-			item.OrganizationID = orgID
-			item.CollectorName = "" // Not used in v2
-		}
-
-		// Determine collector name and instance number
-		collectorName := item.CollectorName
-		instanceNum := int16(1) // Default instance number
-
-		// Lookup instance number from storage profile
-		if collectorName != "" {
-			profile, err := sp.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
+			// Use new organization resolution logic that also returns the signal from prefix mapping
+			resolution, err := sp.ResolveOrganization(ctx, item.Bucket, item.ObjectID)
 			if err != nil {
-				slog.Warn("Failed to lookup storage profile for collector, using default instance",
+				slog.Error("Failed to resolve organization with signal",
 					slog.Any("error", err),
-					slog.String("organization_id", item.OrganizationID.String()),
-					slog.String("collector_name", collectorName))
-			} else {
-				instanceNum = profile.InstanceNum
+					slog.String("bucket", item.Bucket),
+					slog.String("object_id", item.ObjectID))
+				result.ItemsSkipped++
+				result.SkipReasons["resolve_org_failed"]++
+				continue
 			}
+			item.OrganizationID = resolution.OrganizationID
+			item.Signal = resolution.Signal
 		}
+
+		// Get the lowest instance for this organization and bucket
+		profile, err := sp.GetLowestInstanceStorageProfile(ctx, item.OrganizationID, item.Bucket)
+		if err != nil {
+			slog.Error("Failed to get lowest instance storage profile",
+				slog.Any("error", err),
+				slog.String("organization_id", item.OrganizationID.String()),
+				slog.String("bucket", item.Bucket))
+			result.ItemsSkipped++
+			result.SkipReasons["get_profile_failed"]++
+			continue
+		}
+
+		instanceNum := profile.InstanceNum
+		collectorName := profile.CollectorName
+		item.InstanceNum = instanceNum
 
 		slog.Info("Processing item for Kafka",
 			slog.String("bucket", item.Bucket),
@@ -115,7 +136,7 @@ func handleMessageWithKafka(
 		// Create object storage notification message for Kafka
 		notification := messages.ObjStoreNotificationMessage{
 			OrganizationID: item.OrganizationID,
-			InstanceNum:    instanceNum,
+			InstanceNum:    item.InstanceNum,
 			Bucket:         item.Bucket,
 			ObjectID:       item.ObjectID,
 			FileSize:       item.FileSize,
@@ -123,19 +144,102 @@ func handleMessageWithKafka(
 		}
 
 		// Add to the appropriate signal group
-		notificationsBySignal[item.Signal] = append(notificationsBySignal[item.Signal], notification)
+		result.NotificationsBySignal[item.Signal] = append(result.NotificationsBySignal[item.Signal], notification)
+		result.ItemsProcessed++
 
-		itemsProcessed.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("bucket", item.Bucket),
-			attribute.String("telemetry_type", item.Signal),
-			attribute.String("source", source),
-		))
+		// Count file types by signal
+		if result.FileTypeCounts[item.Signal] == nil {
+			result.FileTypeCounts[item.Signal] = make(map[string]int)
+		}
+		extCategory := getFileExtensionCategory(item.ObjectID)
+		result.FileTypeCounts[item.Signal][extCategory]++
+	}
+
+	return result, nil
+}
+
+// handleMessageWithKafka processes object storage notifications and sends them to Kafka
+func handleMessageWithKafka(
+	ctx context.Context,
+	msg []byte,
+	source string,
+	sp storageprofile.StorageProfileProvider,
+	kafkaSender KafkaNotificationSender,
+	deduplicator Deduplicator,
+	stats *StatsAggregator,
+) error {
+	if len(msg) == 0 {
+		return fmt.Errorf("empty message received")
+	}
+
+	items, err := parseS3LikeEvents(msg)
+	if err != nil {
+		return fmt.Errorf("failed to parse S3-like events: %w", err)
+	}
+
+	// Deduplicate items early before processing
+	var dedupedItems []IngestItem
+	for _, item := range items {
+		shouldProcess, err := deduplicator.CheckAndRecord(ctx, item.Bucket, item.ObjectID, source)
+		if err != nil {
+			return fmt.Errorf("deduplication check failed for bucket %s object %s: %w",
+				item.Bucket, item.ObjectID, err)
+		}
+		if shouldProcess {
+			dedupedItems = append(dedupedItems, item)
+		}
+	}
+
+	// Convert items to Kafka messages
+	result, err := convertItemsToKafkaMessages(ctx, dedupedItems, sp)
+	if err != nil {
+		return err
+	}
+
+	// Record file type counts in stats aggregator
+	if stats != nil {
+		for signal, extCounts := range result.FileTypeCounts {
+			stats.RecordFileTypes(signal, extCounts)
+		}
+	}
+
+	// Update metrics based on conversion results
+	for reason, count := range result.SkipReasons {
+		for i := 0; i < count; i++ {
+			itemsSkipped.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("reason", reason),
+			))
+		}
+	}
+
+	// Track skipped items in stats
+	for _, count := range result.SkipReasons {
+		if stats != nil && count > 0 {
+			stats.RecordSkipped("unknown", count)
+		}
 	}
 
 	// Send notifications grouped by signal to appropriate topics
-	for signal, signalNotifications := range notificationsBySignal {
+	for signal, signalNotifications := range result.NotificationsBySignal {
 		if err := kafkaSender.SendBatch(ctx, signal, signalNotifications); err != nil {
+			// Record failed items in stats
+			if stats != nil {
+				stats.RecordFailed(signal, len(signalNotifications))
+			}
 			return fmt.Errorf("failed to send notifications to Kafka for signal %s: %w", signal, err)
+		}
+
+		// Record successful items in stats and metrics
+		if stats != nil {
+			stats.RecordProcessed(signal, len(signalNotifications))
+		}
+
+		for _, notification := range signalNotifications {
+			itemsProcessed.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("bucket", notification.Bucket),
+				attribute.String("telemetry_type", signal),
+				attribute.String("source", source),
+			))
 		}
 	}
 
@@ -144,9 +248,11 @@ func handleMessageWithKafka(
 
 // KafkaHandler wraps the Kafka notification manager for pubsub services
 type KafkaHandler struct {
-	manager *fly.ObjStoreNotificationManager
-	source  string
-	sp      storageprofile.StorageProfileProvider
+	manager      *fly.ObjStoreNotificationManager
+	source       string
+	sp           storageprofile.StorageProfileProvider
+	deduplicator Deduplicator
+	stats        *StatsAggregator
 }
 
 // NewKafkaHandler creates a new Kafka handler for pubsub notifications
@@ -156,13 +262,20 @@ func NewKafkaHandler(
 	factory *fly.Factory,
 	source string,
 	sp storageprofile.StorageProfileProvider,
+	deduplicator Deduplicator,
 ) (*KafkaHandler, error) {
 	manager := fly.NewObjStoreNotificationManager(ctx, cfg, factory)
 
+	// Create stats aggregator with 20 second reporting interval
+	stats := NewStatsAggregator(20 * time.Second)
+	stats.Start(ctx)
+
 	return &KafkaHandler{
-		manager: manager,
-		source:  source,
-		sp:      sp,
+		manager:      manager,
+		source:       source,
+		sp:           sp,
+		deduplicator: deduplicator,
+		stats:        stats,
 	}, nil
 }
 
@@ -173,10 +286,13 @@ func (h *KafkaHandler) HandleMessage(ctx context.Context, msg []byte) error {
 		return fmt.Errorf("failed to get Kafka producer: %w", err)
 	}
 
-	return handleMessageWithKafka(ctx, msg, h.source, h.sp, producer)
+	return handleMessageWithKafka(ctx, msg, h.source, h.sp, producer, h.deduplicator, h.stats)
 }
 
 // Close closes the Kafka handler
 func (h *KafkaHandler) Close() error {
+	if h.stats != nil {
+		h.stats.Stop()
+	}
 	return h.manager.Close()
 }

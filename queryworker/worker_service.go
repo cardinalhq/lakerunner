@@ -41,14 +41,17 @@ import (
 type WorkerService struct {
 	MetricsCM            *CacheManager
 	LogsCM               *CacheManager
+	TracesCM             *CacheManager
 	StorageProfilePoller storageprofile.StorageProfileProvider
 	MetricsGlobSize      int
 	LogsGlobSize         int
+	TracesGlobSize       int
 }
 
 func NewWorkerService(
 	metricsGlobSize int,
 	logsGlobSize int,
+	tracesGlobSize int,
 	maxConcurrency int,
 	sp storageprofile.StorageProfileProvider,
 	cloudManagers cloudstorage.ClientProvider,
@@ -133,9 +136,11 @@ func NewWorkerService(
 	return &WorkerService{
 		MetricsCM:            NewCacheManager(downloader, "metrics", sp),
 		LogsCM:               NewCacheManager(downloader, "logs", sp),
+		TracesCM:             NewCacheManager(downloader, "traces", sp),
 		StorageProfilePoller: sp,
 		MetricsGlobSize:      metricsGlobSize,
 		LogsGlobSize:         logsGlobSize,
+		TracesGlobSize:       tracesGlobSize,
 	}
 }
 
@@ -314,9 +319,15 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			globSize = ws.LogsGlobSize
 			isTagValuesQuery = true
 		} else {
-			workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString(), req.Fields)
-			cacheManager = ws.LogsCM
-			globSize = ws.LogsGlobSize
+			if req.IsSpans {
+				workerSql = req.LogLeaf.ToSpansWorkerSQLWithLimit(req.Limit, req.ToOrderString(), req.Fields)
+				cacheManager = ws.TracesCM
+				globSize = ws.TracesGlobSize
+			} else {
+				workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString(), req.Fields)
+				cacheManager = ws.LogsCM
+				globSize = ws.LogsGlobSize
+			}
 		}
 	} else {
 		http.Error(w, "no leaf to evaluate", http.StatusBadRequest)

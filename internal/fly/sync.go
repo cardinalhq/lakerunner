@@ -113,6 +113,6 @@ func CreateDefaultTopicsConfig(topics []kafkasync.Topic) *kafkasync.Config {
 			},
 		},
 		Topics:           topics,
-		OperationTimeout: 30 * time.Second,
+		OperationTimeout: 5 * time.Minute, // Increased timeout for topic operations
 	}
 }
