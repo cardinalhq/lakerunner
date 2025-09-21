@@ -68,20 +68,28 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 	timePred := fmt.Sprintf("CAST(%s AS BIGINT) >= {start} AND CAST(%s AS BIGINT) < {end}", tsCol, tsCol)
 	pb.push([]string{pb.top() + ".*"}, pb.top(), []string{"1=1", "true", timePred})
 
-	// 3) Apply selector & line filters before parsers
-	emitSelectorAndLineFilters(be, &pb, bodyCol)
+	// --- Split line filters into pre- vs post-parser using ParserIdx (nil => pre)
+	preLF, postLF := partitionLineFilters(be.LineFilters)
+
+	// 3) Apply selector & PRE-parser line filters
+	emitSelectorAndPreLineFilters(be, &pb, bodyCol, preLF)
 
 	// 4) Collect future-created labels (from label_format), unwrap needs
 	futureCreated := collectFutureCreated(be)
 	unwrapNeeded := collectUnwrapNeeds(be)
 
 	// 5) Emit parsers left→right, pushing label filters as soon as labels exist
-	remainingLF := append([]LabelFilter(nil), be.LabelFilters...)
-	emitParsers(be, &pb, bodyCol, groupKeys, futureCreated, unwrapNeeded, &remainingLF, fields, parserCreated)
+	remainingLbl := append([]LabelFilter(nil), be.LabelFilters...)
+	emitParsersWithPostLineFilters(
+		be, &pb, bodyCol,
+		groupKeys, futureCreated, unwrapNeeded,
+		&remainingLbl, &postLF,
+		fields, parserCreated,
+	)
 
 	// 6) Any remaining label filters (base columns) → apply at the end
-	if len(remainingLF) > 0 {
-		where := buildLabelFilterWhere(remainingLF, nil)
+	if len(remainingLbl) > 0 {
+		where := buildLabelFilterWhere(remainingLbl, nil)
 		if len(where) > 0 {
 			pb.push([]string{pb.top() + ".*"}, pb.top(), where)
 		}
@@ -253,8 +261,25 @@ func selectListFromSet(s map[string]struct{}) []string {
 	return out
 }
 
-func emitSelectorAndLineFilters(be *LogLeaf, pb *pipelineBuilder, bodyCol string) {
-	// selector matchers
+/* --- line filters: pre vs post --- */
+
+// Requires LineFilter to carry:
+//
+//	AfterParser bool          // true iff it syntactically appears after a parser
+//	ParserIdx   *int          // index of parser it follows; nil => pre-parser
+func partitionLineFilters(all []LineFilter) (pre []LineFilter, post []LineFilter) {
+	for _, lf := range all {
+		if lf.ParserIdx == nil {
+			pre = append(pre, lf)
+		} else {
+			post = append(post, lf)
+		}
+	}
+	return
+}
+
+func emitSelectorAndPreLineFilters(be *LogLeaf, pb *pipelineBuilder, bodyCol string, preLF []LineFilter) {
+	// selector matchers as label filters
 	if len(be.Matchers) > 0 {
 		var mLfs []LabelFilter
 		for _, m := range be.Matchers {
@@ -264,11 +289,36 @@ func emitSelectorAndLineFilters(be *LogLeaf, pb *pipelineBuilder, bodyCol string
 			pb.push([]string{pb.top() + ".*"}, pb.top(), where)
 		}
 	}
-	// line filters
-	if where := buildLineFilterWhere(be.LineFilters, bodyCol); len(where) > 0 {
-		pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+	// pre-parser line filters only
+	if len(preLF) > 0 {
+		if where := buildLineFilterWhere(preLF, bodyCol); len(where) > 0 {
+			pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+		}
 	}
 }
+
+// Apply the subset of post line-filters that should run *right after* parser `i`.
+func applyLineFiltersAt(pb *pipelineBuilder, bodyCol string, remaining *[]LineFilter, parserIdx int) {
+	if remaining == nil || len(*remaining) == 0 {
+		return
+	}
+	var now, later []LineFilter
+	for _, lf := range *remaining {
+		if lf.ParserIdx != nil && *lf.ParserIdx == parserIdx {
+			now = append(now, lf)
+		} else {
+			later = append(later, lf)
+		}
+	}
+	if len(now) > 0 {
+		if where := buildLineFilterWhere(now, bodyCol); len(where) > 0 {
+			pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+		}
+	}
+	*remaining = later
+}
+
+/* --- future-created & unwrap needs --- */
 
 func collectFutureCreated(be *LogLeaf) map[string]struct{} {
 	future := make(map[string]struct{})
@@ -301,16 +351,17 @@ func collectUnwrapNeeds(be *LogLeaf) map[string]struct{} {
 	return needs
 }
 
-/* --- parser emission --- */
+/* --- parser emission (with post line-filters) --- */
 
-func emitParsers(
+func emitParsersWithPostLineFilters(
 	be *LogLeaf,
 	pb *pipelineBuilder,
 	bodyCol string,
 	groupKeys []string,
 	futureCreated map[string]struct{},
 	unwrapNeeded map[string]struct{},
-	remainingLF *[]LabelFilter,
+	remainingLbl *[]LabelFilter, // label filters
+	remainingLine *[]LineFilter, // post line filters
 	fields []string,
 	parserCreated map[string]struct{},
 ) {
@@ -384,11 +435,13 @@ func emitParsers(
 			// Full capture order (all capturing groups). Unnamed groups are "__g#".
 			order := regexCaptureOrder(pat)
 			if len(order) == 0 {
-				// no capturing groups → pass through, carry filters
+				// no capturing groups → pass through, carry label filters
 				pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
 				if len(p.Filters) > 0 {
-					*remainingLF = append(*remainingLF, p.Filters...)
+					*remainingLbl = append(*remainingLbl, p.Filters...)
 				}
+				// Apply post line-filters attached after this parser
+				applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 				break
 			}
 
@@ -409,8 +462,9 @@ func emitParsers(
 				// only unnamed groups; nothing to create as labels
 				pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
 				if len(p.Filters) > 0 {
-					*remainingLF = append(*remainingLF, p.Filters...)
+					*remainingLbl = append(*remainingLbl, p.Filters...)
 				}
+				applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 				break
 			}
 
@@ -441,22 +495,25 @@ func emitParsers(
 			sel = append(sel, addCols...)
 			pb.push(sel, pb.top(), nil)
 
-			// mark created named groups as present, apply filters that now resolve
+			// mark created named groups as present, apply label filters that now resolve
 			for n := range created {
 				addPresent(n)
 			}
-			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			allFilters := append(append([]LabelFilter{}, *remainingLbl...), p.Filters...)
 			now, later := partitionByNames(allFilters, created)
 			if len(now) > 0 {
 				if where := buildLabelFilterWhere(now, nil); len(where) > 0 {
 					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
 				}
 			}
-			*remainingLF = later
+			*remainingLbl = later
+
+			// Apply post line-filters attached after this parser
+			applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 
 		case "json":
 			// Keys needed by filters + group-by + unwrap.
-			baseFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			baseFilters := append(append([]LabelFilter{}, *remainingLbl...), p.Filters...)
 			needKeys := uniqLabels(baseFilters)
 			needKeys = append(needKeys, groupKeys...)
 			for f := range unwrapNeeded {
@@ -575,11 +632,11 @@ func emitParsers(
 			}
 			pb.push(sel, pb.top(), nil)
 
-			// Apply any filters whose columns now exist (global remaining + stage filters)
+			// Apply any label filters whose columns now exist (global remaining + stage filters)
 			for k := range created {
 				addPresent(k)
 			}
-			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			allFilters := append(append([]LabelFilter{}, *remainingLbl...), p.Filters...)
 			now, later := partitionByNames(allFilters, created)
 			if len(now) > 0 {
 				where := buildLabelFilterWhere(now, nil)
@@ -587,11 +644,14 @@ func emitParsers(
 					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
 				}
 			}
-			*remainingLF = later
+			*remainingLbl = later
+
+			// Post line-filters after this parser
+			applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 
 		case "logfmt":
 			// Same logic as JSON for deciding which keys we need.
-			baseFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			baseFilters := append(append([]LabelFilter{}, *remainingLbl...), p.Filters...)
 			needKeys := uniqLabels(baseFilters)
 			needKeys = append(needKeys, groupKeys...)
 			for f := range unwrapNeeded {
@@ -681,7 +741,7 @@ func emitParsers(
 					addPresent(k)
 				}
 				created := mkSet(needKeys)
-				allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+				allFilters := append(append([]LabelFilter{}, *remainingLbl...), p.Filters...)
 				now, later := partitionByNames(allFilters, created)
 				if len(now) > 0 {
 					where := buildLabelFilterWhere(now, nil)
@@ -689,10 +749,13 @@ func emitParsers(
 						pb.push([]string{pb.top() + ".*"}, pb.top(), where)
 					}
 				}
-				*remainingLF = later
+				*remainingLbl = later
 			} else if len(p.Filters) > 0 {
-				*remainingLF = append(*remainingLF, p.Filters...)
+				*remainingLbl = append(*remainingLbl, p.Filters...)
 			}
+
+			// Post line-filters after this parser
+			applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 
 		case "label_format", "label-format", "labelformat":
 			// Compute label_format outputs; REPLACE if present else ADD
@@ -742,8 +805,8 @@ func emitParsers(
 				addPresent(out)
 			}
 
-			// Filters: apply those that now exist
-			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			// Filters: apply those that now exist (label filters)
+			allFilters := append(append([]LabelFilter{}, *remainingLbl...), p.Filters...)
 			now, later := partitionByNames(allFilters, created)
 			if len(now) > 0 {
 				where := buildLabelFilterWhere(now, nil)
@@ -751,25 +814,28 @@ func emitParsers(
 					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
 				}
 			}
-			*remainingLF = later
+			*remainingLbl = later
+
+			// Post line-filters after this parser
+			applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 
 		case "line_format":
 			// Build a SQL expr from the Go-template-like string
 			tmpl := strings.TrimSpace(p.Params["template"])
 			if tmpl == "" {
-				// No template → no-op pass-through, but still carry stage-level filters
+				// No template → no-op pass-through, but still carry stage-level label filters
 				pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
 				if len(p.Filters) > 0 {
-					*remainingLF = append(*remainingLF, p.Filters...)
+					*remainingLbl = append(*remainingLbl, p.Filters...)
 				}
+				// Even with a no-op, apply post line-filters after this stage if any
+				applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 				break
 			}
 
 			expr, err := buildLabelFormatExprTemplate(
 				tmpl,
-				func(col string) string {
-					return quoteIdent(normalizeLabelName(col))
-				},
+				func(col string) string { return quoteIdent(normalizeLabelName(col)) },
 			)
 			if err != nil {
 				expr = "''"
@@ -785,10 +851,13 @@ func emitParsers(
 			// message still present
 			addPresent("_cardinalhq.message")
 
-			// line_format doesn't create new labels; any attached filters are carried forward
+			// line_format doesn't create new labels; any stage label filters are carried
 			if len(p.Filters) > 0 {
-				*remainingLF = append(*remainingLF, p.Filters...)
+				*remainingLbl = append(*remainingLbl, p.Filters...)
 			}
+
+			// CRITICAL: apply the line filters that appear *after* this line_format
+			applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 
 		case "unwrap":
 			// Compute __unwrap_value (DOUBLE) based on previously created label
@@ -796,6 +865,7 @@ func emitParsers(
 			fn := strings.ToLower(strings.TrimSpace(p.Params["func"]))
 			if field == "" {
 				pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
+				applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 				break
 			}
 			col := quoteIdent(field)
@@ -820,7 +890,7 @@ func emitParsers(
 			addPresent("__unwrap_value", field)
 
 			created := map[string]struct{}{"__unwrap_value": {}, field: {}}
-			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			allFilters := append(append([]LabelFilter{}, *remainingLbl...), p.Filters...)
 			now, later := partitionByNames(allFilters, created)
 			if len(now) > 0 {
 				where := buildLabelFilterWhere(now, nil)
@@ -828,14 +898,19 @@ func emitParsers(
 					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
 				}
 			}
-			*remainingLF = later
+			*remainingLbl = later
+
+			// Post line-filters after this parser
+			applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 
 		default:
-			// Unknown stage: still allow stage-level filters to be carried forward.
+			// Unknown stage: still allow stage-level label filters to be carried forward.
 			pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
 			if len(p.Filters) > 0 {
-				*remainingLF = append(*remainingLF, p.Filters...)
+				*remainingLbl = append(*remainingLbl, p.Filters...)
 			}
+			// And still respect any post line-filters directed at this index
+			applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 		}
 	}
 }
