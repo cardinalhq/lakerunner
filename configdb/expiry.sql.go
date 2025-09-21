@@ -7,7 +7,6 @@ package configdb
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -97,53 +96,34 @@ func (q *Queries) GetActiveOrganizations(ctx context.Context) ([]GetActiveOrgani
 	return items, nil
 }
 
-const getExpiryToProcess = `-- name: GetExpiryToProcess :many
+const getExpiryLastRun = `-- name: GetExpiryLastRun :one
 SELECT
-    ose.organization_id,
-    ose.signal_type,
-    ose.max_age_days,
-    ose.last_checked_at,
-    o.name as organization_name
-FROM organization_signal_expiry ose
-JOIN organizations o ON o.id = ose.organization_id
-WHERE o.enabled = true
-  AND ose.last_checked_at < CURRENT_DATE
-ORDER BY ose.last_checked_at ASC
+    organization_id,
+    signal_type,
+    last_run_at,
+    created_at,
+    updated_at
+FROM expiry_run_tracking
+WHERE organization_id = $1
+  AND signal_type = $2
 `
 
-type GetExpiryToProcessRow struct {
-	OrganizationID   uuid.UUID `json:"organization_id"`
-	SignalType       string    `json:"signal_type"`
-	MaxAgeDays       int32     `json:"max_age_days"`
-	LastCheckedAt    time.Time `json:"last_checked_at"`
-	OrganizationName string    `json:"organization_name"`
+type GetExpiryLastRunParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	SignalType     string    `json:"signal_type"`
 }
 
-// Get organizations that need expiry processing (not checked today)
-func (q *Queries) GetExpiryToProcess(ctx context.Context) ([]GetExpiryToProcessRow, error) {
-	rows, err := q.db.Query(ctx, getExpiryToProcess)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetExpiryToProcessRow
-	for rows.Next() {
-		var i GetExpiryToProcessRow
-		if err := rows.Scan(
-			&i.OrganizationID,
-			&i.SignalType,
-			&i.MaxAgeDays,
-			&i.LastCheckedAt,
-			&i.OrganizationName,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+func (q *Queries) GetExpiryLastRun(ctx context.Context, arg GetExpiryLastRunParams) (ExpiryRunTracking, error) {
+	row := q.db.QueryRow(ctx, getExpiryLastRun, arg.OrganizationID, arg.SignalType)
+	var i ExpiryRunTracking
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.SignalType,
+		&i.LastRunAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getOrganizationExpiry = `-- name: GetOrganizationExpiry :one
@@ -151,7 +131,6 @@ SELECT
     organization_id,
     signal_type,
     max_age_days,
-    last_checked_at,
     created_at,
     updated_at
 FROM organization_signal_expiry
@@ -171,28 +150,33 @@ func (q *Queries) GetOrganizationExpiry(ctx context.Context, arg GetOrganization
 		&i.OrganizationID,
 		&i.SignalType,
 		&i.MaxAgeDays,
-		&i.LastCheckedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const updateExpiryCheckedAt = `-- name: UpdateExpiryCheckedAt :exec
-UPDATE organization_signal_expiry
-SET last_checked_at = NOW(),
+const upsertExpiryRunTracking = `-- name: UpsertExpiryRunTracking :exec
+INSERT INTO expiry_run_tracking (
+    organization_id,
+    signal_type,
+    last_run_at
+) VALUES (
+    $1, $2, NOW()
+)
+ON CONFLICT (organization_id, signal_type)
+DO UPDATE SET
+    last_run_at = NOW(),
     updated_at = NOW()
-WHERE organization_id = $1
-  AND signal_type = $2
 `
 
-type UpdateExpiryCheckedAtParams struct {
+type UpsertExpiryRunTrackingParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	SignalType     string    `json:"signal_type"`
 }
 
-func (q *Queries) UpdateExpiryCheckedAt(ctx context.Context, arg UpdateExpiryCheckedAtParams) error {
-	_, err := q.db.Exec(ctx, updateExpiryCheckedAt, arg.OrganizationID, arg.SignalType)
+func (q *Queries) UpsertExpiryRunTracking(ctx context.Context, arg UpsertExpiryRunTrackingParams) error {
+	_, err := q.db.Exec(ctx, upsertExpiryRunTracking, arg.OrganizationID, arg.SignalType)
 	return err
 }
 
@@ -200,15 +184,13 @@ const upsertOrganizationExpiry = `-- name: UpsertOrganizationExpiry :exec
 INSERT INTO organization_signal_expiry (
     organization_id,
     signal_type,
-    max_age_days,
-    last_checked_at
+    max_age_days
 ) VALUES (
-    $1, $2, $3, NOW()
+    $1, $2, $3
 )
 ON CONFLICT (organization_id, signal_type)
 DO UPDATE SET
     max_age_days = EXCLUDED.max_age_days,
-    last_checked_at = EXCLUDED.last_checked_at,
     updated_at = NOW()
 `
 

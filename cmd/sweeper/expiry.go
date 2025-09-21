@@ -39,11 +39,11 @@ type ExpiryQuerier interface {
 	// GetOrganizationExpiry retrieves expiry configuration for an org/signal pair
 	GetOrganizationExpiry(ctx context.Context, arg configdb.GetOrganizationExpiryParams) (configdb.OrganizationSignalExpiry, error)
 
-	// UpsertOrganizationExpiry creates or updates expiry configuration
-	UpsertOrganizationExpiry(ctx context.Context, arg configdb.UpsertOrganizationExpiryParams) error
+	// GetExpiryLastRun retrieves when expiry was last run for an org/signal pair
+	GetExpiryLastRun(ctx context.Context, arg configdb.GetExpiryLastRunParams) (configdb.ExpiryRunTracking, error)
 
-	// UpdateExpiryCheckedAt updates the last checked timestamp
-	UpdateExpiryCheckedAt(ctx context.Context, arg configdb.UpdateExpiryCheckedAtParams) error
+	// UpsertExpiryRunTracking creates or updates expiry run tracking
+	UpsertExpiryRunTracking(ctx context.Context, arg configdb.UpsertExpiryRunTrackingParams) error
 
 	// CallFindOrgPartition finds the organization's partition for a given table
 	CallFindOrgPartition(ctx context.Context, arg configdb.CallFindOrgPartitionParams) (string, error)
@@ -149,39 +149,24 @@ func runExpiryCleanup(ctx context.Context, cdb ExpiryQuerier, cfg *config.Config
 		orgName := org.Name
 
 		for _, signalType := range signalTypes {
-			// Check if we need to process this org/signal combination
+			// First check if we have a retention policy for this org/signal
 			expiry, err := cdb.GetOrganizationExpiry(ctx, configdb.GetOrganizationExpiryParams{
 				OrganizationID: orgID,
 				SignalType:     signalType,
 			})
 
-			needsCheck := false
 			var maxAgeDays int
 
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					// No entry exists, create one with default settings
-					err = cdb.UpsertOrganizationExpiry(ctx, configdb.UpsertOrganizationExpiryParams{
-						OrganizationID: orgID,
-						SignalType:     signalType,
-						MaxAgeDays:     int32(-1), // -1 means use default from config
-					})
-					if err != nil {
-						slog.Error("Failed to create expiry entry",
-							slog.String("org", orgName),
-							slog.String("signal_type", signalType),
-							slog.Any("error", err))
-						continue
-					}
-					// Use default from config
+					// No policy exists - use default from config
 					maxAgeDays = getDefaultMaxAgeDays(cfg, signalType)
 					if maxAgeDays == -1 {
-						slog.Warn("No default configured for signal type, skipping",
+						slog.Debug("No policy and no default configured for signal type, skipping",
 							slog.String("org", orgName),
 							slog.String("signal_type", signalType))
 						continue
 					}
-					needsCheck = true
 				} else {
 					slog.Error("Failed to fetch expiry config",
 						slog.String("org", orgName),
@@ -190,34 +175,59 @@ func runExpiryCleanup(ctx context.Context, cdb ExpiryQuerier, cfg *config.Config
 					continue
 				}
 			} else {
-				// Check if it was already checked today
-				if expiry.LastCheckedAt.Before(time.Now().Truncate(24 * time.Hour)) {
-					needsCheck = true
-					if expiry.MaxAgeDays == 0 {
-						// 0 means never expire
-						needsCheck = false
-						slog.Debug("Skipping expiry for org/signal (never expire)",
+				// We have a policy
+				if expiry.MaxAgeDays == 0 {
+					// 0 means never expire
+					slog.Debug("Skipping expiry for org/signal (policy says never expire)",
+						slog.String("org", orgName),
+						slog.String("signal_type", signalType))
+					continue
+				} else if expiry.MaxAgeDays > 0 {
+					// Use the org-specific setting
+					maxAgeDays = int(expiry.MaxAgeDays)
+				} else {
+					// -1 means use default from config
+					maxAgeDays = getDefaultMaxAgeDays(cfg, signalType)
+					if maxAgeDays == -1 {
+						slog.Debug("Policy exists but no default configured for signal type, skipping",
 							slog.String("org", orgName),
 							slog.String("signal_type", signalType))
-					} else if expiry.MaxAgeDays > 0 {
-						// Use the org-specific setting
-						maxAgeDays = int(expiry.MaxAgeDays)
-					} else {
-						// -1 means use default from config
-						maxAgeDays = getDefaultMaxAgeDays(cfg, signalType)
-						if maxAgeDays == -1 {
-							slog.Warn("No default configured for signal type, skipping",
-								slog.String("org", orgName),
-								slog.String("signal_type", signalType))
-							continue
-						} else if maxAgeDays == 0 {
-							// Config says never expire
-							needsCheck = false
-							slog.Debug("Skipping expiry for org/signal (config says never expire)",
-								slog.String("org", orgName),
-								slog.String("signal_type", signalType))
-						}
+						continue
 					}
+				}
+			}
+
+			// Check if maxAgeDays is 0 (never expire)
+			if maxAgeDays == 0 {
+				slog.Debug("Skipping expiry for org/signal (never expire)",
+					slog.String("org", orgName),
+					slog.String("signal_type", signalType))
+				continue
+			}
+
+			// Now check if we need to run expiry (haven't checked today)
+			needsCheck := false
+			lastRun, err := cdb.GetExpiryLastRun(ctx, configdb.GetExpiryLastRunParams{
+				OrganizationID: orgID,
+				SignalType:     signalType,
+			})
+
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					// Never run before, needs check
+					needsCheck = true
+				} else {
+					slog.Error("Failed to fetch last run info",
+						slog.String("org", orgName),
+						slog.String("signal_type", signalType),
+						slog.Any("error", err))
+					// Continue anyway - better to check than skip
+					needsCheck = true
+				}
+			} else {
+				// Check if it was already checked today
+				if lastRun.LastRunAt.Time.Before(time.Now().Truncate(24 * time.Hour)) {
+					needsCheck = true
 				}
 			}
 
@@ -251,8 +261,8 @@ func runExpiryCleanup(ctx context.Context, cdb ExpiryQuerier, cfg *config.Config
 					slog.String("table", tableName),
 					slog.Any("error", err))
 
-				// Update last_checked_at anyway to avoid repeated attempts
-				_ = cdb.UpdateExpiryCheckedAt(ctx, configdb.UpdateExpiryCheckedAtParams{
+				// Update run tracking anyway to avoid repeated attempts
+				_ = cdb.UpsertExpiryRunTracking(ctx, configdb.UpsertExpiryRunTrackingParams{
 					OrganizationID: orgID,
 					SignalType:     signalType,
 				})
@@ -300,13 +310,13 @@ func runExpiryCleanup(ctx context.Context, cdb ExpiryQuerier, cfg *config.Config
 				))
 			}
 
-			// Update last_checked_at
-			err = cdb.UpdateExpiryCheckedAt(ctx, configdb.UpdateExpiryCheckedAtParams{
+			// Update run tracking
+			err = cdb.UpsertExpiryRunTracking(ctx, configdb.UpsertExpiryRunTrackingParams{
 				OrganizationID: orgID,
 				SignalType:     signalType,
 			})
 			if err != nil {
-				slog.Error("Failed to update last_checked_at",
+				slog.Error("Failed to update run tracking",
 					slog.String("org", orgName),
 					slog.String("signal_type", signalType),
 					slog.Any("error", err))

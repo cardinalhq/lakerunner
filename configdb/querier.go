@@ -83,8 +83,7 @@ type Querier interface {
 	GetBucketConfigurationByName(ctx context.Context, bucketName string) (BucketConfiguration, error)
 	GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]GetBucketPrefixMappingsRow, error)
 	GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (GetDefaultOrganizationBucketRow, error)
-	// Get organizations that need expiry processing (not checked today)
-	GetExpiryToProcess(ctx context.Context) ([]GetExpiryToProcessRow, error)
+	GetExpiryLastRun(ctx context.Context, arg GetExpiryLastRunParams) (ExpiryRunTracking, error)
 	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (GetLongestPrefixMatchRow, error)
 	GetLowestInstanceOrganizationBucket(ctx context.Context, arg GetLowestInstanceOrganizationBucketParams) (GetLowestInstanceOrganizationBucketRow, error)
 	GetOrganization(ctx context.Context, id uuid.UUID) (Organization, error)
@@ -105,9 +104,9 @@ type Querier interface {
 	ListOrganizationAPIKeysByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationAPIKeysByOrgRow, error)
 	ListOrganizationBucketsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationBucketsByOrgRow, error)
 	ListOrganizations(ctx context.Context) ([]Organization, error)
-	UpdateExpiryCheckedAt(ctx context.Context, arg UpdateExpiryCheckedAtParams) error
 	UpsertAdminAPIKey(ctx context.Context, arg UpsertAdminAPIKeyParams) (AdminApiKey, error)
 	UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (BucketConfiguration, error)
+	UpsertExpiryRunTracking(ctx context.Context, arg UpsertExpiryRunTrackingParams) error
 	UpsertOrganization(ctx context.Context, arg UpsertOrganizationParams) (Organization, error)
 	UpsertOrganizationAPIKey(ctx context.Context, arg UpsertOrganizationAPIKeyParams) (OrganizationApiKey, error)
 	UpsertOrganizationAPIKeyMapping(ctx context.Context, arg UpsertOrganizationAPIKeyMappingParams) error

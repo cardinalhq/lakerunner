@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
@@ -44,12 +45,12 @@ func (m *MockExpiryQuerier) GetOrganizationExpiry(ctx context.Context, arg confi
 	return args.Get(0).(configdb.OrganizationSignalExpiry), args.Error(1)
 }
 
-func (m *MockExpiryQuerier) UpsertOrganizationExpiry(ctx context.Context, arg configdb.UpsertOrganizationExpiryParams) error {
+func (m *MockExpiryQuerier) GetExpiryLastRun(ctx context.Context, arg configdb.GetExpiryLastRunParams) (configdb.ExpiryRunTracking, error) {
 	args := m.Called(ctx, arg)
-	return args.Error(0)
+	return args.Get(0).(configdb.ExpiryRunTracking), args.Error(1)
 }
 
-func (m *MockExpiryQuerier) UpdateExpiryCheckedAt(ctx context.Context, arg configdb.UpdateExpiryCheckedAtParams) error {
+func (m *MockExpiryQuerier) UpsertExpiryRunTracking(ctx context.Context, arg configdb.UpsertExpiryRunTrackingParams) error {
 	args := m.Called(ctx, arg)
 	return args.Error(0)
 }
@@ -136,7 +137,6 @@ func TestRunExpiryCleanup_NeverExpireConfiguration(t *testing.T) {
 			OrganizationID: orgID,
 			SignalType:     signalType,
 			MaxAgeDays:     0, // Never expire
-			LastCheckedAt:  yesterday,
 			CreatedAt:      yesterday,
 			UpdatedAt:      yesterday,
 		}
@@ -193,7 +193,6 @@ func TestRunExpiryCleanup_WithExpiry(t *testing.T) {
 			OrganizationID: orgID,
 			SignalType:     tc.signalType,
 			MaxAgeDays:     tc.maxAgeDays,
-			LastCheckedAt:  yesterday, // Was checked yesterday, needs processing today
 			CreatedAt:      yesterday,
 			UpdatedAt:      yesterday,
 		}
@@ -204,6 +203,19 @@ func TestRunExpiryCleanup_WithExpiry(t *testing.T) {
 		}).Return(expiry, nil)
 
 		if tc.shouldExpire {
+			// Mock the last run check - was run yesterday so needs to run today
+			lastRun := configdb.ExpiryRunTracking{
+				OrganizationID: orgID,
+				SignalType:     tc.signalType,
+				LastRunAt:      pgtype.Timestamp{Time: yesterday, Valid: true},
+				CreatedAt:      pgtype.Timestamp{Time: yesterday, Valid: true},
+				UpdatedAt:      pgtype.Timestamp{Time: yesterday, Valid: true},
+			}
+			mockDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
+				OrganizationID: orgID,
+				SignalType:     tc.signalType,
+			}).Return(lastRun, nil)
+
 			tableName := tc.signalType[:len(tc.signalType)-1] + "_seg"
 			partitionName := tableName + "_org_" + orgID.String()[:8]
 
@@ -219,8 +231,8 @@ func TestRunExpiryCleanup_WithExpiry(t *testing.T) {
 					arg.BatchSize == int32(cfg.Expiry.BatchSize)
 			})).Return(int64(100), nil)
 
-			// Expect update of last_checked_at
-			mockDB.On("UpdateExpiryCheckedAt", ctx, configdb.UpdateExpiryCheckedAtParams{
+			// Expect update of run tracking
+			mockDB.On("UpsertExpiryRunTracking", ctx, configdb.UpsertExpiryRunTrackingParams{
 				OrganizationID: orgID,
 				SignalType:     tc.signalType,
 			}).Return(nil)
@@ -260,7 +272,6 @@ func TestRunExpiryCleanup_PartitionNotFound(t *testing.T) {
 		OrganizationID: orgID,
 		SignalType:     "logs",
 		MaxAgeDays:     30,
-		LastCheckedAt:  yesterday,
 		CreatedAt:      yesterday,
 		UpdatedAt:      yesterday,
 	}
@@ -270,29 +281,30 @@ func TestRunExpiryCleanup_PartitionNotFound(t *testing.T) {
 		SignalType:     "logs",
 	}).Return(expiry, nil)
 
+	// Mock the last run check - needs to run
+	mockDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
+		OrganizationID: orgID,
+		SignalType:     "logs",
+	}).Return(configdb.ExpiryRunTracking{}, sql.ErrNoRows)
+
 	// Partition lookup fails (org has no data yet)
 	mockDB.On("CallFindOrgPartition", ctx, mock.MatchedBy(func(arg configdb.CallFindOrgPartitionParams) bool {
 		return arg.TableName == "log_seg" && arg.OrganizationID == orgID
 	})).Return("", errors.New("No rows for organization"))
 
-	// Should still update last_checked_at
-	mockDB.On("UpdateExpiryCheckedAt", ctx, configdb.UpdateExpiryCheckedAtParams{
+	// Should still update run tracking
+	mockDB.On("UpsertExpiryRunTracking", ctx, configdb.UpsertExpiryRunTrackingParams{
 		OrganizationID: orgID,
 		SignalType:     "logs",
 	}).Return(nil)
 
-	// For the other signal types that don't exist yet
+	// For the other signal types that don't have policies
 	for _, signalType := range []string{"metrics", "traces"} {
 		mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 			OrganizationID: orgID,
 			SignalType:     signalType,
 		}).Return(configdb.OrganizationSignalExpiry{}, sql.ErrNoRows)
-
-		mockDB.On("UpsertOrganizationExpiry", ctx, configdb.UpsertOrganizationExpiryParams{
-			OrganizationID: orgID,
-			SignalType:     signalType,
-			MaxAgeDays:     int32(-1),
-		}).Return(nil)
+		// No default configured, so these are skipped
 	}
 
 	// Run the function
@@ -322,13 +334,12 @@ func TestRunExpiryCleanup_AlreadyCheckedToday(t *testing.T) {
 	}
 	mockDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
 
-	// Setup expiry configuration - already checked today
+	// Setup expiry configuration
 	today := time.Now()
 	expiry := configdb.OrganizationSignalExpiry{
 		OrganizationID: orgID,
 		SignalType:     "logs",
 		MaxAgeDays:     30,
-		LastCheckedAt:  today, // Already checked today
 		CreatedAt:      today,
 		UpdatedAt:      today,
 	}
@@ -338,6 +349,19 @@ func TestRunExpiryCleanup_AlreadyCheckedToday(t *testing.T) {
 		SignalType:     "logs",
 	}).Return(expiry, nil)
 
+	// Mock the last run check - already run today
+	lastRun := configdb.ExpiryRunTracking{
+		OrganizationID: orgID,
+		SignalType:     "logs",
+		LastRunAt:      pgtype.Timestamp{Time: today, Valid: true}, // Already run today
+		CreatedAt:      pgtype.Timestamp{Time: today, Valid: true},
+		UpdatedAt:      pgtype.Timestamp{Time: today, Valid: true},
+	}
+	mockDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
+		OrganizationID: orgID,
+		SignalType:     "logs",
+	}).Return(lastRun, nil)
+
 	// Should NOT call partition lookup or expiry since already checked today
 
 	// For the other signal types
@@ -346,12 +370,7 @@ func TestRunExpiryCleanup_AlreadyCheckedToday(t *testing.T) {
 			OrganizationID: orgID,
 			SignalType:     signalType,
 		}).Return(configdb.OrganizationSignalExpiry{}, sql.ErrNoRows)
-
-		mockDB.On("UpsertOrganizationExpiry", ctx, configdb.UpsertOrganizationExpiryParams{
-			OrganizationID: orgID,
-			SignalType:     signalType,
-			MaxAgeDays:     int32(-1),
-		}).Return(nil)
+		// No default configured, so these are skipped
 	}
 
 	// Run the function
@@ -385,13 +404,51 @@ func TestRunExpiryCleanup_NoDefaultConfigured(t *testing.T) {
 			OrganizationID: orgID,
 			SignalType:     signalType,
 		}).Return(configdb.OrganizationSignalExpiry{}, sql.ErrNoRows)
+		// No expiry will happen since no default is configured
+	}
 
-		mockDB.On("UpsertOrganizationExpiry", ctx, configdb.UpsertOrganizationExpiryParams{
+	// Run the function
+	err := runExpiryCleanup(ctx, mockDB, cfg)
+
+	// Assertions
+	assert.NoError(t, err)
+	mockDB.AssertExpectations(t)
+}
+
+func TestRunExpiryCleanup_ZeroDefaultNoExistingEntry(t *testing.T) {
+	ctx := context.Background()
+	mockDB := new(MockExpiryQuerier)
+	orgID := uuid.New()
+	cfg := &config.Config{
+		Expiry: config.ExpiryConfig{
+			DefaultMaxAgeDays: map[string]int{
+				"logs":    0, // Never expire
+				"metrics": 0, // Never expire
+				"traces":  0, // Never expire
+			},
+			BatchSize: 1000,
+		},
+	}
+
+	// Setup expectations
+	orgs := []configdb.GetActiveOrganizationsRow{
+		{ID: orgID, Name: "TestOrg", Enabled: true},
+	}
+	mockDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
+
+	// For each signal type, when no policy exists and default is 0 (never expire)
+	for _, signalType := range []string{"logs", "metrics", "traces"} {
+		// No policy exists - returns ErrNoRows
+		mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 			OrganizationID: orgID,
 			SignalType:     signalType,
-			MaxAgeDays:     int32(-1),
-		}).Return(nil)
-		// No expiry will happen since no default is configured
+		}).Return(configdb.OrganizationSignalExpiry{}, sql.ErrNoRows)
+
+		// No expiry operations should happen since default is 0 (never expire)
+		// No GetExpiryLastRun
+		// No CallFindOrgPartition
+		// No CallExpirePublishedByIngestCutoff
+		// No UpsertExpiryRunTracking
 	}
 
 	// Run the function

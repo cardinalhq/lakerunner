@@ -22,48 +22,48 @@ SELECT
     organization_id,
     signal_type,
     max_age_days,
-    last_checked_at,
     created_at,
     updated_at
 FROM organization_signal_expiry
 WHERE organization_id = @organization_id
   AND signal_type = @signal_type;
 
--- name: GetExpiryToProcess :many
--- Get organizations that need expiry processing (not checked today)
-SELECT
-    ose.organization_id,
-    ose.signal_type,
-    ose.max_age_days,
-    ose.last_checked_at,
-    o.name as organization_name
-FROM organization_signal_expiry ose
-JOIN organizations o ON o.id = ose.organization_id
-WHERE o.enabled = true
-  AND ose.last_checked_at < CURRENT_DATE
-ORDER BY ose.last_checked_at ASC;
-
 -- name: UpsertOrganizationExpiry :exec
 INSERT INTO organization_signal_expiry (
     organization_id,
     signal_type,
-    max_age_days,
-    last_checked_at
+    max_age_days
 ) VALUES (
-    @organization_id, @signal_type, @max_age_days, NOW()
+    @organization_id, @signal_type, @max_age_days
 )
 ON CONFLICT (organization_id, signal_type)
 DO UPDATE SET
     max_age_days = EXCLUDED.max_age_days,
-    last_checked_at = EXCLUDED.last_checked_at,
     updated_at = NOW();
 
--- name: UpdateExpiryCheckedAt :exec
-UPDATE organization_signal_expiry
-SET last_checked_at = NOW(),
-    updated_at = NOW()
+-- name: GetExpiryLastRun :one
+SELECT
+    organization_id,
+    signal_type,
+    last_run_at,
+    created_at,
+    updated_at
+FROM expiry_run_tracking
 WHERE organization_id = @organization_id
   AND signal_type = @signal_type;
+
+-- name: UpsertExpiryRunTracking :exec
+INSERT INTO expiry_run_tracking (
+    organization_id,
+    signal_type,
+    last_run_at
+) VALUES (
+    @organization_id, @signal_type, NOW()
+)
+ON CONFLICT (organization_id, signal_type)
+DO UPDATE SET
+    last_run_at = NOW(),
+    updated_at = NOW();
 
 -- name: CallFindOrgPartition :one
 SELECT find_org_partition(@table_name::regclass, @organization_id::uuid)::text AS partition_name;

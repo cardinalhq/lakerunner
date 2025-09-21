@@ -96,6 +96,15 @@ type CStorageProfile struct {
 	Role           *string   `json:"role"`
 }
 
+// Tracks when expiry cleanup was last run for each organization and signal type. Separate from policy to avoid creating policy records just for tracking.
+type ExpiryRunTracking struct {
+	OrganizationID uuid.UUID        `json:"organization_id"`
+	SignalType     string           `json:"signal_type"`
+	LastRunAt      pgtype.Timestamp `json:"last_run_at"`
+	CreatedAt      pgtype.Timestamp `json:"created_at"`
+	UpdatedAt      pgtype.Timestamp `json:"updated_at"`
+}
+
 type Organization struct {
 	ID        uuid.UUID  `json:"id"`
 	Name      string     `json:"name"`
@@ -126,11 +135,11 @@ type OrganizationBucket struct {
 	CollectorName  string    `json:"collector_name"`
 }
 
+// Stores data retention policies for each organization and signal type. A value of -1 means use system default, 0 means never expire, >0 means specific retention days.
 type OrganizationSignalExpiry struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	SignalType     string    `json:"signal_type"`
 	MaxAgeDays     int32     `json:"max_age_days"`
-	LastCheckedAt  time.Time `json:"last_checked_at"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
