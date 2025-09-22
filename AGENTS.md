@@ -204,7 +204,7 @@ Inside the container, memory and CPU limits for Go will match the constraints of
 - CI uses **partial builds** (`partial:` section in goreleaser)
 - Developers cannot use `partial:` locally, but must keep it in config
 
-## Important Reminders
+## IMPORTANT Reminders
 
 - This is a monorepo - no backwards compatibility needed
 - Always prefer editing existing files over creating new ones

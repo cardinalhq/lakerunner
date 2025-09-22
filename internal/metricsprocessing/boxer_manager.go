@@ -154,9 +154,8 @@ func (m *BoxerManager) Run(ctx context.Context) error {
 		c := consumer // Capture for closure
 		g.Go(func() error {
 			gll := logctx.FromContext(gCtx).With("task", taskName)
-			gCtx = logctx.WithLogger(gCtx, gll)
 			gll.Info("Starting boxer consumer")
-			if err := c.Run(gCtx); err != nil {
+			if err := c.Run(logctx.WithLogger(gCtx, gll)); err != nil {
 				gll.Error("Boxer consumer failed", "error", err)
 				return fmt.Errorf("task %s failed: %w", taskName, err)
 			}

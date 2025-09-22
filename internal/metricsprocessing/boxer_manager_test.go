@@ -154,7 +154,7 @@ func TestBoxerManager_Run(t *testing.T) {
 		consumer := &MockBoxerConsumer{}
 
 		factory.On("CreateLogCompactionConsumer", ctx).Return(consumer, nil)
-		consumer.On("Run", mock.AnythingOfType("*context.cancelCtx")).Return(nil)
+		consumer.On("Run", mock.AnythingOfType("*context.valueCtx")).Return(nil)
 
 		manager, err := NewBoxerManagerWithFactory(ctx, factory, []string{"compact-logs"})
 		require.NoError(t, err)
@@ -178,8 +178,8 @@ func TestBoxerManager_Run(t *testing.T) {
 		factory.On("CreateLogCompactionConsumer", ctx).Return(logConsumer, nil)
 		factory.On("CreateMetricCompactionConsumer", ctx).Return(metricConsumer, nil)
 
-		logConsumer.On("Run", mock.AnythingOfType("*context.cancelCtx")).Return(nil)
-		metricConsumer.On("Run", mock.AnythingOfType("*context.cancelCtx")).Return(nil)
+		logConsumer.On("Run", mock.AnythingOfType("*context.valueCtx")).Return(nil)
+		metricConsumer.On("Run", mock.AnythingOfType("*context.valueCtx")).Return(nil)
 
 		manager, err := NewBoxerManagerWithFactory(ctx, factory, []string{"compact-logs", "compact-metrics"})
 		require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestBoxerManager_Run(t *testing.T) {
 		consumer := &MockBoxerConsumer{}
 
 		factory.On("CreateLogCompactionConsumer", ctx).Return(consumer, nil)
-		consumer.On("Run", mock.AnythingOfType("*context.cancelCtx")).Return(errors.New("consumer failed"))
+		consumer.On("Run", mock.AnythingOfType("*context.valueCtx")).Return(errors.New("consumer failed"))
 
 		manager, err := NewBoxerManagerWithFactory(ctx, factory, []string{"compact-logs"})
 		require.NoError(t, err)
