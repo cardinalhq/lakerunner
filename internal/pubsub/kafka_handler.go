@@ -205,7 +205,7 @@ func handleMessageWithKafka(
 
 	// Update metrics based on conversion results
 	for reason, count := range result.SkipReasons {
-		for i := 0; i < count; i++ {
+		for range count {
 			itemsSkipped.Add(ctx, 1, metric.WithAttributes(
 				attribute.String("reason", reason),
 			))
