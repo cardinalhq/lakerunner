@@ -36,23 +36,21 @@ func TestGetDefaultMaxAgeDays(t *testing.T) {
 			expected:   -1,
 		},
 		{
-			name:       "returns configured value",
+			name:       "returns configured value for logs",
 			signalType: "logs",
 			cfg: &config.Config{
 				Expiry: config.ExpiryConfig{
-					DefaultMaxAgeDays: map[string]int{
-						"logs": 7,
-					},
+					DefaultMaxAgeDaysLogs: 7,
 				},
 			},
 			expected: 7,
 		},
 		{
-			name:       "empty map returns -1",
+			name:       "not configured returns -1",
 			signalType: "logs",
 			cfg: &config.Config{
 				Expiry: config.ExpiryConfig{
-					DefaultMaxAgeDays: map[string]int{},
+					DefaultMaxAgeDaysLogs: -1,
 				},
 			},
 			expected: -1,
@@ -62,24 +60,40 @@ func TestGetDefaultMaxAgeDays(t *testing.T) {
 			signalType: "logs",
 			cfg: &config.Config{
 				Expiry: config.ExpiryConfig{
-					DefaultMaxAgeDays: map[string]int{
-						"logs": 0,
-					},
+					DefaultMaxAgeDaysLogs: 0,
 				},
 			},
 			expected: 0,
 		},
 		{
-			name:       "negative value is passed through",
-			signalType: "logs",
+			name:       "returns configured value for metrics",
+			signalType: "metrics",
 			cfg: &config.Config{
 				Expiry: config.ExpiryConfig{
-					DefaultMaxAgeDays: map[string]int{
-						"logs": -5,
-					},
+					DefaultMaxAgeDaysMetrics: 30,
 				},
 			},
-			expected: -5,
+			expected: 30,
+		},
+		{
+			name:       "returns configured value for traces",
+			signalType: "traces",
+			cfg: &config.Config{
+				Expiry: config.ExpiryConfig{
+					DefaultMaxAgeDaysTraces: 14,
+				},
+			},
+			expected: 14,
+		},
+		{
+			name:       "unknown signal type returns -1",
+			signalType: "unknown",
+			cfg: &config.Config{
+				Expiry: config.ExpiryConfig{
+					DefaultMaxAgeDaysLogs: 7,
+				},
+			},
+			expected: -1,
 		},
 	}
 

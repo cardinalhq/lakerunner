@@ -107,12 +107,20 @@ func toDateInt(t time.Time) int {
 // getDefaultMaxAgeDays returns the default max age in days for a signal type from the configuration
 // Returns -1 if not configured (which means use the system default)
 func getDefaultMaxAgeDays(cfg *config.Config, signalType string) int {
-	if cfg != nil && cfg.Expiry.DefaultMaxAgeDays != nil {
-		if days, ok := cfg.Expiry.DefaultMaxAgeDays[signalType]; ok {
-			return days // Return the value as-is, even if 0 (never expire)
-		}
+	if cfg == nil {
+		return -1
 	}
-	return -1 // Not configured, will be handled as "use default"
+
+	switch signalType {
+	case "logs":
+		return cfg.Expiry.DefaultMaxAgeDaysLogs
+	case "metrics":
+		return cfg.Expiry.DefaultMaxAgeDaysMetrics
+	case "traces":
+		return cfg.Expiry.DefaultMaxAgeDaysTraces
+	default:
+		return -1
+	}
 }
 
 // getBatchSize returns the batch size for expiry operations from the configuration

@@ -77,12 +77,10 @@ func TestRunExpiryCleanup_NoOrganizations(t *testing.T) {
 	mockLDB := new(MockLRDBExpiryQuerier)
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
-			DefaultMaxAgeDays: map[string]int{
-				"logs":    30,
-				"metrics": 90,
-				"traces":  7,
-			},
-			BatchSize: 1000,
+			DefaultMaxAgeDaysLogs:    30,
+			DefaultMaxAgeDaysMetrics: 90,
+			DefaultMaxAgeDaysTraces:  7,
+			BatchSize:                1000,
 		},
 	}
 
@@ -124,12 +122,10 @@ func TestRunExpiryCleanup_NeverExpireConfiguration(t *testing.T) {
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
-			DefaultMaxAgeDays: map[string]int{
-				"logs":    0, // Never expire
-				"metrics": 0, // Never expire
-				"traces":  0, // Never expire
-			},
-			BatchSize: 1000,
+			DefaultMaxAgeDaysLogs:    0, // Never expire
+			DefaultMaxAgeDaysMetrics: 0, // Never expire
+			DefaultMaxAgeDaysTraces:  0, // Never expire
+			BatchSize:                1000,
 		},
 	}
 
@@ -173,12 +169,10 @@ func TestRunExpiryCleanup_WithExpiry(t *testing.T) {
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
-			DefaultMaxAgeDays: map[string]int{
-				"logs":    30,
-				"metrics": 90,
-				"traces":  7,
-			},
-			BatchSize: 1000,
+			DefaultMaxAgeDaysLogs:    30,
+			DefaultMaxAgeDaysMetrics: 90,
+			DefaultMaxAgeDaysTraces:  7,
+			BatchSize:                1000,
 		},
 	}
 
@@ -266,10 +260,10 @@ func TestRunExpiryCleanup_PartitionNotFound(t *testing.T) {
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
-			DefaultMaxAgeDays: map[string]int{
-				"logs": 30,
-			},
-			BatchSize: 1000,
+			DefaultMaxAgeDaysLogs:    30,
+			DefaultMaxAgeDaysMetrics: -1, // Not configured
+			DefaultMaxAgeDaysTraces:  -1, // Not configured
+			BatchSize:                1000,
 		},
 	}
 
@@ -335,10 +329,10 @@ func TestRunExpiryCleanup_AlreadyCheckedToday(t *testing.T) {
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
-			DefaultMaxAgeDays: map[string]int{
-				"logs": 30,
-			},
-			BatchSize: 1000,
+			DefaultMaxAgeDaysLogs:    30,
+			DefaultMaxAgeDaysMetrics: -1, // Not configured
+			DefaultMaxAgeDaysTraces:  -1, // Not configured
+			BatchSize:                1000,
 		},
 	}
 
@@ -402,8 +396,10 @@ func TestRunExpiryCleanup_NoDefaultConfigured(t *testing.T) {
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
-			DefaultMaxAgeDays: map[string]int{}, // No defaults configured
-			BatchSize:         1000,
+			DefaultMaxAgeDaysLogs:    -1, // Not configured
+			DefaultMaxAgeDaysMetrics: -1, // Not configured
+			DefaultMaxAgeDaysTraces:  -1, // Not configured
+			BatchSize:                1000,
 		},
 	}
 
@@ -437,12 +433,10 @@ func TestRunExpiryCleanup_ZeroDefaultNoExistingEntry(t *testing.T) {
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
-			DefaultMaxAgeDays: map[string]int{
-				"logs":    0, // Never expire
-				"metrics": 0, // Never expire
-				"traces":  0, // Never expire
-			},
-			BatchSize: 1000,
+			DefaultMaxAgeDaysLogs:    0, // Never expire
+			DefaultMaxAgeDaysMetrics: 0, // Never expire
+			DefaultMaxAgeDaysTraces:  0, // Never expire
+			BatchSize:                1000,
 		},
 	}
 
@@ -482,10 +476,10 @@ func TestRunExpiryCleanup_ExpiryFailureNoRunTracking(t *testing.T) {
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
-			DefaultMaxAgeDays: map[string]int{
-				"logs": 30,
-			},
-			BatchSize: 1000,
+			DefaultMaxAgeDaysLogs:    30,
+			DefaultMaxAgeDaysMetrics: -1, // Not configured
+			DefaultMaxAgeDaysTraces:  -1, // Not configured
+			BatchSize:                1000,
 		},
 	}
 

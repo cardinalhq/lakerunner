@@ -89,8 +89,10 @@ type PubSubDedupConfig struct {
 }
 
 type ExpiryConfig struct {
-	DefaultMaxAgeDays map[string]int `mapstructure:"default_max_age_days"`
-	BatchSize         int            `mapstructure:"batch_size"`
+	DefaultMaxAgeDaysLogs    int `mapstructure:"default_max_age_days_logs"`
+	DefaultMaxAgeDaysMetrics int `mapstructure:"default_max_age_days_metrics"`
+	DefaultMaxAgeDaysTraces  int `mapstructure:"default_max_age_days_traces"`
+	BatchSize                int `mapstructure:"batch_size"`
 }
 
 // TopicCreationConfig holds configuration for creating Kafka topics
@@ -262,12 +264,10 @@ func Load() (*Config, error) {
 			},
 		},
 		Expiry: ExpiryConfig{
-			DefaultMaxAgeDays: map[string]int{
-				"logs":    0, // Disabled by default (0 = never expire)
-				"metrics": 0, // Disabled by default (0 = never expire)
-				"traces":  0, // Disabled by default (0 = never expire)
-			},
-			BatchSize: 20000, // Default batch size for expiry operations
+			DefaultMaxAgeDaysLogs:    -1,    // -1 means not configured
+			DefaultMaxAgeDaysMetrics: -1,    // -1 means not configured
+			DefaultMaxAgeDaysTraces:  -1,    // -1 means not configured
+			BatchSize:                20000, // Default batch size for expiry operations
 		},
 	}
 
