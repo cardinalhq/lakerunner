@@ -28,7 +28,10 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// LogCompactionBoxerProcessor implements boxing for log compaction messages
+// LogCompactionBoxerProcessor implements boxing for log compaction messages.
+// Note: This processor only bundles messages for compaction and only requires
+// GetLogEstimate() from the store. The actual compaction operations (GetLogSeg,
+// CompactLogSegments, etc.) are performed by the compaction processor itself.
 type LogCompactionBoxerProcessor struct {
 	store         BoxerStore
 	kafkaProducer fly.Producer

@@ -26,7 +26,9 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 )
 
-// BoxerStore defines the interface required by the metric boxer
+// BoxerStore defines the interface required by all boxer processors.
+// Boxers only bundle messages and need estimation methods for optimal batching.
+// They do not perform actual processing operations (compaction, etc.).
 type BoxerStore interface {
 	OffsetTrackerStore
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
