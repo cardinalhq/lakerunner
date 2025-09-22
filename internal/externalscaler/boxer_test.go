@@ -36,37 +36,30 @@ func TestService_GetMetrics_Boxer(t *testing.T) {
 	}{
 		{
 			name:          "boxer task metric",
-			serviceType:   "boxer",
-			metricName:    "boxer-compact-logs-queue-depth",
-			taskDepths:    map[string]int64{"boxer-compact-logs": 100},
+			serviceType:   config.ServiceTypeBoxer,
+			metricName:    config.ServiceTypeBoxerCompactLogs,
+			taskDepths:    map[string]int64{config.ServiceTypeBoxerCompactLogs: 100},
 			expectedValue: 100,
 		},
 		{
 			name:          "boxer task metric with different value",
-			serviceType:   "boxer",
-			metricName:    "boxer-compact-metrics-queue-depth",
-			taskDepths:    map[string]int64{"boxer-compact-metrics": 250},
+			serviceType:   config.ServiceTypeBoxer,
+			metricName:    config.ServiceTypeBoxerCompactMetrics,
+			taskDepths:    map[string]int64{config.ServiceTypeBoxerCompactMetrics: 250},
 			expectedValue: 250,
 		},
 		{
 			name:          "boxer task not found should error",
-			serviceType:   "boxer",
-			metricName:    "boxer-unknown-task-queue-depth",
+			serviceType:   config.ServiceTypeBoxer,
+			metricName:    "boxer-unknown-task",
 			taskDepths:    map[string]int64{},
 			expectedError: true,
 			errorContains: "failed to get queue depth for boxer-unknown-task",
 		},
 		{
-			name:          "invalid boxer metric name format should error",
-			serviceType:   "boxer",
-			metricName:    "invalid-metric-name",
-			expectedError: true,
-			errorContains: "invalid boxer metric name format",
-		},
-		{
 			name:          "non-boxer service should use original logic",
 			serviceType:   "ingest-logs",
-			metricName:    "ingest-logs-queue-depth",
+			metricName:    "ingest-logs",
 			taskDepths:    map[string]int64{"ingest-logs": 150},
 			expectedValue: 150,
 		},
@@ -84,11 +77,8 @@ func TestService_GetMetrics_Boxer(t *testing.T) {
 
 			// For error cases with unknown tasks
 			if tt.expectedError && strings.Contains(tt.errorContains, "failed to get queue depth") {
-				// Extract service type from metric name for error case
-				if strings.HasSuffix(tt.metricName, "-queue-depth") {
-					taskServiceType := strings.TrimSuffix(tt.metricName, "-queue-depth")
-					mockLagMonitor.On("GetQueueDepth", taskServiceType).Return(int64(0), assert.AnError)
-				}
+				// Use metric name directly as service type for error case
+				mockLagMonitor.On("GetQueueDepth", tt.metricName).Return(int64(0), assert.AnError)
 			}
 
 			// Create service with mock
@@ -145,47 +135,47 @@ func TestService_GetMetricSpec_Boxer(t *testing.T) {
 	}{
 		{
 			name:        "boxer without boxerTasks should error",
-			serviceType: "boxer",
+			serviceType: config.ServiceTypeBoxer,
 			// boxerTasks not provided
 			expectedError: true,
 			errorContains: "boxerTasks not specified for boxer service",
 		},
 		{
 			name:        "boxer with single task",
-			serviceType: "boxer",
-			boxerTasks:  "compact-logs",
+			serviceType: config.ServiceTypeBoxer,
+			boxerTasks:  config.TaskCompactLogs,
 			taskTargets: map[string]int{
-				"boxer-compact-logs": 10,
+				config.ServiceTypeBoxerCompactLogs: 10,
 			},
 			expectedSpecs: []struct {
 				name   string
 				target float64
 			}{
-				{"boxer-compact-logs-queue-depth", 10},
+				{config.ServiceTypeBoxerCompactLogs, 10},
 			},
 		},
 		{
 			name:        "boxer with multiple tasks",
-			serviceType: "boxer",
-			boxerTasks:  "compact-logs,compact-metrics",
+			serviceType: config.ServiceTypeBoxer,
+			boxerTasks:  config.TaskCompactLogs + "," + config.TaskCompactMetrics,
 			taskTargets: map[string]int{
-				"boxer-compact-logs":    10,
-				"boxer-compact-metrics": 20,
+				config.ServiceTypeBoxerCompactLogs:    10,
+				config.ServiceTypeBoxerCompactMetrics: 20,
 			},
 			expectedSpecs: []struct {
 				name   string
 				target float64
 			}{
-				{"boxer-compact-logs-queue-depth", 10},
-				{"boxer-compact-metrics-queue-depth", 20},
+				{config.ServiceTypeBoxerCompactLogs, 10},
+				{config.ServiceTypeBoxerCompactMetrics, 20},
 			},
 		},
 		{
 			name:        "boxer with unknown task falls back to default",
-			serviceType: "boxer",
-			boxerTasks:  "compact-logs,unknown-task",
+			serviceType: config.ServiceTypeBoxer,
+			boxerTasks:  config.TaskCompactLogs + ",unknown-task",
 			taskTargets: map[string]int{
-				"boxer-compact-logs": 10,
+				config.ServiceTypeBoxerCompactLogs: 10,
 				// unknown-task will fall back to DefaultTarget
 			},
 			defaultTarget: 20,
@@ -193,8 +183,8 @@ func TestService_GetMetricSpec_Boxer(t *testing.T) {
 				name   string
 				target float64
 			}{
-				{"boxer-compact-logs-queue-depth", 10},
-				{"boxer-unknown-task-queue-depth", 20},
+				{config.ServiceTypeBoxerCompactLogs, 10},
+				{"boxer-unknown-task", 20},
 			},
 		},
 		{
@@ -207,7 +197,7 @@ func TestService_GetMetricSpec_Boxer(t *testing.T) {
 				name   string
 				target float64
 			}{
-				{"ingest-logs-queue-depth", 25},
+				{"ingest-logs", 25},
 			},
 		},
 	}
@@ -223,21 +213,21 @@ func TestService_GetMetricSpec_Boxer(t *testing.T) {
 			for taskServiceType, target := range tt.taskTargets {
 				scaling := config.ServiceScaling{TargetQueueSize: target}
 				switch taskServiceType {
-				case "boxer-compact-logs":
+				case config.ServiceTypeBoxerCompactLogs:
 					scalingConfig.BoxerCompactLogs = scaling
-				case "boxer-compact-metrics":
+				case config.ServiceTypeBoxerCompactMetrics:
 					scalingConfig.BoxerCompactMetrics = scaling
-				case "boxer-compact-traces":
+				case config.ServiceTypeBoxerCompactTraces:
 					scalingConfig.BoxerCompactTraces = scaling
-				case "boxer-rollup-metrics":
+				case config.ServiceTypeBoxerRollupMetrics:
 					scalingConfig.BoxerRollupMetrics = scaling
-				case "ingest-logs":
+				case config.ServiceTypeIngestLogs:
 					scalingConfig.IngestLogs = scaling
-				case "compact-logs":
+				case config.ServiceTypeCompactLogs:
 					scalingConfig.CompactLogs = scaling
-				case "compact-metrics":
+				case config.ServiceTypeCompactMetrics:
 					scalingConfig.CompactMetrics = scaling
-				case "rollup-metrics":
+				case config.ServiceTypeRollupMetrics:
 					scalingConfig.RollupMetrics = scaling
 				}
 			}

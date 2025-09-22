@@ -17,13 +17,13 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 // BoxerConsumer represents a generic boxer consumer interface
@@ -93,6 +93,8 @@ func NewBoxerManager(ctx context.Context, cfg *config.Config, store BoxerStore, 
 
 // NewBoxerManagerWithFactory creates a new BoxerManager with a custom factory (for testing)
 func NewBoxerManagerWithFactory(ctx context.Context, factory ConsumerFactory, tasks []string) (*BoxerManager, error) {
+	ll := logctx.FromContext(ctx)
+
 	if len(tasks) == 0 {
 		return nil, fmt.Errorf("at least one task must be specified")
 	}
@@ -110,19 +112,19 @@ func NewBoxerManagerWithFactory(ctx context.Context, factory ConsumerFactory, ta
 		manager.consumers = append(manager.consumers, consumer)
 	}
 
-	slog.Info("Created boxer manager", "tasks", tasks, "consumers", len(manager.consumers))
+	ll.Info("Created boxer manager", "tasks", tasks, "consumers", len(manager.consumers))
 	return manager, nil
 }
 
 func (m *BoxerManager) createConsumerForTask(ctx context.Context, factory ConsumerFactory, task string) (BoxerConsumer, error) {
 	switch task {
-	case "compact-logs":
+	case config.TaskCompactLogs:
 		return factory.CreateLogCompactionConsumer(ctx)
-	case "compact-metrics":
+	case config.TaskCompactMetrics:
 		return factory.CreateMetricCompactionConsumer(ctx)
-	case "compact-traces":
+	case config.TaskCompactTraces:
 		return factory.CreateTraceCompactionConsumer(ctx)
-	case "rollup-metrics":
+	case config.TaskRollupMetrics:
 		return factory.CreateMetricRollupConsumer(ctx)
 	default:
 		return nil, fmt.Errorf("unknown task: %s", task)
@@ -131,11 +133,12 @@ func (m *BoxerManager) createConsumerForTask(ctx context.Context, factory Consum
 
 // Run starts all consumers concurrently and waits for them to complete
 func (m *BoxerManager) Run(ctx context.Context) error {
+	ll := logctx.FromContext(ctx)
+
 	if len(m.consumers) == 0 {
 		return fmt.Errorf("no consumers to run")
 	}
 
-	// Use errgroup to run all consumers concurrently
 	g, gCtx := errgroup.WithContext(ctx)
 
 	m.mu.RLock()
@@ -150,12 +153,14 @@ func (m *BoxerManager) Run(ctx context.Context) error {
 		taskName := tasks[i]
 		c := consumer // Capture for closure
 		g.Go(func() error {
-			slog.Info("Starting boxer consumer", "task", taskName)
+			gll := logctx.FromContext(gCtx).With("task", taskName)
+			gCtx = logctx.WithLogger(gCtx, gll)
+			gll.Info("Starting boxer consumer")
 			if err := c.Run(gCtx); err != nil {
-				slog.Error("Boxer consumer failed", "task", taskName, "error", err)
+				gll.Error("Boxer consumer failed", "error", err)
 				return fmt.Errorf("task %s failed: %w", taskName, err)
 			}
-			slog.Info("Boxer consumer stopped", "task", taskName)
+			gll.Info("Boxer consumer stopped")
 			return nil
 		})
 	}
@@ -165,7 +170,7 @@ func (m *BoxerManager) Run(ctx context.Context) error {
 		return fmt.Errorf("boxer failed: %w", err)
 	}
 
-	slog.Info("All boxer consumers completed successfully")
+	ll.Info("All boxer consumers completed successfully")
 	return nil
 }
 
@@ -190,8 +195,8 @@ func (m *BoxerManager) Close() error {
 	return nil
 }
 
-// GetTasks returns the list of tasks this manager is running
-func (m *BoxerManager) GetTasks() []string {
+// getTasks returns the list of tasks this manager is running
+func (m *BoxerManager) getTasks() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

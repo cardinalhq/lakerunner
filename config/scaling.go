@@ -74,27 +74,27 @@ func GetDefaultScalingConfig() ScalingConfig {
 // GetServiceScaling returns the scaling configuration for a specific service type
 func (s *ScalingConfig) GetServiceScaling(serviceType string) (ServiceScaling, error) {
 	switch serviceType {
-	case "ingest-logs":
+	case ServiceTypeIngestLogs:
 		return s.IngestLogs, nil
-	case "ingest-metrics":
+	case ServiceTypeIngestMetrics:
 		return s.IngestMetrics, nil
-	case "ingest-traces":
+	case ServiceTypeIngestTraces:
 		return s.IngestTraces, nil
-	case "compact-logs":
+	case ServiceTypeCompactLogs:
 		return s.CompactLogs, nil
-	case "compact-metrics":
+	case ServiceTypeCompactMetrics:
 		return s.CompactMetrics, nil
-	case "compact-traces":
+	case ServiceTypeCompactTraces:
 		return s.CompactTraces, nil
-	case "rollup-metrics":
+	case ServiceTypeRollupMetrics:
 		return s.RollupMetrics, nil
-	case "boxer-compact-logs":
+	case ServiceTypeBoxerCompactLogs:
 		return s.BoxerCompactLogs, nil
-	case "boxer-compact-metrics":
+	case ServiceTypeBoxerCompactMetrics:
 		return s.BoxerCompactMetrics, nil
-	case "boxer-compact-traces":
+	case ServiceTypeBoxerCompactTraces:
 		return s.BoxerCompactTraces, nil
-	case "boxer-rollup-metrics":
+	case ServiceTypeBoxerRollupMetrics:
 		return s.BoxerRollupMetrics, nil
 	default:
 		return ServiceScaling{}, fmt.Errorf("unknown service type: %s", serviceType)

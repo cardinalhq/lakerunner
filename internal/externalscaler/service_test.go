@@ -141,9 +141,9 @@ func TestService_GetMetricSpec(t *testing.T) {
 		expectedTarget     float64
 		expectError        bool
 	}{
-		{"ingest-logs", "ingest-logs", "ingest-logs-queue-depth", 100.0, false},
-		{"rollup-metrics", "rollup-metrics", "rollup-metrics-queue-depth", 100.0, false},
-		{"boxer-rollup-metrics", "boxer-rollup-metrics", "boxer-rollup-metrics-queue-depth", 1500.0, false},
+		{"ingest-logs", "ingest-logs", "ingest-logs", 100.0, false},
+		{"rollup-metrics", "rollup-metrics", "rollup-metrics", 100.0, false},
+		{"boxer-rollup-metrics", "boxer-rollup-metrics", "boxer-rollup-metrics", 1500.0, false},
 		{"missing-service-type", "", "", 0, true},
 		{"unknown-service-type", "unknown-service", "", 0, true},
 	}
@@ -265,7 +265,7 @@ func TestService_GetMetrics(t *testing.T) {
 						"serviceType": tt.serviceType,
 					},
 				},
-				MetricName: tt.serviceType + "-queue-depth",
+				MetricName: tt.serviceType,
 			}
 
 			resp, err := service.GetMetrics(context.Background(), req)
@@ -283,23 +283,6 @@ func TestService_GetMetrics(t *testing.T) {
 			mockMonitor.AssertExpectations(t)
 		})
 	}
-}
-
-func TestService_GetMetrics_MissingServiceType(t *testing.T) {
-	service := &Service{}
-
-	req := &GetMetricsRequest{
-		ScaledObjectRef: &ScaledObjectRef{
-			Name:           "test-object",
-			Namespace:      "test-namespace",
-			ScalerMetadata: map[string]string{}, // No serviceType
-		},
-		MetricName: "test-metric",
-	}
-
-	_, err := service.GetMetrics(context.Background(), req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "serviceType not specified")
 }
 
 func TestService_getQueueDepth(t *testing.T) {

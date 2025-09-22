@@ -137,7 +137,7 @@ func TestNewBoxerManagerWithFactory(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, manager)
-				assert.Equal(t, tt.tasks, manager.GetTasks())
+				assert.Equal(t, tt.tasks, manager.getTasks())
 				assert.Len(t, manager.consumers, len(tt.tasks))
 			}
 
@@ -287,12 +287,12 @@ func TestBoxerManager_GetTasks(t *testing.T) {
 	manager, err := NewBoxerManagerWithFactory(ctx, factory, tasks)
 	require.NoError(t, err)
 
-	result := manager.GetTasks()
+	result := manager.getTasks()
 	assert.Equal(t, tasks, result)
 
 	// Verify that the returned slice is a copy (modifying it shouldn't affect the original)
 	result[0] = "modified"
-	assert.Equal(t, tasks, manager.GetTasks())
+	assert.Equal(t, tasks, manager.getTasks())
 
 	factory.AssertExpectations(t)
 }
