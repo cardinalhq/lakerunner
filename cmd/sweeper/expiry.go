@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -158,7 +159,6 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 
 	for _, org := range orgs {
 		orgID := org.ID
-		orgName := org.Name
 
 		for _, signalType := range signalTypes {
 			// First check if we have a retention policy for this org/signal
@@ -175,13 +175,13 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 					maxAgeDays = getDefaultMaxAgeDays(cfg, signalType)
 					if maxAgeDays == -1 {
 						slog.Debug("No policy and no default configured for signal type, skipping",
-							slog.String("org", orgName),
+							slog.String("org_id", orgID.String()),
 							slog.String("signal_type", signalType))
 						continue
 					}
 				} else {
 					slog.Error("Failed to fetch expiry config",
-						slog.String("org", orgName),
+						slog.String("org_id", orgID.String()),
 						slog.String("signal_type", signalType),
 						slog.Any("error", err))
 					continue
@@ -191,7 +191,7 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 				if expiry.MaxAgeDays == 0 {
 					// 0 means never expire
 					slog.Debug("Skipping expiry for org/signal (policy says never expire)",
-						slog.String("org", orgName),
+						slog.String("org_id", orgID.String()),
 						slog.String("signal_type", signalType))
 					continue
 				} else if expiry.MaxAgeDays > 0 {
@@ -202,7 +202,7 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 					maxAgeDays = getDefaultMaxAgeDays(cfg, signalType)
 					if maxAgeDays == -1 {
 						slog.Debug("Policy exists but no default configured for signal type, skipping",
-							slog.String("org", orgName),
+							slog.String("org_id", orgID.String()),
 							slog.String("signal_type", signalType))
 						continue
 					}
@@ -212,7 +212,7 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 			// Check if maxAgeDays is 0 (never expire)
 			if maxAgeDays == 0 {
 				slog.Debug("Skipping expiry for org/signal (never expire)",
-					slog.String("org", orgName),
+					slog.String("org_id", orgID.String()),
 					slog.String("signal_type", signalType))
 				continue
 			}
@@ -230,7 +230,7 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 					needsCheck = true
 				} else {
 					slog.Error("Failed to fetch last run info",
-						slog.String("org", orgName),
+						slog.String("org_id", orgID.String()),
 						slog.String("signal_type", signalType),
 						slog.Any("error", err))
 					// Continue anyway - better to check than skip
@@ -252,7 +252,7 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 			cutoffDateInt := toDateInt(cutoffDate)
 
 			slog.Info("Processing expiry",
-				slog.String("org", orgName),
+				slog.String("org_id", orgID.String()),
 				slog.String("signal_type", signalType),
 				slog.Int("max_age_days", maxAgeDays),
 				slog.Int("cutoff_dateint", cutoffDateInt))
@@ -266,12 +266,22 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 				OrganizationID: orgID,
 			})
 			if err != nil {
-				// Log the error and continue - partition might not exist yet
-				slog.Warn("Failed to find org partition",
-					slog.String("org", orgName),
-					slog.String("signal_type", signalType),
-					slog.String("table", tableName),
-					slog.Any("error", err))
+				// Check if this is just a "no data" situation
+				errStr := err.Error()
+				if strings.Contains(errStr, "No rows for organization") {
+					// This is normal for orgs that haven't ingested data yet
+					slog.Debug("No data found for org/signal (org has not ingested this signal type yet)",
+						slog.String("org_id", orgID.String()),
+						slog.String("signal_type", signalType),
+						slog.String("table", tableName))
+				} else {
+					// This is an actual error
+					slog.Warn("Failed to find org partition",
+						slog.String("org_id", orgID.String()),
+						slog.String("signal_type", signalType),
+						slog.String("table", tableName),
+						slog.Any("error", err))
+				}
 
 				// Update run tracking anyway to avoid repeated attempts
 				_ = cdb.UpsertExpiryRunTracking(ctx, configdb.UpsertExpiryRunTrackingParams{
@@ -290,7 +300,7 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 			})
 			if err != nil {
 				slog.Error("Failed to expire data",
-					slog.String("org", orgName),
+					slog.String("org_id", orgID.String()),
 					slog.String("signal_type", signalType),
 					slog.String("partition", partitionResult),
 					slog.Int("cutoff_dateint", cutoffDateInt),
@@ -299,7 +309,7 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 				expiryCleanupCounter.Add(ctx, 1, metric.WithAttributes(
 					attribute.String("status", "error"),
 					attribute.String("signal_type", signalType),
-					attribute.String("org", orgName),
+					attribute.String("org_id", orgID.String()),
 					attribute.String("error", "expire_data"),
 				))
 				// Don't update run tracking on failure - allow retry on next hourly pass
@@ -309,19 +319,19 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 			totalRowsExpired += rowsExpired
 
 			slog.Info("Successfully expired data",
-				slog.String("org", orgName),
+				slog.String("org_id", orgID.String()),
 				slog.String("signal_type", signalType),
 				slog.Int64("rows_expired", rowsExpired))
 
 			expiryRowsCounter.Add(ctx, rowsExpired, metric.WithAttributes(
 				attribute.String("signal_type", signalType),
-				attribute.String("org", orgName),
+				attribute.String("org_id", orgID.String()),
 			))
 
 			expiryCleanupCounter.Add(ctx, 1, metric.WithAttributes(
 				attribute.String("status", "success"),
 				attribute.String("signal_type", signalType),
-				attribute.String("org", orgName),
+				attribute.String("org_id", orgID.String()),
 			))
 
 			// Only update run tracking on successful expiry
@@ -331,7 +341,7 @@ func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpi
 			})
 			if err != nil {
 				slog.Error("Failed to update run tracking",
-					slog.String("org", orgName),
+					slog.String("org_id", orgID.String()),
 					slog.String("signal_type", signalType),
 					slog.Any("error", err))
 			}
