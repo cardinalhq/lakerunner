@@ -27,16 +27,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/dbopen"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // setupTestDatabase creates a single connection for tests that need it
-func setupTestDatabase(t *testing.T) (*pgx.Conn, *configdb.Queries) {
+func setupTestDatabase(t *testing.T) (*pgx.Conn, *lrdb.Queries) {
 	ctx := context.Background()
 
 	// Use the standard connection helper with skip migration check for tests
-	pool, err := configdb.ConnectToConfigDB(ctx, dbopen.SkipMigrationCheck())
+	pool, err := lrdb.ConnectTolrdb(ctx, dbopen.SkipMigrationCheck())
 	require.NoError(t, err, "Failed to connect to database")
 
 	// Acquire a single connection from the pool
@@ -50,7 +50,7 @@ func setupTestDatabase(t *testing.T) (*pgx.Conn, *configdb.Queries) {
 	pool.Close()
 
 	// Create queries instance with the single connection
-	queries := configdb.New(hijackedConn)
+	queries := lrdb.New(hijackedConn)
 
 	return hijackedConn, queries
 }
@@ -60,17 +60,13 @@ func setupTestOrganizationAndPartitions(t *testing.T, conn *pgx.Conn) (uuid.UUID
 	ctx := context.Background()
 	orgID := uuid.New()
 
-	// Create organization
-	_, err := conn.Exec(ctx, `
-		INSERT INTO organizations (id, name, enabled)
-		VALUES ($1, 'TestOrg', true)
-	`, orgID)
-	require.NoError(t, err)
+	// Note: In lrdb we don't have organizations table, just use a UUID
+	// The actual org would be in configdb, but for partition testing we don't need it
 
 	// Create partitioned table structure similar to what would exist in production
 	// First check if the test tables exist, if not create them
 	var exists bool
-	err = conn.QueryRow(ctx, `
+	err := conn.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM pg_tables
 			WHERE schemaname = 'public'
@@ -213,7 +209,7 @@ func TestCallFindOrgPartition_Integration(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := queries.CallFindOrgPartition(ctx, configdb.CallFindOrgPartitionParams{
+			result, err := queries.CallFindOrgPartition(ctx, lrdb.CallFindOrgPartitionParams{
 				TableName:      tc.tableName,
 				OrganizationID: tc.orgID,
 			})
@@ -248,7 +244,7 @@ func TestCallExpirePublishedByIngestCutoff_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// First, find the partition for our test data
-	partitionName, err := queries.CallFindOrgPartition(ctx, configdb.CallFindOrgPartitionParams{
+	partitionName, err := queries.CallFindOrgPartition(ctx, lrdb.CallFindOrgPartitionParams{
 		TableName:      "test_log_seg",
 		OrganizationID: orgID,
 	})
@@ -302,7 +298,7 @@ func TestCallExpirePublishedByIngestCutoff_Integration(t *testing.T) {
 			require.NoError(t, err)
 
 			// Call the expiry function
-			rowsExpired, err := queries.CallExpirePublishedByIngestCutoff(ctx, configdb.CallExpirePublishedByIngestCutoffParams{
+			rowsExpired, err := queries.CallExpirePublishedByIngestCutoff(ctx, lrdb.CallExpirePublishedByIngestCutoffParams{
 				PartitionName:  partitionName,
 				OrganizationID: orgID,
 				CutoffDateint:  tc.cutoffDateInt,
@@ -378,21 +374,14 @@ func TestExpirePublishedByIngestCutoff_BatchProcessing(t *testing.T) {
 	ctx := context.Background()
 	orgID := uuid.New()
 
-	// Create organization
-	_, err := conn.Exec(ctx, `
-		INSERT INTO organizations (id, name, enabled)
-		VALUES ($1, 'TestOrgBatch', true)
-	`, orgID)
-	require.NoError(t, err)
-	defer func() {
-		_, _ = conn.Exec(ctx, "DELETE FROM organizations WHERE id = $1", orgID)
-	}()
+	// Note: In lrdb we don't have organizations table, just use a UUID
+	// The actual org would be in configdb, but for partition testing we don't need it
 
 	// Create test table and partition
 	orgPartitionName := fmt.Sprintf("test_log_seg_batch_%s", orgID.String()[:8])
 
 	// Create the org partition
-	_, err = conn.Exec(ctx, fmt.Sprintf(`
+	_, err := conn.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s PARTITION OF test_log_seg
 		FOR VALUES IN ('%s')
 		PARTITION BY RANGE (dateint)
@@ -428,7 +417,7 @@ func TestExpirePublishedByIngestCutoff_BatchProcessing(t *testing.T) {
 	}
 
 	// Find the partition
-	partitionName, err := queries.CallFindOrgPartition(ctx, configdb.CallFindOrgPartitionParams{
+	partitionName, err := queries.CallFindOrgPartition(ctx, lrdb.CallFindOrgPartitionParams{
 		TableName:      "test_log_seg",
 		OrganizationID: orgID,
 	})
@@ -439,7 +428,7 @@ func TestExpirePublishedByIngestCutoff_BatchProcessing(t *testing.T) {
 	batchSize := int32(10)
 
 	// Call the expire function - it processes all rows internally in batches
-	rowsExpired, err := queries.CallExpirePublishedByIngestCutoff(ctx, configdb.CallExpirePublishedByIngestCutoffParams{
+	rowsExpired, err := queries.CallExpirePublishedByIngestCutoff(ctx, lrdb.CallExpirePublishedByIngestCutoffParams{
 		PartitionName:  partitionName,
 		OrganizationID: orgID,
 		CutoffDateint:  20250915, // All test data has ingest_dateint = 20250910
@@ -462,7 +451,7 @@ func TestExpirePublishedByIngestCutoff_BatchProcessing(t *testing.T) {
 	assert.Equal(t, 0, publishedCount, "No published rows should remain")
 
 	// Verify calling again returns 0 (no more work)
-	rowsExpired, err = queries.CallExpirePublishedByIngestCutoff(ctx, configdb.CallExpirePublishedByIngestCutoffParams{
+	rowsExpired, err = queries.CallExpirePublishedByIngestCutoff(ctx, lrdb.CallExpirePublishedByIngestCutoffParams{
 		PartitionName:  partitionName,
 		OrganizationID: orgID,
 		CutoffDateint:  20250915,

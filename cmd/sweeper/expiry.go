@@ -28,11 +28,11 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// ExpiryQuerier defines the database operations needed for expiry cleanup
-// This interface enables easier unit testing by allowing mock implementations
-type ExpiryQuerier interface {
+// ConfigExpiryQuerier defines the configdb operations needed for expiry cleanup
+type ConfigExpiryQuerier interface {
 	// GetActiveOrganizations returns all enabled organizations
 	GetActiveOrganizations(ctx context.Context) ([]configdb.GetActiveOrganizationsRow, error)
 
@@ -44,16 +44,20 @@ type ExpiryQuerier interface {
 
 	// UpsertExpiryRunTracking creates or updates expiry run tracking
 	UpsertExpiryRunTracking(ctx context.Context, arg configdb.UpsertExpiryRunTrackingParams) error
-
-	// CallFindOrgPartition finds the organization's partition for a given table
-	CallFindOrgPartition(ctx context.Context, arg configdb.CallFindOrgPartitionParams) (string, error)
-
-	// CallExpirePublishedByIngestCutoff expires data older than the cutoff date
-	CallExpirePublishedByIngestCutoff(ctx context.Context, arg configdb.CallExpirePublishedByIngestCutoffParams) (int64, error)
 }
 
-// Compile-time check to ensure configdb.QuerierFull implements ExpiryQuerier
-var _ ExpiryQuerier = (configdb.QuerierFull)(nil)
+// LRDBExpiryQuerier defines the lrdb operations needed for expiry cleanup
+type LRDBExpiryQuerier interface {
+	// CallFindOrgPartition finds the organization's partition for a given table
+	CallFindOrgPartition(ctx context.Context, arg lrdb.CallFindOrgPartitionParams) (string, error)
+
+	// CallExpirePublishedByIngestCutoff expires data older than the cutoff date
+	CallExpirePublishedByIngestCutoff(ctx context.Context, arg lrdb.CallExpirePublishedByIngestCutoffParams) (int64, error)
+}
+
+// Compile-time checks to ensure implementations match interfaces
+var _ ConfigExpiryQuerier = (configdb.QuerierFull)(nil)
+var _ LRDBExpiryQuerier = (lrdb.QuerierFull)(nil)
 
 var (
 	expiryCleanupCounter  metric.Int64Counter
@@ -121,7 +125,7 @@ func getBatchSize(cfg *config.Config) int {
 }
 
 // runExpiryCleanup processes expired data for all organizations and signal types
-func runExpiryCleanup(ctx context.Context, cdb ExpiryQuerier, cfg *config.Config) error {
+func runExpiryCleanup(ctx context.Context, cdb ConfigExpiryQuerier, ldb LRDBExpiryQuerier, cfg *config.Config) error {
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start).Seconds()
@@ -249,7 +253,7 @@ func runExpiryCleanup(ctx context.Context, cdb ExpiryQuerier, cfg *config.Config
 			tableName := fmt.Sprintf("%s_seg", signalType[:len(signalType)-1]) // Remove 's' from the end
 
 			// Find the org partition
-			partitionResult, err := cdb.CallFindOrgPartition(ctx, configdb.CallFindOrgPartitionParams{
+			partitionResult, err := ldb.CallFindOrgPartition(ctx, lrdb.CallFindOrgPartitionParams{
 				TableName:      tableName,
 				OrganizationID: orgID,
 			})
@@ -270,7 +274,7 @@ func runExpiryCleanup(ctx context.Context, cdb ExpiryQuerier, cfg *config.Config
 			}
 
 			// Call the expiry function
-			rowsExpired, err := cdb.CallExpirePublishedByIngestCutoff(ctx, configdb.CallExpirePublishedByIngestCutoffParams{
+			rowsExpired, err := ldb.CallExpirePublishedByIngestCutoff(ctx, lrdb.CallExpirePublishedByIngestCutoffParams{
 				PartitionName:  partitionResult,
 				OrganizationID: orgID,
 				CutoffDateint:  int32(cutoffDateInt),

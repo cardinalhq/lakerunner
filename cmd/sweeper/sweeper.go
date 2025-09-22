@@ -219,7 +219,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	wg.Go(func() {
 		slog.Info("Starting data expiry cleanup goroutine", slog.Duration("period", expiryCleanupPeriod))
 		if err := periodicLoop(ctx, expiryCleanupPeriod, func(c context.Context) error {
-			return runExpiryCleanup(c, cdb, cmd.cfg)
+			return runExpiryCleanup(c, cdb, mdb, cmd.cfg)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}

@@ -11,47 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const callExpirePublishedByIngestCutoff = `-- name: CallExpirePublishedByIngestCutoff :one
-SELECT expire_published_by_ingest_cutoff($1::regclass, $2::uuid, $3::integer, $4::integer) AS rows_expired
-`
-
-type CallExpirePublishedByIngestCutoffParams struct {
-	PartitionName  interface{} `json:"partition_name"`
-	OrganizationID uuid.UUID   `json:"organization_id"`
-	CutoffDateint  int32       `json:"cutoff_dateint"`
-	BatchSize      int32       `json:"batch_size"`
-}
-
-func (q *Queries) CallExpirePublishedByIngestCutoff(ctx context.Context, arg CallExpirePublishedByIngestCutoffParams) (int64, error) {
-	row := q.db.QueryRow(ctx, callExpirePublishedByIngestCutoff,
-		arg.PartitionName,
-		arg.OrganizationID,
-		arg.CutoffDateint,
-		arg.BatchSize,
-	)
-	var rows_expired int64
-	err := row.Scan(&rows_expired)
-	return rows_expired, err
-}
-
-const callFindOrgPartition = `-- name: CallFindOrgPartition :one
-SELECT find_org_partition($1::regclass, $2::uuid)::text AS partition_name
-`
-
-type CallFindOrgPartitionParams struct {
-	TableName      interface{} `json:"table_name"`
-	OrganizationID uuid.UUID   `json:"organization_id"`
-}
-
-func (q *Queries) CallFindOrgPartition(ctx context.Context, arg CallFindOrgPartitionParams) (string, error) {
-	row := q.db.QueryRow(ctx, callFindOrgPartition, arg.TableName, arg.OrganizationID)
-	var partition_name string
-	err := row.Scan(&partition_name)
-	return partition_name, err
-}
-
 const getActiveOrganizations = `-- name: GetActiveOrganizations :many
-
 SELECT id, name, enabled
 FROM organizations
 WHERE enabled = true
@@ -63,19 +23,6 @@ type GetActiveOrganizationsRow struct {
 	Enabled bool      `json:"enabled"`
 }
 
-// Copyright (C) 2025 CardinalHQ, Inc
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as
-// published by the Free Software Foundation, version 3.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <http://www.gnu.org/licenses/>.
 func (q *Queries) GetActiveOrganizations(ctx context.Context) ([]GetActiveOrganizationsRow, error) {
 	rows, err := q.db.Query(ctx, getActiveOrganizations)
 	if err != nil {

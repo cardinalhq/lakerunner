@@ -28,46 +28,53 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// MockExpiryQuerier is a mock implementation of ExpiryQuerier for testing
-type MockExpiryQuerier struct {
+// MockConfigExpiryQuerier is a mock implementation of ConfigExpiryQuerier for testing
+type MockConfigExpiryQuerier struct {
 	mock.Mock
 }
 
-func (m *MockExpiryQuerier) GetActiveOrganizations(ctx context.Context) ([]configdb.GetActiveOrganizationsRow, error) {
+func (m *MockConfigExpiryQuerier) GetActiveOrganizations(ctx context.Context) ([]configdb.GetActiveOrganizationsRow, error) {
 	args := m.Called(ctx)
 	return args.Get(0).([]configdb.GetActiveOrganizationsRow), args.Error(1)
 }
 
-func (m *MockExpiryQuerier) GetOrganizationExpiry(ctx context.Context, arg configdb.GetOrganizationExpiryParams) (configdb.OrganizationSignalExpiry, error) {
+func (m *MockConfigExpiryQuerier) GetOrganizationExpiry(ctx context.Context, arg configdb.GetOrganizationExpiryParams) (configdb.OrganizationSignalExpiry, error) {
 	args := m.Called(ctx, arg)
 	return args.Get(0).(configdb.OrganizationSignalExpiry), args.Error(1)
 }
 
-func (m *MockExpiryQuerier) GetExpiryLastRun(ctx context.Context, arg configdb.GetExpiryLastRunParams) (configdb.ExpiryRunTracking, error) {
+func (m *MockConfigExpiryQuerier) GetExpiryLastRun(ctx context.Context, arg configdb.GetExpiryLastRunParams) (configdb.ExpiryRunTracking, error) {
 	args := m.Called(ctx, arg)
 	return args.Get(0).(configdb.ExpiryRunTracking), args.Error(1)
 }
 
-func (m *MockExpiryQuerier) UpsertExpiryRunTracking(ctx context.Context, arg configdb.UpsertExpiryRunTrackingParams) error {
+func (m *MockConfigExpiryQuerier) UpsertExpiryRunTracking(ctx context.Context, arg configdb.UpsertExpiryRunTrackingParams) error {
 	args := m.Called(ctx, arg)
 	return args.Error(0)
 }
 
-func (m *MockExpiryQuerier) CallFindOrgPartition(ctx context.Context, arg configdb.CallFindOrgPartitionParams) (string, error) {
+// MockLRDBExpiryQuerier is a mock implementation of LRDBExpiryQuerier for testing
+type MockLRDBExpiryQuerier struct {
+	mock.Mock
+}
+
+func (m *MockLRDBExpiryQuerier) CallFindOrgPartition(ctx context.Context, arg lrdb.CallFindOrgPartitionParams) (string, error) {
 	args := m.Called(ctx, arg)
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockExpiryQuerier) CallExpirePublishedByIngestCutoff(ctx context.Context, arg configdb.CallExpirePublishedByIngestCutoffParams) (int64, error) {
+func (m *MockLRDBExpiryQuerier) CallExpirePublishedByIngestCutoff(ctx context.Context, arg lrdb.CallExpirePublishedByIngestCutoffParams) (int64, error) {
 	args := m.Called(ctx, arg)
 	return args.Get(0).(int64), args.Error(1)
 }
 
 func TestRunExpiryCleanup_NoOrganizations(t *testing.T) {
 	ctx := context.Background()
-	mockDB := new(MockExpiryQuerier)
+	mockCDB := new(MockConfigExpiryQuerier)
+	mockLDB := new(MockLRDBExpiryQuerier)
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
 			DefaultMaxAgeDays: map[string]int{
@@ -80,37 +87,40 @@ func TestRunExpiryCleanup_NoOrganizations(t *testing.T) {
 	}
 
 	// Setup expectations - no organizations
-	mockDB.On("GetActiveOrganizations", ctx).Return([]configdb.GetActiveOrganizationsRow{}, nil)
+	mockCDB.On("GetActiveOrganizations", ctx).Return([]configdb.GetActiveOrganizationsRow{}, nil)
 
 	// Run the function
-	err := runExpiryCleanup(ctx, mockDB, cfg)
+	err := runExpiryCleanup(ctx, mockCDB, mockLDB, cfg)
 
 	// Assertions
 	assert.NoError(t, err)
-	mockDB.AssertExpectations(t)
+	mockCDB.AssertExpectations(t)
+	mockLDB.AssertExpectations(t)
 }
 
 func TestRunExpiryCleanup_ErrorFetchingOrganizations(t *testing.T) {
 	ctx := context.Background()
-	mockDB := new(MockExpiryQuerier)
+	mockCDB := new(MockConfigExpiryQuerier)
+	mockLDB := new(MockLRDBExpiryQuerier)
 	cfg := &config.Config{}
 
 	// Setup expectations - error fetching orgs
 	expectedErr := errors.New("database connection failed")
-	mockDB.On("GetActiveOrganizations", ctx).Return([]configdb.GetActiveOrganizationsRow{}, expectedErr)
+	mockCDB.On("GetActiveOrganizations", ctx).Return([]configdb.GetActiveOrganizationsRow{}, expectedErr)
 
 	// Run the function
-	err := runExpiryCleanup(ctx, mockDB, cfg)
+	err := runExpiryCleanup(ctx, mockCDB, mockLDB, cfg)
 
 	// Assertions
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to fetch active organizations")
-	mockDB.AssertExpectations(t)
+	mockCDB.AssertExpectations(t)
 }
 
 func TestRunExpiryCleanup_NeverExpireConfiguration(t *testing.T) {
 	ctx := context.Background()
-	mockDB := new(MockExpiryQuerier)
+	mockCDB := new(MockConfigExpiryQuerier)
+	mockLDB := new(MockLRDBExpiryQuerier)
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
@@ -127,7 +137,7 @@ func TestRunExpiryCleanup_NeverExpireConfiguration(t *testing.T) {
 	orgs := []configdb.GetActiveOrganizationsRow{
 		{ID: orgID, Name: "TestOrg", Enabled: true},
 	}
-	mockDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
+	mockCDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
 
 	// For each signal type, when configured to never expire (0),
 	// entries with MaxAgeDays=0 mean never expire
@@ -140,7 +150,7 @@ func TestRunExpiryCleanup_NeverExpireConfiguration(t *testing.T) {
 			CreatedAt:      yesterday,
 			UpdatedAt:      yesterday,
 		}
-		mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+		mockCDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 			OrganizationID: orgID,
 			SignalType:     signalType,
 		}).Return(expiry, nil)
@@ -149,16 +159,17 @@ func TestRunExpiryCleanup_NeverExpireConfiguration(t *testing.T) {
 	}
 
 	// Run the function
-	err := runExpiryCleanup(ctx, mockDB, cfg)
+	err := runExpiryCleanup(ctx, mockCDB, mockLDB, cfg)
 
 	// Assertions
 	assert.NoError(t, err)
-	mockDB.AssertExpectations(t)
+	mockCDB.AssertExpectations(t)
 }
 
 func TestRunExpiryCleanup_WithExpiry(t *testing.T) {
 	ctx := context.Background()
-	mockDB := new(MockExpiryQuerier)
+	mockCDB := new(MockConfigExpiryQuerier)
+	mockLDB := new(MockLRDBExpiryQuerier)
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
@@ -175,7 +186,7 @@ func TestRunExpiryCleanup_WithExpiry(t *testing.T) {
 	orgs := []configdb.GetActiveOrganizationsRow{
 		{ID: orgID, Name: "TestOrg", Enabled: true},
 	}
-	mockDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
+	mockCDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
 
 	// Setup expiry configurations that need processing
 	yesterday := time.Now().AddDate(0, 0, -1)
@@ -197,7 +208,7 @@ func TestRunExpiryCleanup_WithExpiry(t *testing.T) {
 			UpdatedAt:      yesterday,
 		}
 
-		mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+		mockCDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 			OrganizationID: orgID,
 			SignalType:     tc.signalType,
 		}).Return(expiry, nil)
@@ -211,7 +222,7 @@ func TestRunExpiryCleanup_WithExpiry(t *testing.T) {
 				CreatedAt:      pgtype.Timestamp{Time: yesterday, Valid: true},
 				UpdatedAt:      pgtype.Timestamp{Time: yesterday, Valid: true},
 			}
-			mockDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
+			mockCDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
 				OrganizationID: orgID,
 				SignalType:     tc.signalType,
 			}).Return(lastRun, nil)
@@ -219,20 +230,20 @@ func TestRunExpiryCleanup_WithExpiry(t *testing.T) {
 			tableName := tc.signalType[:len(tc.signalType)-1] + "_seg"
 			partitionName := tableName + "_org_" + orgID.String()[:8]
 
-			// Expect partition lookup
-			mockDB.On("CallFindOrgPartition", ctx, mock.MatchedBy(func(arg configdb.CallFindOrgPartitionParams) bool {
+			// Expect partition lookup - now from lrdb
+			mockLDB.On("CallFindOrgPartition", ctx, mock.MatchedBy(func(arg lrdb.CallFindOrgPartitionParams) bool {
 				return arg.TableName == tableName && arg.OrganizationID == orgID
 			})).Return(partitionName, nil)
 
-			// Expect expiry call
-			mockDB.On("CallExpirePublishedByIngestCutoff", ctx, mock.MatchedBy(func(arg configdb.CallExpirePublishedByIngestCutoffParams) bool {
+			// Expect expiry call - now from lrdb
+			mockLDB.On("CallExpirePublishedByIngestCutoff", ctx, mock.MatchedBy(func(arg lrdb.CallExpirePublishedByIngestCutoffParams) bool {
 				return arg.PartitionName == partitionName &&
 					arg.OrganizationID == orgID &&
 					arg.BatchSize == int32(cfg.Expiry.BatchSize)
 			})).Return(int64(100), nil)
 
 			// Expect update of run tracking
-			mockDB.On("UpsertExpiryRunTracking", ctx, configdb.UpsertExpiryRunTrackingParams{
+			mockCDB.On("UpsertExpiryRunTracking", ctx, configdb.UpsertExpiryRunTrackingParams{
 				OrganizationID: orgID,
 				SignalType:     tc.signalType,
 			}).Return(nil)
@@ -240,16 +251,18 @@ func TestRunExpiryCleanup_WithExpiry(t *testing.T) {
 	}
 
 	// Run the function
-	err := runExpiryCleanup(ctx, mockDB, cfg)
+	err := runExpiryCleanup(ctx, mockCDB, mockLDB, cfg)
 
 	// Assertions
 	assert.NoError(t, err)
-	mockDB.AssertExpectations(t)
+	mockCDB.AssertExpectations(t)
+	mockLDB.AssertExpectations(t)
 }
 
 func TestRunExpiryCleanup_PartitionNotFound(t *testing.T) {
 	ctx := context.Background()
-	mockDB := new(MockExpiryQuerier)
+	mockCDB := new(MockConfigExpiryQuerier)
+	mockLDB := new(MockLRDBExpiryQuerier)
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
@@ -264,7 +277,7 @@ func TestRunExpiryCleanup_PartitionNotFound(t *testing.T) {
 	orgs := []configdb.GetActiveOrganizationsRow{
 		{ID: orgID, Name: "TestOrg", Enabled: true},
 	}
-	mockDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
+	mockCDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
 
 	// Setup expiry configuration
 	yesterday := time.Now().AddDate(0, 0, -1)
@@ -276,31 +289,31 @@ func TestRunExpiryCleanup_PartitionNotFound(t *testing.T) {
 		UpdatedAt:      yesterday,
 	}
 
-	mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+	mockCDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 		OrganizationID: orgID,
 		SignalType:     "logs",
 	}).Return(expiry, nil)
 
 	// Mock the last run check - needs to run
-	mockDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
+	mockCDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
 		OrganizationID: orgID,
 		SignalType:     "logs",
 	}).Return(configdb.ExpiryRunTracking{}, sql.ErrNoRows)
 
-	// Partition lookup fails (org has no data yet)
-	mockDB.On("CallFindOrgPartition", ctx, mock.MatchedBy(func(arg configdb.CallFindOrgPartitionParams) bool {
+	// Partition lookup fails (org has no data yet) - now from lrdb
+	mockLDB.On("CallFindOrgPartition", ctx, mock.MatchedBy(func(arg lrdb.CallFindOrgPartitionParams) bool {
 		return arg.TableName == "log_seg" && arg.OrganizationID == orgID
 	})).Return("", errors.New("No rows for organization"))
 
 	// Should still update run tracking
-	mockDB.On("UpsertExpiryRunTracking", ctx, configdb.UpsertExpiryRunTrackingParams{
+	mockCDB.On("UpsertExpiryRunTracking", ctx, configdb.UpsertExpiryRunTrackingParams{
 		OrganizationID: orgID,
 		SignalType:     "logs",
 	}).Return(nil)
 
 	// For the other signal types that don't have policies
 	for _, signalType := range []string{"metrics", "traces"} {
-		mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+		mockCDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 			OrganizationID: orgID,
 			SignalType:     signalType,
 		}).Return(configdb.OrganizationSignalExpiry{}, sql.ErrNoRows)
@@ -308,16 +321,17 @@ func TestRunExpiryCleanup_PartitionNotFound(t *testing.T) {
 	}
 
 	// Run the function
-	err := runExpiryCleanup(ctx, mockDB, cfg)
+	err := runExpiryCleanup(ctx, mockCDB, mockLDB, cfg)
 
 	// Assertions
 	assert.NoError(t, err) // Should not fail when partition doesn't exist
-	mockDB.AssertExpectations(t)
+	mockCDB.AssertExpectations(t)
 }
 
 func TestRunExpiryCleanup_AlreadyCheckedToday(t *testing.T) {
 	ctx := context.Background()
-	mockDB := new(MockExpiryQuerier)
+	mockCDB := new(MockConfigExpiryQuerier)
+	mockLDB := new(MockLRDBExpiryQuerier)
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
@@ -332,7 +346,7 @@ func TestRunExpiryCleanup_AlreadyCheckedToday(t *testing.T) {
 	orgs := []configdb.GetActiveOrganizationsRow{
 		{ID: orgID, Name: "TestOrg", Enabled: true},
 	}
-	mockDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
+	mockCDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
 
 	// Setup expiry configuration
 	today := time.Now()
@@ -344,7 +358,7 @@ func TestRunExpiryCleanup_AlreadyCheckedToday(t *testing.T) {
 		UpdatedAt:      today,
 	}
 
-	mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+	mockCDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 		OrganizationID: orgID,
 		SignalType:     "logs",
 	}).Return(expiry, nil)
@@ -357,7 +371,7 @@ func TestRunExpiryCleanup_AlreadyCheckedToday(t *testing.T) {
 		CreatedAt:      pgtype.Timestamp{Time: today, Valid: true},
 		UpdatedAt:      pgtype.Timestamp{Time: today, Valid: true},
 	}
-	mockDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
+	mockCDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
 		OrganizationID: orgID,
 		SignalType:     "logs",
 	}).Return(lastRun, nil)
@@ -366,7 +380,7 @@ func TestRunExpiryCleanup_AlreadyCheckedToday(t *testing.T) {
 
 	// For the other signal types
 	for _, signalType := range []string{"metrics", "traces"} {
-		mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+		mockCDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 			OrganizationID: orgID,
 			SignalType:     signalType,
 		}).Return(configdb.OrganizationSignalExpiry{}, sql.ErrNoRows)
@@ -374,16 +388,17 @@ func TestRunExpiryCleanup_AlreadyCheckedToday(t *testing.T) {
 	}
 
 	// Run the function
-	err := runExpiryCleanup(ctx, mockDB, cfg)
+	err := runExpiryCleanup(ctx, mockCDB, mockLDB, cfg)
 
 	// Assertions
 	assert.NoError(t, err)
-	mockDB.AssertExpectations(t)
+	mockCDB.AssertExpectations(t)
 }
 
 func TestRunExpiryCleanup_NoDefaultConfigured(t *testing.T) {
 	ctx := context.Background()
-	mockDB := new(MockExpiryQuerier)
+	mockCDB := new(MockConfigExpiryQuerier)
+	mockLDB := new(MockLRDBExpiryQuerier)
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
@@ -396,11 +411,11 @@ func TestRunExpiryCleanup_NoDefaultConfigured(t *testing.T) {
 	orgs := []configdb.GetActiveOrganizationsRow{
 		{ID: orgID, Name: "TestOrg", Enabled: true},
 	}
-	mockDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
+	mockCDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
 
 	// For each signal type, expect GetOrganizationExpiry to return ErrNoRows
 	for _, signalType := range []string{"logs", "metrics", "traces"} {
-		mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+		mockCDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 			OrganizationID: orgID,
 			SignalType:     signalType,
 		}).Return(configdb.OrganizationSignalExpiry{}, sql.ErrNoRows)
@@ -408,16 +423,17 @@ func TestRunExpiryCleanup_NoDefaultConfigured(t *testing.T) {
 	}
 
 	// Run the function
-	err := runExpiryCleanup(ctx, mockDB, cfg)
+	err := runExpiryCleanup(ctx, mockCDB, mockLDB, cfg)
 
 	// Assertions
 	assert.NoError(t, err)
-	mockDB.AssertExpectations(t)
+	mockCDB.AssertExpectations(t)
 }
 
 func TestRunExpiryCleanup_ZeroDefaultNoExistingEntry(t *testing.T) {
 	ctx := context.Background()
-	mockDB := new(MockExpiryQuerier)
+	mockCDB := new(MockConfigExpiryQuerier)
+	mockLDB := new(MockLRDBExpiryQuerier)
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
@@ -434,12 +450,12 @@ func TestRunExpiryCleanup_ZeroDefaultNoExistingEntry(t *testing.T) {
 	orgs := []configdb.GetActiveOrganizationsRow{
 		{ID: orgID, Name: "TestOrg", Enabled: true},
 	}
-	mockDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
+	mockCDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
 
 	// For each signal type, when no policy exists and default is 0 (never expire)
 	for _, signalType := range []string{"logs", "metrics", "traces"} {
 		// No policy exists - returns ErrNoRows
-		mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+		mockCDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 			OrganizationID: orgID,
 			SignalType:     signalType,
 		}).Return(configdb.OrganizationSignalExpiry{}, sql.ErrNoRows)
@@ -452,16 +468,17 @@ func TestRunExpiryCleanup_ZeroDefaultNoExistingEntry(t *testing.T) {
 	}
 
 	// Run the function
-	err := runExpiryCleanup(ctx, mockDB, cfg)
+	err := runExpiryCleanup(ctx, mockCDB, mockLDB, cfg)
 
 	// Assertions
 	assert.NoError(t, err)
-	mockDB.AssertExpectations(t)
+	mockCDB.AssertExpectations(t)
 }
 
 func TestRunExpiryCleanup_ExpiryFailureNoRunTracking(t *testing.T) {
 	ctx := context.Background()
-	mockDB := new(MockExpiryQuerier)
+	mockCDB := new(MockConfigExpiryQuerier)
+	mockLDB := new(MockLRDBExpiryQuerier)
 	orgID := uuid.New()
 	cfg := &config.Config{
 		Expiry: config.ExpiryConfig{
@@ -476,7 +493,7 @@ func TestRunExpiryCleanup_ExpiryFailureNoRunTracking(t *testing.T) {
 	orgs := []configdb.GetActiveOrganizationsRow{
 		{ID: orgID, Name: "TestOrg", Enabled: true},
 	}
-	mockDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
+	mockCDB.On("GetActiveOrganizations", ctx).Return(orgs, nil)
 
 	// Setup expiry configuration
 	yesterday := time.Now().AddDate(0, 0, -1)
@@ -488,24 +505,24 @@ func TestRunExpiryCleanup_ExpiryFailureNoRunTracking(t *testing.T) {
 		UpdatedAt:      yesterday,
 	}
 
-	mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+	mockCDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 		OrganizationID: orgID,
 		SignalType:     "logs",
 	}).Return(expiry, nil)
 
 	// Mock the last run check - needs to run
-	mockDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
+	mockCDB.On("GetExpiryLastRun", ctx, configdb.GetExpiryLastRunParams{
 		OrganizationID: orgID,
 		SignalType:     "logs",
 	}).Return(configdb.ExpiryRunTracking{}, sql.ErrNoRows)
 
-	// Partition lookup succeeds
-	mockDB.On("CallFindOrgPartition", ctx, mock.MatchedBy(func(arg configdb.CallFindOrgPartitionParams) bool {
+	// Partition lookup succeeds - now from lrdb
+	mockLDB.On("CallFindOrgPartition", ctx, mock.MatchedBy(func(arg lrdb.CallFindOrgPartitionParams) bool {
 		return arg.TableName == "log_seg" && arg.OrganizationID == orgID
 	})).Return("log_seg_org_partition", nil)
 
-	// Expiry call FAILS - simulate database error
-	mockDB.On("CallExpirePublishedByIngestCutoff", ctx, mock.MatchedBy(func(arg configdb.CallExpirePublishedByIngestCutoffParams) bool {
+	// Expiry call FAILS - simulate database error - now from lrdb
+	mockLDB.On("CallExpirePublishedByIngestCutoff", ctx, mock.MatchedBy(func(arg lrdb.CallExpirePublishedByIngestCutoffParams) bool {
 		return arg.PartitionName == "log_seg_org_partition" && arg.OrganizationID == orgID
 	})).Return(int64(0), errors.New("database connection lost"))
 
@@ -513,16 +530,17 @@ func TestRunExpiryCleanup_ExpiryFailureNoRunTracking(t *testing.T) {
 
 	// For the other signal types that don't have policies
 	for _, signalType := range []string{"metrics", "traces"} {
-		mockDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
+		mockCDB.On("GetOrganizationExpiry", ctx, configdb.GetOrganizationExpiryParams{
 			OrganizationID: orgID,
 			SignalType:     signalType,
 		}).Return(configdb.OrganizationSignalExpiry{}, sql.ErrNoRows)
 	}
 
 	// Run the function
-	err := runExpiryCleanup(ctx, mockDB, cfg)
+	err := runExpiryCleanup(ctx, mockCDB, mockLDB, cfg)
 
 	// Assertions
-	assert.NoError(t, err)       // Function should not fail overall
-	mockDB.AssertExpectations(t) // This will fail if UpsertExpiryRunTracking was called
+	assert.NoError(t, err)        // Function should not fail overall
+	mockCDB.AssertExpectations(t) // This will fail if UpsertExpiryRunTracking was called
+	mockLDB.AssertExpectations(t)
 }

@@ -12,8 +12,6 @@ import (
 )
 
 type Querier interface {
-	CallExpirePublishedByIngestCutoff(ctx context.Context, arg CallExpirePublishedByIngestCutoffParams) (int64, error)
-	CallFindOrgPartition(ctx context.Context, arg CallFindOrgPartitionParams) (string, error)
 	CheckOrgBucketAccess(ctx context.Context, arg CheckOrgBucketAccessParams) (bool, error)
 	ClearAdminAPIKeys(ctx context.Context) error
 	ClearBucketConfigurations(ctx context.Context) error
@@ -41,19 +39,6 @@ type Querier interface {
 	DeleteOrganizationBucketMappings(ctx context.Context, arg DeleteOrganizationBucketMappingsParams) error
 	// Delete organizations not in c_ tables
 	DeleteOrganizationsNotInList(ctx context.Context, idsToDelete []uuid.UUID) error
-	// Copyright (C) 2025 CardinalHQ, Inc
-	//
-	// This program is free software: you can redistribute it and/or modify
-	// it under the terms of the GNU Affero General Public License as
-	// published by the Free Software Foundation, version 3.
-	//
-	// This program is distributed in the hope that it will be useful,
-	// but WITHOUT ANY WARRANTY; without even the implied warranty of
-	// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-	// GNU Affero General Public License for more details.
-	//
-	// You should have received a copy of the GNU Affero General Public License
-	// along with this program. If not, see <http://www.gnu.org/licenses/>.
 	GetActiveOrganizations(ctx context.Context) ([]GetActiveOrganizationsRow, error)
 	GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (AdminApiKey, error)
 	GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (AdminApiKey, error)

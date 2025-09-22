@@ -23,6 +23,8 @@ type Querier interface {
 	BatchUpsertExemplarLogs(ctx context.Context, arg []BatchUpsertExemplarLogsParams) *BatchUpsertExemplarLogsBatchResults
 	BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUpsertExemplarMetricsParams) *BatchUpsertExemplarMetricsBatchResults
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
+	CallExpirePublishedByIngestCutoff(ctx context.Context, arg CallExpirePublishedByIngestCutoffParams) (int64, error)
+	CallFindOrgPartition(ctx context.Context, arg CallFindOrgPartitionParams) (string, error)
 	CleanupKafkaOffsets(ctx context.Context, arg CleanupKafkaOffsetsParams) (int64, error)
 	CleanupKafkaOffsetsByAge(ctx context.Context, createdBefore time.Time) (int64, error)
 	// Retrieves all pack estimates for a specific signal type
