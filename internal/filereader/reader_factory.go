@@ -100,6 +100,8 @@ func WrapReaderForAggregation(reader Reader, opts ReaderOptions) (Reader, error)
 //   - .parquet: Creates a ParquetRawReader (works for all signal types)
 //   - .json.gz: Creates a JSONLinesReader with gzip decompression (works for all signal types)
 //   - .json: Creates a JSONLinesReader (works for all signal types)
+//   - .csv: Creates a CSVReader (works for all signal types)
+//   - .csv.gz: Creates a CSVReader with gzip decompression (works for all signal types)
 //   - .binpb: Creates a signal-specific proto reader (NewIngestProtoLogsReader, NewIngestProtoMetricsReader, or NewProtoTracesReader)
 //   - .binpb.gz: Creates a signal-specific proto reader with gzip decompression
 func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, error) {
@@ -116,6 +118,10 @@ func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, erro
 		return createJSONGzReader(filename, opts)
 	case strings.HasSuffix(filename, ".json"):
 		return createJSONReader(filename, opts)
+	case strings.HasSuffix(filename, ".csv.gz"):
+		return createCSVGzReader(filename, opts)
+	case strings.HasSuffix(filename, ".csv"):
+		return createCSVReader(filename, opts)
 	case strings.HasSuffix(filename, ".binpb.gz"):
 		return createProtoBinaryGzReader(filename, opts)
 	case strings.HasSuffix(filename, ".binpb"):
@@ -251,6 +257,71 @@ func createProtoBinaryReader(filename string, opts ReaderOptions) (Reader, error
 	_ = file.Close()
 
 	return reader, nil
+}
+
+// createCSVReader creates a CSVReader with optional translation for a plain CSV file.
+func createCSVReader(filename string, opts ReaderOptions) (Reader, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open CSV file: %w", err)
+	}
+
+	csvReader, err := NewCSVReader(file, opts.BatchSize)
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+
+	// Add translation for logs
+	if opts.SignalType == SignalTypeLogs {
+		translator := NewCSVLogTranslator(opts)
+		translatingReader, err := NewTranslatingReader(csvReader, translator, opts.BatchSize)
+		if err != nil {
+			_ = csvReader.Close()
+			return nil, err
+		}
+		return translatingReader, nil
+	}
+
+	return csvReader, nil
+}
+
+// createCSVGzReader creates a CSVReader with optional translation for a gzipped CSV file.
+func createCSVGzReader(filename string, opts ReaderOptions) (Reader, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open CSV.gz file: %w", err)
+	}
+
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+
+	rc := &multiReadCloser{
+		Reader:  gzipReader,
+		closers: []io.Closer{gzipReader, file},
+	}
+
+	csvReader, err := NewCSVReader(rc, opts.BatchSize)
+	if err != nil {
+		_ = rc.Close()
+		return nil, err
+	}
+
+	// Add translation for logs
+	if opts.SignalType == SignalTypeLogs {
+		translator := NewCSVLogTranslator(opts)
+		translatingReader, err := NewTranslatingReader(csvReader, translator, opts.BatchSize)
+		if err != nil {
+			_ = csvReader.Close()
+			return nil, err
+		}
+		return translatingReader, nil
+	}
+
+	return csvReader, nil
 }
 
 // createProtoReaderWithOptions creates the appropriate proto reader with optional translation
