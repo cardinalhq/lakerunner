@@ -20,6 +20,16 @@ const (
 	NoRecordLimitPerFile = -1
 )
 
+// DefaultStringConversionPrefixes are the default field name prefixes that will have
+// their values converted to strings to avoid type conflicts.
+var DefaultStringConversionPrefixes = []string{
+	"resource.",
+	"scope.",
+	"log.",
+	"metric.",
+	"span.",
+}
+
 // WriterConfig contains all configuration options for creating a ParquetWriter.
 type WriterConfig struct {
 	// TmpDir is the directory where temporary and output files are created
@@ -37,6 +47,11 @@ type WriterConfig struct {
 
 	// Optional stats collection
 	StatsProvider StatsProvider
+
+	// StringConversionPrefixes is a list of field name prefixes that should have their
+	// values converted to strings to avoid type conflicts during schema merging.
+	// If nil or empty, uses default prefixes: resource., scope., log., metric., span.
+	StringConversionPrefixes []string
 }
 
 // Validate checks that the configuration is valid and returns an error if not.
@@ -49,6 +64,15 @@ func (c *WriterConfig) Validate() error {
 	}
 	// No schema validation needed - discovered dynamically
 	return nil
+}
+
+// GetStringConversionPrefixes returns the effective string conversion prefixes,
+// using defaults if none were specified.
+func (c *WriterConfig) GetStringConversionPrefixes() []string {
+	if len(c.StringConversionPrefixes) > 0 {
+		return c.StringConversionPrefixes
+	}
+	return DefaultStringConversionPrefixes
 }
 
 // ConfigError represents a configuration validation error.
