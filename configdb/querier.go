@@ -39,6 +39,7 @@ type Querier interface {
 	DeleteOrganizationBucketMappings(ctx context.Context, arg DeleteOrganizationBucketMappingsParams) error
 	// Delete organizations not in c_ tables
 	DeleteOrganizationsNotInList(ctx context.Context, idsToDelete []uuid.UUID) error
+	GetActiveOrganizations(ctx context.Context) ([]GetActiveOrganizationsRow, error)
 	GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (AdminApiKey, error)
 	GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (AdminApiKey, error)
 	GetAllAdminAPIKeys(ctx context.Context) ([]AdminApiKey, error)
@@ -67,6 +68,7 @@ type Querier interface {
 	GetBucketConfigurationByName(ctx context.Context, bucketName string) (BucketConfiguration, error)
 	GetBucketPrefixMappings(ctx context.Context, bucketName string) ([]GetBucketPrefixMappingsRow, error)
 	GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (GetDefaultOrganizationBucketRow, error)
+	GetExpiryLastRun(ctx context.Context, arg GetExpiryLastRunParams) (ExpiryRunTracking, error)
 	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (GetLongestPrefixMatchRow, error)
 	GetLowestInstanceOrganizationBucket(ctx context.Context, arg GetLowestInstanceOrganizationBucketParams) (GetLowestInstanceOrganizationBucketRow, error)
 	GetOrganization(ctx context.Context, id uuid.UUID) (Organization, error)
@@ -75,6 +77,7 @@ type Querier interface {
 	GetOrganizationBucketByCollector(ctx context.Context, arg GetOrganizationBucketByCollectorParams) (GetOrganizationBucketByCollectorRow, error)
 	GetOrganizationBucketByInstance(ctx context.Context, arg GetOrganizationBucketByInstanceParams) (GetOrganizationBucketByInstanceRow, error)
 	GetOrganizationByName(ctx context.Context, name string) (Organization, error)
+	GetOrganizationExpiry(ctx context.Context, arg GetOrganizationExpiryParams) (OrganizationSignalExpiry, error)
 	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
 	GetStorageProfileByCollectorNameUncached(ctx context.Context, organizationID pgtype.UUID) (GetStorageProfileByCollectorNameRow, error)
 	GetStorageProfileUncached(ctx context.Context, arg GetStorageProfileParams) (GetStorageProfileRow, error)
@@ -88,10 +91,12 @@ type Querier interface {
 	ListOrganizations(ctx context.Context) ([]Organization, error)
 	UpsertAdminAPIKey(ctx context.Context, arg UpsertAdminAPIKeyParams) (AdminApiKey, error)
 	UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (BucketConfiguration, error)
+	UpsertExpiryRunTracking(ctx context.Context, arg UpsertExpiryRunTrackingParams) error
 	UpsertOrganization(ctx context.Context, arg UpsertOrganizationParams) (Organization, error)
 	UpsertOrganizationAPIKey(ctx context.Context, arg UpsertOrganizationAPIKeyParams) (OrganizationApiKey, error)
 	UpsertOrganizationAPIKeyMapping(ctx context.Context, arg UpsertOrganizationAPIKeyMappingParams) error
 	UpsertOrganizationBucket(ctx context.Context, arg UpsertOrganizationBucketParams) error
+	UpsertOrganizationExpiry(ctx context.Context, arg UpsertOrganizationExpiryParams) error
 	// Upsert organization
 	UpsertOrganizationSync(ctx context.Context, arg UpsertOrganizationSyncParams) error
 }

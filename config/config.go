@@ -41,6 +41,7 @@ type Config struct {
 	Admin       AdminConfig       `mapstructure:"admin"`
 	Scaling     ScalingConfig     `mapstructure:"scaling"`
 	PubSub      PubSubConfig      `mapstructure:"pubsub"`
+	Expiry      ExpiryConfig      `mapstructure:"expiry"`
 
 	// Derived fields (populated during Load())
 	TopicRegistry *TopicRegistry // Kafka topic registry based on prefix
@@ -85,6 +86,13 @@ type PubSubConfig struct {
 type PubSubDedupConfig struct {
 	RetentionDuration time.Duration `mapstructure:"retention_duration"`
 	CleanupBatchSize  int           `mapstructure:"cleanup_batch_size"`
+}
+
+type ExpiryConfig struct {
+	DefaultMaxAgeDaysLogs    int `mapstructure:"default_max_age_days_logs"`
+	DefaultMaxAgeDaysMetrics int `mapstructure:"default_max_age_days_metrics"`
+	DefaultMaxAgeDaysTraces  int `mapstructure:"default_max_age_days_traces"`
+	BatchSize                int `mapstructure:"batch_size"`
 }
 
 // TopicCreationConfig holds configuration for creating Kafka topics
@@ -249,11 +257,17 @@ func Load() (*Config, error) {
 			Defaults: TopicCreationConfig{
 				PartitionCount:    intPtr(16),
 				ReplicationFactor: intPtr(3),
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"cleanup.policy": "delete",
 					"retention.ms":   "604800000", // 7 days
 				},
 			},
+		},
+		Expiry: ExpiryConfig{
+			DefaultMaxAgeDaysLogs:    -1,    // -1 means not configured
+			DefaultMaxAgeDaysMetrics: -1,    // -1 means not configured
+			DefaultMaxAgeDaysTraces:  -1,    // -1 means not configured
+			BatchSize:                20000, // Default batch size for expiry operations
 		},
 	}
 
@@ -471,7 +485,7 @@ func MergeKafkaTopicsOverride(base KafkaTopicsConfig, override *KafkaTopicsOverr
 	}
 	if len(override.Defaults.Options) > 0 {
 		if result.Defaults.Options == nil {
-			result.Defaults.Options = make(map[string]interface{})
+			result.Defaults.Options = make(map[string]any)
 		}
 		maps.Copy(result.Defaults.Options, override.Defaults.Options)
 	}
