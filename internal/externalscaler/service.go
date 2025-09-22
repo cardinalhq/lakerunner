@@ -139,8 +139,41 @@ func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActive
 		return &IsActiveResponse{Result: false}, nil
 	}
 
+	if serviceType == config.ServiceTypeBoxer {
+		return s.isBoxerActive(ctx, req.ScalerMetadata)
+	}
+
 	_, err := s.lagMonitor.GetQueueDepth(serviceType)
 	return &IsActiveResponse{Result: err == nil}, nil
+}
+
+// isBoxerActive checks if any of the boxer task queues are active
+func (s *Service) isBoxerActive(ctx context.Context, metadata map[string]string) (*IsActiveResponse, error) {
+	ll := logctx.FromContext(ctx)
+
+	boxerTasks, exists := metadata["boxerTasks"]
+	if !exists {
+		ll.Warn("boxerTasks not specified for boxer service")
+		return &IsActiveResponse{Result: false}, nil
+	}
+
+	tasks := strings.Split(boxerTasks, ",")
+	for _, task := range tasks {
+		task = strings.TrimSpace(task)
+		if task == "" {
+			continue
+		}
+
+		taskServiceType := config.GetBoxerServiceType(task)
+		_, err := s.lagMonitor.GetQueueDepth(taskServiceType)
+		if err == nil {
+			// At least one task queue is active
+			return &IsActiveResponse{Result: true}, nil
+		}
+	}
+
+	// No task queues are active
+	return &IsActiveResponse{Result: false}, nil
 }
 
 func (s *Service) StreamIsActive(req *ScaledObjectRef, stream grpc.ServerStreamingServer[IsActiveResponse]) error {

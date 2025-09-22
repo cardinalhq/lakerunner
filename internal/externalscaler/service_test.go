@@ -122,6 +122,88 @@ func TestService_IsActive(t *testing.T) {
 	}
 }
 
+func TestService_IsActive_Boxer(t *testing.T) {
+	mockMonitor := new(MockLagMonitor)
+	service := &Service{
+		lagMonitor: mockMonitor,
+	}
+
+	tests := []struct {
+		name           string
+		boxerTasks     string
+		mockSetup      func(*MockLagMonitor)
+		expectedResult bool
+	}{
+		{
+			name:       "boxer with active task queue",
+			boxerTasks: config.TaskCompactLogs,
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(5), nil)
+			},
+			expectedResult: true,
+		},
+		{
+			name:       "boxer with inactive task queue",
+			boxerTasks: config.TaskCompactLogs,
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(0), fmt.Errorf("queue not found"))
+			},
+			expectedResult: false,
+		},
+		{
+			name:       "boxer with multiple tasks, one active",
+			boxerTasks: config.TaskCompactLogs + "," + config.TaskCompactMetrics,
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(0), fmt.Errorf("queue not found"))
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactMetrics).Return(int64(3), nil)
+			},
+			expectedResult: true,
+		},
+		{
+			name:       "boxer with multiple tasks, all inactive",
+			boxerTasks: config.TaskCompactLogs + "," + config.TaskCompactMetrics,
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(0), fmt.Errorf("queue not found"))
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactMetrics).Return(int64(0), fmt.Errorf("queue not found"))
+			},
+			expectedResult: false,
+		},
+		{
+			name:           "boxer without boxerTasks metadata",
+			boxerTasks:     "",
+			mockSetup:      func(m *MockLagMonitor) {}, // No expectations
+			expectedResult: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset mock for each test
+			mockMonitor.ExpectedCalls = nil
+			mockMonitor.Calls = nil
+			tt.mockSetup(mockMonitor)
+
+			req := &ScaledObjectRef{
+				Name:      "test-boxer",
+				Namespace: "test-namespace",
+				ScalerMetadata: map[string]string{
+					"serviceType": config.ServiceTypeBoxer,
+				},
+			}
+
+			if tt.boxerTasks != "" {
+				req.ScalerMetadata["boxerTasks"] = tt.boxerTasks
+			}
+
+			resp, err := service.IsActive(context.Background(), req)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedResult, resp.Result)
+
+			mockMonitor.AssertExpectations(t)
+		})
+	}
+}
+
 func TestService_GetMetricSpec(t *testing.T) {
 	scalingConfig := &config.ScalingConfig{
 		DefaultTarget:      100,
