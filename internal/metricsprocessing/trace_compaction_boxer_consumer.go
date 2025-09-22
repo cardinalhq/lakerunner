@@ -32,9 +32,9 @@ type TraceCompactionBoxerConsumer struct {
 // NewTraceCompactionBoxerConsumer creates a new trace compaction boxer consumer using the common consumer framework
 func NewTraceCompactionBoxerConsumer(
 	ctx context.Context,
-	factory *fly.Factory,
-	store BoxerStore,
 	cfg *config.Config,
+	store BoxerStore,
+	factory *fly.Factory,
 ) (*TraceCompactionBoxerConsumer, error) {
 
 	// Create Kafka producer for sending compaction bundles

@@ -16,4 +16,48 @@ package config
 
 const (
 	TargetFileSize = int64(2 * 1024 * 1024) // 2MB
+
+	// Service types for ingestion
+	ServiceTypeIngestLogs    = "ingest-logs"
+	ServiceTypeIngestMetrics = "ingest-metrics"
+	ServiceTypeIngestTraces  = "ingest-traces"
+
+	// Service types for compaction
+	ServiceTypeCompactLogs    = "compact-logs"
+	ServiceTypeCompactMetrics = "compact-metrics"
+	ServiceTypeCompactTraces  = "compact-traces"
+
+	// Service types for rollup
+	ServiceTypeRollupMetrics = "rollup-metrics"
+
+	// Service types for boxer tasks
+	ServiceTypeBoxerCompactLogs    = "boxer-compact-logs"
+	ServiceTypeBoxerCompactMetrics = "boxer-compact-metrics"
+	ServiceTypeBoxerCompactTraces  = "boxer-compact-traces"
+	ServiceTypeBoxerRollupMetrics  = "boxer-rollup-metrics"
+
+	// Boxer service type for KEDA scaling
+	ServiceTypeBoxer = "boxer"
+
+	// Task names (used in boxer command flags and KEDA boxerTasks)
+	TaskCompactLogs    = "compact-logs"
+	TaskCompactMetrics = "compact-metrics"
+	TaskCompactTraces  = "compact-traces"
+	TaskRollupMetrics  = "rollup-metrics"
 )
+
+// GetBoxerServiceType returns the service type for a boxer task
+func GetBoxerServiceType(task string) string {
+	switch task {
+	case TaskCompactLogs:
+		return ServiceTypeBoxerCompactLogs
+	case TaskCompactMetrics:
+		return ServiceTypeBoxerCompactMetrics
+	case TaskCompactTraces:
+		return ServiceTypeBoxerCompactTraces
+	case TaskRollupMetrics:
+		return ServiceTypeBoxerRollupMetrics
+	default:
+		return "boxer-" + task // fallback for unknown tasks
+	}
+}

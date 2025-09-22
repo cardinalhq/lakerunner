@@ -32,9 +32,9 @@ type LogCompactionBoxerConsumer struct {
 // NewLogCompactionBoxerConsumer creates a new log compaction boxer consumer using the generic framework
 func NewLogCompactionBoxerConsumer(
 	ctx context.Context,
-	factory *fly.Factory,
 	cfg *config.Config,
-	store LogCompactionStore,
+	store BoxerStore,
+	factory *fly.Factory,
 ) (*LogCompactionBoxerConsumer, error) {
 
 	// Create Kafka producer for sending compaction bundles

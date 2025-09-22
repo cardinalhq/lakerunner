@@ -89,6 +89,10 @@ func convertItemsToKafkaMessages(
 			slog.Debug("Skipping database file", slog.String("objectID", item.ObjectID))
 			result.ItemsSkipped++
 			result.SkipReasons["database_file"]++
+			itemsSkipped.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("reason", "database_file"),
+				attribute.String("bucket", item.Bucket),
+			))
 			continue
 		}
 
@@ -103,6 +107,10 @@ func convertItemsToKafkaMessages(
 					slog.String("object_id", item.ObjectID))
 				result.ItemsSkipped++
 				result.SkipReasons["resolve_org_failed"]++
+				itemsSkipped.Add(ctx, 1, metric.WithAttributes(
+					attribute.String("reason", "resolve_org_failed"),
+					attribute.String("bucket", item.Bucket),
+				))
 				continue
 			}
 			item.OrganizationID = resolution.OrganizationID
@@ -118,6 +126,10 @@ func convertItemsToKafkaMessages(
 				slog.String("bucket", item.Bucket))
 			result.ItemsSkipped++
 			result.SkipReasons["get_profile_failed"]++
+			itemsSkipped.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("reason", "get_profile_failed"),
+				attribute.String("bucket", item.Bucket),
+			))
 			continue
 		}
 
@@ -200,15 +212,6 @@ func handleMessageWithKafka(
 	if stats != nil {
 		for signal, extCounts := range result.FileTypeCounts {
 			stats.RecordFileTypes(signal, extCounts)
-		}
-	}
-
-	// Update metrics based on conversion results
-	for reason, count := range result.SkipReasons {
-		for i := 0; i < count; i++ {
-			itemsSkipped.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("reason", reason),
-			))
 		}
 	}
 

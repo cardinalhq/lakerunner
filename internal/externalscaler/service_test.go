@@ -122,6 +122,88 @@ func TestService_IsActive(t *testing.T) {
 	}
 }
 
+func TestService_IsActive_Boxer(t *testing.T) {
+	mockMonitor := new(MockLagMonitor)
+	service := &Service{
+		lagMonitor: mockMonitor,
+	}
+
+	tests := []struct {
+		name           string
+		boxerTasks     string
+		mockSetup      func(*MockLagMonitor)
+		expectedResult bool
+	}{
+		{
+			name:       "boxer with active task queue",
+			boxerTasks: config.TaskCompactLogs,
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(5), nil)
+			},
+			expectedResult: true,
+		},
+		{
+			name:       "boxer with inactive task queue",
+			boxerTasks: config.TaskCompactLogs,
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(0), fmt.Errorf("queue not found"))
+			},
+			expectedResult: false,
+		},
+		{
+			name:       "boxer with multiple tasks, one active",
+			boxerTasks: config.TaskCompactLogs + "," + config.TaskCompactMetrics,
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(0), fmt.Errorf("queue not found"))
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactMetrics).Return(int64(3), nil)
+			},
+			expectedResult: true,
+		},
+		{
+			name:       "boxer with multiple tasks, all inactive",
+			boxerTasks: config.TaskCompactLogs + "," + config.TaskCompactMetrics,
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(0), fmt.Errorf("queue not found"))
+				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactMetrics).Return(int64(0), fmt.Errorf("queue not found"))
+			},
+			expectedResult: false,
+		},
+		{
+			name:           "boxer without boxerTasks metadata",
+			boxerTasks:     "",
+			mockSetup:      func(m *MockLagMonitor) {}, // No expectations
+			expectedResult: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset mock for each test
+			mockMonitor.ExpectedCalls = nil
+			mockMonitor.Calls = nil
+			tt.mockSetup(mockMonitor)
+
+			req := &ScaledObjectRef{
+				Name:      "test-boxer",
+				Namespace: "test-namespace",
+				ScalerMetadata: map[string]string{
+					"serviceType": config.ServiceTypeBoxer,
+				},
+			}
+
+			if tt.boxerTasks != "" {
+				req.ScalerMetadata["boxerTasks"] = tt.boxerTasks
+			}
+
+			resp, err := service.IsActive(context.Background(), req)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedResult, resp.Result)
+
+			mockMonitor.AssertExpectations(t)
+		})
+	}
+}
+
 func TestService_GetMetricSpec(t *testing.T) {
 	scalingConfig := &config.ScalingConfig{
 		DefaultTarget:      100,
@@ -141,9 +223,9 @@ func TestService_GetMetricSpec(t *testing.T) {
 		expectedTarget     float64
 		expectError        bool
 	}{
-		{"ingest-logs", "ingest-logs", "ingest-logs-queue-depth", 100.0, false},
-		{"rollup-metrics", "rollup-metrics", "rollup-metrics-queue-depth", 100.0, false},
-		{"boxer-rollup-metrics", "boxer-rollup-metrics", "boxer-rollup-metrics-queue-depth", 1500.0, false},
+		{"ingest-logs", "ingest-logs", "ingest-logs", 100.0, false},
+		{"rollup-metrics", "rollup-metrics", "rollup-metrics", 100.0, false},
+		{"boxer-rollup-metrics", "boxer-rollup-metrics", "boxer-rollup-metrics", 1500.0, false},
 		{"missing-service-type", "", "", 0, true},
 		{"unknown-service-type", "unknown-service", "", 0, true},
 	}
@@ -265,7 +347,7 @@ func TestService_GetMetrics(t *testing.T) {
 						"serviceType": tt.serviceType,
 					},
 				},
-				MetricName: tt.serviceType + "-queue-depth",
+				MetricName: tt.serviceType,
 			}
 
 			resp, err := service.GetMetrics(context.Background(), req)
@@ -283,23 +365,6 @@ func TestService_GetMetrics(t *testing.T) {
 			mockMonitor.AssertExpectations(t)
 		})
 	}
-}
-
-func TestService_GetMetrics_MissingServiceType(t *testing.T) {
-	service := &Service{}
-
-	req := &GetMetricsRequest{
-		ScaledObjectRef: &ScaledObjectRef{
-			Name:           "test-object",
-			Namespace:      "test-namespace",
-			ScalerMetadata: map[string]string{}, // No serviceType
-		},
-		MetricName: "test-metric",
-	}
-
-	_, err := service.GetMetrics(context.Background(), req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "serviceType not specified")
 }
 
 func TestService_getQueueDepth(t *testing.T) {

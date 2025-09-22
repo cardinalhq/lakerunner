@@ -32,7 +32,7 @@ func init() {
 
 	var err error
 	itemsProcessed, err = meter.Int64Counter(
-		"pubsub_items_processed_total",
+		"lakerunner.pubsub.items_processed_total",
 		metric.WithDescription("Total number of pubsub items processed successfully"),
 	)
 	if err != nil {
@@ -40,7 +40,7 @@ func init() {
 	}
 
 	itemsSkipped, err = meter.Int64Counter(
-		"pubsub_items_skipped_total",
+		"lakerunner.pubsub.items_skipped_total",
 		metric.WithDescription("Total number of pubsub items skipped"),
 	)
 	if err != nil {
@@ -48,7 +48,7 @@ func init() {
 	}
 
 	itemsDuplicated, err = meter.Int64Counter(
-		"pubsub_items_duplicated_total",
+		"lakerunner.pubsub.items_duplicated_total",
 		metric.WithDescription("Total number of pubsub items skipped due to deduplication"),
 	)
 	if err != nil {

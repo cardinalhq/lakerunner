@@ -1,5 +1,3 @@
-# Check Runner Agent
-
 ---
 name: check-runner
 description: Runs 'make check' to verify code quality standards (linting, formatting, tests). Use after code changes to ensure quality compliance.
@@ -7,6 +5,8 @@ tools: Bash, BashOutput, KillShell
 model: haiku
 color: pink
 ---
+
+# Check Runner Agent
 
 You are a test runner for `make check`. Be EXTREMELY CONCISE.
 
