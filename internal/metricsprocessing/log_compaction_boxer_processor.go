@@ -30,7 +30,7 @@ import (
 
 // LogCompactionBoxerProcessor implements boxing for log compaction messages
 type LogCompactionBoxerProcessor struct {
-	store         LogCompactionStore
+	store         BoxerStore
 	kafkaProducer fly.Producer
 	config        *config.Config
 }
@@ -39,7 +39,7 @@ type LogCompactionBoxerProcessor struct {
 func newLogCompactionBoxerProcessor(
 	cfg *config.Config,
 	producer fly.Producer,
-	store LogCompactionStore,
+	store BoxerStore,
 ) *LogCompactionBoxerProcessor {
 	return &LogCompactionBoxerProcessor{
 		store:         store,

@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -158,27 +159,78 @@ func (s *Service) GetMetricSpec(ctx context.Context, req *ScaledObjectRef) (*Get
 		return nil, status.Errorf(codes.InvalidArgument, "serviceType not specified in scaler metadata")
 	}
 
-	metricName := fmt.Sprintf("%s-queue-depth", serviceType)
+	if serviceType == "boxer" {
+		return s.getBoxerMetricSpecs(req.ScalerMetadata)
+	}
 
-	// Get the target queue size for this service type
+	// Single service metric spec
+	metricName := fmt.Sprintf("%s-queue-depth", serviceType)
 	target, err := s.scalingConfig.GetTargetQueueSize(serviceType)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get target queue size: %v", err)
 	}
-	targetSize := float64(target)
 
 	slog.Debug("Returning metric spec",
 		"serviceType", serviceType,
 		"metricName", metricName,
-		"targetSize", targetSize)
+		"targetSize", target)
 
 	return &GetMetricSpecResponse{
 		MetricSpecs: []*MetricSpec{
 			{
 				MetricName:      metricName,
-				TargetSizeFloat: targetSize,
+				TargetSizeFloat: float64(target),
 			},
 		},
+	}, nil
+}
+
+// getBoxerMetricSpecs returns multiple metric specs for boxer tasks
+func (s *Service) getBoxerMetricSpecs(metadata map[string]string) (*GetMetricSpecResponse, error) {
+	boxerTasks, exists := metadata["boxerTasks"]
+	if !exists {
+		return nil, status.Errorf(codes.InvalidArgument, "boxerTasks not specified for boxer service")
+	}
+
+	tasks := strings.Split(boxerTasks, ",")
+	var metricSpecs []*MetricSpec
+
+	slog.Debug("Processing boxer tasks for metric specs", "tasks", tasks)
+
+	for _, task := range tasks {
+		task = strings.TrimSpace(task)
+		if task == "" {
+			continue
+		}
+
+		taskServiceType := fmt.Sprintf("boxer-%s", task)
+		metricName := fmt.Sprintf("%s-queue-depth", taskServiceType)
+
+		target, err := s.scalingConfig.GetTargetQueueSize(taskServiceType)
+		if err != nil {
+			slog.Warn("Failed to get target queue size for boxer task",
+				"task", task, "serviceType", taskServiceType, "error", err)
+			// Use default target if specific service type not found
+			target = s.scalingConfig.DefaultTarget
+			if target <= 0 {
+				return nil, status.Errorf(codes.InvalidArgument,
+					"failed to get target queue size for task %s and no valid default target available", task)
+			}
+			slog.Debug("Using default target for boxer task", "task", task, "defaultTarget", target)
+		}
+
+		metricSpecs = append(metricSpecs, &MetricSpec{
+			MetricName:      metricName,
+			TargetSizeFloat: float64(target),
+		})
+
+		slog.Debug("Added metric spec for boxer task",
+			"task", task, "serviceType", taskServiceType, "metricName", metricName, "target", target)
+	}
+
+	slog.Debug("Returning boxer metric specs", "tasks", tasks, "metricCount", len(metricSpecs))
+	return &GetMetricSpecResponse{
+		MetricSpecs: metricSpecs,
 	}, nil
 }
 
@@ -194,13 +246,20 @@ func (s *Service) GetMetrics(ctx context.Context, req *GetMetricsRequest) (*GetM
 		return nil, status.Errorf(codes.InvalidArgument, "serviceType not specified in scaler metadata")
 	}
 
-	count, err := s.getQueueDepth(ctx, serviceType)
-	if err != nil {
-		slog.Error("Failed to get queue depth", "serviceType", serviceType, "error", err)
-		return nil, status.Errorf(codes.Internal, "failed to get queue depth for %s: %v", serviceType, err)
+	var metricValue float64
+	var err error
+
+	if serviceType == "boxer" {
+		// For boxer, extract the task from the metric name and get its specific queue depth
+		metricValue, err = s.getBoxerTaskMetricValue(ctx, req.MetricName)
+	} else {
+		// For non-boxer services, use existing logic
+		metricValue, err = s.getSingleServiceMetricValue(ctx, serviceType)
 	}
 
-	metricValue := float64(count)
+	if err != nil {
+		return nil, err
+	}
 
 	return &GetMetricsResponse{
 		MetricValues: []*MetricValue{
@@ -210,4 +269,38 @@ func (s *Service) GetMetrics(ctx context.Context, req *GetMetricsRequest) (*GetM
 			},
 		},
 	}, nil
+}
+
+// getBoxerTaskMetricValue extracts the task from a boxer metric name and returns its queue depth
+func (s *Service) getBoxerTaskMetricValue(_ context.Context, metricName string) (float64, error) {
+	// Extract the task service type from metric name like "boxer-compact-logs-queue-depth"
+	if !strings.HasSuffix(metricName, "-queue-depth") {
+		return 0, status.Errorf(codes.InvalidArgument, "invalid boxer metric name format: %s", metricName)
+	}
+
+	// Remove the "-queue-depth" suffix to get the service type
+	taskServiceType := strings.TrimSuffix(metricName, "-queue-depth")
+
+	slog.Debug("Getting queue depth for boxer task", "taskServiceType", taskServiceType, "metricName", metricName)
+
+	depth, err := s.lagMonitor.GetQueueDepth(taskServiceType)
+	if err != nil {
+		slog.Error("Failed to get queue depth for boxer task",
+			"taskServiceType", taskServiceType, "metricName", metricName, "error", err)
+		return 0, status.Errorf(codes.Internal, "failed to get queue depth for %s: %v", taskServiceType, err)
+	}
+
+	slog.Debug("Got queue depth for boxer task",
+		"taskServiceType", taskServiceType, "metricName", metricName, "depth", depth)
+	return float64(depth), nil
+}
+
+// getSingleServiceMetricValue gets the queue depth for a non-boxer service
+func (s *Service) getSingleServiceMetricValue(ctx context.Context, serviceType string) (float64, error) {
+	depth, err := s.getQueueDepth(ctx, serviceType)
+	if err != nil {
+		slog.Error("Failed to get queue depth", "serviceType", serviceType, "error", err)
+		return 0, status.Errorf(codes.Internal, "failed to get queue depth for %s: %v", serviceType, err)
+	}
+	return float64(depth), nil
 }

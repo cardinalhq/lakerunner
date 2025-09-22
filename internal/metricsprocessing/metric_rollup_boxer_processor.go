@@ -36,7 +36,7 @@ type MetricRollupBoxerProcessor struct {
 
 // newMetricBoxerProcessor creates a new metric boxer processor instance
 func newMetricBoxerProcessor(
-	ctx context.Context,
+	_ context.Context,
 	cfg *config.Config,
 	kafkaProducer fly.Producer, store BoxerStore) *MetricRollupBoxerProcessor {
 	return &MetricRollupBoxerProcessor{

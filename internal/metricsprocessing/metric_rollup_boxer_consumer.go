@@ -24,15 +24,14 @@ import (
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // BoxerStore defines the interface required by the metric boxer
 type BoxerStore interface {
-	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
-	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
+	OffsetTrackerStore
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
+	GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64
 }
 
 // MetricRollupBoxerConsumer handles metric rollup bundling using CommonConsumer
@@ -43,9 +42,9 @@ type MetricRollupBoxerConsumer struct {
 // NewMetricBoxerConsumer creates a new metric boxer consumer using the common consumer framework
 func NewMetricBoxerConsumer(
 	ctx context.Context,
-	factory *fly.Factory,
-	store BoxerStore,
 	cfg *config.Config,
+	store BoxerStore,
+	factory *fly.Factory,
 ) (*MetricRollupBoxerConsumer, error) {
 
 	// Create Kafka producer for sending rollup bundles
