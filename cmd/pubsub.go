@@ -15,6 +15,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -64,7 +66,14 @@ func init() {
 				return fmt.Errorf("failed to create HTTP pubsub service: %w", err)
 			}
 
-			return service.Run(doneCtx)
+			if err := service.Run(doneCtx); err != nil {
+				if errors.Is(err, context.Canceled) {
+					slog.Info("shutting down", "error", err)
+					return nil
+				}
+				return err
+			}
+			return nil
 		},
 	}
 	cmd.AddCommand(httpListenCmd)
@@ -98,7 +107,14 @@ func init() {
 			if err != nil {
 				return fmt.Errorf("failed to create SQS pubsub service: %w", err)
 			}
-			return service.Run(doneCtx)
+			if err := service.Run(doneCtx); err != nil {
+				if errors.Is(err, context.Canceled) {
+					slog.Info("shutting down", "error", err)
+					return nil
+				}
+				return err
+			}
+			return nil
 		},
 	}
 	cmd.AddCommand(sqsListenCmd)
@@ -133,7 +149,14 @@ func init() {
 				return fmt.Errorf("failed to create GCP Pub/Sub backend: %w", err)
 			}
 
-			return backend.Run(doneCtx)
+			if err := backend.Run(doneCtx); err != nil {
+				if errors.Is(err, context.Canceled) {
+					slog.Info("shutting down", "error", err)
+					return nil
+				}
+				return err
+			}
+			return nil
 		},
 	}
 	cmd.AddCommand(gcpListenCmd)
@@ -169,7 +192,14 @@ func init() {
 				return fmt.Errorf("failed to create Azure Queue Storage backend: %w", err)
 			}
 
-			return backend.Run(doneCtx)
+			if err := backend.Run(doneCtx); err != nil {
+				if errors.Is(err, context.Canceled) {
+					slog.Info("shutting down", "error", err)
+					return nil
+				}
+				return err
+			}
+			return nil
 		},
 	}
 	cmd.AddCommand(azureListenCmd)

@@ -15,6 +15,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -82,7 +84,14 @@ func init() {
 			// Mark as ready now that database connections are established and migrations have been checked
 			healthServer.SetReady(true)
 
-			return cmd.Run(ctx)
+			if err := cmd.Run(ctx); err != nil {
+				if errors.Is(err, context.Canceled) {
+					slog.Info("shutting down", "error", err)
+					return nil
+				}
+				return err
+			}
+			return nil
 		},
 	}
 

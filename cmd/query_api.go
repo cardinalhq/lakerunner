@@ -15,6 +15,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -113,7 +115,14 @@ func init() {
 
 			// All services are now fully initialized
 
-			return querier.Run(ctx)
+			if err := querier.Run(ctx); err != nil {
+				if errors.Is(err, context.Canceled) {
+					slog.Info("shutting down", "error", err)
+					return nil
+				}
+				return err
+			}
+			return nil
 		},
 	}
 

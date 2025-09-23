@@ -15,6 +15,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -127,7 +129,14 @@ func runBoxer(_ *cobra.Command, _ []string) error {
 
 	healthServer.SetStatus(healthcheck.StatusHealthy)
 
-	return manager.Run(ctx)
+	if err := manager.Run(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Info("shutting down", "error", err)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func getSelectedTasks() []string {
