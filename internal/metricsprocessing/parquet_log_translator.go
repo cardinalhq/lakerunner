@@ -38,6 +38,16 @@ type ParquetLogTranslator struct {
 	ExemplarProcessor *exemplars.Processor
 }
 
+// NewParquetLogTranslator creates a new ParquetLogTranslator with the specified metadata
+func NewParquetLogTranslator(orgID, bucket, objectID string, exemplarProcessor *exemplars.Processor) *ParquetLogTranslator {
+	return &ParquetLogTranslator{
+		OrgID:             orgID,
+		Bucket:            bucket,
+		ObjectID:          objectID,
+		ExemplarProcessor: exemplarProcessor,
+	}
+}
+
 // flattenValue recursively flattens nested structures into dot-notation fields
 func (t *ParquetLogTranslator) flattenValue(prefix string, value any, result map[wkk.RowKey]any) {
 	switch v := value.(type) {
@@ -273,7 +283,7 @@ func (t *ParquetLogTranslator) detectMessageField(row *filereader.Row) (string, 
 }
 
 // TranslateRow processes Parquet rows with timestamp detection and fingerprinting
-func (t *ParquetLogTranslator) TranslateRow(row *filereader.Row) error {
+func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
@@ -388,7 +398,7 @@ func (t *ParquetLogTranslator) TranslateRow(row *filereader.Row) error {
 
 	// Fingerprint the message if we have one and an exemplar processor
 	if message != "" && t.ExemplarProcessor != nil {
-		tenant := t.ExemplarProcessor.GetTenant(context.Background(), t.OrgID)
+		tenant := t.ExemplarProcessor.GetTenant(ctx, t.OrgID)
 		if tenant != nil {
 			trieClusterManager := tenant.GetTrieClusterManager()
 			fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)

@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -203,7 +204,7 @@ func TestProtoBinLogTranslator_TimestampValidation(t *testing.T) {
 			}
 
 			// Apply translation
-			err := translator.TranslateRow(&row)
+			err := translator.TranslateRow(context.Background(), &row)
 			require.NoError(t, err)
 
 			// Check timestamp

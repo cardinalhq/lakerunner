@@ -131,16 +131,13 @@ func validateLogIngestGroupConsistency(group *accumulationGroup[messages.IngestK
 
 // Process implements the Processor interface and performs raw log ingestion
 func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
-	ll := logctx.FromContext(ctx)
-
-	// Calculate group age from Hunter timestamp
-	groupAge := time.Since(group.CreatedAt)
+	ll := logctx.FromContext(ctx).With(
+		slog.String("organizationID", group.Key.OrganizationID.String()),
+		slog.Int("instanceNum", int(group.Key.InstanceNum)))
 
 	ll.Info("Starting log ingestion",
-		slog.String("organizationID", group.Key.OrganizationID.String()),
-		slog.Int("instanceNum", int(group.Key.InstanceNum)),
 		slog.Int("messageCount", len(group.Messages)),
-		slog.Duration("groupAge", groupAge))
+		slog.Duration("groupAge", time.Since(group.CreatedAt)))
 
 	if err := validateLogIngestGroupConsistency(group); err != nil {
 		return fmt.Errorf("group validation failed: %w", err)
@@ -250,7 +247,6 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 
 	criticalCtx := context.WithoutCancel(ctx)
 	if err := p.store.InsertLogSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
-		// Log detailed segment information for debugging
 		segmentIDs := make([]int64, len(segmentParams))
 		var totalRecords, totalSize int64
 		for i, seg := range segmentParams {
@@ -261,8 +257,6 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 
 		ll.Error("Failed to insert log segments with Kafka offsets",
 			slog.Any("error", err),
-			slog.String("organization_id", group.Key.OrganizationID.String()),
-			slog.Int("instance_num", int(group.Key.InstanceNum)),
 			slog.Int("segmentCount", len(segmentParams)),
 			slog.Int64("totalRecords", totalRecords),
 			slog.Int64("totalSize", totalSize),
@@ -271,12 +265,10 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		return fmt.Errorf("failed to insert log segments with Kafka offsets: %w", err)
 	}
 
-	// Send compaction notifications to Kafka topic
 	if p.kafkaProducer != nil {
 		compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerLogsCompact)
 
 		for _, segParams := range segmentParams {
-			// Create log compaction message
 			compactionNotification := messages.LogCompactionMessage{
 				Version:        1,
 				OrganizationID: segParams.OrganizationID,
@@ -290,7 +282,6 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 				QueuedAt:       time.Now(),
 			}
 
-			// Marshal compaction message
 			compactionMsgBytes, err := compactionNotification.Marshal()
 			if err != nil {
 				return fmt.Errorf("failed to marshal log compaction notification: %w", err)
@@ -301,7 +292,6 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 				Value: compactionMsgBytes,
 			}
 
-			// Send to compaction topic
 			if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
 				return fmt.Errorf("failed to send log compaction notification to Kafka: %w", err)
 			} else {
@@ -317,7 +307,6 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		totalOutputSize += params.FileSize
 	}
 
-	// Report telemetry - ingestion transforms files into segments
 	reportTelemetry(ctx, "logs", "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Log ingestion completed successfully",
@@ -340,23 +329,11 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 		return nil, fmt.Errorf("failed to create log reader: %w", err)
 	}
 
-	// Check if the file is a Parquet file to determine which translator to use
 	var translator filereader.RowTranslator
 	if strings.HasSuffix(tmpFilename, ".parquet") {
-		// Use specialized Parquet translator that handles timestamp detection and fingerprinting
-		translator = &ParquetLogTranslator{
-			OrgID:             orgID,
-			Bucket:            bucket,
-			ObjectID:          objectID,
-			ExemplarProcessor: p.exemplarProcessor,
-		}
+		translator = NewParquetLogTranslator(orgID, bucket, objectID, p.exemplarProcessor)
 	} else {
-		// Use standard translator for other formats (json, binpb, etc.)
-		translator = &LogTranslator{
-			orgID:    orgID,
-			bucket:   bucket,
-			objectID: objectID,
-		}
+		translator = NewLogTranslator(orgID, bucket, objectID, p.exemplarProcessor)
 	}
 
 	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
@@ -602,43 +579,7 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 		segmentParams = append(segmentParams, params)
 	}
 
-	ll.Info("Log segment upload completed",
-		slog.Int("totalSegments", len(segmentParams)))
+	ll.Info("Log segment upload completed", slog.Int("totalSegments", len(segmentParams)))
 
 	return segmentParams, nil
-}
-
-// LogTranslator adds resource metadata to log rows
-type LogTranslator struct {
-	orgID    string
-	bucket   string
-	objectID string
-}
-
-// NewLogTranslator creates a new LogTranslator with the specified metadata
-func NewLogTranslator(orgID, bucket, objectID string) *LogTranslator {
-	return &LogTranslator{
-		orgID:    orgID,
-		bucket:   bucket,
-		objectID: objectID,
-	}
-}
-
-// TranslateRow adds resource fields to each row
-func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
-	if row == nil {
-		return fmt.Errorf("row cannot be nil")
-	}
-
-	// Only set the specific required fields - assume all other fields are properly set
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
-
-	// Ensure required CardinalhQ fields are set
-	(*row)[wkk.RowKeyCTelemetryType] = "logs"
-	(*row)[wkk.RowKeyCName] = "log.events"
-	(*row)[wkk.RowKeyCValue] = float64(1.0)
-
-	return nil
 }

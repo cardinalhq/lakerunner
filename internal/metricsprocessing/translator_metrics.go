@@ -15,6 +15,7 @@
 package metricsprocessing
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -33,7 +34,7 @@ type MetricTranslator struct {
 
 // TranslateRow adds resource fields to each row
 // Assumes all other metric fields (including sketches) are properly set by the proto reader
-func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
+func (t *MetricTranslator) TranslateRow(_ context.Context, row *filereader.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}

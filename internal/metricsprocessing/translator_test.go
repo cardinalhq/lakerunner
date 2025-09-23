@@ -15,6 +15,7 @@
 package metricsprocessing
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -38,7 +39,7 @@ func TestMetricTranslator(t *testing.T) {
 		wkk.NewRowKey("resource.should.be.filtered"): "value",
 	}
 
-	err := translator.TranslateRow(&row)
+	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 	require.Equal(t, "test-org", row[wkk.RowKeyCCustomerID])
 	require.Equal(t, "metrics", row[wkk.RowKeyCTelemetryType])
@@ -95,7 +96,7 @@ func TestMetricTranslator_TimestampTruncation(t *testing.T) {
 				wkk.RowKeyCTimestamp: tc.inputTimestamp,
 			}
 
-			err := translator.TranslateRow(&row)
+			err := translator.TranslateRow(context.Background(), &row)
 			require.NoError(t, err)
 			require.Equal(t, tc.expectedTruncated, row[wkk.RowKeyCTimestamp])
 		})
@@ -138,7 +139,7 @@ func TestMetricTranslator_AttributeFiltering(t *testing.T) {
 		wkk.NewRowKey("custom.field"): "value",
 	}
 
-	err := translator.TranslateRow(&row)
+	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 
 	// Check that kept resource attributes are still present

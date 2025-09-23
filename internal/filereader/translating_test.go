@@ -34,7 +34,7 @@ func newTestNoopTranslator() *testNoopTranslator {
 	return &testNoopTranslator{}
 }
 
-func (nt *testNoopTranslator) TranslateRow(row *Row) error {
+func (nt *testNoopTranslator) TranslateRow(_ context.Context, row *Row) error {
 	// No-op - row is unchanged
 	return nil
 }
@@ -45,7 +45,7 @@ type mockTranslator struct {
 	prefix      string
 }
 
-func (mt *mockTranslator) TranslateRow(row *Row) error {
+func (mt *mockTranslator) TranslateRow(_ context.Context, row *Row) error {
 	if mt.shouldError {
 		return errors.New("mock translation error")
 	}
@@ -484,7 +484,7 @@ type conditionalErrorTranslator struct {
 	rowCount  int
 }
 
-func (cet *conditionalErrorTranslator) TranslateRow(row *Row) error {
+func (cet *conditionalErrorTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	if cet.rowCount == cet.failOnRow {
 		return errors.New("conditional translation error")
 	}
