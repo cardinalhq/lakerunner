@@ -25,7 +25,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -594,69 +593,7 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 		segmentParams = append(segmentParams, params)
 	}
 
-	ll.Info("Log segment upload completed",
-		slog.Int("totalSegments", len(segmentParams)))
+	ll.Info("Log segment upload completed", slog.Int("totalSegments", len(segmentParams)))
 
 	return segmentParams, nil
-}
-
-// LogTranslator adds resource metadata to log rows
-type LogTranslator struct {
-	orgID             string
-	bucket            string
-	objectID          string
-	exemplarProcessor *exemplars.Processor
-}
-
-// NewLogTranslator creates a new LogTranslator with the specified metadata
-func NewLogTranslator(orgID, bucket, objectID string, exemplarProcessor *exemplars.Processor) *LogTranslator {
-	return &LogTranslator{
-		orgID:             orgID,
-		bucket:            bucket,
-		objectID:          objectID,
-		exemplarProcessor: exemplarProcessor,
-	}
-}
-
-// TranslateRow adds resource fields to each row
-func (t *LogTranslator) TranslateRow(ctx context.Context, row *filereader.Row) error {
-	if row == nil {
-		return fmt.Errorf("row cannot be nil")
-	}
-
-	// Only set the specific required fields - assume all other fields are properly set
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
-
-	// Ensure required CardinalhQ fields are set
-	(*row)[wkk.RowKeyCTelemetryType] = "logs"
-	(*row)[wkk.RowKeyCName] = "log.events"
-	(*row)[wkk.RowKeyCValue] = float64(1.0)
-
-	t.setFingerprint(ctx, row)
-
-	return nil
-}
-
-func (t *LogTranslator) setFingerprint(ctx context.Context, row *filereader.Row) {
-	if t.exemplarProcessor == nil {
-		return
-	}
-
-	if _, ok := (*row)[wkk.RowKeyCFingerprint]; ok {
-		return // Fingerprint already set
-	}
-
-	message, ok := (*row)[wkk.RowKeyCMessage].(string)
-	if !ok || message == "" {
-		return // No message to fingerprint
-	}
-
-	tenant := t.exemplarProcessor.GetTenant(ctx, t.orgID)
-	trieClusterManager := tenant.GetTrieClusterManager()
-	fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
-	if err == nil {
-		(*row)[wkk.RowKeyCFingerprint] = fingerprint
-	}
 }
