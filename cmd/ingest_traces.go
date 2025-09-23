@@ -16,9 +16,10 @@ package cmd
 
 import (
 	"fmt"
+	"log/slog"
+
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/lrdb"
-	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"

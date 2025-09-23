@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/parquet-go/parquet-go"
 
@@ -31,9 +33,10 @@ import (
 // FileSplitter manages splitting data into multiple output files based on
 // size constraints and grouping requirements.
 type FileSplitter struct {
-	config       WriterConfig
-	currentRows  int64
-	currentGroup any
+	config             WriterConfig
+	currentRows        int64
+	currentGroup       any
+	conversionPrefixes []string // Cached prefixes for string conversion
 
 	// Binary buffering for schema evolution
 	codec        rowcodec.Codec
@@ -59,9 +62,74 @@ func NewFileSplitter(config WriterConfig) *FileSplitter {
 	}
 
 	return &FileSplitter{
-		config:  config,
-		codec:   codec,
-		results: make([]Result, 0),
+		config:             config,
+		codec:              codec,
+		results:            make([]Result, 0),
+		conversionPrefixes: config.GetStringConversionPrefixes(),
+	}
+}
+
+// shouldConvertToString checks if a field name matches any of the configured prefixes
+// that require string conversion.
+func (s *FileSplitter) shouldConvertToString(fieldName string) bool {
+	for _, prefix := range s.conversionPrefixes {
+		if strings.HasPrefix(fieldName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// convertToStringIfNeeded converts a value to string if the field name matches
+// one of the configured prefixes. Otherwise, returns the value unchanged.
+func (s *FileSplitter) convertToStringIfNeeded(fieldName string, value any) any {
+	if !s.shouldConvertToString(fieldName) {
+		return value
+	}
+
+	// Handle nil values
+	if value == nil {
+		return nil
+	}
+
+	// If already a string, return as-is
+	if _, ok := value.(string); ok {
+		return value
+	}
+
+	// Convert to string based on type
+	switch v := value.(type) {
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case int32:
+		return strconv.FormatInt(int64(v), 10)
+	case int16:
+		return strconv.FormatInt(int64(v), 10)
+	case int8:
+		return strconv.FormatInt(int64(v), 10)
+	case int:
+		return strconv.Itoa(v)
+	case uint64:
+		return strconv.FormatUint(v, 10)
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint:
+		return strconv.FormatUint(uint64(v), 10)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(v), 'f', -1, 32)
+	case bool:
+		return strconv.FormatBool(v)
+	case []byte:
+		return string(v)
+	default:
+		// For any other type (including slices, maps, etc.), use fmt.Sprint
+		return fmt.Sprint(v)
 	}
 }
 
@@ -116,7 +184,9 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		// Convert pipeline.Row to map[string]any efficiently
 		stringRow := make(map[string]any, len(row)+1) // +1 for _cardinalhq.id
 		for key, value := range row {
-			stringRow[string(key.Value())] = value
+			fieldName := string(key.Value())
+			// Apply string conversion for fields with configured prefixes
+			stringRow[fieldName] = s.convertToStringIfNeeded(fieldName, value)
 		}
 
 		stringRow["_cardinalhq.id"] = idgen.NextBase32ID()

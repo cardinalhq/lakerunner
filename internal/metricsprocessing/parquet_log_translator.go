@@ -21,12 +21,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/oteltools/pkg/translate"
+
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
-	"github.com/cardinalhq/oteltools/pkg/translate"
 )
 
 // ParquetLogTranslator handles Parquet-specific log translation with timestamp detection and fingerprinting

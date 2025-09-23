@@ -17,8 +17,9 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/configdb"
 	"log/slog"
+
+	"github.com/cardinalhq/lakerunner/configdb"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"

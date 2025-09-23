@@ -67,17 +67,17 @@ func NewTopicRegistry(prefix string) *TopicRegistry {
 	}
 
 	// Initialize all topic specifications with exact current names/groups
-	tr.registerTopic(TopicObjstoreIngestLogs, "objstore.ingest.logs", "ingest.logs", "ingest-logs")
-	tr.registerTopic(TopicObjstoreIngestMetrics, "objstore.ingest.metrics", "ingest.metrics", "ingest-metrics")
-	tr.registerTopic(TopicObjstoreIngestTraces, "objstore.ingest.traces", "ingest.traces", "ingest-traces")
-	tr.registerTopic(TopicSegmentsLogsCompact, "segments.logs.compact", "compact.logs", "compact-logs")
-	tr.registerTopic(TopicSegmentsMetricsCompact, "segments.metrics.compact", "compact.metrics", "compact-metrics")
-	tr.registerTopic(TopicSegmentsTracesCompact, "segments.traces.compact", "compact.traces", "compact-traces")
-	tr.registerTopic(TopicSegmentsMetricsRollup, "segments.metrics.rollup", "rollup.metrics", "rollup-metrics")
-	tr.registerTopic(TopicBoxerLogsCompact, "boxer.logs.compact", "boxer.logs.compact", "boxer-compact-logs")
-	tr.registerTopic(TopicBoxerMetricsCompact, "boxer.metrics.compact", "boxer.metrics.compact", "boxer-compact-metrics")
-	tr.registerTopic(TopicBoxerTracesCompact, "boxer.traces.compact", "boxer.traces.compact", "boxer-compact-traces")
-	tr.registerTopic(TopicBoxerMetricsRollup, "boxer.metrics.rollup", "boxer.metrics.rollup", "boxer-rollup-metrics")
+	tr.registerTopic(TopicObjstoreIngestLogs, "objstore.ingest.logs", "ingest.logs", ServiceTypeIngestLogs)
+	tr.registerTopic(TopicObjstoreIngestMetrics, "objstore.ingest.metrics", "ingest.metrics", ServiceTypeIngestMetrics)
+	tr.registerTopic(TopicObjstoreIngestTraces, "objstore.ingest.traces", "ingest.traces", ServiceTypeIngestTraces)
+	tr.registerTopic(TopicSegmentsLogsCompact, "segments.logs.compact", "compact.logs", ServiceTypeCompactLogs)
+	tr.registerTopic(TopicSegmentsMetricsCompact, "segments.metrics.compact", "compact.metrics", ServiceTypeCompactMetrics)
+	tr.registerTopic(TopicSegmentsTracesCompact, "segments.traces.compact", "compact.traces", ServiceTypeCompactTraces)
+	tr.registerTopic(TopicSegmentsMetricsRollup, "segments.metrics.rollup", "rollup.metrics", ServiceTypeRollupMetrics)
+	tr.registerTopic(TopicBoxerLogsCompact, "boxer.logs.compact", "boxer.logs.compact", ServiceTypeBoxerCompactLogs)
+	tr.registerTopic(TopicBoxerMetricsCompact, "boxer.metrics.compact", "boxer.metrics.compact", ServiceTypeBoxerCompactMetrics)
+	tr.registerTopic(TopicBoxerTracesCompact, "boxer.traces.compact", "boxer.traces.compact", ServiceTypeBoxerCompactTraces)
+	tr.registerTopic(TopicBoxerMetricsRollup, "boxer.metrics.rollup", "boxer.metrics.rollup", ServiceTypeBoxerRollupMetrics)
 
 	return tr
 }
@@ -208,16 +208,16 @@ type KafkaSyncConfig struct {
 }
 
 type KafkaSyncDefaults struct {
-	PartitionCount    int                    `yaml:"partitionCount"`
-	ReplicationFactor int                    `yaml:"replicationFactor"`
-	TopicConfig       map[string]interface{} `yaml:"topicConfig"`
+	PartitionCount    int            `yaml:"partitionCount"`
+	ReplicationFactor int            `yaml:"replicationFactor"`
+	TopicConfig       map[string]any `yaml:"topicConfig"`
 }
 
 type KafkaSyncTopic struct {
-	Name              string                 `yaml:"name"`
-	PartitionCount    int                    `yaml:"partitionCount,omitempty"`
-	ReplicationFactor int                    `yaml:"replicationFactor,omitempty"`
-	TopicConfig       map[string]interface{} `yaml:"topicConfig,omitempty"`
+	Name              string         `yaml:"name"`
+	PartitionCount    int            `yaml:"partitionCount,omitempty"`
+	ReplicationFactor int            `yaml:"replicationFactor,omitempty"`
+	TopicConfig       map[string]any `yaml:"topicConfig,omitempty"`
 }
 
 // GenerateKafkaSyncConfig creates a kafka-sync compatible config from our KafkaTopicsConfig
@@ -226,7 +226,7 @@ func (tr *TopicRegistry) GenerateKafkaSyncConfig(config KafkaTopicsConfig) Kafka
 	defaults := KafkaSyncDefaults{
 		PartitionCount:    16, // Safe default
 		ReplicationFactor: 3,  // Safe default
-		TopicConfig:       make(map[string]interface{}),
+		TopicConfig:       make(map[string]any),
 	}
 
 	// Override with configured defaults
@@ -270,7 +270,7 @@ func (tr *TopicRegistry) GenerateKafkaSyncConfig(config KafkaTopicsConfig) Kafka
 				topic.ReplicationFactor = *serviceConfig.ReplicationFactor
 			}
 			if len(serviceConfig.Options) > 0 {
-				topic.TopicConfig = make(map[string]interface{})
+				topic.TopicConfig = make(map[string]any)
 				for k, v := range serviceConfig.Options {
 					topic.TopicConfig[k] = v
 				}

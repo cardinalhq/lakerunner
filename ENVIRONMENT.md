@@ -16,6 +16,31 @@ kafka_topics:
 LAKERUNNER_KAFKA_TOPIC_PREFIX=my-prefix
 ```
 
+- **Data Expiry Configuration** – Configure retention policies for telemetry data.
+
+```yaml
+# config.yaml
+expiry:
+  default_max_age_days:
+    logs: 30     # Retain logs for 30 days (0 = never expire)
+    metrics: 90  # Retain metrics for 90 days (0 = never expire)
+    traces: 7    # Retain traces for 7 days (0 = never expire)
+  batch_size: 20000  # Number of rows to process per batch
+```
+
+```bash
+# Environment variable overrides (using Viper naming convention)
+LAKERUNNER_EXPIRY_DEFAULT_MAX_AGE_DAYS_LOGS=30
+LAKERUNNER_EXPIRY_DEFAULT_MAX_AGE_DAYS_METRICS=90
+LAKERUNNER_EXPIRY_DEFAULT_MAX_AGE_DAYS_TRACES=7
+LAKERUNNER_EXPIRY_BATCH_SIZE=20000
+```
+
+**Note:** The default configuration sets all signal types to 0 (never expire) for safety. Organizations can override these defaults per-org in the `organization_signal_expiry` table:
+- `-1` = use default from config
+- `0` = never expire
+- `>0` = specific retention days
+
 ## Removed / Replaced
 
 ### `DEBUG`

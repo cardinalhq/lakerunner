@@ -21,9 +21,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/oteltools/pkg/translate"
+
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
-	"github.com/cardinalhq/oteltools/pkg/translate"
 )
 
 func TestParquetLogTranslator_TranslateRow_NilRow(t *testing.T) {

@@ -204,10 +204,12 @@ Inside the container, memory and CPU limits for Go will match the constraints of
 - CI uses **partial builds** (`partial:` section in goreleaser)
 - Developers cannot use `partial:` locally, but must keep it in config
 
-## Important Reminders
+## IMPORTANT Reminders
 
 - This is a monorepo - no backwards compatibility needed
 - Always prefer editing existing files over creating new ones
 - Never proactively create documentation unless requested
 - When working on SQL, ensure `make test-integration` passes
 - Do what has been asked; nothing more, nothing less
+- "make test-integration" should be run via the sub-agent named "integration-test-runner"
+- "make check" should be run via the sub-agent named check-runner.

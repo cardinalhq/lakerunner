@@ -32,9 +32,9 @@ type MetricCompactionBoxerConsumer struct {
 // NewMetricCompactionBoxerConsumer creates a new metric compaction boxer consumer using the common consumer framework
 func NewMetricCompactionBoxerConsumer(
 	ctx context.Context,
-	factory *fly.Factory,
-	store BoxerStore,
 	cfg *config.Config,
+	store BoxerStore,
+	factory *fly.Factory,
 ) (*MetricCompactionBoxerConsumer, error) {
 
 	// Create Kafka producer for sending compaction bundles

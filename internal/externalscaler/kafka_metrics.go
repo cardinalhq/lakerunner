@@ -18,10 +18,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cardinalhq/lakerunner/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 // KafkaMetricsExporter exports Kafka consumer lag metrics as OpenTelemetry metrics

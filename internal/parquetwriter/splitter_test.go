@@ -23,6 +23,8 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // mockStatsProvider implements StatsProvider for testing
@@ -531,6 +533,110 @@ func TestFileSplitterTempFileCreation(t *testing.T) {
 	for _, result := range results {
 		_ = os.Remove(result.FileName)
 	}
+}
+
+// TestStringConversionForPrefixedFields tests that fields with configured prefixes
+// are converted to strings to avoid schema conflicts
+func TestStringConversionForPrefixedFields(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Test with default prefixes
+	t.Run("DefaultPrefixes", func(t *testing.T) {
+		config := WriterConfig{
+			TmpDir:         tmpDir,
+			RecordsPerFile: 100,
+		}
+
+		splitter := NewFileSplitter(config)
+
+		// Test conversion methods directly
+		assert.True(t, splitter.shouldConvertToString("resource.foo"))
+		assert.True(t, splitter.shouldConvertToString("scope.bar"))
+		assert.True(t, splitter.shouldConvertToString("log.baz"))
+		assert.True(t, splitter.shouldConvertToString("metric.qux"))
+		assert.True(t, splitter.shouldConvertToString("span.trace"))
+		assert.False(t, splitter.shouldConvertToString("other.field"))
+		assert.False(t, splitter.shouldConvertToString("timestamp"))
+
+		// Test conversion of different types
+		assert.Equal(t, "123", splitter.convertToStringIfNeeded("resource.id", int64(123)))
+		assert.Equal(t, "45", splitter.convertToStringIfNeeded("scope.level", int32(45)))
+		assert.Equal(t, "3.14", splitter.convertToStringIfNeeded("metric.value", float64(3.14)))
+		assert.Equal(t, "true", splitter.convertToStringIfNeeded("log.enabled", true))
+		assert.Equal(t, "already_string", splitter.convertToStringIfNeeded("span.name", "already_string"))
+
+		// Fields without matching prefix should not be converted
+		assert.Equal(t, int64(999), splitter.convertToStringIfNeeded("other.value", int64(999)))
+		assert.Equal(t, float64(2.71), splitter.convertToStringIfNeeded("timestamp", float64(2.71)))
+
+		// Nil values should remain nil
+		assert.Nil(t, splitter.convertToStringIfNeeded("resource.nil", nil))
+	})
+
+	// Test with custom prefixes
+	t.Run("CustomPrefixes", func(t *testing.T) {
+		config := WriterConfig{
+			TmpDir:                   tmpDir,
+			RecordsPerFile:           100,
+			StringConversionPrefixes: []string{"custom.", "special."},
+		}
+
+		splitter := NewFileSplitter(config)
+
+		// Test that custom prefixes are used instead of defaults
+		assert.True(t, splitter.shouldConvertToString("custom.field"))
+		assert.True(t, splitter.shouldConvertToString("special.value"))
+		assert.False(t, splitter.shouldConvertToString("resource.foo"))
+		assert.False(t, splitter.shouldConvertToString("log.bar"))
+
+		// Test conversion with custom prefixes
+		assert.Equal(t, "42", splitter.convertToStringIfNeeded("custom.id", int64(42)))
+		assert.Equal(t, int64(99), splitter.convertToStringIfNeeded("resource.id", int64(99)))
+	})
+
+	// Test actual batch processing with mixed types
+	t.Run("BatchProcessingWithConversion", func(t *testing.T) {
+		config := WriterConfig{
+			TmpDir:         tmpDir,
+			RecordsPerFile: 100,
+		}
+
+		splitter := NewFileSplitter(config)
+		ctx := context.Background()
+
+		// Create a batch with fields that need conversion
+		batch := pipeline.GetBatch()
+
+		// First row has resource.id as int64
+		row1 := batch.AddRow()
+		row1[wkk.NewRowKey("resource.id")] = int64(12345)
+		row1[wkk.NewRowKey("resource.name")] = "service-a"
+		row1[wkk.NewRowKey("metric.value")] = float64(99.5)
+		row1[wkk.NewRowKey("regular.field")] = int64(777)
+
+		// Second row has resource.id as string (simulating type conflict)
+		row2 := batch.AddRow()
+		row2[wkk.NewRowKey("resource.id")] = "67890"
+		row2[wkk.NewRowKey("resource.name")] = "service-b"
+		row2[wkk.NewRowKey("metric.value")] = int64(100)
+		row2[wkk.NewRowKey("regular.field")] = int64(888)
+
+		// Write batch - should not error despite type mismatch
+		err := splitter.WriteBatchRows(ctx, batch)
+		require.NoError(t, err, "WriteBatchRows should handle type conversion")
+
+		// Close and verify results
+		results, err := splitter.Close(ctx)
+		require.NoError(t, err, "Close should succeed")
+		require.Len(t, results, 1, "Should have one result file")
+
+		// Clean up
+		for _, result := range results {
+			_ = os.Remove(result.FileName)
+		}
+
+		pipeline.ReturnBatch(batch)
+	})
 }
 
 // Helper functions
