@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,6 +32,16 @@ import (
 var (
 	// Pattern to sanitize field names - removes non-alphanumeric chars except dots and underscores
 	fieldSanitizeRegex = regexp.MustCompile(`[^a-zA-Z0-9._]+`)
+	// Pattern to match Unix timestamp strings (all digits)
+	timestampDigitsRegex = regexp.MustCompile(`^\d+$`)
+)
+
+const (
+	// timestampSecondsThreshold represents the cutoff point between seconds and milliseconds
+	// Values below this are assumed to be in seconds and will be converted to milliseconds
+	// 2e9 milliseconds = 2,000,000,000 ms ≈ January 24, 2033 in milliseconds
+	// This ensures timestamps before 2033 in millisecond format are treated as seconds
+	timestampSecondsThreshold = 2e9
 )
 
 // CSVLogTranslator handles translation for CSV log files
@@ -56,10 +67,20 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	}
 
 	// First, normalize all field names to lowercase with deduplication
+	// Sort keys to ensure deterministic processing order
+	keys := make([]wkk.RowKey, 0, len(*row))
+	for key := range *row {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return wkk.RowKeyValue(keys[i]) < wkk.RowKeyValue(keys[j])
+	})
+
 	normalizedRow := make(Row)
 	usedNames := make(map[string]int) // Track how many times each lowercased name has been used
 
-	for key, value := range *row {
+	for _, key := range keys {
+		value := (*row)[key]
 		originalName := wkk.RowKeyValue(key)
 		normalizedName := strings.ToLower(originalName)
 
@@ -201,7 +222,7 @@ func (t *CSVLogTranslator) parseTimestamp(val interface{}) int64 {
 func (t *CSVLogTranslator) parseTimestampString(s string) int64 {
 	s = strings.TrimSpace(s)
 	// Check if it looks like a Unix timestamp (all digits)
-	if matched, _ := regexp.MatchString(`^\d+$`, s); matched {
+	if timestampDigitsRegex.MatchString(s) {
 		var ts int64
 		_, _ = fmt.Sscanf(s, "%d", &ts)
 		return t.normalizeTimestamp(ts)
@@ -222,7 +243,7 @@ func (t *CSVLogTranslator) normalizeTimestamp(ts int64) int64 {
 	}
 
 	// Seconds (before year 2033 in milliseconds)
-	if ts < 2e9 {
+	if ts < timestampSecondsThreshold {
 		return ts * 1000
 	}
 

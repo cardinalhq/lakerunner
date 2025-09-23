@@ -410,8 +410,8 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]interface{}{
 				"_cardinalhq.message":   "Message",
 				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.alice":             "lowercase", // First occurrence keeps original name
-				"log.alice_2":           "titlecase", // Second occurrence gets suffix
+				"log.alice":             "titlecase", // "Alice" comes first alphabetically
+				"log.alice_2":           "lowercase", // "alice" comes second alphabetically
 			},
 		},
 		{
@@ -426,9 +426,9 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]interface{}{
 				"_cardinalhq.message":   "Message",
 				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.field":             "first",  // First occurrence
-				"log.field_2":           "second", // Second occurrence
-				"log.field_3":           "third",  // Third occurrence
+				"log.field":             "third",  // "FIELD" comes first alphabetically
+				"log.field_2":           "second", // "Field" comes second alphabetically
+				"log.field_3":           "first",  // "field" comes third alphabetically
 			},
 		},
 	}
