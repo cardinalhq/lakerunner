@@ -726,7 +726,7 @@ func NewTraceTranslator(orgID, bucket, objectID string) *TraceTranslator {
 }
 
 // TranslateRow adds resource fields to each row
-func (t *TraceTranslator) TranslateRow(row *filereader.Row) error {
+func (t *TraceTranslator) TranslateRow(_ context.Context, row *filereader.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}

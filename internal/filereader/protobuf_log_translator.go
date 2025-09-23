@@ -43,9 +43,7 @@ func NewProtoBinLogTranslator(opts ReaderOptions) *ProtoBinLogTranslator {
 }
 
 // TranslateRow handles protobuf-specific field translation
-func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
-	// Use background context for metrics - we'll add proper context passing later if needed
-	ctx := context.Background()
+func (t *ProtoBinLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	return t.translateRowWithContext(ctx, row)
 }
 

@@ -50,7 +50,7 @@ type Reader interface {
 // RowTranslator transforms rows from one format to another.
 type RowTranslator interface {
 	// TranslateRow transforms a row in-place by modifying the provided row pointer.
-	TranslateRow(row *Row) error
+	TranslateRow(ctx context.Context, row *Row) error
 }
 
 // OTELMetricsProvider provides access to the underlying OpenTelemetry metrics structure.

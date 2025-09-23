@@ -88,7 +88,7 @@ func (tr *TranslatingReader) Next(ctx context.Context) (*Batch, error) {
 		row := make(Row)
 		maps.Copy(row, sourceRow)
 
-		if translateErr := tr.translator.TranslateRow(&row); translateErr != nil {
+		if translateErr := tr.translator.TranslateRow(ctx, &row); translateErr != nil {
 			// TODO: Add logging here when we have access to a logger
 
 			// Return partial batch if we've successfully translated some rows

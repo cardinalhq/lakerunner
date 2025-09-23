@@ -625,7 +625,7 @@ func NewLogTranslator(orgID, bucket, objectID string) *LogTranslator {
 }
 
 // TranslateRow adds resource fields to each row
-func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
+func (t *LogTranslator) TranslateRow(_ context.Context, row *filereader.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}

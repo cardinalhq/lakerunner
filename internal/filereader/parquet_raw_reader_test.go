@@ -286,7 +286,7 @@ type testTranslator struct {
 	addValue string
 }
 
-func (t *testTranslator) TranslateRow(row *Row) error {
+func (t *testTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}

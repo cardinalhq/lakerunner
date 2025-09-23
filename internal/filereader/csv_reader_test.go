@@ -360,7 +360,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			row := tt.input
-			err := translator.TranslateRow(&row)
+			err := translator.TranslateRow(context.Background(), &row)
 			require.NoError(t, err)
 
 			// Check expected fields

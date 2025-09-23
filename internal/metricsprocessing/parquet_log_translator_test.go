@@ -15,6 +15,7 @@
 package metricsprocessing
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -34,7 +35,7 @@ func TestParquetLogTranslator_TranslateRow_NilRow(t *testing.T) {
 		ObjectID: "test.parquet",
 	}
 
-	err := translator.TranslateRow(nil)
+	err := translator.TranslateRow(context.Background(), nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "row cannot be nil")
 }
@@ -153,7 +154,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 			}
 
 			beforeTranslate := time.Now()
-			err := translator.TranslateRow(&row)
+			err := translator.TranslateRow(context.Background(), &row)
 			afterTranslate := time.Now()
 			require.NoError(t, err)
 
@@ -264,7 +265,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 				row[k] = v
 			}
 
-			err := translator.TranslateRow(&row)
+			err := translator.TranslateRow(context.Background(), &row)
 			require.NoError(t, err)
 
 			// Check message was set correctly
@@ -352,7 +353,7 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 				row[k] = v
 			}
 
-			err := translator.TranslateRow(&row)
+			err := translator.TranslateRow(context.Background(), &row)
 			require.NoError(t, err)
 
 			// Check that nested structures were flattened correctly
@@ -408,7 +409,7 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 		wkk.NewRowKey("resource.old"): "keep",
 	}
 
-	err := translator.TranslateRow(&row)
+	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 
 	// Check that special fields were not duplicated as regular attributes
@@ -449,7 +450,7 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 		wkk.NewRowKey("message"):   "test message",
 	}
 
-	err := translator.TranslateRow(&row)
+	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 
 	// Check required CardinalhQ fields
@@ -489,7 +490,7 @@ func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
 		wkk.NewRowKey(""):          "value with empty key", // This should be skipped
 	}
 
-	err := translator.TranslateRow(&row)
+	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 
 	// The empty key should be skipped during processing
@@ -521,7 +522,7 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 		wkk.NewRowKey("duration.ms"):  float64(123.45),
 	}
 
-	err := translator.TranslateRow(&row)
+	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 
 	// Check that all non-special fields are preserved with resource. prefix

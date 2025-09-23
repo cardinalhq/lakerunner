@@ -324,7 +324,7 @@ func TestTranslatingReader_BufferLeak(t *testing.T) {
 // mockLeakTestTranslator for testing (avoid conflict with existing mockTranslator)
 type mockLeakTestTranslator struct{}
 
-func (m *mockLeakTestTranslator) TranslateRow(row *Row) error {
+func (m *mockLeakTestTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	// Simple translation: add a field
 	(*row)[wkk.NewRowKey("translated")] = true
 	return nil

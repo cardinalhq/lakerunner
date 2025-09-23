@@ -51,11 +51,6 @@ func NewCSVLogTranslator(opts ReaderOptions) *CSVLogTranslator {
 
 // TranslateRow handles CSV-specific field translation for logs
 func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
-	return t.translateRowWithContext(ctx, row)
-}
-
-// translateRowWithContext handles CSV-specific field translation with context
-func (t *CSVLogTranslator) translateRowWithContext(ctx context.Context, row *Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}

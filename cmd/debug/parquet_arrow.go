@@ -125,7 +125,7 @@ func runParquetArrowCat(filename string, limit int, translatorType string) error
 
 			// Apply translator if configured
 			if logTranslator != nil {
-				if err := logTranslator.TranslateRow(&row); err != nil {
+				if err := logTranslator.TranslateRow(ctx, &row); err != nil {
 					return fmt.Errorf("error translating row: %w", err)
 				}
 			}
