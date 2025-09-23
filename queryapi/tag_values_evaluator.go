@@ -72,8 +72,6 @@ func (q *QuerierService) EvaluateMetricTagValuesQuery(
 					default:
 					}
 
-					slog.Info("Pushing down segments", "groupSize", len(group.Segments))
-
 					// Collect all segment IDs for worker assignment
 					segmentIDs := make([]int64, 0, len(group.Segments))
 					segmentMap := make(map[int64][]SegmentInfo)
@@ -191,7 +189,122 @@ func (q *QuerierService) EvaluateLogTagValuesQuery(
 					default:
 					}
 
-					slog.Info("Pushing down segments", "groupSize", len(group.Segments))
+					// Collect all segment IDs for worker assignment
+					segmentIDs := make([]int64, 0, len(group.Segments))
+					segmentMap := make(map[int64][]SegmentInfo)
+					for _, segment := range group.Segments {
+						segmentIDs = append(segmentIDs, segment.SegmentID)
+						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
+					}
+
+					// Get worker assignments for all segments
+					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+					if err != nil {
+						slog.Error("failed to get worker assignments", "err", err)
+						continue
+					}
+
+					// Group segments by assigned worker
+					workerGroups := make(map[Worker][]SegmentInfo)
+					for _, mapping := range mappings {
+						segmentList := segmentMap[mapping.SegmentID]
+						workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
+					}
+
+					var groupLeafChans []<-chan promql.TagValue
+					for worker, workerSegments := range workerGroups {
+						req := PushDownRequest{
+							OrganizationID: orgID,
+							LogLeaf:        &leaf,
+							TagName:        queryPlan.TagName,
+							StartTs:        group.StartTs,
+							EndTs:          group.EndTs,
+							Segments:       workerSegments,
+							Step:           stepDuration,
+						}
+						ch, err := q.tagValuesPushDown(ctx, worker, req)
+						if err != nil {
+							slog.Error("pushdown failed", "worker", worker, "err", err)
+							continue
+						}
+						groupLeafChans = append(groupLeafChans, ch)
+					}
+					// No channels for this group — skip.
+					if len(groupLeafChans) == 0 {
+						continue
+					}
+
+					// Merge this group's worker streams without sorting
+					mergedGroup := mergeChannels(ctx, 1024, groupLeafChans...)
+
+					// Forward group results into final output stream as they arrive, with deduplication
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case res, ok := <-mergedGroup:
+							if !ok {
+								// Group done, proceed to next group.
+								goto nextGroup
+							}
+							// Only send unique tag values
+							if !seenTagValues[res.Value] {
+								seenTagValues[res.Value] = true
+								out <- res
+							}
+						}
+					}
+				nextGroup:
+				}
+			}
+		}
+	}()
+	return out, nil
+}
+
+func (q *QuerierService) EvaluateSpanTagValuesQuery(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs int64,
+	endTs int64,
+	queryPlan logql.LQueryPlan,
+) (<-chan promql.Timestamped, error) {
+	workers, err := q.workerDiscovery.GetAllWorkers()
+	if err != nil {
+		slog.Error("failed to get all workers", "err", err)
+		return nil, fmt.Errorf("failed to get all workers: %w", err)
+	}
+
+	stepDuration := StepForQueryDuration(startTs, endTs)
+
+	out := make(chan promql.Timestamped, 1024)
+
+	go func() {
+		defer close(out)
+
+		// Use a map to track unique tag values across all workers and groups
+		seenTagValues := make(map[string]bool)
+
+		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, true)
+
+		for _, leaf := range queryPlan.Leaves {
+			for _, dih := range dateIntHours {
+				segments, err := q.lookupSpansSegments(ctx, dih, leaf, startTs, endTs, orgID, q.mdb.ListTraceSegmentsForQuery)
+				if err != nil {
+					slog.Error("failed to lookup spans segments", "err", err, "dih", dih, "leaf", leaf)
+					return
+				}
+				if len(segments) == 0 {
+					continue
+				}
+				// Form time-contiguous batches sized for the number of workers.
+				groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), true)
+				for _, group := range groups {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
 
 					// Collect all segment IDs for worker assignment
 					segmentIDs := make([]int64, 0, len(group.Segments))
@@ -225,6 +338,7 @@ func (q *QuerierService) EvaluateLogTagValuesQuery(
 							EndTs:          group.EndTs,
 							Segments:       workerSegments,
 							Step:           stepDuration,
+							IsSpans:        true,
 						}
 						ch, err := q.tagValuesPushDown(ctx, worker, req)
 						if err != nil {

@@ -131,3 +131,57 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 		}
 	}
 }
+
+func (q *QuerierService) handleGetSpanTagValues(w http.ResponseWriter, r *http.Request) {
+	qp := readQueryPayload(w, r, true)
+	if qp == nil {
+		return
+	}
+
+	tagName := r.URL.Query().Get("tagName")
+	if qp.Q == "" {
+		// If no query expression, use a default query that does an exists check for the requested tag
+		qp.Q = fmt.Sprintf("{%s=~\".+\"}", strings.ReplaceAll(tagName, ".", "_"))
+	}
+
+	logAst, err := logql.FromLogQL(qp.Q)
+	if err != nil {
+		http.Error(w, "invalid span query expression: "+qp.Q+" "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	lplan, err := logql.CompileLog(logAst)
+	lplan.TagName = tagName
+	if err != nil {
+		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeSSE, ok := q.sseWriter(w)
+	if !ok {
+		return
+	}
+
+	resultsCh, err := q.EvaluateSpanTagValuesQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, lplan)
+	if err != nil {
+		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	notify := r.Context().Done()
+	for {
+		select {
+		case <-notify:
+			slog.Info("client disconnected; stopping stream")
+			return
+		case res, more := <-resultsCh:
+			if !more {
+				_ = writeSSE("done", map[string]string{"status": "ok"})
+				return
+			}
+			if err := writeSSE("result", res); err != nil {
+				slog.Error("write SSE failed", "error", err)
+				return
+			}
+		}
+	}
+}

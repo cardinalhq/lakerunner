@@ -315,8 +315,13 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if req.LogLeaf != nil {
 		if req.TagName != "" {
 			workerSql = req.LogLeaf.ToWorkerSQLForTagValues(req.TagName)
-			cacheManager = ws.LogsCM
-			globSize = ws.LogsGlobSize
+			if req.IsSpans {
+				cacheManager = ws.TracesCM
+				globSize = ws.TracesGlobSize
+			} else {
+				cacheManager = ws.LogsCM
+				globSize = ws.LogsGlobSize
+			}
 			isTagValuesQuery = true
 		} else {
 			if req.IsSpans {

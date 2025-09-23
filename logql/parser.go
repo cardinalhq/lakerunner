@@ -846,7 +846,7 @@ func normalizeLabelName(label string) string {
 		remainder := strings.TrimPrefix(label, "_cardinalhq_")
 		return "_cardinalhq." + remainder
 	}
-	if strings.HasPrefix(label, "resource_") || strings.HasPrefix(label, "log_") {
+	if strings.HasPrefix(label, "resource_") || strings.HasPrefix(label, "log_") || strings.HasPrefix(label, "span_") {
 		return strings.ReplaceAll(label, "_", ".")
 	}
 	return label
