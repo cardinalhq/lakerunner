@@ -16,6 +16,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -139,6 +140,10 @@ func runMonitoringServe(_ context.Context) error {
 	defer cancel()
 
 	if err := service.Start(signalCtx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Info("shutting down", "error", err)
+			return nil
+		}
 		slog.Error("External scaler service failed", "error", err)
 		return err
 	}

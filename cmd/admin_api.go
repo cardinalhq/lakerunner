@@ -15,6 +15,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -85,7 +87,14 @@ func init() {
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			// Run the admin service
-			return service.Run(ctx)
+			if err := service.Run(ctx); err != nil {
+				if errors.Is(err, context.Canceled) {
+					slog.Info("shutting down", "error", err)
+					return nil
+				}
+				return err
+			}
+			return nil
 		},
 	}
 

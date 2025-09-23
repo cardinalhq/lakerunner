@@ -16,6 +16,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -75,7 +76,14 @@ func init() {
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			worker := queryworker.NewWorkerService(5, 5, 5, 12, sp, cloudManagers)
-			return worker.Run(doneCtx)
+			if err := worker.Run(doneCtx); err != nil {
+				if errors.Is(err, context.Canceled) {
+					slog.Info("shutting down", "error", err)
+					return nil
+				}
+				return err
+			}
+			return nil
 		},
 	}
 
