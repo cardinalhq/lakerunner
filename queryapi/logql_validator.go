@@ -22,8 +22,8 @@ import (
 )
 
 type logQLValidateRequest struct {
-	Query    string `json:"query"`
-	Exemplar string `json:"exemplar,omitempty"`
+	Query    string         `json:"query"`
+	Exemplar map[string]any `json:"exemplar,omitempty"`
 }
 
 type logQLValidateResponse struct {
@@ -46,12 +46,18 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if strings.TrimSpace(req.Exemplar) == "" {
+	me, err := json.Marshal(req.Exemplar)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, InvalidJSON, "invalid exemplar: "+err.Error())
+		return
+	}
+	payload := string(me)
+	if strings.TrimSpace(payload) == "" {
 		_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: true})
 		return
 	}
 
-	vr, err := ValidateLogQLAgainstExemplar(r.Context(), req.Query, req.Exemplar)
+	vr, err := ValidateLogQLAgainstExemplar(r.Context(), req.Query, payload)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ValidationFailed, "validation failed: "+err.Error())
 		return

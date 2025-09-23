@@ -1,0 +1,287 @@
+{
+  "query":"count_over_time({serviceName=\"accounting\"} |= \"Order details\" [5m])",
+  "exemplar":{
+    "resourceLogs": [
+      {
+        "resource": {
+          "attributes": [
+            {
+              "key": "os.type",
+              "value": {
+                "stringValue": "linux"
+              }
+            },
+            {
+              "key": "os.description",
+              "value": {
+                "stringValue": "Debian GNU/Linux 12 (bookworm)"
+              }
+            },
+            {
+              "key": "os.build_id",
+              "value": {
+                "stringValue": "6.1.148-173.267.amzn2023.x86_64"
+              }
+            },
+            {
+              "key": "os.name",
+              "value": {
+                "stringValue": "Debian GNU/Linux"
+              }
+            },
+            {
+              "key": "os.version",
+              "value": {
+                "stringValue": "12"
+              }
+            },
+            {
+              "key": "host.name",
+              "value": {
+                "stringValue": "accounting-5d8956858-6xqlr"
+              }
+            },
+            {
+              "key": "process.owner",
+              "value": {
+                "stringValue": "app"
+              }
+            },
+            {
+              "key": "process.pid",
+              "value": {
+                "intValue": "1"
+              }
+            },
+            {
+              "key": "process.runtime.description",
+              "value": {
+                "stringValue": ".NET 8.0.14"
+              }
+            },
+            {
+              "key": "process.runtime.name",
+              "value": {
+                "stringValue": ".NET"
+              }
+            },
+            {
+              "key": "process.runtime.version",
+              "value": {
+                "stringValue": "8.0.14"
+              }
+            },
+            {
+              "key": "container.id",
+              "value": {
+                "stringValue": "321ead6776ecc7b9d5d9716ed477ab144d8897e400db21965b02b7ca758b411f"
+              }
+            },
+            {
+              "key": "telemetry.distro.name",
+              "value": {
+                "stringValue": "opentelemetry-dotnet-instrumentation"
+              }
+            },
+            {
+              "key": "telemetry.distro.version",
+              "value": {
+                "stringValue": "1.11.0"
+              }
+            },
+            {
+              "key": "telemetry.sdk.name",
+              "value": {
+                "stringValue": "opentelemetry"
+              }
+            },
+            {
+              "key": "telemetry.sdk.language",
+              "value": {
+                "stringValue": "dotnet"
+              }
+            },
+            {
+              "key": "telemetry.sdk.version",
+              "value": {
+                "stringValue": "1.11.2"
+              }
+            },
+            {
+              "key": "service.name",
+              "value": {
+                "stringValue": "accounting"
+              }
+            },
+            {
+              "key": "service.namespace",
+              "value": {
+                "stringValue": "opentelemetry-demo"
+              }
+            },
+            {
+              "key": "service.version",
+              "value": {
+                "stringValue": "2.0.2"
+              }
+            },
+            {
+              "key": "k8s.pod.ip",
+              "value": {
+                "stringValue": "10.181.14.5"
+              }
+            },
+            {
+              "key": "k8s.pod.uid",
+              "value": {
+                "stringValue": "b2c082e7-1474-400b-b525-53cfaa114338"
+              }
+            },
+            {
+              "key": "k8s.deployment.name",
+              "value": {
+                "stringValue": "accounting"
+              }
+            },
+            {
+              "key": "k8s.node.name",
+              "value": {
+                "stringValue": "ip-10-181-0-193.us-east-2.compute.internal"
+              }
+            },
+            {
+              "key": "k8s.pod.name",
+              "value": {
+                "stringValue": "accounting-5d8956858-6xqlr"
+              }
+            },
+            {
+              "key": "k8s.namespace.name",
+              "value": {
+                "stringValue": "otel-demo-apps"
+              }
+            },
+            {
+              "key": "k8s.pod.start_time",
+              "value": {
+                "stringValue": "2025-09-22T17:03:10Z"
+              }
+            },
+            {
+              "key": "service.instance.id",
+              "value": {
+                "stringValue": "b2c082e7-1474-400b-b525-53cfaa114338"
+              }
+            },
+            {
+              "key": "_cardinalhq.customer_id",
+              "value": {
+                "stringValue": "667ffac0-6ce2-41d7-8b49-13495956cb5a"
+              }
+            },
+            {
+              "key": "_cardinalhq.collector_id",
+              "value": {
+                "stringValue": "chq-saas"
+              }
+            },
+            {
+              "key": "k8s.cluster.name",
+              "value": {
+                "stringValue": "unknown"
+              }
+            },
+            {
+              "key": "_cardinalhq.bucket_prefix",
+              "value": {
+                "stringValue": "otel-raw/667ffac0-6ce2-41d7-8b49-13495956cb5a/chq-saas"
+              }
+            }
+          ]
+        },
+        "scopeLogs": [
+          {
+            "scope": {
+              "name": "Accounting.Consumer"
+            },
+            "logRecords": [
+              {
+                "body": {
+                  "stringValue": "Order details: {@OrderResult}."
+                },
+                "spanId": "",
+                "traceId": "",
+                "attributes": [
+                  {
+                    "key": "_cardinalhq.id",
+                    "value": {
+                      "stringValue": "AUSDFYSDF"
+                    }
+                  },
+                  {
+                    "key": "@OrderResult",
+                    "value": {
+                      "stringValue": "{ \"orderId\": \"b0514fb9-9820-11f0-be7d-be4a2e0c3e64\", \"shippingTrackingId\": \"226f11ba-2b4d-4693-9f78-a18a8692afcf\", \"shippingCost\": { \"currencyCode\": \"USD\", \"units\": \"185\", \"nanos\": 200000000 }, \"shippingAddress\": { \"streetAddress\": \"1355 Market St\", \"city\": \"San Francisco\", \"state\": \"CA\", \"country\": \"United States\", \"zipCode\": \"94103\" }, \"items\": [ { \"item\": { \"productId\": \"HQTGWGPNH4\", \"quantity\": 2 }, \"cost\": { \"currencyCode\": \"USD\", \"nanos\": 990000000 } } ] }"
+                    }
+                  },
+                  {
+                    "key": "_cardinalhq.json",
+                    "value": {
+                      "kvlistValue": {}
+                    }
+                  },
+                  {
+                    "key": "_cardinalhq.fingerprint",
+                    "value": {
+                      "intValue": "7754623969787599908"
+                    }
+                  },
+                  {
+                    "key": "_cardinalhq.level",
+                    "value": {
+                      "stringValue": "INFO"
+                    }
+                  },
+                  {
+                    "key": "cardinalhq.stats_customer_id",
+                    "value": {
+                      "stringValue": "667ffac0-6ce2-41d7-8b49-13495956cb5a"
+                    }
+                  },
+                  {
+                    "key": "cardinalhq.stats_collector_id",
+                    "value": {
+                      "stringValue": ""
+                    }
+                  },
+                  {
+                    "key": "cardinalhq.stats_collector_name",
+                    "value": {
+                      "stringValue": ""
+                    }
+                  },
+                  {
+                    "key": "_cardinalhq.customer_id",
+                    "value": {
+                      "stringValue": "667ffac0-6ce2-41d7-8b49-13495956cb5a"
+                    }
+                  },
+                  {
+                    "key": "_cardinalhq.collector_id",
+                    "value": {
+                      "stringValue": "chq-saas"
+                    }
+                  }
+                ],
+                "severityText": "INFO",
+                "timeUnixNano": "1758592661318002400",
+                "severityNumber": 9,
+                "observedTimeUnixNano": "1758592661318002400"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
