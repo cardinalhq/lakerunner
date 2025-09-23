@@ -961,12 +961,39 @@ func tryParseLabelFilter(stage string) (LabelFilter, bool) {
 	return LabelFilter{}, false
 }
 
+// spanFieldMappings maps LogQL underscore syntax to actual Parquet column names
+// for span fields that have underscores in the column name that should be preserved
+var spanFieldMappings = map[string]string{
+	"span_has_error":                                  "span.has_error",
+	"span_cardinalhq_stats_collector_id":              "span.cardinalhq.stats_collector_id",
+	"span_cardinalhq_stats_collector_name":            "span.cardinalhq.stats_collector_name",
+	"span_cardinalhq_stats_customer_id":               "span.cardinalhq.stats_customer_id",
+	"span_http_request_content_length_uncompressed":   "span.http.request_content_length_uncompressed",
+	"span_http_request_method_original":               "span.http.request.method_original",
+	"span_http_response_header_content_length":        "span.http.response.header.content-length",
+	"span_http_response_status_code":                  "span.http.response.status_code",
+	"span_http_status_code":                           "span.http.status_code",
+	"span_http_status_text":                           "span.http.status_text",
+	"span_http_user_agent":                            "span.http.user_agent",
+	"span_user_agent_original":                        "span.user_agent.original",
+}
+
 func normalizeLabelName(label string) string {
 	if strings.HasPrefix(label, "_cardinalhq_") {
 		remainder := strings.TrimPrefix(label, "_cardinalhq_")
 		return "_cardinalhq." + remainder
 	}
-	if strings.HasPrefix(label, "resource_") || strings.HasPrefix(label, "log_") || strings.HasPrefix(label, "span_") {
+
+	// For span fields, check explicit mappings first
+	if strings.HasPrefix(label, "span_") {
+		if mapped, exists := spanFieldMappings[label]; exists {
+			return mapped
+		}
+		// Fallback to generic replacement for span fields not in mapping
+		return strings.ReplaceAll(label, "_", ".")
+	}
+
+	if strings.HasPrefix(label, "resource_") || strings.HasPrefix(label, "log_") {
 		return strings.ReplaceAll(label, "_", ".")
 	}
 	return label
