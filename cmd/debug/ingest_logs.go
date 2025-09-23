@@ -163,15 +163,10 @@ func createLogReaderStack(filename, orgID, bucket, objectID string, exemplarProc
 	var translator filereader.RowTranslator
 	if strings.HasSuffix(filename, ".parquet") {
 		// Use specialized Parquet translator for .parquet files
-		translator = &metricsprocessing.ParquetLogTranslator{
-			OrgID:             orgID,
-			Bucket:            bucket,
-			ObjectID:          objectID,
-			ExemplarProcessor: exemplarProcessor,
-		}
+		translator = metricsprocessing.NewParquetLogTranslator(orgID, bucket, objectID, exemplarProcessor)
 	} else {
 		// Use standard translator for CSV, JSON, and other formats
-		translator = metricsprocessing.NewLogTranslator(orgID, bucket, objectID)
+		translator = metricsprocessing.NewLogTranslator(orgID, bucket, objectID, nil)
 	}
 
 	// Wrap with translating reader

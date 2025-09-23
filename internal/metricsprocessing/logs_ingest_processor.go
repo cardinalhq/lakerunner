@@ -25,6 +25,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -344,19 +345,10 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 	var translator filereader.RowTranslator
 	if strings.HasSuffix(tmpFilename, ".parquet") {
 		// Use specialized Parquet translator that handles timestamp detection and fingerprinting
-		translator = &ParquetLogTranslator{
-			OrgID:             orgID,
-			Bucket:            bucket,
-			ObjectID:          objectID,
-			ExemplarProcessor: p.exemplarProcessor,
-		}
+		translator = NewParquetLogTranslator(orgID, bucket, objectID, p.exemplarProcessor)
 	} else {
 		// Use standard translator for other formats (json, binpb, etc.)
-		translator = &LogTranslator{
-			orgID:    orgID,
-			bucket:   bucket,
-			objectID: objectID,
-		}
+		translator = NewLogTranslator(orgID, bucket, objectID, p.exemplarProcessor)
 	}
 
 	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
@@ -610,22 +602,24 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 
 // LogTranslator adds resource metadata to log rows
 type LogTranslator struct {
-	orgID    string
-	bucket   string
-	objectID string
+	orgID             string
+	bucket            string
+	objectID          string
+	exemplarProcessor *exemplars.Processor
 }
 
 // NewLogTranslator creates a new LogTranslator with the specified metadata
-func NewLogTranslator(orgID, bucket, objectID string) *LogTranslator {
+func NewLogTranslator(orgID, bucket, objectID string, exemplarProcessor *exemplars.Processor) *LogTranslator {
 	return &LogTranslator{
-		orgID:    orgID,
-		bucket:   bucket,
-		objectID: objectID,
+		orgID:             orgID,
+		bucket:            bucket,
+		objectID:          objectID,
+		exemplarProcessor: exemplarProcessor,
 	}
 }
 
 // TranslateRow adds resource fields to each row
-func (t *LogTranslator) TranslateRow(_ context.Context, row *filereader.Row) error {
+func (t *LogTranslator) TranslateRow(ctx context.Context, row *filereader.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
@@ -640,5 +634,29 @@ func (t *LogTranslator) TranslateRow(_ context.Context, row *filereader.Row) err
 	(*row)[wkk.RowKeyCName] = "log.events"
 	(*row)[wkk.RowKeyCValue] = float64(1.0)
 
+	t.setFingerprint(ctx, row)
+
 	return nil
+}
+
+func (t *LogTranslator) setFingerprint(ctx context.Context, row *filereader.Row) {
+	if t.exemplarProcessor == nil {
+		return
+	}
+
+	if _, ok := (*row)[wkk.RowKeyCFingerprint]; ok {
+		return // Fingerprint already set
+	}
+
+	message, ok := (*row)[wkk.RowKeyCMessage].(string)
+	if !ok || message == "" {
+		return // No message to fingerprint
+	}
+
+	tenant := t.exemplarProcessor.GetTenant(ctx, t.orgID)
+	trieClusterManager := tenant.GetTrieClusterManager()
+	fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
+	if err == nil {
+		(*row)[wkk.RowKeyCFingerprint] = fingerprint
+	}
 }

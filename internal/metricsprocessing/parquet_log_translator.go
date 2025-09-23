@@ -38,6 +38,16 @@ type ParquetLogTranslator struct {
 	ExemplarProcessor *exemplars.Processor
 }
 
+// NewParquetLogTranslator creates a new ParquetLogTranslator with the specified metadata
+func NewParquetLogTranslator(orgID, bucket, objectID string, exemplarProcessor *exemplars.Processor) *ParquetLogTranslator {
+	return &ParquetLogTranslator{
+		OrgID:             orgID,
+		Bucket:            bucket,
+		ObjectID:          objectID,
+		ExemplarProcessor: exemplarProcessor,
+	}
+}
+
 // flattenValue recursively flattens nested structures into dot-notation fields
 func (t *ParquetLogTranslator) flattenValue(prefix string, value any, result map[wkk.RowKey]any) {
 	switch v := value.(type) {
