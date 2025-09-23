@@ -431,6 +431,42 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				"log.field_3":           "first",  // "field" comes third alphabetically
 			},
 		},
+		{
+			name: "Sanitization collision - different special chars",
+			input: Row{
+				wkk.NewRowKey("data"):    "Message",
+				wkk.NewRowKey("foo-bar"): "dash",
+				wkk.NewRowKey("foo bar"): "space",
+				wkk.NewRowKey("foo@bar"): "at",
+				wkk.NewRowKey("time"):    int64(1758397185000),
+			},
+			expected: map[string]interface{}{
+				"_cardinalhq.message":   "Message",
+				"_cardinalhq.timestamp": int64(1758397185000),
+				"log.foo_bar":           "space", // "foo bar" comes first alphabetically
+				"log.foo_bar_2":         "dash",  // "foo-bar" comes second alphabetically
+				"log.foo_bar_3":         "at",    // "foo@bar" comes third alphabetically
+			},
+		},
+		{
+			name: "Complex sanitization collision",
+			input: Row{
+				wkk.NewRowKey("data"):      "Message",
+				wkk.NewRowKey("user-name"): "dash",
+				wkk.NewRowKey("user name"): "space",
+				wkk.NewRowKey("user_name"): "underscore",
+				wkk.NewRowKey("user@name"): "at",
+				wkk.NewRowKey("time"):      int64(1758397185000),
+			},
+			expected: map[string]interface{}{
+				"_cardinalhq.message":   "Message",
+				"_cardinalhq.timestamp": int64(1758397185000),
+				"log.user_name":         "space",      // "user name" comes first alphabetically
+				"log.user_name_2":       "dash",       // "user-name" comes second alphabetically
+				"log.user_name_3":       "at",         // "user@name" comes third alphabetically
+				"log.user_name_4":       "underscore", // "user_name" comes fourth alphabetically
+			},
+		},
 	}
 
 	opts := ReaderOptions{

@@ -146,21 +146,46 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	(*row)[wkk.RowKeyCTimestamp] = timestamp
 
 	// Map remaining fields to log.* namespace with sanitized names
-	newFields := make(map[wkk.RowKey]interface{})
-	for key, value := range *row {
+	// Sort keys to ensure deterministic processing order for sanitization too
+	remainingKeys := make([]wkk.RowKey, 0)
+	for key := range *row {
 		// Skip already processed fields
 		if key == wkk.RowKeyCTimestamp || key == wkk.RowKeyCMessage {
-			newFields[key] = value
 			continue
 		}
+		remainingKeys = append(remainingKeys, key)
+	}
+	sort.Slice(remainingKeys, func(i, j int) bool {
+		return wkk.RowKeyValue(remainingKeys[i]) < wkk.RowKeyValue(remainingKeys[j])
+	})
 
-		// Get the original field name
+	newFields := make(map[wkk.RowKey]interface{})
+	// Add already processed fields
+	newFields[wkk.RowKeyCTimestamp] = (*row)[wkk.RowKeyCTimestamp]
+	if msgVal, exists := (*row)[wkk.RowKeyCMessage]; exists {
+		newFields[wkk.RowKeyCMessage] = msgVal
+	}
+
+	usedSanitizedNames := make(map[string]int) // Track sanitized name usage
+
+	for _, key := range remainingKeys {
+		value := (*row)[key]
 		originalName := wkk.RowKeyValue(key)
 
 		// Sanitize the field name
 		sanitized := t.sanitizeFieldName(originalName)
 		if sanitized != "" && sanitized != "data" { // Skip empty names and "data" field
-			newKey := wkk.NewRowKey("log." + sanitized)
+			// Handle duplicates in sanitized names by adding numbered suffixes
+			finalSanitized := sanitized
+			if count, exists := usedSanitizedNames[sanitized]; exists {
+				count++
+				usedSanitizedNames[sanitized] = count
+				finalSanitized = fmt.Sprintf("%s_%d", sanitized, count)
+			} else {
+				usedSanitizedNames[sanitized] = 1
+			}
+
+			newKey := wkk.NewRowKey("log." + finalSanitized)
 			newFields[newKey] = value
 		}
 	}
