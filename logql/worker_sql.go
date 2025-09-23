@@ -246,6 +246,14 @@ func computeS0Need(be *LogLeaf, groupKeys []string, parserCreated map[string]str
 					}
 				}
 			}
+
+		case "unwrap":
+			if f := strings.TrimSpace(p.Params["field"]); f != "" {
+				q := quoteIdent(f)
+				if isBaseCol(q) {
+					need[q] = struct{}{}
+				}
+			}
 		}
 	}
 

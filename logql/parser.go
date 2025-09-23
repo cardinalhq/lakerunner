@@ -756,7 +756,7 @@ func parseUnwrapParams(stage string) (map[string]string, bool) {
 	if i := strings.IndexAny(tok, "[ )"); i >= 0 {
 		tok = tok[:i]
 	}
-	tok = normalizeLabelFormatLiteral(tok)
+	tok = normalizeLabelName(normalizeLabelFormatLiteral(tok))
 	if tok == "" {
 		return nil, false
 	}

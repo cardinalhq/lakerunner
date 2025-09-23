@@ -2376,3 +2376,79 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 		t.Fatalf("final _cardinalhq.message mismatch:\n  got:  %q\n  want: %q\nsql:\n%s", gotMsg, wantMsg, sql)
 	}
 }
+
+func TestRewrite_SumOverTime_Unwrap_BaseField_LineFilter(t *testing.T) {
+	db := openDuckDB(t)
+	// Base table with top-level log.quantity (note the quoted dotted name).
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT,
+		"log.quantity"            INTEGER
+	);`)
+
+	// Two 1m buckets: [0..60s) and [60..120s)
+	// bucket 0: quantities 1 + 2  => sum = 3
+	// bucket 1: quantity 3        => sum = 3
+	// Include a distractor row that shouldn't match the |= "AddItem" filter.
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name","log.quantity") VALUES
+	(10*1000,  'AddItemAsync called with userId=U1, productId=P1, quantity=1', 'cart', 1),
+	(25*1000,  'AddItem completed for userId=U2',                              'cart', 2),
+	(70*1000,  'AddItem scheduled for userId=U3',                               'cart', 3),
+	(50*1000,  'RemoveItem (should not match filter)',                  'cart', 999);
+	`)
+
+	q := `sum_over_time(({resource_service_name="cart"} |= "AddItem" | unwrap log_quantity)[1m])`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	step := time.Minute
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(step), 0, 120*1000)
+
+	// Sanity: unwrap should reference the base column as DOUBLE.
+	if !strings.Contains(sql, `try_cast("log.quantity" AS DOUBLE) AS __unwrap_value`) {
+		t.Fatalf("expected unwrap of top-level log.quantity; sql=\n%s", sql)
+	}
+	// Sanity: the line filter should appear as LIKE '%AddItem%'.
+	if !strings.Contains(sql, `"_cardinalhq.message" LIKE '%AddItem%'`) {
+		t.Fatalf("expected line filter on message; sql=\n%s", sql)
+	}
+
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows returned; sql=\n%s", sql)
+	}
+
+	// Collect sums per bucket.
+	got := map[int64]float64{}
+	for _, r := range rows {
+		b := i64(r["bucket_ts"])
+		sum := f64(r["sum"])
+		got[b] = sum
+	}
+
+	// Expected sums by bucket.
+	want := map[int64]float64{
+		0:     3, // 1 + 2 from bucket 0; distractor (999) excluded by line filter
+		60000: 3, // 3 in bucket 1
+	}
+
+	const eps = 1e-9
+	for b, w := range want {
+		g, ok := got[b]
+		if !ok {
+			t.Fatalf("missing bucket %d; rows=%v\nsql=\n%s", b, rows, sql)
+		}
+		if math.Abs(g-w) > eps {
+			t.Fatalf("bucket %d: got sum=%v want=%v; rows=%v\nsql=\n%s", b, g, w, rows, sql)
+		}
+	}
+}
