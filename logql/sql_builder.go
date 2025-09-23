@@ -409,41 +409,6 @@ func quoteIdent(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
-func regexCaptureNames(pattern string) []string {
-	// Find all capture groups (both named and unnamed) left→right
-	// This regex matches:
-	// - Named capture groups: (?P<name>...)
-	// - Unnamed capture groups: (...)
-	// We need to be careful to not match non-capturing groups: (?:...)
-	re := regexp.MustCompile(`\(`)
-	m := re.FindAllStringIndex(pattern, -1)
-	if len(m) == 0 {
-		return nil
-	}
-	names := make([]string, 0)
-	unnamedIndex := 0
-	for _, idx := range m {
-		start := idx[0]
-		// non-capturing?
-		if start+2 < len(pattern) && pattern[start:start+3] == "(?:" {
-			continue
-		}
-		// named?
-		if start+3 < len(pattern) && pattern[start:start+3] == "(?P" {
-			nameEnd := strings.Index(pattern[start+3:], ">")
-			if nameEnd != -1 {
-				name := pattern[start+4 : start+3+nameEnd]
-				names = append(names, name)
-				continue
-			}
-		}
-		// unnamed capture
-		names = append(names, fmt.Sprintf("__var_%d", unnamedIndex))
-		unnamedIndex++
-	}
-	return names
-}
-
 func buildLineFilterWhere(lfs []LineFilter, bodyCol string) []string {
 	var where []string
 	for _, lf := range lfs {

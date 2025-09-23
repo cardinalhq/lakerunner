@@ -29,8 +29,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/logql"
-	"github.com/cardinalhq/lakerunner/promql"
-
 	_ "github.com/marcboeker/go-duckdb/v2"
 
 	"go.opentelemetry.io/collector/pdata/plog"
@@ -381,12 +379,6 @@ type ValidateResult struct {
 	IsAggregate  bool        // whether query was aggregate path (PromQL rewrite)
 }
 
-// ValidateLogQLAgainstExemplar
-// - compiles logql → plan → (maybe PromQL rewrite) → leaf → worker SQL
-// - opens in-memory DuckDB (unless you pass an existing db via WithDB)
-// - ingests exemplar JSON with IngestExemplarLogsJSONToDuckDB
-// - computes [start,end] from ingested timestamps if not provided
-// - executes worker SQL and returns rows + executed SQL
 func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON string, opts ...ValidateOption) (*ValidateResult, error) {
 	cfg := validateConfig{
 		table:        "logs",
@@ -394,26 +386,22 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON strin
 		logLimit:     1000,
 		logOrder:     "desc",
 		extraOrderBy: nil,
-		resolveRange: true, // compute [start,end] from ingested data by default
-		startMillis:  0,    // ignored unless resolveRange=false
-		endMillis:    0,    // ignored unless resolveRange=false
-		manageDB:     true, // if we created the DB, we'll close it
+		resolveRange: true,
+		startMillis:  0,
+		endMillis:    0,
+		manageDB:     true,
 	}
 	for _, o := range opts {
 		o(&cfg)
 	}
 
-	// 1) Compile LogQL to a log plan.
+	// 1) Parse to simplified AST (works for both pipeline and aggregate)
 	ast, err := logql.FromLogQL(query)
 	if err != nil {
 		return nil, fmt.Errorf("parse logql: %w", err)
 	}
-	lplan, err := logql.CompileLog(ast)
-	if err != nil {
-		return nil, fmt.Errorf("compile logql: %w", err)
-	}
 
-	// 2) Open DuckDB if not provided.
+	// 2) Open DuckDB (in-memory default)
 	if cfg.db == nil {
 		cfg.db, err = sql.Open("duckdb", "")
 		if err != nil {
@@ -425,7 +413,7 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON strin
 		defer func() { _ = cfg.db.Close() }()
 	}
 
-	// 3) Ingest exemplar into DuckDB.
+	// 3) Ingest exemplar rows
 	inserted, err := IngestExemplarLogsJSONToDuckDB(ctx, cfg.db, cfg.table, exemplarJSON)
 	if err != nil {
 		return nil, fmt.Errorf("ingest exemplar: %w", err)
@@ -434,14 +422,13 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON strin
 		return nil, fmt.Errorf("no rows ingested from exemplar")
 	}
 
-	// 4) Determine [start,end] range to bake into SQL placeholders.
+	// 4) Resolve [start,end] range
 	var startMillis, endMillis int64
 	if cfg.resolveRange {
 		startMillis, endMillis, err = minMaxTimestamp(ctx, cfg.db, cfg.table)
 		if err != nil {
 			return nil, fmt.Errorf("resolve [start,end]: %w", err)
 		}
-		// make end inclusive-friendly for BETWEEN-like filters (if used in SQL)
 		if endMillis == startMillis {
 			endMillis = startMillis + 1
 		}
@@ -449,54 +436,80 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON strin
 		startMillis, endMillis = cfg.startMillis, cfg.endMillis
 	}
 
-	// 5) Build worker SQL from the leaf.
-	var workerSQL string
-	isAgg := ast.IsAggregateExpr()
-	if isAgg {
-		// Rewrite to PromQL & compile, attach log leaves.
-		rr, err := promql.RewriteToPromQL(lplan.Root)
-		if err != nil {
-			return nil, fmt.Errorf("rewrite to promql: %w", err)
-		}
-		promExpr, err := promql.FromPromQL(rr.PromQL)
-		if err != nil {
-			return nil, fmt.Errorf("parse promql: %w", err)
-		}
-		pplan, err := promql.Compile(promExpr)
-		if err != nil {
-			return nil, fmt.Errorf("compile promql: %w", err)
-		}
-		pplan.AttachLogLeaves(rr)
-		if len(pplan.Leaves) == 0 {
-			return nil, fmt.Errorf("no leaves produced for aggregate query")
-		}
-		leaf := pplan.Leaves[0]
-		workerSQL = leaf.ToWorkerSQL(cfg.aggStep)
-	} else {
-		if len(lplan.Leaves) == 0 {
-			return nil, fmt.Errorf("no leaves produced for log query")
-		}
-		leaf := lplan.Leaves[0]
-		workerSQL = leaf.ToWorkerSQL(cfg.logLimit, cfg.logOrder, cfg.extraOrderBy)
+	// 5) Extract the first pipeline (selector + range) from the AST,
+	//    regardless of aggregate/vector context.
+	sel, rng, ok := ast.FirstPipeline()
+	if !ok || sel == nil {
+		return nil, fmt.Errorf("no log pipeline (selector) found in expression")
 	}
-	workerSQL = replacePlaceholders(workerSQL, cfg.table, startMillis, endMillis)
 
-	// 6) Execute worker SQL and return rows.
-	rows, err := queryAllRows(cfg.db, workerSQL)
+	// 6) Build a synthetic leaf from that pipeline for validation.
+	leaf := logql.LogLeaf{
+		Matchers:     append([]logql.LabelMatch(nil), sel.Matchers...),
+		LineFilters:  append([]logql.LineFilter(nil), sel.LineFilters...),
+		LabelFilters: append([]logql.LabelFilter(nil), sel.LabelFilters...),
+		Parsers:      append([]logql.ParserStage(nil), sel.Parsers...),
+
+		Range:  "",
+		Offset: "",
+		Unwrap: false,
+	}
+	if rng != nil {
+		leaf.Range = rng.Range
+		leaf.Offset = rng.Offset
+		leaf.Unwrap = rng.Unwrap
+	}
+	// Assign a stable ID (optional; helps determinism/debug)
+	leaf.ID = leaf.Label()
+
+	// 7) Stage-wise validation: matchers → +independent (incl. line filters) → +each parser (and parser’s label filters).
+	stages, err := stageWiseValidation(
+		cfg.db, cfg.table,
+		leaf,
+		startMillis, endMillis,
+		cfg.logLimit,
+		cfg.logOrder,
+		cfg.extraOrderBy,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("execute worker SQL: %w\nSQL was:\n%s", err, workerSQL)
+		return nil, fmt.Errorf("stage-wise validation: %w", err)
+	}
+	if len(stages) == 0 {
+		return nil, fmt.Errorf("stage-wise validator returned no stages")
+	}
+
+	final := stages[len(stages)-1]
+	if !final.OK {
+		// Surface a helpful error including missing fields, if any.
+		if len(final.MissingFields) > 0 {
+			return nil, fmt.Errorf("validation failed at final stage: missing fields: %v", final.MissingFields)
+		}
+		if final.Error != nil {
+			return nil, fmt.Errorf("validation failed at final stage: %v", final.Error)
+		}
+		return nil, fmt.Errorf("validation failed at final stage")
+	}
+	if final.RowCount == 0 {
+		return nil, fmt.Errorf("final stage returned 0 rows")
+	}
+
+	// 8) Fetch final rows for the response (mirrors old behavior)
+	rows, err := queryAllRows(cfg.db, final.SQL)
+	if err != nil {
+		return nil, fmt.Errorf("execute final SQL: %w\nSQL was:\n%s", err, final.SQL)
 	}
 	if len(rows) == 0 {
-		return nil, fmt.Errorf("no rows returned from worker SQL; SQL was:\n%s", workerSQL)
+		return nil, fmt.Errorf("no rows returned from final SQL; SQL was:\n%s", final.SQL)
 	}
 
+	// 9) Return a ValidateResult compatible with the existing HTTP handler.
 	return &ValidateResult{
-		WorkerSQL:    workerSQL,
+		WorkerSQL:    final.SQL, // final stage SQL (fully resolved; no placeholders)
 		StartMillis:  startMillis,
 		EndMillis:    endMillis,
 		InsertedRows: inserted,
 		Rows:         rows,
-		IsAggregate:  isAgg,
+		IsAggregate:  ast.IsAggregateExpr(), // keep this info; we validated the pipeline inside it
 	}, nil
 }
 
@@ -554,24 +567,6 @@ func WithTable(name string) ValidateOption {
 // WithAggStep sets the step used when building aggregate worker SQL; default 10s.
 func WithAggStep(step time.Duration) ValidateOption {
 	return func(c *validateConfig) { c.aggStep = step }
-}
-
-// WithLogLeafSQL controls the non-aggregate leaf ToWorkerSQL() arguments.
-func WithLogLeafSQL(limit int, order string, extraOrderBy []string) ValidateOption {
-	return func(c *validateConfig) {
-		c.logLimit = limit
-		c.logOrder = order
-		c.extraOrderBy = extraOrderBy
-	}
-}
-
-// WithRange fixes the start/end placeholders instead of inferring from ingested data.
-func WithRange(startMillis, endMillis int64) ValidateOption {
-	return func(c *validateConfig) {
-		c.resolveRange = false
-		c.startMillis = startMillis
-		c.endMillis = endMillis
-	}
 }
 
 type rowstruct map[string]any

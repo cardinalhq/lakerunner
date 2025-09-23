@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	lqllog "github.com/grafana/loki/v3/pkg/logql/log"
@@ -159,8 +160,9 @@ const (
 )
 
 type LineFilter struct {
-	Op    LineFilterOp `json:"op"`    // contains|not_contains|regex|not_regex
-	Match string       `json:"match"` // substring or regex
+	Op        LineFilterOp `json:"op"`
+	Match     string       `json:"match"`
+	ParserIdx *int         `json:"parserIdx,omitempty"`
 }
 
 type LineFilterOp string
@@ -380,33 +382,63 @@ func addLineFilterFromSyntax(ls *LogSelector, lineFilterList []logql.LineFilterE
 	}
 }
 
+func labelFormatFuncMap() template.FuncMap {
+	return template.FuncMap{
+		"hasPrefix": func(s, prefix string) bool { return strings.HasPrefix(s, prefix) },
+		"hasSuffix": func(s, suffix string) bool { return strings.HasSuffix(s, suffix) },
+		"contains":  func(s, sub string) bool { return strings.Contains(s, sub) },
+
+		// simple transforms (handy to have; harmless at parse time)
+		"toUpper": strings.ToUpper,
+		"toLower": strings.ToLower,
+	}
+}
+
 // Adds parser stages and label filters based on the *string* form of the selector pipeline.
 func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 	lastParser := -1
 
+	findExistingLF := func(op LineFilterOp, match string) *LineFilter {
+		for i := range ls.LineFilters {
+			if ls.LineFilters[i].Op == op && ls.LineFilters[i].Match == match {
+				return &ls.LineFilters[i]
+			}
+		}
+		return nil
+	}
+
 	for _, chunk := range splitPipelineStages(s) {
-		// Parser?
+		// parser?
 		if typ, params, ok := looksLikeParser(chunk); ok {
 			ps := ParserStage{Type: typ, Params: params}
 
-			if typ == "label_format" {
-				compiled := make([]LabelFormatExpr, 0, len(params))
-				for outName, raw := range params {
+			// Parse-time validation for label_format
+			if typ == "label_format" && len(params) > 0 {
+				for _, out := range sortedKeys(params) {
+					// normalize quotes/backticks and escapes
+					raw := params[out]
 					tmpl := normalizeLabelFormatLiteral(raw)
-					sqlExpr, err := buildLabelFormatExprTemplate(
+
+					if _, err := template.New("label_format").Funcs(labelFormatFuncMap()).Parse(tmpl); err != nil {
+						return fmt.Errorf("label_format: %w", err)
+					}
+
+					// 2) Compile to SQL using your existing builder
+					exprSQL, err := buildLabelFormatExprTemplate(
 						tmpl,
 						func(col string) string { return quoteIdent(normalizeLabelName(col)) },
 					)
 					if err != nil {
-						return fmt.Errorf("label_format %s: %w", outName, err)
+						return fmt.Errorf("label_format: %w", err)
 					}
-					compiled = append(compiled, LabelFormatExpr{
-						Out:  normalizeLabelName(outName),
+
+					// 3) Record the compiled mapping
+					ps.LabelFormats = append(ps.LabelFormats, LabelFormatExpr{
+						Out:  out,
 						Tmpl: tmpl,
-						SQL:  sqlExpr,
+						SQL:  exprSQL,
 					})
 				}
-				ps.LabelFormats = compiled
 			}
 
 			ls.Parsers = append(ls.Parsers, ps)
@@ -414,32 +446,118 @@ func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 			continue
 		}
 
-		// Label filter?
+		// label filter?
 		if lf, ok := tryParseLabelFilter(chunk); ok {
 			if lastParser >= 0 {
 				idx := lastParser
-				lf.AfterParser = true
 				lf.ParserIdx = &idx
+				lf.AfterParser = true
 				ls.Parsers[lastParser].Filters = append(ls.Parsers[lastParser].Filters, lf)
-				ls.LabelFilters = append(ls.LabelFilters, lf)
-			} else {
-				ls.LabelFilters = append(ls.LabelFilters, lf)
 			}
+			ls.LabelFilters = append(ls.LabelFilters, lf)
+			continue
+		}
+
+		// line filter?
+		if lf, ok := tryParseLineFilter(chunk); ok {
+			if lastParser >= 0 {
+				idx := lastParser
+				if existing := findExistingLF(lf.Op, lf.Match); existing != nil {
+					existing.ParserIdx = &idx
+				} else {
+					lf.ParserIdx = &idx
+					ls.LineFilters = append(ls.LineFilters, lf)
+				}
+			} else {
+				if existing := findExistingLF(lf.Op, lf.Match); existing == nil {
+					ls.LineFilters = append(ls.LineFilters, lf)
+				}
+			}
+			continue
 		}
 	}
 	return nil
 }
 
-func buildSelector(sel logql.LogSelectorExpr) (LogSelector, error) {
-	ls := LogSelector{
-		Matchers: toLabelMatches(sel.Matchers()),
+func tryParseLineFilter(stage string) (LineFilter, bool) {
+	s := strings.TrimSpace(stage)
+
+	// helper to normalize the RHS token: strip quotes/backticks, unescape \" etc
+	norm := func(t string) string {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			return t
+		}
+		return normalizeLabelFormatLiteral(t)
 	}
+
+	switch {
+	case strings.HasPrefix(s, "="): // |= "foo"
+		return LineFilter{Op: LineContains, Match: norm(s[1:])}, true
+	case strings.HasPrefix(s, "!="): // != "foo"
+		return LineFilter{Op: LineNotContains, Match: norm(s[2:])}, true
+	case strings.HasPrefix(s, "~"): // |~ "re"
+		return LineFilter{Op: LineRegex, Match: norm(s[1:])}, true
+	case strings.HasPrefix(s, "!~"): // !~ "re"
+		return LineFilter{Op: LineNotRegex, Match: norm(s[2:])}, true
+	default:
+		return LineFilter{}, false
+	}
+}
+
+func annotateLineFiltersParserIdxFromString(selStr string, ls *LogSelector) {
+	lastParser := -1
+
+	// quick finder for an existing (op,match) in ls.LineFilters
+	find := func(op LineFilterOp, match string) *LineFilter {
+		for i := range ls.LineFilters {
+			if ls.LineFilters[i].Op == op && ls.LineFilters[i].Match == match {
+				return &ls.LineFilters[i] // pointer to slice elem
+			}
+		}
+		return nil
+	}
+
+	for _, chunk := range splitPipelineStages(selStr) {
+		if typ, _, ok := looksLikeParser(chunk); ok {
+			lastParser++
+			_ = typ
+			continue
+		}
+		if lf, ok := tryParseLineFilter(chunk); ok {
+			if ex := find(lf.Op, lf.Match); ex != nil {
+				if lastParser >= 0 {
+					i := lastParser
+					ex.ParserIdx = &i
+				} else {
+					ex.ParserIdx = nil
+				}
+			} else {
+				if lastParser >= 0 {
+					i := lastParser
+					lf.ParserIdx = &i
+				}
+				ls.LineFilters = append(ls.LineFilters, lf)
+			}
+		}
+	}
+}
+
+func buildSelector(sel logql.LogSelectorExpr) (LogSelector, error) {
+	ls := LogSelector{Matchers: toLabelMatches(sel.Matchers())}
+
+	// Keep Loki’s extraction to populate the set (dedup semantics).
 	addLineFilterFromSyntax(&ls, logql.ExtractLineFilters(sel))
 
-	// Parse stages & label filters from the *string* pipeline (json/logfmt/regexp/etc.)
+	// Parsers & label filters (we already have this)
 	if err := addParsersAndLabelFiltersFromString(sel.String(), &ls); err != nil {
 		return LogSelector{}, err
 	}
+
+	// NEW: annotate each line filter with the parser index it follows.
+	annotateLineFiltersParserIdxFromString(sel.String(), &ls)
+
+	ls.Parsers = MergeConsecutiveKeyParsers(ls.Parsers)
 
 	sort.Slice(ls.Matchers, func(i, j int) bool { return ls.Matchers[i].Label < ls.Matchers[j].Label })
 	return ls, nil
@@ -528,7 +646,6 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 	}
 	switch head[0] {
 	case "json":
-		// support mappings: json a="x.y" b=`m.n` c=plain
 		raw := parseLabelFormatParams(stage)
 		params := make(map[string]string, len(raw))
 		for k, v := range raw {
@@ -537,7 +654,6 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 		return "json", params, true
 
 	case "logfmt":
-		// support optional mappings after logfmt as well
 		raw := parseLabelFormatParams(stage)
 		params := make(map[string]string, len(raw))
 		for k, v := range raw {
@@ -545,14 +661,13 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 		}
 		return "logfmt", params, true
 
-		// in looksLikeParser(stage string)
 	case "line_format":
 		tmpl := ""
 		if i := strings.IndexAny(stage, "`\""); i >= 0 {
 			q := stage[i]
 			if j := strings.LastIndexByte(stage, q); j > i {
-				inner := stage[i : j+1]                   // includes quotes
-				tmpl = normalizeLabelFormatLiteral(inner) // strips quotes/backticks, unescapes \" etc
+				inner := stage[i : j+1]
+				tmpl = normalizeLabelFormatLiteral(inner)
 			}
 		}
 		params := map[string]string{}
@@ -576,7 +691,12 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 		return "regexp", params, true
 
 	case "label_format", "label-format", "labelformat":
-		return "label_format", parseLabelFormatParams(stage), true
+		raw := parseLabelFormatParams(stage)
+		params := make(map[string]string, len(raw))
+		for k, v := range raw {
+			params[k] = normalizeLabelFormatLiteral(v)
+		}
+		return "label_format", params, true
 
 	case "unwrap":
 		if p, ok := parseUnwrapParams(stage); ok {
@@ -1016,4 +1136,32 @@ func cleanStage(s string) string {
 		s = strings.TrimSpace(s[1:])
 	}
 	return s
+}
+
+// MergeConsecutiveKeyParsers merges adjacent json/logfmt stages by unioning their Params
+func MergeConsecutiveKeyParsers(parsers []ParserStage) []ParserStage {
+	if len(parsers) == 0 {
+		return parsers
+	}
+	out := make([]ParserStage, 0, len(parsers))
+	for _, p := range parsers {
+		if len(out) > 0 {
+			prev := &out[len(out)-1]
+			same := (p.Type == prev.Type) && (p.Type == "json" || p.Type == "logfmt")
+			if same {
+				if prev.Params == nil {
+					prev.Params = map[string]string{}
+				}
+				for k, v := range p.Params {
+					prev.Params[k] = v
+				}
+				if len(p.Filters) > 0 {
+					prev.Filters = append(prev.Filters, p.Filters...)
+				}
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	return out
 }

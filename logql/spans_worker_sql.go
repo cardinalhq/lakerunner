@@ -68,7 +68,11 @@ func (be *LogLeaf) ToSpansWorkerSQL(limit int, order string, fields []string) st
 
 	// 5) Emit parsers left→right, pushing label filters as soon as labels exist
 	remainingLF := append([]LabelFilter(nil), be.LabelFilters...)
-	emitParsers(be, &pb, spansNameCol, groupKeys, futureCreated, unwrapNeeded, &remainingLF)
+	remainingLine := make([]LineFilter, 0)
+	emitParsersWithPostLineFilters(be, &pb, spansNameCol,
+		groupKeys,
+		futureCreated, unwrapNeeded,
+		&remainingLF, &remainingLine, fields, parserCreated)
 
 	// 6) Any remaining label filters (base columns) → apply at the end
 	if len(remainingLF) > 0 {
