@@ -262,7 +262,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		ll.Error("Failed to insert log segments with Kafka offsets",
 			slog.Any("error", err),
 			slog.String("organization_id", group.Key.OrganizationID.String()),
-			slog.Int("instance_num", int(group.Key.InstanceNum)),
+			slog.Int("instanceNum", int(group.Key.InstanceNum)),
 			slog.Int("segmentCount", len(segmentParams)),
 			slog.Int64("totalRecords", totalRecords),
 			slog.Int64("totalSize", totalSize),
