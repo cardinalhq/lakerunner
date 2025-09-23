@@ -17,6 +17,7 @@ package filereader
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -159,7 +161,7 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 		return wkk.RowKeyValue(remainingKeys[i]) < wkk.RowKeyValue(remainingKeys[j])
 	})
 
-	newFields := make(map[wkk.RowKey]interface{})
+	newFields := make(map[wkk.RowKey]any)
 	// Add already processed fields
 	newFields[wkk.RowKeyCTimestamp] = (*row)[wkk.RowKeyCTimestamp]
 	if msgVal, exists := (*row)[wkk.RowKeyCMessage]; exists {
@@ -203,6 +205,8 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	if t.orgID != "" {
 		(*row)[wkk.NewRowKey("_cardinalhq.organization_id")] = t.orgID
 	}
+
+	slog.Info("Translated CSV log row", "row", pipeline.ToStringMap(*row))
 
 	return nil
 }
