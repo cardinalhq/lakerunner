@@ -26,6 +26,163 @@ import (
 	"testing"
 )
 
+func TestStagewiseValidator_Accounting_CountOverTime_ByZipCode(t *testing.T) {
+	ctx := context.Background()
+
+	// 1) Load exemplar data that contains the @OrderResult payload referenced by the index(...)
+	b, err := os.ReadFile("testdata/exemplar2.json")
+	if err != nil {
+		t.Fatalf("read exemplar2.json: %v", err)
+	}
+
+	// 2) In-memory DuckDB + ingest
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("open duckdb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	const table = "logs_stagewise_zipcode_count"
+	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	if err != nil {
+		t.Fatalf("ingest exemplar2: %v", err)
+	}
+	if n <= 0 {
+		t.Fatalf("expected >0 rows inserted, got %d", n)
+	}
+
+	// 3) Resolve [start,end] for placeholder substitution
+	startMillis, endMillis, err := minMaxTimestamp(ctx, db, table)
+	if err != nil {
+		t.Fatalf("min/max timestamp: %v", err)
+	}
+	if endMillis == startMillis {
+		endMillis = startMillis + 1
+	}
+
+	// 4) Aggregate LogQL under test. We validate the pre-aggregation pipeline:
+	//    selector + (pre) line filter + line_format + json(zipCode)
+	q := `sum by (zipCode) (` +
+		`count_over_time(` +
+		`{resource_service_name="accounting"} |= "Order details:" ` +
+		`| line_format "{{index . \"log_@OrderResult\"}}" ` +
+		`| json zipCode="shippingAddress.zipCode" ` +
+		`[5m]))`
+
+	ast, err := logql.FromLogQL(q)
+	if err != nil {
+		t.Fatalf("parse logql: %v", err)
+	}
+	if !ast.IsAggregateExpr() {
+		t.Fatalf("query should be aggregate but IsAggregateExpr() == false")
+	}
+
+	// 5) Pull out the pipeline that feeds the range aggregation for stage-wise validation
+	sel, rng, ok := ast.FirstPipeline()
+	if !ok || sel == nil {
+		t.Fatalf("no pipeline (selector) found in expression")
+	}
+	if len(sel.Parsers) == 0 {
+		t.Fatalf("expected parser stages in pipeline, found 0")
+	}
+
+	leaf := logql.LogLeaf{
+		Matchers:     append([]logql.LabelMatch(nil), sel.Matchers...),
+		LineFilters:  append([]logql.LineFilter(nil), sel.LineFilters...),
+		LabelFilters: append([]logql.LabelFilter(nil), sel.LabelFilters...),
+		Parsers:      append([]logql.ParserStage(nil), sel.Parsers...),
+	}
+	if rng != nil {
+		leaf.Range = rng.Range   // 5m window
+		leaf.Offset = rng.Offset // if present
+		leaf.Unwrap = rng.Unwrap // not used here, but keep consistent
+	}
+	leaf.ID = leaf.Label()
+
+	// 6) Stage-wise validation: matchers → +independent/line filters (pre) → +parser[0]: line_format → +parser[1]: json
+	stages, err := stageWiseValidation(
+		db, table,
+		leaf,
+		startMillis, endMillis,
+		1000,
+		"desc",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("stageWiseValidation: %v", err)
+	}
+
+	// Expect at least 4 stages:
+	//   0 = matchers
+	//   1 = matchers + independent + pre_line_filters   (|= "Order details:" is pre, since it precedes line_format)
+	//   2 = parser[0]: line_format
+	//   3 = parser[1]: json
+	if len(stages) < 4 {
+		t.Fatalf("expected at least 4 stages, got %d", len(stages))
+	}
+
+	// 7) Early stages should pass and return rows
+	if !stages[0].OK || stages[0].RowCount == 0 {
+		t.Fatalf("stage 0 failed or returned no rows; sql:\n%s", stages[0].SQL)
+	}
+	if s1 := stages[1]; !s1.OK || s1.RowCount == 0 {
+		t.Fatalf("stage 1 (pre_line_filters) failed or returned no rows; sql:\n%s", s1.SQL)
+	}
+
+	// 8) Parser stages present and succeed
+	if stages[2].Name != "parser[0]: line_format" {
+		t.Fatalf("unexpected stage[2] name: %q\nsql:\n%s", stages[2].Name, stages[2].SQL)
+	}
+	if !stages[2].OK || stages[2].RowCount == 0 {
+		t.Fatalf("line_format stage returned no rows; sql:\n%s", stages[2].SQL)
+	}
+
+	last := stages[3]
+	if last.Name != "parser[1]: json" {
+		t.Fatalf("unexpected stage[3] name: %q\nsql:\n%s", last.Name, last.SQL)
+	}
+	if !last.OK {
+		t.Fatalf("json stage unexpectedly failed: %v\nmissing: %v\nsql:\n%s", last.Error, last.MissingFields, last.SQL)
+	}
+	if last.RowCount == 0 {
+		t.Fatalf("json stage returned 0 rows; sql:\n%s", last.SQL)
+	}
+
+	// 9) Inspect final stage rows: confirm zipCode exists and is non-empty (basic sanity)
+	rows, err := queryAllRows(db, last.SQL)
+	if err != nil {
+		t.Fatalf("query final stage rows: %v\nsql:\n%s", err, last.SQL)
+	}
+	var sawZip bool
+	for _, r := range rows {
+		zRaw, ok := r["zipCode"]
+		if !ok {
+			continue
+		}
+		z := strings.TrimSpace(fmt.Sprint(zRaw))
+		if z == "" {
+			continue
+		}
+		// Optional: basic zip sanity — numeric and reasonable length (5–10 chars to allow extended forms)
+		if _, convErr := strconv.Atoi(strings.TrimLeft(z, "0")); convErr == nil && len(z) >= 5 && len(z) <= 10 {
+			sawZip = true
+			break
+		}
+		// If the exemplar uses strictly 5-digit ZIPs, the above will still pass.
+		if len(z) >= 3 { // fallback: at least something non-empty
+			sawZip = true
+			break
+		}
+	}
+	if !sawZip {
+		t.Fatalf("did not find a non-empty zipCode column in final stage rows; sql:\n%s", last.SQL)
+	}
+
+	// Note: We don't execute the full count_over_time/sum by (zipCode) aggregation here —
+	// this test ensures the pipeline feeding that aggregation (selector → line_filter → line_format → json)
+	// is valid and produces the 'zipCode' label required for grouping.
+}
+
 func TestStagewiseValidator_InvalidLineFormatThenRegexp_NoCountry(t *testing.T) {
 	ctx := context.Background()
 
