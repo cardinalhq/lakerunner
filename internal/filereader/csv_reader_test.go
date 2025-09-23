@@ -347,6 +347,90 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				"log.user":              "bob",
 			},
 		},
+		{
+			name: "Normalized field names - Timestamp",
+			input: Row{
+				wkk.NewRowKey("data"):      "Message",
+				wkk.NewRowKey("Timestamp"): int64(1758397185000),
+				wkk.NewRowKey("User"):      "alice",
+			},
+			expected: map[string]interface{}{
+				"_cardinalhq.message":   "Message",
+				"_cardinalhq.timestamp": int64(1758397185000),
+				"log.user":              "alice",
+			},
+		},
+		{
+			name: "Normalized field names - Publish_Time",
+			input: Row{
+				wkk.NewRowKey("data"):         "Message",
+				wkk.NewRowKey("Publish_Time"): int64(1758397185000),
+				wkk.NewRowKey("User"):         "bob",
+			},
+			expected: map[string]interface{}{
+				"_cardinalhq.message":   "Message",
+				"_cardinalhq.timestamp": int64(1758397185000),
+				"log.user":              "bob",
+			},
+		},
+		{
+			name: "Normalized field names - EVENT_TIMESTAMP",
+			input: Row{
+				wkk.NewRowKey("data"):            "Message",
+				wkk.NewRowKey("EVENT_TIMESTAMP"): int64(1758397185000),
+				wkk.NewRowKey("User"):            "charlie",
+			},
+			expected: map[string]interface{}{
+				"_cardinalhq.message":   "Message",
+				"_cardinalhq.timestamp": int64(1758397185000),
+				"log.user":              "charlie",
+			},
+		},
+		{
+			name: "Normalized field names - EventTime",
+			input: Row{
+				wkk.NewRowKey("data"):      "Message",
+				wkk.NewRowKey("EventTime"): int64(1758397185000),
+				wkk.NewRowKey("User"):      "david",
+			},
+			expected: map[string]interface{}{
+				"_cardinalhq.message":   "Message",
+				"_cardinalhq.timestamp": int64(1758397185000),
+				"log.user":              "david",
+			},
+		},
+		{
+			name: "Duplicate field names with different cases",
+			input: Row{
+				wkk.NewRowKey("data"):  "Message",
+				wkk.NewRowKey("alice"): "lowercase",
+				wkk.NewRowKey("Alice"): "titlecase",
+				wkk.NewRowKey("time"):  int64(1758397185000),
+			},
+			expected: map[string]interface{}{
+				"_cardinalhq.message":   "Message",
+				"_cardinalhq.timestamp": int64(1758397185000),
+				"log.alice":             "lowercase", // First occurrence keeps original name
+				"log.alice_2":           "titlecase", // Second occurrence gets suffix
+			},
+		},
+		{
+			name: "Multiple duplicate field names",
+			input: Row{
+				wkk.NewRowKey("data"):  "Message",
+				wkk.NewRowKey("field"): "first",
+				wkk.NewRowKey("Field"): "second",
+				wkk.NewRowKey("FIELD"): "third",
+				wkk.NewRowKey("time"):  int64(1758397185000),
+			},
+			expected: map[string]interface{}{
+				"_cardinalhq.message":   "Message",
+				"_cardinalhq.timestamp": int64(1758397185000),
+				"log.field":             "first",  // First occurrence
+				"log.field_2":           "second", // Second occurrence
+				"log.field_3":           "third",  // Third occurrence
+			},
+		},
 	}
 
 	opts := ReaderOptions{

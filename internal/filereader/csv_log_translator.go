@@ -55,6 +55,29 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 		return fmt.Errorf("row cannot be nil")
 	}
 
+	// First, normalize all field names to lowercase with deduplication
+	normalizedRow := make(Row)
+	usedNames := make(map[string]int) // Track how many times each lowercased name has been used
+
+	for key, value := range *row {
+		originalName := wkk.RowKeyValue(key)
+		normalizedName := strings.ToLower(originalName)
+
+		// Handle duplicates by adding numbered suffixes
+		finalName := normalizedName
+		if count, exists := usedNames[normalizedName]; exists {
+			count++
+			usedNames[normalizedName] = count
+			finalName = fmt.Sprintf("%s_%d", normalizedName, count)
+		} else {
+			usedNames[normalizedName] = 1
+		}
+
+		normalizedKey := wkk.NewRowKey(finalName)
+		normalizedRow[normalizedKey] = value
+	}
+	*row = normalizedRow
+
 	// Special handling for "data" field as message
 	dataKey := wkk.NewRowKey("data")
 	if dataVal, exists := (*row)[dataKey]; exists {
@@ -70,11 +93,11 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	timestampFound := false
 	var timestamp int64
 
-	// Check common timestamp field names
+	// Check common timestamp field names (all lowercase now)
 	timestampFields := []string{
 		"timestamp", "time", "datetime", "date",
 		"publish_time", "event_timestamp", "created_at", "updated_at",
-		"@timestamp", "ts", "eventTime", "event_time",
+		"@timestamp", "ts", "eventtime", "event_time",
 	}
 
 	for _, fieldName := range timestampFields {
