@@ -504,6 +504,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			assert.Equal(t, "test-bucket", row[wkk.NewRowKey("resource.bucket.name")])
 			assert.Equal(t, "./test.csv", row[wkk.NewRowKey("resource.file.name")])
 			assert.Equal(t, "test", row[wkk.NewRowKey("resource.file.type")]) // GetFileType returns filename without extension
+			assert.Equal(t, "csv-import", row[wkk.NewRowKey("resource.service.name")])
 		})
 	}
 }

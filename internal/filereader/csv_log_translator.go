@@ -197,6 +197,7 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
 	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
 	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.NewRowKey("resource.service.name")] = "csv-import"
 
 	// Add organization ID if available
 	if t.orgID != "" {
