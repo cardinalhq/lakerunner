@@ -37,10 +37,10 @@ var (
 )
 
 const (
-	// timestampSecondsThreshold represents the cutoff point between seconds and milliseconds
-	// Values below this are assumed to be in seconds and will be converted to milliseconds
-	// 2e9 milliseconds = 2,000,000,000 ms ≈ January 24, 2033 in milliseconds
-	// This ensures timestamps before 2033 in millisecond format are treated as seconds
+	// timestampSecondsThreshold is used to distinguish between second-based and millisecond-based Unix timestamps.
+	// Values below this threshold are assumed to be in seconds and will be converted to milliseconds.
+	// 2e9 milliseconds = 2,000,000,000 ms ≈ January 24, 2033. Any real millisecond timestamp will be much larger than this value.
+	// Therefore, if a timestamp value is less than 2e9, it is treated as seconds (not milliseconds).
 	timestampSecondsThreshold = 2e9
 )
 
