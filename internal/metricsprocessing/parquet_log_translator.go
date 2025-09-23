@@ -236,6 +236,35 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) timesta
 	return timestampResult{found: false}
 }
 
+// detectLevelField attempts to find a severity/level field in the row
+// Returns the level string (uppercase) and a boolean indicating if found
+func (t *ParquetLogTranslator) detectLevelField(row *filereader.Row) (string, bool) {
+	// Check common level/severity field names
+	levelFields := []string{
+		"severity_text", "severityText", "severity.text",
+		"level", "log_level", "log.level", "loglevel", "logLevel",
+		"severity", "sev", "lvl",
+	}
+
+	for _, field := range levelFields {
+		key := wkk.NewRowKey(field)
+		if val, exists := (*row)[key]; exists {
+			switch v := val.(type) {
+			case string:
+				if v != "" {
+					return strings.ToUpper(v), true
+				}
+			case []byte:
+				if len(v) > 0 {
+					return strings.ToUpper(string(v)), true
+				}
+			}
+		}
+	}
+
+	return "", false
+}
+
 // detectMessageField attempts to find a message field in the row
 func (t *ParquetLogTranslator) detectMessageField(row *filereader.Row) (string, bool) {
 	// Common message field names to check (in priority order)
@@ -331,6 +360,23 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 		specialFields[wkk.NewRowKey(field)] = true
 	}
 
+	// Detect level/severity
+	level, levelFound := t.detectLevelField(row)
+	if !levelFound {
+		// Default to INFO if no level found
+		level = "INFO"
+	}
+
+	// Mark level/severity fields as special to avoid duplicating as attributes
+	levelFieldNames := []string{
+		"severity_text", "severityText", "severity.text",
+		"level", "log_level", "log.level", "loglevel", "logLevel",
+		"severity", "sev", "lvl",
+	}
+	for _, field := range levelFieldNames {
+		specialFields[wkk.NewRowKey(field)] = true
+	}
+
 	// Process all other fields as attributes (matching OTLP collector behavior)
 	// First pass: collect all fields that need processing
 	fieldsToProcess := make(map[wkk.RowKey]any)
@@ -342,13 +388,20 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 			continue
 		}
 
-		// Skip special fields, _cardinalhq fields, and fields already with resource. prefix
-		if specialFields[key] || strings.HasPrefix(keyStr, "_cardinalhq.") || strings.HasPrefix(keyStr, "resource.") || keyStr[0] == '_' {
-			// Remove special fields and underscore fields
-			if specialFields[key] || keyStr[0] == '_' {
+		// Skip _cardinalhq fields, underscore fields, and fields already with resource. prefix
+		if strings.HasPrefix(keyStr, "_cardinalhq.") || strings.HasPrefix(keyStr, "resource.") || keyStr[0] == '_' {
+			// Remove underscore fields but keep existing resource. fields
+			if keyStr[0] == '_' {
 				delete(*row, key)
 			}
 			// Keep existing resource. fields as-is
+			continue
+		}
+
+		// Special fields get processed as resource attributes but the original field is removed
+		if specialFields[key] {
+			fieldsToProcess[key] = value
+			delete(*row, key) // Remove the original special field
 			continue
 		}
 
@@ -395,6 +448,9 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 	// Set message field
 	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
 	(*row)[messageKey] = message
+
+	// Set level field
+	(*row)[wkk.NewRowKey("_cardinalhq.level")] = level
 
 	// Fingerprint the message if we have one and an exemplar processor
 	if message != "" && t.ExemplarProcessor != nil {
