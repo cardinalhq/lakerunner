@@ -15,6 +15,7 @@
 package logql
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -498,6 +499,14 @@ var labelFormatTemplateFuncs = template.FuncMap{
 	"lower": func(s string) string { return strings.ToLower(s) },
 	"upper": func(s string) string { return strings.ToUpper(s) },
 	"trim":  func(s string) string { return strings.TrimSpace(s) },
+	"len": func(s string) int {
+		var arr []any
+		err := json.Unmarshal([]byte(s), &arr)
+		if err == nil {
+			return len(arr)
+		}
+		return len(s)
+	},
 }
 
 func buildLabelFormatExprTemplate(tmpl string, colResolver func(string) string) (string, error) {
@@ -789,6 +798,13 @@ func callFunc(name string, args []arg) (string, string, error) {
 			return "", "", fmt.Errorf("trim needs 1 arg")
 		}
 		return fmt.Sprintf("trim(%s)", args[0].sql), "string", nil
+
+	case "len":
+		if len(args) != 1 {
+			return "", "", fmt.Errorf("len needs 1 arg")
+		}
+		s := args[0].sql
+		return fmt.Sprintf(`(CASE WHEN try_cast(%s AS JSON) IS NOT NULL THEN json_array_length(cast(%s AS JSON)) ELSE length(cast(%s AS VARCHAR)) END)`, s, s, s), "int64", nil
 	}
 
 	return "", "", fmt.Errorf("label_format: unsupported func %q", name)

@@ -1497,3 +1497,111 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 		t.Fatalf("wrong row selected: resource.service.name=%q", svc)
 	}
 }
+
+func TestToWorkerSQL_LineFormat_JSON_LabelFormat_ItemCount_WithFingerprint(t *testing.T) {
+	db := openDuckDB(t)
+	t.Cleanup(func() { mustDropTable(db, "logs") })
+
+	// Full base table so we don't need replaceTable(..)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		"resource.service.name"   TEXT,
+		"log.@OrderResult"        TEXT
+	);`)
+
+	const orderJSON = `{
+	  "orderId": "f127489e-98ab-11f0-8a9a-e21d1a6f40db",
+	  "shippingTrackingId": "862c07a6-ef43-4b79-a84c-3b9b76ca3e1f",
+	  "shippingCost": { "currencyCode": "USD", "units": "456", "nanos": 500000000 },
+	  "shippingAddress": {
+	    "streetAddress": "1600 Amphitheatre Parkway",
+	    "city": "Mountain View",
+	    "state": "CA",
+	    "country": "United States",
+	    "zipCode": "94043"
+	  },
+	  "items": [
+	    { "item": { "productId": "HQTGWGPNH4", "quantity": 3 }, "cost": { "currencyCode": "USD", "nanos": 990000000 } },
+	    { "item": { "productId": "66VCHSJNUP", "quantity": 3 }, "cost": { "currencyCode": "USD", "units": "349", "nanos": 949999999 } },
+	    { "item": { "productId": "2ZYFJ3GM2N", "quantity": 4 }, "cost": { "currencyCode": "USD", "units": "209", "nanos": 949999999 } },
+	    { "item": { "productId": "9SIQT8TOJO", "quantity": 1 }, "cost": { "currencyCode": "USD", "units": "3599" } }
+	  ]
+	}`
+
+	// One matching row (service=accounting AND fingerprint match) + one distractor.
+	mustExec(t, db, `INSERT INTO logs VALUES
+		(1000, 'id1', 'info',  'orig msg 1', 7754623969787599908, 'accounting', ?),
+		(2000, 'id2', 'debug', 'orig msg 2', 111,                  'billing',    '{"items":[{"x":1}]}')`, orderJSON)
+
+	// {resource_service_name="accounting", _cardinalhq_fingerprint="7754623969787599908"}
+	// | line_format "{{ index . \"log_@OrderResult\" }}"
+	// | json
+	// | label_format item_count=`{{len .items}}`
+	q := `{resource_service_name="accounting", _cardinalhq_fingerprint="7754623969787599908"} ` +
+		`| line_format "{{ index . \"log_@OrderResult\" }}" ` +
+		`| json ` +
+		`| label_format item_count=` + "`{{len .items}}`"
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	// Use the real base table (no replaceTable), and plug in a wide time range.
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 10_000)
+
+	// Sanity checks on generated SQL.
+	if !strings.Contains(sql, `"resource.service.name" = 'accounting'`) {
+		t.Fatalf("missing selector on resource.service.name:\n%s", sql)
+	}
+	if !strings.Contains(sql, `"_cardinalhq.fingerprint" = '7754623969787599908'`) {
+		t.Fatalf("missing fingerprint selector:\n%s", sql)
+	}
+	if !strings.Contains(sql, `"log.@OrderResult"`) {
+		t.Fatalf("expected hoisted base column \"log.@OrderResult\" in SQL:\n%s", sql)
+	}
+	if !strings.Contains(sql, `AS item_count`) {
+		t.Fatalf("expected label_format to produce item_count column:\n%s", sql)
+	}
+
+	// Execute.
+	rows := queryAll(t, db, sql)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 matching row, got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
+	}
+
+	// Validate item_count == 4 (accept string or numeric driver types).
+	got := rows[0]["item_count"]
+	switch v := got.(type) {
+	case nil:
+		t.Fatalf("item_count is nil")
+	case string:
+		if v != "4" {
+			t.Fatalf("item_count (string) = %q, want \"4\"", v)
+		}
+	case int64:
+		if v != 4 {
+			t.Fatalf("item_count (int64) = %d, want 4", v)
+		}
+	case float64:
+		if int(v) != 4 {
+			t.Fatalf("item_count (float64) = %v, want 4", v)
+		}
+	default:
+		t.Fatalf("item_count has unexpected type %T: %v", got, got)
+	}
+}
