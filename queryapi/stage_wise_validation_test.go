@@ -18,12 +18,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/logql"
-	_ "github.com/marcboeker/go-duckdb/v2"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+
+	_ "github.com/marcboeker/go-duckdb/v2"
+
+	"github.com/cardinalhq/lakerunner/logql"
 )
 
 func TestStagewiseValidator_InvalidLineFormatThenRegexp_NoCountry(t *testing.T) {

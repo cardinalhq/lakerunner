@@ -27,9 +27,10 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/marcboeker/go-duckdb/v2"
+
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/logql"
-	_ "github.com/marcboeker/go-duckdb/v2"
 
 	"go.opentelemetry.io/collector/pdata/plog"
 )

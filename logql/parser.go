@@ -964,18 +964,18 @@ func tryParseLabelFilter(stage string) (LabelFilter, bool) {
 // spanFieldMappings maps LogQL underscore syntax to actual Parquet column names
 // for span fields that have underscores in the column name that should be preserved
 var spanFieldMappings = map[string]string{
-	"span_has_error":                                  "span.has_error",
-	"span_cardinalhq_stats_collector_id":              "span.cardinalhq.stats_collector_id",
-	"span_cardinalhq_stats_collector_name":            "span.cardinalhq.stats_collector_name",
-	"span_cardinalhq_stats_customer_id":               "span.cardinalhq.stats_customer_id",
-	"span_http_request_content_length_uncompressed":   "span.http.request_content_length_uncompressed",
-	"span_http_request_method_original":               "span.http.request.method_original",
-	"span_http_response_header_content_length":        "span.http.response.header.content-length",
-	"span_http_response_status_code":                  "span.http.response.status_code",
-	"span_http_status_code":                           "span.http.status_code",
-	"span_http_status_text":                           "span.http.status_text",
-	"span_http_user_agent":                            "span.http.user_agent",
-	"span_user_agent_original":                        "span.user_agent.original",
+	"span_has_error":                                "span.has_error",
+	"span_cardinalhq_stats_collector_id":            "span.cardinalhq.stats_collector_id",
+	"span_cardinalhq_stats_collector_name":          "span.cardinalhq.stats_collector_name",
+	"span_cardinalhq_stats_customer_id":             "span.cardinalhq.stats_customer_id",
+	"span_http_request_content_length_uncompressed": "span.http.request_content_length_uncompressed",
+	"span_http_request_method_original":             "span.http.request.method_original",
+	"span_http_response_header_content_length":      "span.http.response.header.content-length",
+	"span_http_response_status_code":                "span.http.response.status_code",
+	"span_http_status_code":                         "span.http.status_code",
+	"span_http_status_text":                         "span.http.status_text",
+	"span_http_user_agent":                          "span.http.user_agent",
+	"span_user_agent_original":                      "span.user_agent.original",
 }
 
 func normalizeLabelName(label string) string {
