@@ -372,22 +372,22 @@ func emitParsersWithPostLineFilters(
 		switch strings.ToLower(p.Type) {
 
 		case "regexp":
-			pat := p.Params["pattern"]
+			patNorm := p.Params["pattern"]
 
-			// Full capture order (all capturing groups). Unnamed groups are "__g#".
+			// 2) Make unnamed groups non-capturing so named groups get contiguous 1..N indices.
+			pat := namedOnlyPattern(patNorm)
+
+			// Everything below stays the same, but uses `pat` for both analysis and SQL:
 			order := regexCaptureOrder(pat)
 			if len(order) == 0 {
-				// no capturing groups → pass through, carry label filters
 				pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
 				if len(p.Filters) > 0 {
 					*remainingLbl = append(*remainingLbl, p.Filters...)
 				}
-				// Apply post line-filters attached after this parser
 				applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 				break
 			}
 
-			// Map named group -> 1-based index
 			nameToIdx := map[string]int{}
 			var named []string
 			for idx, n := range order {
@@ -401,7 +401,6 @@ func emitParsersWithPostLineFilters(
 			}
 
 			if len(named) == 0 {
-				// only unnamed groups; nothing to create as labels
 				pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
 				if len(p.Filters) > 0 {
 					*remainingLbl = append(*remainingLbl, p.Filters...)
@@ -410,14 +409,14 @@ func emitParsersWithPostLineFilters(
 				break
 			}
 
-			var replacePairs []string
-			var addCols []string
+			var replacePairs, addCols []string
 			star := pb.top() + ".*"
 			created := make(map[string]struct{}, len(named))
 
 			for _, n := range named {
 				idx := nameToIdx[n]
-				expr := fmt.Sprintf("regexp_extract(%s, %s, %d) AS %s",
+				expr := fmt.Sprintf(
+					"regexp_extract(%s, %s, %d) AS %s",
 					bodyCol, sqlQuote(pat), idx, quoteIdent(n),
 				)
 				if _, ok := present[n]; ok {
@@ -437,7 +436,6 @@ func emitParsersWithPostLineFilters(
 			sel = append(sel, addCols...)
 			pb.push(sel, pb.top(), nil)
 
-			// mark created named groups as present, apply label filters that now resolve
 			for n := range created {
 				addPresent(n)
 			}
@@ -449,8 +447,6 @@ func emitParsersWithPostLineFilters(
 				}
 			}
 			*remainingLbl = later
-
-			// Apply post line-filters attached after this parser
 			applyLineFiltersAt(pb, bodyCol, remainingLine, i)
 
 		case "json":
@@ -1026,4 +1022,58 @@ func regexCaptureNames(pat string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// namedOnlyPattern rewrites a regex so that *unnamed* capturing groups
+// become non-capturing groups. It preserves escapes and character classes.
+func namedOnlyPattern(pat string) string {
+	if pat == "" {
+		return pat
+	}
+	runes := []rune(pat)
+	var b strings.Builder
+	inClass := false
+	escape := false
+	for i := 0; i < len(runes); i++ {
+		ch := runes[i]
+
+		if escape {
+			b.WriteRune(ch)
+			escape = false
+			continue
+		}
+		if ch == '\\' {
+			b.WriteRune(ch)
+			escape = true
+			continue
+		}
+		if ch == '[' {
+			inClass = true
+			b.WriteRune(ch)
+			continue
+		}
+		if ch == ']' && inClass {
+			inClass = false
+			b.WriteRune(ch)
+			continue
+		}
+		if inClass {
+			b.WriteRune(ch)
+			continue
+		}
+
+		if ch == '(' {
+			// If this is "(?..." then it's already non-capturing or special (?:, ?=, ?!, ?P<...)
+			if i+1 < len(runes) && runes[i+1] == '?' {
+				b.WriteRune('(')
+				continue
+			}
+			// Plain capturing group -> make it non-capturing
+			b.WriteString("(?:")
+			continue
+		}
+
+		b.WriteRune(ch)
+	}
+	return b.String()
 }

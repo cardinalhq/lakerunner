@@ -262,6 +262,77 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 	}
 }
 
+func TestToWorkerSQL_Regexp_Kafka_DurationExtract(t *testing.T) {
+	db := openDuckDB(t)
+
+	// Full base schema + selector column
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		"resource.service.name"   TEXT
+	);`)
+
+	// 1) Matching kafka row (duration=1)
+	// 2) Non-matching kafka row (noise)
+	// 3) Matching but wrong service (should be filtered out by selector)
+	mustExec(t, db, `INSERT INTO logs VALUES
+		(1, '', '', '[LocalLog partition=__cluster_metadata-0, dir=/tmp/kafka-logs] Rolled new log segment at offset 101915 in 1 ms.', -4446492996171837732, 'kafka'),
+		(2, '', '', 'some other kafka line without the expected shape',                                           -4446492996171837732, 'kafka'),
+		(3, '', '', '[LocalLog partition=__cluster_metadata-0, dir=/tmp/kafka-logs] Rolled new log segment at offset 222222 in 7 ms.', -4446492996171837732, 'other');`)
+
+	leaf := LogLeaf{
+		Matchers: []LabelMatch{
+			{Label: "resource.service.name", Op: MatchEq, Value: "kafka"},
+		},
+		LineFilters: []LineFilter{
+			{Op: LineContains, Match: `Rolled`},
+		},
+		Parsers: []ParserStage{
+			{
+				Type: "regexp",
+				Params: map[string]string{
+					// Raw string for legibility; same pattern as in your expression.
+					"pattern": `([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([0-9]+) ([A-Za-z]+) (?P<duration>[0-9]+) ([A-Za-z0-9-_.:]+)`,
+				},
+			},
+		},
+	}
+
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 10_000)
+
+	// Sanity: time-window sentinel present so segment filters can be spliced.
+	if !strings.Contains(sql, "AND true") {
+		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
+	}
+
+	rows := queryAll(t, db, sql)
+
+	// We expect exactly 1 row:
+	//  - the matching kafka line with "in 1 ms."
+	//  - the noise line doesn't match the regexp
+	//  - the "other" service is filtered by the selector
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row after selector+regexp, got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
+	}
+
+	// Verify named capture 'duration' exists and equals "1".
+	dur := getString(rows[0]["duration"])
+	if dur != "1" {
+		t.Fatalf("expected duration='1', got %q; row=%v\nsql=\n%s", dur, rows[0], sql)
+	}
+
+	// Double-check the selector held.
+	svc := getString(rows[0][`resource.service.name`])
+	if svc != "kafka" {
+		t.Fatalf("expected resource.service.name='kafka', got %q", svc)
+	}
+}
+
 func TestToWorkerSQL_Regexp_NumericCompare_EmulateGTZero(t *testing.T) {
 	db := openDuckDB(t)
 
