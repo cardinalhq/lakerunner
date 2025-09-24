@@ -203,15 +203,6 @@ func collectTemplateDeps(tmpl string) []string {
 	return out
 }
 
-func selectListFromSet(s map[string]struct{}) []string {
-	out := make([]string, 0, len(s))
-	for k := range s {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
 /* --- line filters: pre vs post --- */
 
 // Requires LineFilter to carry:
