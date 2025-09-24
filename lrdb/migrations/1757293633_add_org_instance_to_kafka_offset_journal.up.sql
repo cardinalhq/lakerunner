@@ -1,8 +1,8 @@
 -- Add organization_id and instance_num columns to kafka_offset_journal table
 -- These columns are needed to track offsets per organization and instance for compaction
 
--- NOTE: Keeping TRUNCATE as it's harmless, but removing table modifications since table is later dropped
-TRUNCATE TABLE kafka_offset_journal;
+-- NOTE: Removing TRUNCATE since table is never created (later dropped)
+-- TRUNCATE TABLE kafka_offset_journal;
 
 -- Add the new columns with defaults
 -- ALTER TABLE kafka_offset_journal

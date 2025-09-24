@@ -1,6 +1,6 @@
 -- Clear existing data before schema change since we're adding NOT NULL without default
--- NOTE: Keeping TRUNCATE as it's harmless, but removing table modifications since table is later dropped
-TRUNCATE TABLE metric_rollup_queue;
+-- NOTE: Removing TRUNCATE since table is never created (later dropped)
+-- TRUNCATE TABLE metric_rollup_queue;
 
 -- Add window_close_ts column to track when rollup windows can safely be processed
 -- ALTER TABLE metric_rollup_queue
