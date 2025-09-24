@@ -52,20 +52,19 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 	// 2) Build CTE pipeline
 	pb := newPipelineBuilder()
 
-	// s0: minimal base projection + matchers + non-parser groupKeys (+ fields param)
-	s0Need := computeS0Need(be, groupKeys, parserCreated)
+	// s0: always SELECT * from the base relation
+	pb.push([]string{"*"}, baseRel, nil)
 
-	// Add fields parameter to s0 if they are base table columns and not being extracted by parsers
-	for _, field := range fields {
-		if _, created := parserCreated[field]; !created {
-			qk := quoteIdent(field)
-			s0Need[qk] = struct{}{}
-		}
-	}
-	pb.push(selectListFromSet(s0Need), baseRel, nil)
+	// s0+: normalize fingerprint type to string once up-front so downstream filters/clients are stable
+	pb.push([]string{
+		pb.top() + `.* REPLACE(CAST("_cardinalhq.fingerprint" AS VARCHAR) AS "_cardinalhq.fingerprint")`,
+	}, pb.top(), nil)
 
 	// s1: time window sentinel so segment filters can be spliced
-	timePred := fmt.Sprintf("CAST(%s AS BIGINT) >= {start} AND CAST(%s AS BIGINT) < {end}", tsCol, tsCol)
+	timePred := fmt.Sprintf(
+		"CAST(%s AS BIGINT) >= {start} AND CAST(%s AS BIGINT) < {end}",
+		tsCol, tsCol,
+	)
 	pb.push([]string{pb.top() + ".*"}, pb.top(), []string{"1=1", "true", timePred})
 
 	// --- Split line filters into pre- vs post-parser using ParserIdx (nil => pre)
@@ -89,8 +88,7 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 
 	// 6) Any remaining label filters (base columns) → apply at the end
 	if len(remainingLbl) > 0 {
-		where := buildLabelFilterWhere(remainingLbl, nil)
-		if len(where) > 0 {
+		if where := buildLabelFilterWhere(remainingLbl, nil); len(where) > 0 {
 			pb.push([]string{pb.top() + ".*"}, pb.top(), where)
 		}
 	}
@@ -199,70 +197,6 @@ func collectTemplateDeps(tmpl string) []string {
 	})
 	out := make([]string, 0, len(deps))
 	for k := range deps {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func computeS0Need(be *LogLeaf, groupKeys []string, parserCreated map[string]struct{}) map[string]struct{} {
-	// base columns always in s0
-	need := map[string]struct{}{
-		"\"_cardinalhq.message\"":   {},
-		"\"_cardinalhq.timestamp\"": {},
-		"\"_cardinalhq.id\"":        {},
-		"\"_cardinalhq.level\"":     {},
-		"CAST(\"_cardinalhq.fingerprint\" AS VARCHAR) AS \"_cardinalhq.fingerprint\"": {},
-	}
-	// matchers must exist before parsers
-	for _, m := range be.Matchers {
-		need[quoteIdent(m.Label)] = struct{}{}
-	}
-	// only non-parser groupKeys go into s0
-	for _, k := range groupKeys {
-		if _, created := parserCreated[k]; !created {
-			need[quoteIdent(k)] = struct{}{}
-		}
-	}
-
-	// Hoist base columns referenced by label_format / line_format templates.
-	for _, p := range be.Parsers {
-		switch strings.ToLower(p.Type) {
-		case "label_format", "label-format", "labelformat":
-			for _, tmpl := range p.Params {
-				for _, dep := range collectTemplateDeps(tmpl) {
-					q := quoteIdent(dep)
-					if isBaseCol(q) {
-						need[q] = struct{}{}
-					}
-				}
-			}
-		case "line_format", "line-format", "lineformat":
-			if tmpl := strings.TrimSpace(p.Params["template"]); tmpl != "" {
-				for _, dep := range collectTemplateDeps(tmpl) {
-					q := quoteIdent(dep)
-					if isBaseCol(q) {
-						need[q] = struct{}{}
-					}
-				}
-			}
-
-		case "unwrap":
-			if f := strings.TrimSpace(p.Params["field"]); f != "" {
-				q := quoteIdent(f)
-				if isBaseCol(q) {
-					need[q] = struct{}{}
-				}
-			}
-		}
-	}
-
-	return need
-}
-
-func selectListFromSet(s map[string]struct{}) []string {
-	out := make([]string, 0, len(s))
-	for k := range s {
 		out = append(out, k)
 	}
 	sort.Strings(out)

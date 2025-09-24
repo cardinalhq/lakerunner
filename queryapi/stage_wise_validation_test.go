@@ -28,6 +28,124 @@ import (
 	"github.com/cardinalhq/lakerunner/logql"
 )
 
+func TestStagewiseValidator_Accounting_PreLineFilter_ThenLineFormat_OK(t *testing.T) {
+	ctx := context.Background()
+
+	// 1) Load exemplar data that contains the @OrderResult payload.
+	b, err := os.ReadFile("testdata/exemplar2.json")
+	if err != nil {
+		t.Fatalf("read exemplar2.json: %v", err)
+	}
+
+	// 2) In-memory DuckDB + ingest
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatalf("open duckdb: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	const table = "logs_stagewise_lineformat_pre_ok"
+	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	if err != nil {
+		t.Fatalf("ingest exemplar2: %v", err)
+	}
+	if n <= 0 {
+		t.Fatalf("expected >0 rows inserted, got %d", n)
+	}
+
+	// 3) Resolve [start,end] for placeholder substitution
+	startMillis, endMillis, err := minMaxTimestamp(ctx, db, table)
+	if err != nil {
+		t.Fatalf("min/max timestamp: %v", err)
+	}
+	if endMillis == startMillis {
+		endMillis = startMillis + 1
+	}
+
+	// 4) Expression under test:
+	//    pre line filter (|= "Order details:") then line_format -> index base field with special chars
+	q := `{resource_service_name="accounting"} |= "Order details:" | line_format "{{ index . \"log_@OrderResult\" }}"`
+
+	ast, err := logql.FromLogQL(q)
+	if err != nil {
+		t.Fatalf("parse logql: %v", err)
+	}
+	if ast.IsAggregateExpr() {
+		t.Fatalf("query is unexpectedly aggregate")
+	}
+
+	lplan, err := logql.CompileLog(ast)
+	if err != nil {
+		t.Fatalf("compile log plan: %v", err)
+	}
+	if len(lplan.Leaves) == 0 {
+		t.Fatalf("no leaves produced for log query")
+	}
+	leaf := lplan.Leaves[0]
+
+	// 5) Stage-wise validation: matchers → +pre line filters → +parser[0]: line_format
+	stages, err := stageWiseValidation(
+		db, table,
+		leaf,
+		startMillis, endMillis,
+		1000,
+		"desc",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("stageWiseValidation: %v", err)
+	}
+
+	// Expect: 0=matchers, 1=matchers+independent+pre_line_filters, 2=parser[0]: line_format
+	if len(stages) < 3 {
+		t.Fatalf("expected at least 3 stages, got %d", len(stages))
+	}
+
+	// Stage 0 (matchers) should pass and return rows
+	if !stages[0].OK || stages[0].RowCount == 0 {
+		t.Fatalf("stage 0 failed or returned no rows; sql:\n%s", stages[0].SQL)
+	}
+
+	// Stage 1: pre line filter (|= "Order details:") applied before parsers
+	s1 := stages[1]
+	if s1.Name != "matchers+independent+pre_line_filters" {
+		t.Fatalf("unexpected stage 1 name: %q\nsql:\n%s", s1.Name, s1.SQL)
+	}
+	if !s1.OK || s1.RowCount == 0 {
+		t.Fatalf("expected stage 1 to return rows (pre line filter); sql:\n%s", s1.SQL)
+	}
+
+	// Stage 2: line_format should rewrite _cardinalhq.message from base "log.@OrderResult"
+	s2 := stages[2]
+	if s2.Name != "parser[0]: line_format" {
+		t.Fatalf("unexpected stage 2 name: %q\nsql:\n%s", s2.Name, s2.SQL)
+	}
+	if !s2.OK || s2.RowCount == 0 {
+		t.Fatalf("expected line_format stage to return rows; sql:\n%s", s2.SQL)
+	}
+	// Hoisted base field should appear in the SQL (dependency for index in template)
+	if !strings.Contains(s2.SQL, `"log.@OrderResult"`) {
+		t.Fatalf("expected hoisted base column \"log.@OrderResult\" in SQL:\n%s", s2.SQL)
+	}
+
+	// 6) Inspect final stage rows: message should now be the JSON payload
+	rows, err := queryAllRows(db, s2.SQL)
+	if err != nil {
+		t.Fatalf("query final stage rows: %v\nsql:\n%s", err, s2.SQL)
+	}
+	foundJSONMsg := false
+	for _, r := range rows {
+		raw, ok := r["_cardinalhq.message"]
+		if !ok || raw == nil {
+			continue
+		}
+		foundJSONMsg = true
+	}
+	if !foundJSONMsg {
+		t.Fatalf("did not find a JSON-like rewritten _cardinalhq.message in stage 2 rows; sql:\n%s", s2.SQL)
+	}
+}
+
 func TestStagewiseValidator_Accounting_CountOverTime_ByZipCode(t *testing.T) {
 	ctx := context.Background()
 
