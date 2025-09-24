@@ -276,12 +276,11 @@ func TestTranslatingReader_TranslationError(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = reader.Close() }()
 
-	// Read should fail on the first row due to translation error
+	// Read should drop all failed rows and eventually return EOF
 	batch, err := reader.Next(context.TODO())
-	assert.Nil(t, batch, "Should not return any batch due to translation error")
+	assert.Nil(t, batch, "Should not return any batch when all rows are dropped")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "translation failed for row 0")
-	assert.Contains(t, err.Error(), "mock translation error")
+	assert.Contains(t, err.Error(), "EOF") // Eventually hits EOF after dropping all rows
 }
 
 func TestTranslatingReader_PartialTranslationError(t *testing.T) {
@@ -299,14 +298,16 @@ func TestTranslatingReader_PartialTranslationError(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = reader.Close() }()
 
-	// Read should succeed for first row, then fail on second
+	// Read should drop the failed row and return successful translations
 	batch, err := reader.Next(context.TODO())
-	assert.NotNil(t, batch, "Should return batch with first row before translation error")
-	assert.Equal(t, 1, batch.Len(), "Should read exactly 1 row before translation error")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "translation failed for row 1")
+	assert.NoError(t, err, "Should succeed by dropping failed rows")
+	assert.NotNil(t, batch, "Should return batch with successful translations")
+	assert.Equal(t, 1, batch.Len(), "Should have 1 successful translation (only row 0 succeeds)")
 
-	// Verify the first row was translated successfully
+	// Verify the successful row was translated
+	// Row 0 (value=1) translates successfully -> "translated_1"
+	// Row 1 (value=2) fails translation -> dropped
+	// Row 2 (value=3) also fails translation -> dropped (translator state issue)
 	assert.Equal(t, "translated_1", batch.Get(0)[wkk.NewRowKey("row")])
 }
 

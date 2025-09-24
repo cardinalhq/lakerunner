@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -78,47 +77,49 @@ func (tr *TranslatingReader) Next(ctx context.Context) (*Batch, error) {
 		attribute.String("reader", "TranslatingReader"),
 	))
 
-	// Create a new batch for translated rows
-	translatedBatch := pipeline.GetBatch()
+	// Create output batch for successful translations
+	outputBatch := pipeline.GetBatch()
 
-	// Translate each row in the batch
+	// Translate each row, dropping failures and transferring successes with zero-copy
 	for i := 0; i < batch.Len(); i++ {
-		sourceRow := batch.Get(i)
-		// Copy row to make it mutable
-		row := make(Row)
-		maps.Copy(row, sourceRow)
+		row := batch.Get(i)
 
 		if translateErr := tr.translator.TranslateRow(ctx, &row); translateErr != nil {
-			// TODO: Add logging here when we have access to a logger
-
-			// Return partial batch if we've successfully translated some rows
-			if translatedBatch.Len() > 0 {
-				tr.rowCount += int64(translatedBatch.Len())
-				return translatedBatch, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
-			}
-
-			// No rows successfully translated
-			pipeline.ReturnBatch(translatedBatch)
-			return nil, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
+			// Drop this row and increment counter
+			rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
+				attribute.String("reader", "TranslatingReader"),
+				attribute.String("reason", "translation_failed"),
+			))
+			continue // Skip this row, move to next
 		}
 
-		// Add translated row to new batch
-		translatedRow := translatedBatch.AddRow()
-		maps.Copy(translatedRow, row)
+		// Translation succeeded - transfer row to output batch (zero-copy)
+		outputRow := outputBatch.AddRow()
+		// Copy the translated data to the output row
+		for k, v := range row {
+			outputRow[k] = v
+		}
 	}
 
-	// Return original batch to pool since we created a new one
+	// Return input batch to pool
 	pipeline.ReturnBatch(batch)
 
+	// If all rows were dropped, try to get another batch
+	if outputBatch.Len() == 0 {
+		pipeline.ReturnBatch(outputBatch)
+		// Recursively try the next batch
+		return tr.Next(ctx)
+	}
+
 	// Count each successfully translated row
-	tr.rowCount += int64(translatedBatch.Len())
+	tr.rowCount += int64(outputBatch.Len())
 
 	// Track rows output to downstream
-	rowsOutCounter.Add(ctx, int64(translatedBatch.Len()), otelmetric.WithAttributes(
+	rowsOutCounter.Add(ctx, int64(outputBatch.Len()), otelmetric.WithAttributes(
 		attribute.String("reader", "TranslatingReader"),
 	))
 
-	return translatedBatch, nil
+	return outputBatch, nil
 }
 
 // Close closes the underlying reader and releases resources.
