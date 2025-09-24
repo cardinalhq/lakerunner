@@ -22,7 +22,7 @@ require (
 	github.com/aws/smithy-go v1.23.0
 	github.com/axiomhq/hyperloglog v0.2.5
 	github.com/cardinalhq/kafka-sync v0.1.0
-	github.com/cardinalhq/oteltools v0.31.0
+	github.com/cardinalhq/oteltools v0.31.3
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/deckarep/golang-set/v2 v2.8.0
 	github.com/fxamacker/cbor/v2 v2.8.0

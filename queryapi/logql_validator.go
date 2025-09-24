@@ -16,9 +16,10 @@ package queryapi
 
 import (
 	"encoding/json"
-	"github.com/cardinalhq/lakerunner/logql"
 	"net/http"
 	"strings"
+
+	"github.com/cardinalhq/lakerunner/logql"
 )
 
 type logQLValidateRequest struct {

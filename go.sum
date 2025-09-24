@@ -355,8 +355,8 @@ github.com/caarlos0/testfs v0.4.4 h1:3PHvzHi5Lt+g332CiShwS8ogTgS3HjrmzZxCm6JCDr8
 github.com/caarlos0/testfs v0.4.4/go.mod h1:bRN55zgG4XCUVVHZCeU+/Tz1Q6AxEJOEJTliBy+1DMk=
 github.com/cardinalhq/kafka-sync v0.1.0 h1:SDSBTMnasgKwru21Q8+b/yasij8ksK8nupZO/OYe65Y=
 github.com/cardinalhq/kafka-sync v0.1.0/go.mod h1:ICpL9yUZhDBFQnSJbNHI0T9zpI9w30CWss/zpJxosq8=
-github.com/cardinalhq/oteltools v0.31.0 h1:+BKtpYF0Pl7+rthUjusMigmp9D6/XAnxR+YC/QOxJkQ=
-github.com/cardinalhq/oteltools v0.31.0/go.mod h1:15WdjidofOJo1gX9EvFV+dYfGitUpo4nFu2i3B2nNCc=
+github.com/cardinalhq/oteltools v0.31.3 h1:Hr4/yPGaGnZqMLCVl/XGe3Kn5jLxr6F3dCcnJc6I/64=
+github.com/cardinalhq/oteltools v0.31.3/go.mod h1:15WdjidofOJo1gX9EvFV+dYfGitUpo4nFu2i3B2nNCc=
 github.com/carlmjohnson/versioninfo v0.22.5 h1:O00sjOLUAFxYQjlN/bzYTuZiS0y6fWDQjMRvwtKgwwc=
 github.com/carlmjohnson/versioninfo v0.22.5/go.mod h1:QT9mph3wcVfISUKd0i9sZfVrPviHuSF+cUtLjm2WSf8=
 github.com/catenacyber/perfsprint v0.9.1 h1:5LlTp4RwTooQjJCvGEFV6XksZvWE7wCOUvjD2z0vls0=
