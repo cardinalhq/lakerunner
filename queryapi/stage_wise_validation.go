@@ -51,7 +51,7 @@ func stageWiseValidation(
 
 	// If there are parsers and *every* line filter has ParserIdx == nil,
 	// assume they belong after the last parser (so they see the rewritten body).
-	leaf = fallbackAnnotateLineFilters(leaf)
+	//leaf = fallbackAnnotateLineFilters(leaf)
 
 	run := func(lf logql.LogLeaf, name string, expect []string) StageCheck {
 		sc := StageCheck{Name: name, FieldsExpected: append([]string(nil), expect...)}
@@ -138,33 +138,6 @@ func stageWiseValidation(
 	}
 
 	return out, nil
-}
-
-// If there are parsers and *all* line filters have ParserIdx == nil,
-// annotate them to follow the last parser so they run post-parser.
-func fallbackAnnotateLineFilters(in logql.LogLeaf) logql.LogLeaf {
-	if len(in.Parsers) == 0 || len(in.LineFilters) == 0 {
-		return in
-	}
-	allNil := true
-	for _, lf := range in.LineFilters {
-		if lf.ParserIdx != nil {
-			allNil = false
-			break
-		}
-	}
-	if !allNil {
-		return in
-	}
-	last := len(in.Parsers) - 1
-	cp := in
-	cp.LineFilters = make([]logql.LineFilter, len(in.LineFilters))
-	for i := range in.LineFilters {
-		lf := in.LineFilters[i]
-		lf.ParserIdx = &last
-		cp.LineFilters[i] = lf
-	}
-	return cp
 }
 
 // lineFiltersUpTo returns pre-parser filters when upto < 0,
