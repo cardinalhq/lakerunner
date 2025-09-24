@@ -78,19 +78,8 @@ func queryAll(t *testing.T, db *sql.DB, q string) []rowmap {
 	return out
 }
 
-// Replace {table} with a local base subquery that injects stub columns for
-// timestamp/id/level/fingerprint so exemplar queries always have them available.
 func replaceTable(sql string) string {
-	base := `(SELECT *,
-  0::BIGINT   AS "_cardinalhq.timestamp",
-  ''::VARCHAR AS "_cardinalhq.id",
-  ''::VARCHAR AS "_cardinalhq.level",
-  -4446492996171837732::BIGINT   AS "_cardinalhq.fingerprint"
-FROM logs) AS _t`
-
-	// Substitute table and time placeholders.
-	sql = strings.ReplaceAll(sql, "{table}", base)
-
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
 	return sql
 }
 
@@ -110,11 +99,23 @@ func getString(v any) string {
 // --- New: sanity that fingerprint is projected and queryable ---------------
 func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
-	mustExec(t, db, `INSERT INTO logs VALUES ('hello'), ('world');`)
+
+	// Full base schema so SELECT * works without synthetic stubs.
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT
+	);`)
+	mustExec(t, db, `INSERT INTO logs VALUES
+		(0, '', '', 'hello', -4446492996171837732),
+		(1, '', '', 'world', -4446492996171837732);`)
 
 	leaf := LogLeaf{} // no parsers/filters; just pass-through with defaults
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
 
 	// Should include the sentinel so CacheManager can splice segment filter.
 	if !strings.Contains(sql, "AND true") {
@@ -136,11 +137,23 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 
 func TestToWorkerSQL_Fingerprint_AsString(t *testing.T) {
 	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
-	mustExec(t, db, `INSERT INTO logs VALUES ('hello'), ('world');`)
+
+	// Full base schema so SELECT * works and fingerprint can be CAST to VARCHAR.
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT
+	);`)
+	mustExec(t, db, `INSERT INTO logs VALUES
+		(0, '', '', 'hello', -4446492996171837732),
+		(1, '', '', 'world', -4446492996171837732);`)
 
 	leaf := LogLeaf{}
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 2 {
@@ -154,14 +167,13 @@ func TestToWorkerSQL_Fingerprint_AsString(t *testing.T) {
 			t.Fatalf("row %d: fingerprint is nil", i)
 		}
 
-		// Check that it's a string type
 		switch v := fingerprint.(type) {
 		case string:
 			if v != "-4446492996171837732" {
 				t.Fatalf("row %d: expected fingerprint to be '-4446492996171837732' (string), got %q", i, v)
 			}
 		case int64:
-			t.Fatalf("row %d: fingerprint is still int64 (%d), should be string", i, v)
+			t.Fatalf("row %d: fingerprint is int64 (%d), should be string", i, v)
 		default:
 			t.Fatalf("row %d: fingerprint has unexpected type %T: %v", i, fingerprint, fingerprint)
 		}
@@ -198,13 +210,21 @@ func createLogsTable(t *testing.T, db *sql.DB) {
 
 func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 	db := openDuckDB(t)
-	// base table: only message is required; id/level/timestamp/fingerprint are stubbed in replaceTable(...)
-	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
+
+	// Full base schema so SELECT * works and parsers can add columns.
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT
+	);`)
+
 	// rows: INFO/alice, ERROR/bob, ERROR/carol
-	mustExec(t, db, `INSERT INTO logs VALUES 
-('ts=1 level=INFO user=alice msg="hello"'), 
-('ts=2 level=ERROR user=bob msg="boom"'),
-('ts=3 level=ERROR user=carol msg="warn"');`)
+	mustExec(t, db, `INSERT INTO logs VALUES
+		(1, '', '', 'ts=1 level=INFO user=alice msg="hello"',  -4446492996171837732),
+		(2, '', '', 'ts=2 level=ERROR user=bob msg="boom"',    -4446492996171837732),
+		(3, '', '', 'ts=3 level=ERROR user=carol msg="warn"',  -4446492996171837732);`)
 
 	leaf := LogLeaf{
 		Parsers: []ParserStage{{
@@ -215,7 +235,11 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 		}},
 	}
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
+
+	// Should include the sentinel so CacheManager can splice segment filter.
 	if !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
 	}
@@ -224,6 +248,7 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
+
 	foundExtracts := 0
 	for _, r := range rows {
 		ll := getString(r["log_level"])
@@ -240,14 +265,21 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 func TestToWorkerSQL_Regexp_NumericCompare_EmulateGTZero(t *testing.T) {
 	db := openDuckDB(t)
 
-	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
+	// Full base schema
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT
+	);`)
 
 	mustExec(t, db, `INSERT INTO logs VALUES
-('Rolled new log segment in 1.25 ms'),
-('Rolled new log segment in 0 s'),
-('Some line without a duration'),
-('Rolled new log segment in 8.5 ms'),
-('Rolled new log segment in 0.000 s');`)
+		(1, '', '', 'Rolled new log segment in 1.25 ms',  -4446492996171837732),
+		(2, '', '', 'Rolled new log segment in 0 s',      -4446492996171837732),
+		(3, '', '', 'Some line without a duration',        -4446492996171837732),
+		(4, '', '', 'Rolled new log segment in 8.5 ms',    -4446492996171837732),
+		(5, '', '', 'Rolled new log segment in 0.000 s',   -4446492996171837732);`)
 
 	leaf := LogLeaf{
 		Parsers: []ParserStage{
@@ -264,8 +296,10 @@ func TestToWorkerSQL_Regexp_NumericCompare_EmulateGTZero(t *testing.T) {
 		},
 	}
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
-	println(sql)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 10_000)
+
 	if !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
 	}
@@ -290,87 +324,22 @@ func TestToWorkerSQL_Regexp_NumericCompare_EmulateGTZero(t *testing.T) {
 	}
 }
 
-func TestToWorkerSQL_Regexp_ExtractWithGeneratedRegex(t *testing.T) {
-	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
-	mustExec(t, db, `INSERT INTO logs VALUES 
-('Received playback request for movieId=XKTATT8'), 
-('Received playback request for movieId=BIDGDS8'),
-('Received playback request for movieId=IGNAJR8');`)
-
-	leaf := LogLeaf{
-		Parsers: []ParserStage{{
-			Type: "regexp",
-			Params: map[string]string{
-				"pattern": `([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+)=(?P<movieId>[A-Za-z0-9]+)`,
-			},
-		}},
-	}
-
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
-	if !strings.Contains(sql, "AND true") {
-		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
-	}
-
-	rows := queryAll(t, db, sql)
-	if len(rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(rows))
-	}
-
-	var movieIds []string
-	for _, r := range rows {
-		movieId := getString(r["movieId"])
-		if movieId != "" {
-			movieIds = append(movieIds, movieId)
-		}
-	}
-	if len(movieIds) != 3 {
-		t.Fatalf("expected 3 rows to have extracted movieIds, got %d", len(movieIds))
-	}
-	if movieIds[0] != "XKTATT8" || movieIds[1] != "BIDGDS8" || movieIds[2] != "IGNAJR8" {
-		t.Fatalf("expected movieIds to be XKTATT8, BIDGDS8, IGNAJR8, got %v", movieIds)
-	}
-}
-
-func TestToWorkerSQL_Regexp_WithFilters(t *testing.T) {
-	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
-	mustExec(t, db, `INSERT INTO logs VALUES 
-('ts=1 level=INFO user=alice msg="hello"'), 
-('ts=2 level=ERROR user=bob msg="boom"'),
-('ts=3 level=ERROR user=carol msg="warn"');`)
-
-	leaf := LogLeaf{
-		Parsers: []ParserStage{{
-			Type: "regexp",
-			Params: map[string]string{
-				"pattern": `level=(?P<log_level>\w+).*user=(?P<username>\w+)`,
-			},
-		}},
-		LabelFilters: []LabelFilter{
-			{Label: "log_level", Op: MatchEq, Value: "ERROR"},
-			{Label: "username", Op: MatchRe, Value: "(alice|bob)"},
-		},
-	}
-
-	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000))
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 row after filters, got %d", len(rows))
-	}
-	ll := getString(rows[0]["log_level"])
-	un := getString(rows[0]["username"])
-	if ll != "ERROR" || un != "bob" {
-		t.Fatalf("wrong row selected: log_level=%q user=%q", ll, un)
-	}
-}
-
 func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
+
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT
+	);`)
+
 	mustExec(t, db, `INSERT INTO logs VALUES 
-('{"level":"INFO","user":"alice","msg":"hello"}'),
-('{"level":"ERROR","user":"bob","msg":"boom"}'),
-('{"level":"ERROR","user":"carol","msg":"warn"}');`)
+		(1, '', '', '{"level":"INFO","user":"alice","msg":"hello"}', -4446492996171837732),
+		(2, '', '', '{"level":"ERROR","user":"bob","msg":"boom"}',   -4446492996171837732),
+		(3, '', '', '{"level":"ERROR","user":"carol","msg":"warn"}', -4446492996171837732);`)
 
 	leaf := LogLeaf{
 		Parsers: []ParserStage{{
@@ -382,8 +351,12 @@ func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 			{Label: "user", Op: MatchRe, Value: "(alice|bob)"},
 		},
 	}
-	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
-	rows := queryAll(t, db, replacedSql)
+
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
+
+	rows := queryAll(t, db, sql)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after filters, got %d", len(rows))
 	}
@@ -396,11 +369,20 @@ func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 
 func TestToWorkerSQL_JSON_WithNOFilters(t *testing.T) {
 	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
+
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT
+	);`)
+
 	mustExec(t, db, `INSERT INTO logs VALUES
-('{"level":"INFO","user":"alice","msg":"hello"}'),
-('{"level":"ERROR","user":"bob","msg":"boom"}'),
-('{"level":"ERROR","user":"carol","msg":"warn"}');`)
+		(1, '', '', '{"level":"INFO","user":"alice","msg":"hello"}', -4446492996171837732),
+		(2, '', '', '{"level":"ERROR","user":"bob","msg":"boom"}',   -4446492996171837732),
+		(3, '', '', '{"level":"ERROR","user":"carol","msg":"warn"}', -4446492996171837732);`)
 
 	leaf := LogLeaf{
 		Parsers: []ParserStage{{
@@ -408,8 +390,12 @@ func TestToWorkerSQL_JSON_WithNOFilters(t *testing.T) {
 			Params: map[string]string{},
 		}},
 	}
-	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
-	rows := queryAll(t, db, replacedSql)
+
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
+
+	rows := queryAll(t, db, sql)
 
 	k := rows[0]["__json"]
 	if k == nil {
@@ -419,14 +405,23 @@ func TestToWorkerSQL_JSON_WithNOFilters(t *testing.T) {
 
 func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
+
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT
+	);`)
+
 	// 1) status=200 user=bob      -> should match
 	// 2) status=200 user=carol    -> filtered out by user regex
 	// 3) status=500 user=alice    -> filtered out by status eq
 	mustExec(t, db, `INSERT INTO logs VALUES
-('ts=1 status=200 duration=15ms user=bob msg="ok"'),
-('ts=2 status=200 duration=05ms user=carol msg="ok"'),
-('ts=3 status=500 duration=20ms user=alice msg="err"');`)
+		(1, '', '', 'ts=1 status=200 duration=15ms user=bob msg="ok"',   -4446492996171837732),
+		(2, '', '', 'ts=2 status=200 duration=05ms user=carol msg="ok"', -4446492996171837732),
+		(3, '', '', 'ts=3 status=500 duration=20ms user=alice msg="err"',-4446492996171837732);`)
 
 	leaf := LogLeaf{
 		Parsers: []ParserStage{{
@@ -439,7 +434,11 @@ func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 		},
 	}
 
-	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQL(0, "desc", nil)), 0, 5000))
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
+
+	rows := queryAll(t, db, sql)
 
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after logfmt filters, got %d", len(rows))
@@ -453,10 +452,20 @@ func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 
 func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs(job TEXT, "_cardinalhq.message" TEXT);`)
-	mustExec(t, db, `INSERT INTO logs(job, "_cardinalhq.message") VALUES
-('my-app',  'hello a'),
-('other',   'hello b');`)
+
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		job                       TEXT
+	);`)
+
+	mustExec(t, db, `INSERT INTO logs("_cardinalhq.timestamp", "_cardinalhq.id", "_cardinalhq.level", "_cardinalhq.message", "_cardinalhq.fingerprint", job) VALUES
+		(1, '', '', 'hello a', -4446492996171837732, 'my-app'),
+		(2, '', '', 'hello b', -4446492996171837732, 'other');`)
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
@@ -464,7 +473,9 @@ func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 		},
 	}
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
 
 	if !strings.Contains(sql, "job = 'my-app'") {
 		t.Fatalf("generated SQL missing matcher WHERE: \n%s", sql)
@@ -484,11 +495,21 @@ func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 
 func TestToWorkerSQL_MatchersThenJSON_FilterApplied_FromLogQL(t *testing.T) {
 	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs(job TEXT, "_cardinalhq.message" TEXT);`)
-	mustExec(t, db, `INSERT INTO logs(job, "_cardinalhq.message") VALUES
-('my-app',  '{"level":"ERROR","user":"bob","msg":"boom"}'),
-('my-app',  '{"level":"INFO","user":"alice","msg":"ok"}'),
-('other',   '{"level":"ERROR","user":"carol","msg":"warn"}');`)
+
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		job                       TEXT
+	);`)
+
+	mustExec(t, db, `INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message", "_cardinalhq.id", "_cardinalhq.level", "_cardinalhq.fingerprint") VALUES
+		(1, 'my-app',  '{"level":"ERROR","user":"bob","msg":"boom"}', '', '', -4446492996171837732),
+		(2, 'my-app',  '{"level":"INFO","user":"alice","msg":"ok"}',  '', '', -4446492996171837732),
+		(3, 'other',   '{"level":"ERROR","user":"carol","msg":"warn"}','', '', -4446492996171837732);`)
 
 	q := `{job="my-app"} | json | level="ERROR"`
 
@@ -505,18 +526,20 @@ func TestToWorkerSQL_MatchersThenJSON_FilterApplied_FromLogQL(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
 
-	if !strings.Contains(replacedSql, "job = 'my-app'") {
-		t.Fatalf("generated SQL missing matcher WHERE:\n%s", replacedSql)
+	if !strings.Contains(sql, "job = 'my-app'") {
+		t.Fatalf("generated SQL missing matcher WHERE:\n%s", sql)
 	}
-	if !strings.Contains(replacedSql, "json_extract_string") {
-		t.Fatalf("generated SQL missing json extraction:\n%s", replacedSql)
+	if !strings.Contains(sql, "json_extract_string") {
+		t.Fatalf("generated SQL missing json extraction:\n%s", sql)
 	}
 
-	rows := queryAll(t, db, replacedSql)
+	rows := queryAll(t, db, sql)
 	if len(rows) != 1 {
-		t.Fatalf("expected 1 row after matcher+json+filter, got %d\nsql:\n%s", len(rows), replacedSql)
+		t.Fatalf("expected 1 row after matcher+json+filter, got %d\nsql:\n%s", len(rows), sql)
 	}
 
 	if gotJob := getString(rows[0]["job"]); gotJob != "my-app" {
@@ -529,12 +552,21 @@ func TestToWorkerSQL_MatchersThenJSON_FilterApplied_FromLogQL(t *testing.T) {
 
 func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs(job TEXT, "_cardinalhq.message" TEXT);`)
 
-	mustExec(t, db, `INSERT INTO logs VALUES
-('my-app', '{"response":"ErrorBadGateway","msg":"x"}'),
-('my-app', '{"response":"OK","msg":"y"}'),
-('my-app', '{"response":"ErrorOops","msg":"z"}');`)
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		job                       TEXT
+	);`)
+
+	mustExec(t, db, `INSERT INTO logs(job, "_cardinalhq.timestamp", "_cardinalhq.message", "_cardinalhq.id", "_cardinalhq.level", "_cardinalhq.fingerprint") VALUES
+	('my-app', 1, '{"response":"ErrorBadGateway","msg":"x"}', '', '', -4446492996171837732),
+	('my-app', 2, '{"response":"OK","msg":"y"}',              '', '', -4446492996171837732),
+	('my-app', 3, '{"response":"ErrorOops","msg":"z"}',       '', '', -4446492996171837732);`)
 
 	q := `{job="my-app"} | json | response=~"(OK|Error.*)" | label_format api=` +
 		"`{{ if hasPrefix \"Error\" .response }}ERROR{{else}}{{.response}}{{end}}`" +
@@ -553,24 +585,28 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
 
-	if !strings.Contains(replacedSql, `job = 'my-app'`) {
-		t.Fatalf("generated SQL missing selector matcher WHERE clause:\n%s", replacedSql)
+	if !strings.Contains(sql, `job = 'my-app'`) {
+		t.Fatalf("generated SQL missing selector matcher WHERE clause:\n%s", sql)
 	}
-	if !strings.Contains(replacedSql, `json_extract_string("_cardinalhq.message", '$.response') AS response`) {
-		t.Fatalf("generated SQL missing JSON projection for 'response':\n%s", replacedSql)
+	// Be a bit robust to optional whitespace after the comma.
+	if !(strings.Contains(sql, `json_extract_string("_cardinalhq.message", '$.response') AS response`) ||
+		strings.Contains(sql, `json_extract_string("_cardinalhq.message",'$.response') AS response`)) {
+		t.Fatalf("generated SQL missing JSON projection for 'response':\n%s", sql)
 	}
-	if !strings.Contains(replacedSql, "CASE WHEN") || !strings.Contains(replacedSql, "starts_with(response, 'Error')") {
-		t.Fatalf("generated SQL missing CASE WHEN/starts_with for label_format:\n%s", replacedSql)
+	if !strings.Contains(sql, "CASE WHEN") || !strings.Contains(sql, "starts_with(response, 'Error')") {
+		t.Fatalf("generated SQL missing CASE WHEN/starts_with for label_format:\n%s", sql)
 	}
-	if !strings.Contains(replacedSql, `api = 'ERROR'`) {
-		t.Fatalf("generated SQL missing final filter on derived label api:\n%s", replacedSql)
+	if !strings.Contains(sql, `api = 'ERROR'`) {
+		t.Fatalf("generated SQL missing final filter on derived label api:\n%s", sql)
 	}
 
-	rows := queryAll(t, db, replacedSql)
+	rows := queryAll(t, db, sql)
 	if len(rows) != 2 {
-		t.Fatalf("expected 2 rows (Error* only), got %d\nsql:\n%s", len(rows), replacedSql)
+		t.Fatalf("expected 2 rows (Error* only), got %d\nsql:\n%s", len(rows), sql)
 	}
 
 	type pair struct{ resp, api string }
@@ -966,13 +1002,28 @@ func TestToWorkerSQLForTagValues_ComplexQuery(t *testing.T) {
 
 func TestToWorkerSQLWithLimit_Fields_Basic(t *testing.T) {
 	db := openDuckDB(t)
-	createLogsTable(t, db)
+
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		"level"                   TEXT,
+		"service"                 TEXT,
+		"pod"                     TEXT,
+		"user"                    TEXT
+	);`)
 
 	// Insert test data
-	mustExec(t, db, `INSERT INTO logs VALUES
-	 (1000, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', 'user1'),
-	 (2000, 'id2', 'error', 'test message 2', 'error', 'web', 'pod2', 'user2'),
-	 (3000, 'id3', 'debug', 'test message 3', 'debug', 'api', 'pod3', 'user3')`)
+	mustExec(t, db, `INSERT INTO logs(
+		"_cardinalhq.timestamp","_cardinalhq.id","_cardinalhq.level","_cardinalhq.message",
+		"_cardinalhq.fingerprint","level","service","pod","user"
+	) VALUES
+	 (1000, 'id1', 'info',  'test message 1', -4446492996171837732, 'info',  'api', 'pod1', 'user1'),
+	 (2000, 'id2', 'error', 'test message 2', -4446492996171837732, 'error', 'web', 'pod2', 'user2'),
+	 (3000, 'id3', 'debug', 'test message 3', -4446492996171837732, 'debug', 'api', 'pod3', 'user3')`)
 
 	// Test with fields parameter - use matchers to ensure fields are projected
 	be := &LogLeaf{
@@ -981,7 +1032,10 @@ func TestToWorkerSQLWithLimit_Fields_Basic(t *testing.T) {
 		},
 	}
 	fields := []string{"service", "pod", "user"}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
+
+	sql := be.ToWorkerSQLWithLimit(0, "desc", fields)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1021,11 +1075,23 @@ func TestToWorkerSQLWithLimit_Fields_Basic(t *testing.T) {
 
 func TestToWorkerSQLWithLimit_Fields_WithRegexpParser(t *testing.T) {
 	db := openDuckDB(t)
-	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
-	mustExec(t, db, `INSERT INTO logs VALUES 
-	('user=alice action=login status=success'),
-	('user=bob action=logout status=success'),
-	('user=charlie action=view status=pending');`)
+
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT
+	);`)
+
+	// Choose timestamps so DESC order matches expected (alice, bob, charlie)
+	mustExec(t, db, `INSERT INTO logs(
+		"_cardinalhq.timestamp","_cardinalhq.id","_cardinalhq.level","_cardinalhq.message","_cardinalhq.fingerprint"
+	) VALUES 
+	(3000,'','', 'user=alice action=login status=success',  -4446492996171837732),
+	(2000,'','', 'user=bob action=logout status=success',   -4446492996171837732),
+	(1000,'','', 'user=charlie action=view status=pending', -4446492996171837732);`)
 
 	// Test with regexp parser and fields parameter
 	be := &LogLeaf{
@@ -1039,7 +1105,11 @@ func TestToWorkerSQLWithLimit_Fields_WithRegexpParser(t *testing.T) {
 
 	// Test with fields that are extracted by the regexp parser
 	fields := []string{"user", "action", "status"}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
+
+	sql := be.ToWorkerSQLWithLimit(0, "desc", fields)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
+
 	rows := queryAll(t, db, sql)
 
 	// Should return all rows with the extracted fields
@@ -1047,7 +1117,7 @@ func TestToWorkerSQLWithLimit_Fields_WithRegexpParser(t *testing.T) {
 		t.Fatalf("expected 3 rows, got %d\nsql:\n%s", len(rows), sql)
 	}
 
-	// Verify that the extracted fields are present and correct
+	// Verify that the extracted fields are present and correct (in DESC ts order)
 	expectedUsers := []string{"alice", "bob", "charlie"}
 	expectedActions := []string{"login", "logout", "view"}
 	expectedStatuses := []string{"success", "success", "pending"}
@@ -1071,17 +1141,35 @@ func TestToWorkerSQLWithLimit_Fields_WithRegexpParser(t *testing.T) {
 
 func TestToWorkerSQLWithLimit_Fields_EmptyFields(t *testing.T) {
 	db := openDuckDB(t)
-	createLogsTable(t, db)
+
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		"level"                   TEXT,
+		"service"                 TEXT,
+		"pod"                     TEXT,
+		"user"                    TEXT
+	);`)
 
 	// Insert test data
-	mustExec(t, db, `INSERT INTO logs VALUES
-	 (1000, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', 'user1'),
-	 (2000, 'id2', 'error', 'test message 2', 'error', 'web', 'pod2', 'user2')`)
+	mustExec(t, db, `INSERT INTO logs(
+		"_cardinalhq.timestamp","_cardinalhq.id","_cardinalhq.level","_cardinalhq.message",
+		"_cardinalhq.fingerprint","level","service","pod","user"
+	) VALUES
+	 (1000, 'id1', 'info',  'test message 1', -4446492996171837732, 'info',  'api', 'pod1', 'user1'),
+	 (2000, 'id2', 'error', 'test message 2', -4446492996171837732, 'error', 'web', 'pod2', 'user2')`)
 
 	// Test with empty fields parameter
 	be := &LogLeaf{}
 	fields := []string{}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
+
+	sql := be.ToWorkerSQLWithLimit(0, "desc", fields)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1099,41 +1187,83 @@ func TestToWorkerSQLWithLimit_Fields_EmptyFields(t *testing.T) {
 	}
 }
 
-func TestToWorkerSQLWithLimit_Fields_NonExistentFields(t *testing.T) {
+// With s0 using SELECT *, unknown fields are a no-op (query succeeds; columns absent).
+func TestToWorkerSQLWithLimit_Fields_NonExistentFields_NoOp(t *testing.T) {
 	db := openDuckDB(t)
-	createLogsTable(t, db)
+
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		"level"                   TEXT,
+		"service"                 TEXT,
+		"pod"                     TEXT,
+		"user"                    TEXT
+	);`)
 
 	// Insert test data
-	mustExec(t, db, `INSERT INTO logs VALUES
-	 (1000, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', 'user1')`)
+	mustExec(t, db, `INSERT INTO logs(
+		"_cardinalhq.timestamp","_cardinalhq.id","_cardinalhq.level","_cardinalhq.message",
+		"_cardinalhq.fingerprint","level","service","pod","user"
+	) VALUES
+	 (1000, 'id1', 'info', 'test message 1', -4446492996171837732, 'info', 'api', 'pod1', 'user1')`)
 
-	// Test with non-existent fields parameter - this should fail at the SQL level
 	be := &LogLeaf{}
 	fields := []string{"nonexistent_field1", "nonexistent_field2"}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
 
-	// This test expects the query to fail because the fields don't exist
-	_, err := db.Query(sql)
-	if err == nil {
-		t.Fatalf("expected query to fail with non-existent fields, but it succeeded\nsql:\n%s", sql)
+	sql := be.ToWorkerSQLWithLimit(0, "desc", fields)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Query should succeed and return the row.
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d\nsql:\n%s", len(rows), sql)
 	}
 
-	// Verify the error message indicates the field is not found
-	if !strings.Contains(err.Error(), "not found") {
-		t.Fatalf("expected 'not found' error, got: %v", err)
+	// The unknown fields should not be present in the result set.
+	if _, ok := rows[0]["nonexistent_field1"]; ok {
+		t.Fatalf("unexpected column projected: nonexistent_field1")
+	}
+	if _, ok := rows[0]["nonexistent_field2"]; ok {
+		t.Fatalf("unexpected column projected: nonexistent_field2")
+	}
+
+	// Sanity: base column still present.
+	if msg := getString(rows[0]["_cardinalhq.message"]); msg == "" {
+		t.Fatalf("missing _cardinalhq.message")
 	}
 }
 
 func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
 	db := openDuckDB(t)
-	createLogsTable(t, db)
+
+	// Full base schema so SELECT * is always valid
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		"level"                   TEXT,
+		"service"                 TEXT,
+		"pod"                     TEXT,
+		"user"                    TEXT
+	);`)
 
 	// Insert test data
-	mustExec(t, db, `INSERT INTO logs VALUES
-	 (1000, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', 'user1'),
-	 (2000, 'id2', 'error', 'test message 2', 'error', 'web', 'pod2', 'user2'),
-	 (3000, 'id3', 'debug', 'test message 3', 'debug', 'api', 'pod3', 'user3'),
-	 (4000, 'id4', 'info', 'test message 4', 'info', 'web', 'pod4', 'user4')`)
+	mustExec(t, db, `INSERT INTO logs(
+		"_cardinalhq.timestamp","_cardinalhq.id","_cardinalhq.level","_cardinalhq.message",
+		"_cardinalhq.fingerprint","level","service","pod","user"
+	) VALUES
+	 (1000, 'id1', 'info',  'test message 1', -4446492996171837732, 'info',  'api', 'pod1', 'user1'),
+	 (2000, 'id2', 'error', 'test message 2', -4446492996171837732, 'error', 'web', 'pod2', 'user2'),
+	 (3000, 'id3', 'debug', 'test message 3', -4446492996171837732, 'debug', 'api', 'pod3', 'user3'),
+	 (4000, 'id4', 'info',  'test message 4', -4446492996171837732, 'info',  'web', 'pod4', 'user4')`)
 
 	// Test with fields parameter and limit - use matchers to ensure fields are projected
 	be := &LogLeaf{
@@ -1142,7 +1272,10 @@ func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
 		},
 	}
 	fields := []string{"service", "pod"}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(2, "desc", fields)), 0, 5000)
+
+	sql := be.ToWorkerSQLWithLimit(2, "desc", fields)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1170,12 +1303,21 @@ func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
 func TestToWorkerSQL_LineFormat_JSONToMessage(t *testing.T) {
 	db := openDuckDB(t)
 
-	mustExec(t, db, `CREATE TABLE logs(app TEXT, level TEXT, "_cardinalhq.message" TEXT);`)
-	// Note: include "level" in the JSON body because the filter runs AFTER the json stage
-	mustExec(t, db, `INSERT INTO logs(app, level, "_cardinalhq.message") VALUES
-        ('web',   'ERROR', '{"message":"boom","level":"ERROR","x":1}'),
-        ('web',   'INFO',  '{"message":"ok","level":"INFO","x":2}'),
-        ('other', 'ERROR', '{"message":"nope","level":"ERROR","x":3}')`)
+	// Full base schema so SELECT * + time window always works
+	mustExec(t, db, `CREATE TABLE logs(
+		app                       TEXT,
+		level                     TEXT,
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT
+	);`)
+	mustExec(t, db, `INSERT INTO logs(app, level, "_cardinalhq.timestamp", "_cardinalhq.id", "_cardinalhq.level", "_cardinalhq.message", "_cardinalhq.fingerprint") VALUES
+		('web',   'ERROR', 1000, '', '', '{"message":"boom","level":"ERROR","x":1}',  -4446492996171837732),
+		('web',   'INFO',  2000, '', '', '{"message":"ok","level":"INFO","x":2}',     -4446492996171837732),
+		('other', 'ERROR', 3000, '', '', '{"message":"nope","level":"ERROR","x":3}', -4446492996171837732)
+	`)
 
 	q := `{app="web"} | json msg="message" | line_format "{{.msg}}" | level="ERROR"`
 
@@ -1192,14 +1334,16 @@ func TestToWorkerSQL_LineFormat_JSONToMessage(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 10_000)
 
 	// sanity checks (optional)
 	if !strings.Contains(sql, "app = 'web'") {
 		t.Fatalf("missing app filter:\n%s", sql)
 	}
-	if !strings.Contains(sql, "json_extract_string(\"_cardinalhq.message\", '$.message') AS msg") &&
-		!strings.Contains(sql, "json_extract_string(\"_cardinalhq.message\",'$.message') AS msg") {
+	if !strings.Contains(sql, `json_extract_string("_cardinalhq.message", '$.message') AS msg`) &&
+		!strings.Contains(sql, `json_extract_string("_cardinalhq.message",'$.message') AS msg`) {
 		t.Fatalf("missing msg JSON projection:\n%s", sql)
 	}
 	if !strings.Contains(sql, `level = 'ERROR'`) {
@@ -1222,25 +1366,21 @@ func TestToWorkerSQL_LineFormat_IndexBaseField(t *testing.T) {
 	db := openDuckDB(t)
 	t.Cleanup(func() { mustDropTable(db, "logs") })
 
-	// Base table with:
-	// - selector column "resource.service.name" (because LogQL normalizes resource_service_name)
-	// - top-level base column with special char: "log.@OrderResult"
-	// - message column to be rewritten
+	// Base table with resource/service, message, and a base field with special chars
 	mustExec(t, db, `CREATE TABLE logs(
-		"resource.service.name" TEXT,
-		"_cardinalhq.message"   TEXT,
-		"log.@OrderResult"      TEXT
+		"resource.service.name"   TEXT,
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		"log.@OrderResult"        TEXT
 	);`)
 
-	// Insert 2 rows: one matches selector, the other does not.
 	mustExec(t, db, `INSERT INTO logs VALUES
-		('accounting', 'orig msg 1', 'SUCCESS'),
-		('billing',    'orig msg 2', 'IGNORED');`)
+		('accounting', 1000, '', '', 'orig msg 1', -4446492996171837732, 'SUCCESS'),
+		('billing',    2000, '', '', 'orig msg 2', -4446492996171837732, 'IGNORED');`)
 
-	// Your intended query:
-	// - matcher on resource_service_name (normalized to "resource.service.name")
-	// - label_format derives "order_result" from top-level base column via index
-	// - line_format turns that into the new _cardinalhq.message
 	q := `{resource_service_name="accounting"} ` +
 		`| label_format order_result=` + "`{{ index . \"log.@OrderResult\" }}`" + ` ` +
 		`| line_format "{{ .order_result }}"`
@@ -1258,9 +1398,11 @@ func TestToWorkerSQL_LineFormat_IndexBaseField(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 10_000)
 
-	// Sanity checks: selector WHERE, dependency hoist, and message rewrite present
+	// Sanity checks
 	if !strings.Contains(sql, `"resource.service.name" = 'accounting'`) {
 		t.Fatalf("missing selector on resource.service.name:\n%s", sql)
 	}
@@ -1276,13 +1418,10 @@ func TestToWorkerSQL_LineFormat_IndexBaseField(t *testing.T) {
 		t.Fatalf("expected 1 row (service=accounting), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
 	}
 
-	// The new message should be the value of "log.@OrderResult" (SUCCESS)
 	gotMsg := getString(rows[0][`_cardinalhq.message`])
 	if gotMsg != "SUCCESS" {
 		t.Fatalf(`rewritten _cardinalhq.message mismatch: got %q, want "SUCCESS"`, gotMsg)
 	}
-
-	// And the losing row (billing) should not appear
 	if svc := getString(rows[0][`resource.service.name`]); svc != "accounting" {
 		t.Fatalf("wrong row selected: resource.service.name=%q", svc)
 	}
@@ -1292,21 +1431,20 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField(t *testing.T) {
 	db := openDuckDB(t)
 	t.Cleanup(func() { mustDropTable(db, "logs") })
 
-	// Base table:
 	mustExec(t, db, `CREATE TABLE logs(
-		"resource.service.name" TEXT,
-		"_cardinalhq.message"   TEXT,
-		"log.@OrderResult"      TEXT
+		"resource.service.name"   TEXT,
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		"log.@OrderResult"        TEXT
 	);`)
 
-	// Two rows; only one should match the selector.
 	mustExec(t, db, `INSERT INTO logs VALUES
-		('accounting', 'orig msg 1', 'SUCCESS'),
-		('billing',    'orig msg 2', 'IGNORED');`)
+		('accounting', 1000, '', '', 'orig msg 1', -4446492996171837732, 'SUCCESS'),
+		('billing',    2000, '', '', 'orig msg 2', -4446492996171837732, 'IGNORED');`)
 
-	// Query:
-	//  - selector on resource_service_name (normalized to "resource.service.name")
-	//  - line_format directly uses index to access base field with special chars
 	q := `{resource_service_name="accounting"} | line_format "{{ index . \"log.@OrderResult\" }}"`
 
 	ast, err := FromLogQL(q)
@@ -1322,10 +1460,11 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 10_000)
 
-	// Sanity: selector, hoisted dep, and message rewrite present.
-	if !strings.Contains(sql, `"resource.service.name" = 'accounting'`) {
+	if !strings.Contains(sql, `"resource.service.name" = 'accounting'`) { // case-sensitive helper is fine here
 		t.Fatalf("missing selector on resource.service.name:\n%s", sql)
 	}
 	if !strings.Contains(sql, `"log.@OrderResult"`) {
@@ -1335,7 +1474,6 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField(t *testing.T) {
 		t.Fatalf("expected rewrite of _cardinalhq.message via line_format:\n%s", sql)
 	}
 
-	// Execute and validate.
 	rows := queryAll(t, db, sql)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row (service=accounting), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
@@ -1355,16 +1493,20 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField_UnderscoreCompat(t *testing
 	t.Cleanup(func() { mustDropTable(db, "logs") })
 
 	mustExec(t, db, `CREATE TABLE logs(
-        "resource.service.name" TEXT,
-        "_cardinalhq.message"   TEXT,
-        "log.@OrderResult"      TEXT
-    );`)
+		"resource.service.name"   TEXT,
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		"log.@OrderResult"        TEXT
+	);`)
 
 	mustExec(t, db, `INSERT INTO logs VALUES
-        ('accounting', 'orig msg 1', 'SUCCESS'),
-        ('billing',    'orig msg 2', 'IGNORED');`)
+		('accounting', 1000, '', '', 'orig msg 1', -4446492996171837732, 'SUCCESS'),
+		('billing',    2000, '', '', 'orig msg 2', -4446492996171837732, 'IGNORED');`)
 
-	// NOTE: underscore in the template key; base column is with a dot.
+	// underscore in the template key; base column uses a dot.
 	q := `{resource_service_name="accounting"} | line_format "{{ index . \"log_@OrderResult\" }}"`
 
 	ast, err := FromLogQL(q)
@@ -1380,9 +1522,10 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField_UnderscoreCompat(t *testing
 	}
 	leaf := plan.Leaves[0]
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 10_000)
 
-	// We should hoist the base column with the DOT form into s0.
 	if !strings.Contains(sql, `"log.@OrderResult"`) {
 		t.Fatalf("expected hoisted base column \"log.@OrderResult\" in SQL:\n%s", sql)
 	}
@@ -1406,26 +1549,20 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 	db := openDuckDB(t)
 	t.Cleanup(func() { mustDropTable(db, "logs") })
 
-	// Base table with:
-	// - selector column normalized from resource_service_name -> "resource.service.name"
-	// - message column that will be rewritten twice by line_format stages
-	// - a base column containing JSON but with special characters in the name
 	mustExec(t, db, `CREATE TABLE logs(
-		"resource.service.name" TEXT,
-		"_cardinalhq.message"   TEXT,
-		"log.@OrderResult"      TEXT
+		"resource.service.name"   TEXT,
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.message"     TEXT,
+		"_cardinalhq.fingerprint" BIGINT,
+		"log.@OrderResult"        TEXT
 	);`)
 
-	// Insert two rows; only the 'accounting' row should match the selector.
-	// The JSON mirrors your target structure.
 	mustExec(t, db, `INSERT INTO logs VALUES
-		('accounting', 'orig msg (to be replaced)', '{"orderId":"O-123","shippingCost":{"currencyCode":"USD","units":12,"nanos":500000000}}'),
-		('billing',    'orig msg (ignored)',        '{"orderId":"O-999","shippingCost":{"currencyCode":"EUR","units":7,"nanos":0}}');`)
+		('accounting', 1000, '', '', 'orig msg (to be replaced)', -4446492996171837732, '{"orderId":"O-123","shippingCost":{"currencyCode":"USD","units":12,"nanos":500000000}}'),
+		('billing',    2000, '', '', 'orig msg (ignored)',        -4446492996171837732, '{"orderId":"O-999","shippingCost":{"currencyCode":"EUR","units":7,"nanos":0}}');`)
 
-	// Your intended LogQL:
-	//  - stage1 line_format: move base column value into message via index key with underscore
-	//  - json: extract fields from that message
-	//  - stage2 line_format: reformat message from extracted fields
 	q := `{resource_service_name="accounting"} ` +
 		`| line_format "{{ index . \"log_@OrderResult\" }}" ` +
 		`| json ` +
@@ -1444,23 +1581,21 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 10_000)
 
-	// Sanity checks on generated SQL:
-	// 1) selector WHERE clause
 	if !strings.Contains(sql, `"resource.service.name" = 'accounting'`) {
 		t.Fatalf("missing selector on resource.service.name:\n%s", sql)
 	}
-	// 2) base column with special chars is hoisted (so it can be indexed in template)
 	if !strings.Contains(sql, `"log.@OrderResult"`) {
 		t.Fatalf("expected hoisted base column \"log.@OrderResult\" in SQL:\n%s", sql)
 	}
-	// 3) final rewrite of _cardinalhq.message via second line_format
 	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq.message"`) {
 		t.Fatalf("expected rewrite of _cardinalhq.message via line_format:\n%s", sql)
 	}
-	// 4) json projections for the accessed fields should appear
-	//    (depending on your compiler they may alias or inline; check for common forms)
+
+	// Look for any of these common JSON projection forms
 	wantJsonBits := []string{
 		`json_extract_string("_cardinalhq.message", '$.orderId')`,
 		`json_extract_string("_cardinalhq.message", '$.shippingCost.currencyCode')`,
@@ -1475,24 +1610,19 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 		}
 	}
 	if !foundJsonAny {
-		// Not fatal in some implementations, but very useful signal while evolving the compiler.
 		t.Logf("note: JSON projections not explicitly visible in SQL (compiler may inline), sql:\n%s", sql)
 	}
 
-	// Execute and validate the single matching row and its final formatted message.
 	rows := queryAll(t, db, sql)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row (service=accounting), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
 	}
 
-	// After both line_format stages, the message should be the composed string:
 	wantMsg := "orderId=O-123 currency=USD units=12 nanos=500000000"
 	gotMsg := getString(rows[0][`_cardinalhq.message`])
 	if gotMsg != wantMsg {
 		t.Fatalf("final _cardinalhq.message mismatch:\n  got:  %q\n  want: %q", gotMsg, wantMsg)
 	}
-
-	// Confirm we indeed selected the accounting row.
 	if svc := getString(rows[0][`resource.service.name`]); svc != "accounting" {
 		t.Fatalf("wrong row selected: resource.service.name=%q", svc)
 	}

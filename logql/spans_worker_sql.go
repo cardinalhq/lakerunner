@@ -16,7 +16,6 @@ package logql
 
 import (
 	"fmt"
-	"strings"
 )
 
 // ToSpansWorkerSQL generates SQL for spans queries with _cardinalhq.name and _cardinalhq.kind as default fields
@@ -42,22 +41,20 @@ func (be *LogLeaf) ToSpansWorkerSQL(limit int, order string, fields []string) st
 	// 2) Build CTE pipeline
 	pb := newPipelineBuilder()
 
-	// s0: minimal base projection + matchers + non-parser groupKeys (+ fields param)
-	s0Need := computeSpansS0Need(be, groupKeys, parserCreated)
+	// s0: always SELECT * from the base relation
+	pb.push([]string{"*"}, baseRel, nil)
 
-	// Add fields parameter to s0 if they are base table columns and not being extracted by parsers
-	for _, field := range fields {
-		if _, created := parserCreated[field]; !created {
-			qk := quoteIdent(field)
-			s0Need[qk] = struct{}{}
-		}
-	}
-	pb.push(selectListFromSet(s0Need), baseRel, nil)
+	// s0+: normalize fingerprint type to string once up-front so downstream filters/clients are stable
+	pb.push([]string{
+		pb.top() + `.* REPLACE(CAST("_cardinalhq.fingerprint" AS VARCHAR) AS "_cardinalhq.fingerprint")`,
+	}, pb.top(), nil)
 
 	// s1: time window sentinel so segment filters can be spliced
-	timePred := fmt.Sprintf("CAST(%s AS BIGINT) >= {start} AND CAST(%s AS BIGINT) < {end}", tsCol, tsCol)
-	pb.push([]string{pb.top() + ".*"}, pb.top(),
-		[]string{timePred, "true"})
+	timePred := fmt.Sprintf(
+		"CAST(%s AS BIGINT) >= {start} AND CAST(%s AS BIGINT) < {end}",
+		tsCol, tsCol,
+	)
+	pb.push([]string{pb.top() + ".*"}, pb.top(), []string{"1=1", "true", timePred})
 
 	// 3) Apply selector & line filters before parsers
 	emitSpansSelectorAndLineFilters(be, &pb, spansNameCol)
@@ -106,60 +103,6 @@ func isSpansBaseCol(col string) bool {
 	}
 	_, ok := spansBaseCols[col]
 	return ok
-}
-
-// computeSpansS0Need computes the columns needed for the initial projection in spans queries
-func computeSpansS0Need(be *LogLeaf, groupKeys []string, parserCreated map[string]struct{}) map[string]struct{} {
-	// base columns always in s0 for spans
-	need := map[string]struct{}{
-		"\"_cardinalhq.id\"":            {},
-		"\"_cardinalhq.kind\"":          {},
-		"\"_cardinalhq.name\"":          {},
-		"\"_cardinalhq.span_id\"":       {},
-		"\"_cardinalhq.span_trace_id\"": {},
-		"\"_cardinalhq.status_code\"":   {},
-		"\"_cardinalhq.span_duration\"": {},
-		"\"_cardinalhq.timestamp\"":     {},
-		"CAST(\"_cardinalhq.fingerprint\" AS VARCHAR) AS \"_cardinalhq.fingerprint\"": {},
-	}
-	// matchers must exist before parsers
-	for _, m := range be.Matchers {
-		need[quoteIdent(m.Label)] = struct{}{}
-	}
-	// only non-parser groupKeys go into s0
-	for _, k := range groupKeys {
-		if _, created := parserCreated[k]; !created {
-			need[quoteIdent(k)] = struct{}{}
-		}
-	}
-
-	// NEW: hoist base columns referenced by label_format / line_format templates.
-	for _, p := range be.Parsers {
-		switch strings.ToLower(p.Type) {
-		case "label_format", "label-format", "labelformat":
-			// If precompiled SQL in LabelFormats, we can't reliably recover deps.
-			// But Params case is common and covers templates.
-			for _, tmpl := range p.Params {
-				for _, dep := range collectTemplateDeps(tmpl) {
-					q := quoteIdent(dep)
-					if isSpansBaseCol(q) {
-						need[q] = struct{}{}
-					}
-				}
-			}
-		case "line_format", "line-format", "lineformat":
-			if tmpl := strings.TrimSpace(p.Params["template"]); tmpl != "" {
-				for _, dep := range collectTemplateDeps(tmpl) {
-					q := quoteIdent(dep)
-					if isSpansBaseCol(q) {
-						need[q] = struct{}{}
-					}
-				}
-			}
-		}
-	}
-
-	return need
 }
 
 // emitSpansSelectorAndLineFilters applies selector and line filters for spans queries
