@@ -119,13 +119,13 @@ func BenchmarkWriteFromReader(b *testing.B) {
 		exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
 		reader, err := createLogReader(testFile, orgID.String(), exemplarProcessor)
 		require.NoError(b, err)
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		// Create translator
 		translator := NewLogTranslator(orgID.String(), "test-bucket", "test-object", nil)
 		translatingReader, err := filereader.NewTranslatingReader(reader, translator, 1000)
 		require.NoError(b, err)
-		defer translatingReader.Close()
+		defer func() { _ = translatingReader.Close() }()
 
 		// Create writer
 		writer, err := factories.NewLogsWriter(tmpDir, 10000)
@@ -170,7 +170,7 @@ func BenchmarkBatchProcessing(b *testing.B) {
 
 				reader, err := filereader.ReaderForFileWithOptions(testFile, options)
 				require.NoError(b, err)
-				defer reader.Close()
+				defer func() { _ = reader.Close() }()
 
 				// Process batches
 				batchCount := 0
@@ -245,8 +245,8 @@ func BenchmarkMemoryLeaks(b *testing.B) {
 		_, err = writer.Close(ctx)
 		require.NoError(b, err)
 
-		translatingReader.Close()
-		reader.Close()
+		_ = translatingReader.Close()
+		_ = reader.Close()
 	}
 
 	// Force GC and check final pool stats
@@ -291,7 +291,7 @@ func BenchmarkDetailedMemoryProfile(b *testing.B) {
 		exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
 		reader, err := createLogReader(testFile, orgID.String(), exemplarProcessor)
 		require.NoError(b, err)
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		runtime.GC()
 		var mem1 runtime.MemStats
@@ -303,7 +303,7 @@ func BenchmarkDetailedMemoryProfile(b *testing.B) {
 		translator := NewLogTranslator(orgID.String(), "test-bucket", "test-object", nil)
 		translatingReader, err := filereader.NewTranslatingReader(reader, translator, 1000)
 		require.NoError(b, err)
-		defer translatingReader.Close()
+		defer func() { _ = translatingReader.Close() }()
 
 		runtime.GC()
 		var mem2 runtime.MemStats
