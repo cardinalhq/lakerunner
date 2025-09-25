@@ -913,15 +913,31 @@ type S3SecretConfig struct {
 
 // seedS3SecretFromEnv fetches S3 credentials from environment and creates a DuckDB secret.
 func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
-	keyID := os.Getenv("AWS_ACCESS_KEY_ID")
-	secret := os.Getenv("AWS_SECRET_ACCESS_KEY")
-	if keyID == "" || secret == "" {
-		return fmt.Errorf("missing AWS credentials: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required")
+	// Check for S3_ prefixed credentials first, then fall back to AWS_ prefix
+	keyID := os.Getenv("S3_ACCESS_KEY_ID")
+	if keyID == "" {
+		keyID = os.Getenv("AWS_ACCESS_KEY_ID")
 	}
-	session := os.Getenv("AWS_SESSION_TOKEN")
+
+	secret := os.Getenv("S3_SECRET_ACCESS_KEY")
+	if secret == "" {
+		secret = os.Getenv("AWS_SECRET_ACCESS_KEY")
+	}
+
+	if keyID == "" || secret == "" {
+		return fmt.Errorf("missing S3/AWS credentials: S3_ACCESS_KEY_ID/AWS_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY/AWS_SECRET_ACCESS_KEY are required")
+	}
+
+	session := os.Getenv("S3_SESSION_TOKEN")
+	if session == "" {
+		session = os.Getenv("AWS_SESSION_TOKEN")
+	}
 
 	if region == "" {
-		if r := os.Getenv("AWS_REGION"); r != "" {
+		// Check S3_REGION first, then AWS_REGION, then AWS_DEFAULT_REGION
+		if r := os.Getenv("S3_REGION"); r != "" {
+			region = r
+		} else if r := os.Getenv("AWS_REGION"); r != "" {
 			region = r
 		} else if r := os.Getenv("AWS_DEFAULT_REGION"); r != "" {
 			region = r
@@ -943,7 +959,11 @@ func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region str
 		}
 	}
 
-	urlStyle := os.Getenv("AWS_S3_URL_STYLE")
+	// Check for S3_URL_STYLE first, then fall back to AWS_S3_URL_STYLE
+	urlStyle := os.Getenv("S3_URL_STYLE")
+	if urlStyle == "" {
+		urlStyle = os.Getenv("AWS_S3_URL_STYLE")
+	}
 	if urlStyle == "" {
 		urlStyle = "path"
 	}
