@@ -36,4 +36,5 @@ func init() {
 	debugCmd.AddCommand(debugcmd.GetAnalyzeCmd())
 	debugCmd.AddCommand(debugcmd.GetSizingReportCmd())
 	debugCmd.AddCommand(debugcmd.GetIngestLogsCmd())
+	debugCmd.AddCommand(debugcmd.GetPubSubCmd())
 }
