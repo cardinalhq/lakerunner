@@ -17,6 +17,7 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 
@@ -53,6 +54,7 @@ func (t *LogTranslator) TranslateRow(ctx context.Context, row *filereader.Row) e
 	// Only set the specific required fields - assume all other fields are properly set
 	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
 	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
+	(*row)[wkk.NewRowKey("resource.file")] = getResourceFile(t.objectID)
 	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
 
 	// Ensure required CardinalhQ fields are set
@@ -63,6 +65,16 @@ func (t *LogTranslator) TranslateRow(ctx context.Context, row *filereader.Row) e
 	t.setFingerprint(ctx, row)
 
 	return nil
+}
+
+func getResourceFile(objectid string) string {
+	items := strings.Split(objectid, "/")
+	for i, item := range items {
+		if strings.EqualFold(item, "Support") && i < len(items)-1 {
+			return items[i+1]
+		}
+	}
+	return "unknown"
 }
 
 func (t *LogTranslator) setFingerprint(ctx context.Context, row *filereader.Row) {
