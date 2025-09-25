@@ -23,6 +23,7 @@ import (
 
 	"github.com/cardinalhq/oteltools/pkg/telemetry"
 	slogmulti "github.com/samber/slog-multi"
+	"github.com/shirou/gopsutil/v4/process"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/instrumentation/host"
 	iruntime "go.opentelemetry.io/contrib/instrumentation/runtime"
@@ -55,9 +56,6 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 		return nil
 	}
 
-	// make all the counters, gauges, etc that everyone is likely to use.
-	setupGlobalMetrics()
-
 	attrs := []attribute.KeyValue{}
 	if addlAttrs != nil {
 		iter := addlAttrs.Iter()
@@ -66,6 +64,9 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 		}
 	}
 	commonAttributes = attribute.NewSet(attrs...)
+
+	// Start process memory metrics collection
+	startProcessMemoryMetrics(doneCtx)
 
 	// Configure slog level based on DEBUG environment variables
 	var opts *slog.HandlerOptions
@@ -120,15 +121,58 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 	return doneCtx, f, nil
 }
 
-func setupGlobalMetrics() {
-	mg, err := meter.Int64Gauge(
-		"lakerunner.exists",
-		metric.WithDescription("Indicates if the service is running (1) or not (0)"),
+// startProcessMemoryMetrics registers observable gauges for process memory metrics
+func startProcessMemoryMetrics(_ context.Context) {
+	// Get current process handle once
+	pid := int32(os.Getpid())
+	proc, err := process.NewProcess(pid)
+	if err != nil {
+		slog.Error("failed to get process handle", "error", err)
+		return
+	}
+
+	// Register RSS observable gauge
+	rssGauge, err := meter.Int64ObservableGauge(
+		"lakerunner.process.memory.rss",
+		metric.WithDescription("Process resident set size (physical memory)"),
+		metric.WithUnit("By"),
 	)
 	if err != nil {
-		panic(fmt.Errorf("failed to create exists.gauge: %w", err))
+		slog.Error("failed to create RSS observable gauge", "error", err)
+		return
 	}
-	existsGauge = mg
-	mg.Record(context.Background(), 1, metric.WithAttributeSet(commonAttributes))
 
+	// Register VMS observable gauge
+	vmsGauge, err := meter.Int64ObservableGauge(
+		"lakerunner.process.memory.vms",
+		metric.WithDescription("Process virtual memory size"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		slog.Error("failed to create VMS observable gauge", "error", err)
+		return
+	}
+
+	// Register a single callback for both gauges
+	_, err = meter.RegisterCallback(
+		func(_ context.Context, observer metric.Observer) error {
+			memInfo, err := proc.MemoryInfo()
+			if err != nil {
+				// Log at debug level to avoid spam
+				slog.Debug("failed to get process memory info", "error", err)
+				return nil // Don't propagate error to avoid breaking metrics collection
+			}
+
+			observer.ObserveInt64(rssGauge, int64(memInfo.RSS), metric.WithAttributeSet(commonAttributes))
+			observer.ObserveInt64(vmsGauge, int64(memInfo.VMS), metric.WithAttributeSet(commonAttributes))
+
+			return nil
+		},
+		rssGauge,
+		vmsGauge,
+	)
+	if err != nil {
+		slog.Error("failed to register memory metrics callback", "error", err)
+		return
+	}
 }
