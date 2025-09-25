@@ -22,6 +22,11 @@ const (
 	ServiceTypeIngestMetrics = "ingest-metrics"
 	ServiceTypeIngestTraces  = "ingest-traces"
 
+	// Service types for segments processing (worker topics)
+	ServiceTypeSegmentsLogsIngest    = "segments-logs-ingest"
+	ServiceTypeSegmentsMetricsIngest = "segments-metrics-ingest"
+	ServiceTypeSegmentsTracesIngest  = "segments-traces-ingest"
+
 	// Service types for compaction
 	ServiceTypeCompactLogs    = "compact-logs"
 	ServiceTypeCompactMetrics = "compact-metrics"
@@ -31,6 +36,9 @@ const (
 	ServiceTypeRollupMetrics = "rollup-metrics"
 
 	// Service types for boxer tasks
+	ServiceTypeBoxerIngestLogs     = "boxer-ingest-logs"
+	ServiceTypeBoxerIngestMetrics  = "boxer-ingest-metrics"
+	ServiceTypeBoxerIngestTraces   = "boxer-ingest-traces"
 	ServiceTypeBoxerCompactLogs    = "boxer-compact-logs"
 	ServiceTypeBoxerCompactMetrics = "boxer-compact-metrics"
 	ServiceTypeBoxerCompactTraces  = "boxer-compact-traces"
@@ -40,6 +48,9 @@ const (
 	ServiceTypeBoxer = "boxer"
 
 	// Task names (used in boxer command flags and KEDA boxerTasks)
+	TaskIngestLogs     = "ingest-logs"
+	TaskIngestMetrics  = "ingest-metrics"
+	TaskIngestTraces   = "ingest-traces"
 	TaskCompactLogs    = "compact-logs"
 	TaskCompactMetrics = "compact-metrics"
 	TaskCompactTraces  = "compact-traces"
@@ -49,6 +60,12 @@ const (
 // GetBoxerServiceType returns the service type for a boxer task
 func GetBoxerServiceType(task string) string {
 	switch task {
+	case TaskIngestLogs:
+		return ServiceTypeBoxerIngestLogs
+	case TaskIngestMetrics:
+		return ServiceTypeBoxerIngestMetrics
+	case TaskIngestTraces:
+		return ServiceTypeBoxerIngestTraces
 	case TaskCompactLogs:
 		return ServiceTypeBoxerCompactLogs
 	case TaskCompactMetrics:

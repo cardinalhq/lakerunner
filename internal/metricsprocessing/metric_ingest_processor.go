@@ -85,28 +85,21 @@ func newMetricIngestProcessor(
 	}
 }
 
-// validateIngestGroupConsistency ensures all messages in an ingest group have consistent fields
-func validateIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]) error {
-	if len(group.Messages) == 0 {
+// validateMetricIngestMessages validates the key and messages for consistency
+func validateMetricIngestMessages(key messages.IngestKey, msgs []*messages.ObjStoreNotificationMessage) error {
+	if len(msgs) == 0 {
 		return &GroupValidationError{
 			Field:   "message_count",
-			Message: "group cannot be empty",
+			Message: "message list cannot be empty",
 		}
 	}
 
-	expectedOrg := group.Key.OrganizationID
-	expectedInstance := group.Key.InstanceNum
+	// Get expected values from the key
+	expectedOrg := key.OrganizationID
+	expectedInstance := key.InstanceNum
 
 	// Validate each message against the expected values
-	for i, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
-		if !ok {
-			return &GroupValidationError{
-				Field:   "message_type",
-				Message: fmt.Sprintf("message %d is not an ObjStoreNotificationMessage", i),
-			}
-		}
-
+	for i, msg := range msgs {
 		if msg.OrganizationID != expectedOrg {
 			return &GroupValidationError{
 				Field:    "organization_id",
@@ -129,23 +122,19 @@ func validateIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]
 	return nil
 }
 
-// Process implements the Processor interface and performs raw metric ingestion
-func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
-	ll := logctx.FromContext(ctx)
+// ProcessBundle implements the Processor interface and performs raw metric ingestion
+func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.IngestKey, msgs []*messages.ObjStoreNotificationMessage, partition int32, offset int64) error {
+	ll := logctx.FromContext(ctx).With(
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("instanceNum", int(key.InstanceNum)))
 
 	defer runtime.GC() // TODO find a way to not need this
 
-	// Calculate group age from Hunter timestamp
-	groupAge := time.Since(group.CreatedAt)
-
 	ll.Info("Starting metric ingestion",
-		slog.String("organizationID", group.Key.OrganizationID.String()),
-		slog.Int("instanceNum", int(group.Key.InstanceNum)),
-		slog.Int("messageCount", len(group.Messages)),
-		slog.Duration("groupAge", groupAge))
+		slog.Int("messageCount", len(msgs)))
 
-	if err := validateIngestGroupConsistency(group); err != nil {
-		return fmt.Errorf("group validation failed: %w", err)
+	if err := validateMetricIngestMessages(key, msgs); err != nil {
+		return fmt.Errorf("message validation failed: %w", err)
 	}
 
 	// Create temporary directory for this ingestion run
@@ -159,7 +148,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		}
 	}()
 
-	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
+	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
@@ -186,11 +175,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
-	for _, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
-		if !ok {
-			continue // Skip non-ObjStoreNotificationMessage messages
-		}
+	for _, msg := range msgs {
 
 		ll.Debug("Processing raw metric file",
 			slog.String("objectID", msg.ObjectID),
@@ -253,6 +238,14 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
 
+	// Create kafka offset info for tracking
+	kafkaOffsets := []lrdb.KafkaOffsetInfo{{
+		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsIngest),
+		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsIngest),
+		PartitionID:   partition,
+		Offsets:       []int64{offset},
+	}}
+
 	criticalCtx := context.WithoutCancel(ctx)
 	if err := p.store.InsertMetricSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
 		// Log detailed segment information for debugging
@@ -266,8 +259,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 
 		ll.Error("Failed to insert metric segments with Kafka offsets",
 			slog.Any("error", err),
-			slog.String("organization_id", group.Key.OrganizationID.String()),
-			slog.Int("instance_num", int(group.Key.InstanceNum)),
 			slog.Int("segmentCount", len(segmentParams)),
 			slog.Int64("totalRecords", totalRecords),
 			slog.Int64("totalSize", totalSize),
@@ -378,10 +369,10 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	}
 
 	// Report telemetry - ingestion transforms files into segments
-	reportTelemetry(ctx, "metrics", "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "metrics", "ingestion", int64(len(msgs)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Metric ingestion completed successfully",
-		slog.Int("inputFiles", len(group.Messages)),
+		slog.Int("inputFiles", len(msgs)),
 		slog.Int64("totalFileSize", totalInputSize),
 		slog.Int("outputSegments", len(segmentParams)))
 

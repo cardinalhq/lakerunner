@@ -41,6 +41,9 @@ type BoxerManager struct {
 
 // ConsumerFactory creates boxer consumers for different task types
 type ConsumerFactory interface {
+	CreateLogIngestConsumer(ctx context.Context) (BoxerConsumer, error)
+	CreateMetricIngestConsumer(ctx context.Context) (BoxerConsumer, error)
+	CreateTraceIngestConsumer(ctx context.Context) (BoxerConsumer, error)
 	CreateLogCompactionConsumer(ctx context.Context) (BoxerConsumer, error)
 	CreateMetricCompactionConsumer(ctx context.Context) (BoxerConsumer, error)
 	CreateTraceCompactionConsumer(ctx context.Context) (BoxerConsumer, error)
@@ -63,6 +66,18 @@ func NewDefaultConsumerFactory(cfg *config.Config, boxerStore BoxerStore) (*Defa
 		boxerStore: boxerStore,
 		cfg:        cfg,
 	}, nil
+}
+
+func (f *DefaultConsumerFactory) CreateLogIngestConsumer(ctx context.Context) (BoxerConsumer, error) {
+	return NewLogIngestBoxerConsumer(ctx, f.cfg, f.boxerStore, f.factory)
+}
+
+func (f *DefaultConsumerFactory) CreateMetricIngestConsumer(ctx context.Context) (BoxerConsumer, error) {
+	return NewMetricIngestBoxerConsumer(ctx, f.cfg, f.boxerStore, f.factory)
+}
+
+func (f *DefaultConsumerFactory) CreateTraceIngestConsumer(ctx context.Context) (BoxerConsumer, error) {
+	return NewTraceIngestBoxerConsumer(ctx, f.cfg, f.boxerStore, f.factory)
 }
 
 func (f *DefaultConsumerFactory) CreateLogCompactionConsumer(ctx context.Context) (BoxerConsumer, error) {
@@ -118,6 +133,12 @@ func NewBoxerManagerWithFactory(ctx context.Context, factory ConsumerFactory, ta
 
 func (m *BoxerManager) createConsumerForTask(ctx context.Context, factory ConsumerFactory, task string) (BoxerConsumer, error) {
 	switch task {
+	case config.TaskIngestLogs:
+		return factory.CreateLogIngestConsumer(ctx)
+	case config.TaskIngestMetrics:
+		return factory.CreateMetricIngestConsumer(ctx)
+	case config.TaskIngestTraces:
+		return factory.CreateTraceIngestConsumer(ctx)
 	case config.TaskCompactLogs:
 		return factory.CreateLogCompactionConsumer(ctx)
 	case config.TaskCompactMetrics:

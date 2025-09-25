@@ -95,7 +95,7 @@ func init() {
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
 			kafkaFactory := fly.NewFactory(&cfg.Kafka)
-			slog.Info("Starting logs ingestion with accumulation consumer")
+			slog.Info("Starting logs ingestion worker (processing from boxer)")
 
 			consumer, err := metricsprocessing.NewLogIngestConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {

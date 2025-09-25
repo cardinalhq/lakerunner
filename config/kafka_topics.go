@@ -24,10 +24,16 @@ const (
 	TopicObjstoreIngestLogs     = "objstore.ingest.logs"
 	TopicObjstoreIngestMetrics  = "objstore.ingest.metrics"
 	TopicObjstoreIngestTraces   = "objstore.ingest.traces"
+	TopicSegmentsLogsIngest     = "segments.logs.ingest"
+	TopicSegmentsMetricsIngest  = "segments.metrics.ingest"
+	TopicSegmentsTracesIngest   = "segments.traces.ingest"
 	TopicSegmentsLogsCompact    = "segments.logs.compact"
 	TopicSegmentsMetricsCompact = "segments.metrics.compact"
 	TopicSegmentsTracesCompact  = "segments.traces.compact"
 	TopicSegmentsMetricsRollup  = "segments.metrics.rollup"
+	TopicBoxerLogsIngest        = "boxer.logs.ingest"
+	TopicBoxerMetricsIngest     = "boxer.metrics.ingest"
+	TopicBoxerTracesIngest      = "boxer.traces.ingest"
 	TopicBoxerLogsCompact       = "boxer.logs.compact"
 	TopicBoxerMetricsCompact    = "boxer.metrics.compact"
 	TopicBoxerTracesCompact     = "boxer.traces.compact"
@@ -70,10 +76,16 @@ func NewTopicRegistry(prefix string) *TopicRegistry {
 	tr.registerTopic(TopicObjstoreIngestLogs, "objstore.ingest.logs", "ingest.logs", ServiceTypeIngestLogs)
 	tr.registerTopic(TopicObjstoreIngestMetrics, "objstore.ingest.metrics", "ingest.metrics", ServiceTypeIngestMetrics)
 	tr.registerTopic(TopicObjstoreIngestTraces, "objstore.ingest.traces", "ingest.traces", ServiceTypeIngestTraces)
+	tr.registerTopic(TopicSegmentsLogsIngest, "segments.logs.ingest", "segments.logs.ingest", ServiceTypeSegmentsLogsIngest)
+	tr.registerTopic(TopicSegmentsMetricsIngest, "segments.metrics.ingest", "segments.metrics.ingest", ServiceTypeSegmentsMetricsIngest)
+	tr.registerTopic(TopicSegmentsTracesIngest, "segments.traces.ingest", "segments.traces.ingest", ServiceTypeSegmentsTracesIngest)
 	tr.registerTopic(TopicSegmentsLogsCompact, "segments.logs.compact", "compact.logs", ServiceTypeCompactLogs)
 	tr.registerTopic(TopicSegmentsMetricsCompact, "segments.metrics.compact", "compact.metrics", ServiceTypeCompactMetrics)
 	tr.registerTopic(TopicSegmentsTracesCompact, "segments.traces.compact", "compact.traces", ServiceTypeCompactTraces)
 	tr.registerTopic(TopicSegmentsMetricsRollup, "segments.metrics.rollup", "rollup.metrics", ServiceTypeRollupMetrics)
+	tr.registerTopic(TopicBoxerLogsIngest, "boxer.logs.ingest", "boxer.logs.ingest", ServiceTypeBoxerIngestLogs)
+	tr.registerTopic(TopicBoxerMetricsIngest, "boxer.metrics.ingest", "boxer.metrics.ingest", ServiceTypeBoxerIngestMetrics)
+	tr.registerTopic(TopicBoxerTracesIngest, "boxer.traces.ingest", "boxer.traces.ingest", ServiceTypeBoxerIngestTraces)
 	tr.registerTopic(TopicBoxerLogsCompact, "boxer.logs.compact", "boxer.logs.compact", ServiceTypeBoxerCompactLogs)
 	tr.registerTopic(TopicBoxerMetricsCompact, "boxer.metrics.compact", "boxer.metrics.compact", ServiceTypeBoxerCompactMetrics)
 	tr.registerTopic(TopicBoxerTracesCompact, "boxer.traces.compact", "boxer.traces.compact", ServiceTypeBoxerCompactTraces)
