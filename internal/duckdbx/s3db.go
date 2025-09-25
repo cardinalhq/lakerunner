@@ -25,8 +25,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 // Global mutex to serialize extension/secret DDL across the process.
@@ -52,6 +56,11 @@ type S3DB struct {
 
 	// Single global pool
 	pool *connectionPool
+
+	// metrics
+	metricsPeriod time.Duration
+	metricsCtx    context.Context
+	metricsCancel context.CancelFunc
 }
 
 type connectionPool struct {
@@ -71,8 +80,10 @@ type pooledConn struct {
 
 // s3DBConfig holds configuration options for S3DB
 type s3DBConfig struct {
-	dbPath   *string
-	inMemory bool
+	dbPath        *string
+	inMemory      bool
+	metricsPeriod time.Duration
+	metricsCtx    context.Context
 }
 
 // S3DBOption is a functional option for configuring S3DB
@@ -95,6 +106,25 @@ func WithInMemory() S3DBOption {
 		cfg.inMemory = true
 		empty := ""
 		cfg.dbPath = &empty
+	}
+}
+
+// WithS3DBMetrics enables periodic polling of DuckDB memory metrics.
+// If period is 0, uses default of 30 seconds.
+func WithS3DBMetrics(period time.Duration) S3DBOption {
+	return func(cfg *s3DBConfig) {
+		if period == 0 {
+			period = 30 * time.Second
+		}
+		cfg.metricsPeriod = period
+	}
+}
+
+// WithS3DBMetricsContext sets the context used for metrics polling.
+// If not set, uses context.Background().
+func WithS3DBMetricsContext(ctx context.Context) S3DBOption {
+	return func(cfg *s3DBConfig) {
+		cfg.metricsCtx = ctx
 	}
 }
 
@@ -156,6 +186,7 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 		maxTempSize:   os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
 		poolSize:      poolSize,
 		threads:       threads,
+		metricsPeriod: cfg.metricsPeriod,
 	}
 
 	s3db.pool = &connectionPool{
@@ -164,10 +195,25 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 		ch:     make(chan *pooledConn, poolSize),
 	}
 
+	// Start metrics polling if enabled
+	if cfg.metricsPeriod > 0 {
+		ctx := cfg.metricsCtx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		s3db.metricsCtx, s3db.metricsCancel = context.WithCancel(ctx)
+		go s3db.pollMemoryMetrics(s3db.metricsCtx)
+	}
+
 	return s3db, nil
 }
 
 func (s *S3DB) Close() error {
+	// Cancel metrics polling if running
+	if s.metricsCancel != nil {
+		s.metricsCancel()
+	}
+
 	if s.pool != nil {
 		s.pool.closeAll()
 	}
@@ -967,4 +1013,137 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// pollMemoryMetrics periodically polls DuckDB memory statistics and records them as OpenTelemetry metrics
+func (s *S3DB) pollMemoryMetrics(ctx context.Context) {
+	// Import metrics package constructs
+	meter := otel.Meter("github.com/cardinalhq/lakerunner/duckdbx")
+
+	dbSizeGauge, err := meter.Int64Gauge("lakerunner.duckdb.memory.database_size",
+		metric.WithDescription("DuckDB database size"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		slog.Error("failed to create database_size metric", "error", err)
+		return
+	}
+
+	blockSizeGauge, err := meter.Int64Gauge("lakerunner.duckdb.memory.block_size",
+		metric.WithDescription("DuckDB block size"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		slog.Error("failed to create block_size metric", "error", err)
+		return
+	}
+
+	totalBlocksGauge, err := meter.Int64Gauge("lakerunner.duckdb.memory.total_blocks",
+		metric.WithDescription("DuckDB total blocks"),
+		metric.WithUnit("1"),
+	)
+	if err != nil {
+		slog.Error("failed to create total_blocks metric", "error", err)
+		return
+	}
+
+	usedBlocksGauge, err := meter.Int64Gauge("lakerunner.duckdb.memory.used_blocks",
+		metric.WithDescription("DuckDB used blocks"),
+		metric.WithUnit("1"),
+	)
+	if err != nil {
+		slog.Error("failed to create used_blocks metric", "error", err)
+		return
+	}
+
+	freeBlocksGauge, err := meter.Int64Gauge("lakerunner.duckdb.memory.free_blocks",
+		metric.WithDescription("DuckDB free blocks"),
+		metric.WithUnit("1"),
+	)
+	if err != nil {
+		slog.Error("failed to create free_blocks metric", "error", err)
+		return
+	}
+
+	walSizeGauge, err := meter.Int64Gauge("lakerunner.duckdb.memory.wal_size",
+		metric.WithDescription("DuckDB WAL size"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		slog.Error("failed to create wal_size metric", "error", err)
+		return
+	}
+
+	memoryUsageGauge, err := meter.Int64Gauge("lakerunner.duckdb.memory.memory_usage",
+		metric.WithDescription("DuckDB memory usage"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		slog.Error("failed to create memory_usage metric", "error", err)
+		return
+	}
+
+	memoryLimitGauge, err := meter.Int64Gauge("lakerunner.duckdb.memory.memory_limit",
+		metric.WithDescription("DuckDB memory limit"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		slog.Error("failed to create memory_limit metric", "error", err)
+		return
+	}
+
+	for {
+		// Get a connection from the pool
+		conn, release, err := s.GetConnection(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				// Context was cancelled, exit gracefully
+				return
+			}
+			slog.Error("failed to get connection for memory metrics", "error", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(s.metricsPeriod):
+				continue
+			}
+		}
+
+		// Get memory statistics
+		stats, err := GetDuckDBMemoryStats(conn)
+		release() // Release the connection back to the pool
+
+		if err != nil {
+			slog.Error("failed to get memory stats", "error", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(s.metricsPeriod):
+				continue
+			}
+		}
+
+		// Record metrics for each database (usually just one)
+		for _, stat := range stats {
+			attributes := []attribute.KeyValue{
+				attribute.String("database_name", stat.DatabaseName),
+				attribute.String("database_type", "duckdb"),
+			}
+			attr := metric.WithAttributeSet(attribute.NewSet(attributes...))
+			dbSizeGauge.Record(ctx, stat.DatabaseSize, attr)
+			blockSizeGauge.Record(ctx, stat.BlockSize, attr)
+			totalBlocksGauge.Record(ctx, stat.TotalBlocks, attr)
+			usedBlocksGauge.Record(ctx, stat.UsedBlocks, attr)
+			freeBlocksGauge.Record(ctx, stat.FreeBlocks, attr)
+			walSizeGauge.Record(ctx, stat.WALSize, attr)
+			memoryUsageGauge.Record(ctx, stat.MemoryUsage, attr)
+			memoryLimitGauge.Record(ctx, stat.MemoryLimit, attr)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(s.metricsPeriod):
+		}
+	}
 }

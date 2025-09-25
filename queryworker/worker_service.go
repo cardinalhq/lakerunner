@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
@@ -135,8 +136,10 @@ func NewWorkerService(
 		return nil
 	}
 
-	// Create a single shared S3DB pool for all queries
-	s3Pool, err := duckdbx.NewS3DB()
+	// Create a single shared S3DB pool for all queries with metrics enabled
+	s3Pool, err := duckdbx.NewS3DB(
+		duckdbx.WithS3DBMetrics(10 * time.Second), // Poll memory metrics every 10 seconds
+	)
 	if err != nil {
 		slog.Error("Failed to create shared S3DB pool", slog.Any("error", err))
 		return nil
