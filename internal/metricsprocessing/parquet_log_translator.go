@@ -253,7 +253,9 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (timest
 	return timestampResult{found: false}, ""
 }
 
-// extractInt64 attempts to extract int64 value from various types
+// extractInt64 attempts to extract int64 value from numeric types only
+// Does NOT attempt to parse string representations to avoid parsing
+// human-readable timestamps like "2025-09-13 18:09:15" as "2025"
 func extractInt64(val interface{}) (int64, bool) {
 	switch v := val.(type) {
 	case int64:
@@ -270,14 +272,6 @@ func extractInt64(val interface{}) (int64, bool) {
 		return int64(v), true
 	case uint32:
 		return int64(v), true
-	case interface{ String() string }:
-		// Try to parse string representation as number
-		if strVal := v.String(); strVal != "" {
-			var parsed int64
-			if _, err := fmt.Sscanf(strVal, "%d", &parsed); err == nil {
-				return parsed, true
-			}
-		}
 	}
 	return 0, false
 }

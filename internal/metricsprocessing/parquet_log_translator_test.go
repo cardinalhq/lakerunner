@@ -603,3 +603,42 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 	assert.True(t, hasLevel, "Should have _cardinalhq.level")
 	assert.Equal(t, "INFO", cardinalLevel, "Should preserve original level")
 }
+
+// mockStringTimestamp simulates Arrow scalar timestamps that render as human-readable strings
+type mockStringTimestamp struct {
+	value string
+}
+
+func (m mockStringTimestamp) String() string { return m.value }
+
+func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testing.T) {
+	translator := &ParquetLogTranslator{
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "test.parquet",
+	}
+
+	row := filereader.Row{
+		wkk.NewRowKey("timestamp"):   mockStringTimestamp{value: "2025-09-13 18:09:15"},
+		wkk.NewRowKey("application"): "test-app",
+		wkk.NewRowKey("message"):     "test message",
+	}
+
+	err := translator.TranslateRow(context.Background(), &row)
+	require.NoError(t, err)
+
+	// Verify that the mock string timestamp was NOT used and we fell back to current time
+	cardinalTimestamp, exists := row[wkk.RowKeyCTimestamp]
+	assert.True(t, exists, "Should have _cardinalhq.timestamp")
+
+	// The timestamp should be recent (current time), not 2025 milliseconds since epoch
+	timestamp := cardinalTimestamp.(int64)
+	now := time.Now().UnixMilli()
+	assert.Greater(t, timestamp, int64(1600000000000), "Should use current time, not parse string as number")
+	assert.Less(t, timestamp-now, int64(5000), "Should be within 5 seconds of current time")
+
+	// Verify that the mock timestamp was promoted to resource attribute since it wasn't used
+	mockTimestampValue, hasMockTimestamp := row[wkk.NewRowKey("resource.timestamp")]
+	assert.True(t, hasMockTimestamp, "Mock timestamp should be promoted to resource attribute")
+	assert.Equal(t, mockStringTimestamp{value: "2025-09-13 18:09:15"}, mockTimestampValue)
+}
