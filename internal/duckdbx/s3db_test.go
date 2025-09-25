@@ -144,9 +144,9 @@ func TestS3DB_ExtensionsLoaded(t *testing.T) {
 func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 	ctx := context.Background()
 
-	// Skip if no S3 credentials in environment
-	if os.Getenv("S3_ACCESS_KEY_ID") == "" || os.Getenv("S3_SECRET_ACCESS_KEY") == "" {
-		t.Skip("Skipping S3 secret test - no S3 credentials in environment")
+	// Skip if no AWS credentials in environment
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" || os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
+		t.Skip("Skipping S3 secret test - no AWS credentials in environment")
 	}
 
 	// Create S3DB instance
@@ -573,20 +573,20 @@ func TestPooledConnectionReuseAcrossBuckets(t *testing.T) {
 	ctx := context.Background()
 
 	// Set test AWS credentials
-	oldKeyID := os.Getenv("S3_ACCESS_KEY_ID")
-	oldSecret := os.Getenv("S3_SECRET_ACCESS_KEY")
-	_ = os.Setenv("S3_ACCESS_KEY_ID", "TEST_ACCESS_KEY")
-	_ = os.Setenv("S3_SECRET_ACCESS_KEY", "TEST_SECRET_KEY")
+	oldKeyID := os.Getenv("AWS_ACCESS_KEY_ID")
+	oldSecret := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	_ = os.Setenv("AWS_ACCESS_KEY_ID", "TEST_ACCESS_KEY")
+	_ = os.Setenv("AWS_SECRET_ACCESS_KEY", "TEST_SECRET_KEY")
 	defer func() {
 		if oldKeyID != "" {
-			_ = os.Setenv("S3_ACCESS_KEY_ID", oldKeyID)
+			_ = os.Setenv("AWS_ACCESS_KEY_ID", oldKeyID)
 		} else {
-			_ = os.Unsetenv("S3_ACCESS_KEY_ID")
+			_ = os.Unsetenv("AWS_ACCESS_KEY_ID")
 		}
 		if oldSecret != "" {
-			_ = os.Setenv("S3_SECRET_ACCESS_KEY", oldSecret)
+			_ = os.Setenv("AWS_SECRET_ACCESS_KEY", oldSecret)
 		} else {
-			_ = os.Unsetenv("S3_SECRET_ACCESS_KEY")
+			_ = os.Unsetenv("AWS_SECRET_ACCESS_KEY")
 		}
 	}()
 

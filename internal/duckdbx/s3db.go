@@ -17,6 +17,7 @@ package duckdbx
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,7 +28,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/marcboeker/go-duckdb/v2"
+	"github.com/marcboeker/go-duckdb/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -375,12 +376,39 @@ func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) 
 		return nil, err
 	}
 
-	// Open a connection to the shared database file
-	// All connections opening the same file share the same in-process database instance
-	db, err := sql.Open("duckdb", p.parent.dbPath)
+	// Create a connector with a boot function that runs on each new physical connection
+	connector, err := duckdb.NewConnector(p.parent.dbPath, func(execer driver.ExecerContext) error {
+		// CRITICAL: Set memory limit on EVERY connection
+		// DuckDB's memory_limit is global but new connections don't inherit it
+		if p.parent.memoryLimitMB > 0 {
+			if _, err := execer.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", p.parent.memoryLimitMB), nil); err != nil {
+				slog.Warn("Failed to set memory_limit on connection", "error", err)
+			}
+		}
+
+		// Disable automatic extension loading/downloading for this connection
+		if _, err := execer.ExecContext(ctx, "SET autoinstall_known_extensions = false;", nil); err != nil {
+			slog.Warn("Failed to disable automatic extension installation", "error", err)
+		}
+		if _, err := execer.ExecContext(ctx, "SET autoload_known_extensions = false;", nil); err != nil {
+			slog.Warn("Failed to disable automatic extension loading", "error", err)
+		}
+
+		// Load extensions for this connection
+		// For simplicity, we'll load the extensions directly here
+		if err := p.parent.loadExtensionsWithExecer(ctx, execer); err != nil {
+			return fmt.Errorf("load extensions for connection: %w", err)
+		}
+
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create connector: %w", err)
 	}
+	// Don't close the connector - it needs to stay open for the DB handle
+
+	// Open a database handle using the connector
+	db := sql.OpenDB(connector)
 	// one physical connection per DB handle
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
@@ -389,30 +417,6 @@ func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) 
 	if err != nil {
 		_ = db.Close()
 		return nil, err
-	}
-
-	// CRITICAL: Set memory limit on EVERY connection
-	// DuckDB's memory_limit is global but new connections don't inherit it
-	if p.parent.memoryLimitMB > 0 {
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", p.parent.memoryLimitMB)); err != nil {
-			slog.Warn("Failed to set memory_limit on connection", "error", err)
-		}
-	}
-
-	// Disable automatic extension loading/downloading for this connection
-	// These are connection-level settings that need to be set on each connection
-	if _, err := conn.ExecContext(ctx, "SET autoinstall_known_extensions = false;"); err != nil {
-		slog.Warn("Failed to disable automatic extension installation", "error", err)
-	}
-	if _, err := conn.ExecContext(ctx, "SET autoload_known_extensions = false;"); err != nil {
-		slog.Warn("Failed to disable automatic extension loading", "error", err)
-	}
-
-	// Load extensions for this connection (they need to be loaded per-connection)
-	if err := p.parent.loadExtensionsForConnection(ctx, conn); err != nil {
-		_ = conn.Close()
-		_ = db.Close()
-		return nil, fmt.Errorf("load extensions for connection: %w", err)
 	}
 
 	return &pooledConn{
@@ -428,13 +432,37 @@ func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, e
 		return nil, err
 	}
 
-	// Open a connection to the shared database file
-	// All connections opening the same file share the same in-process database instance
-	db, err := sql.Open("duckdb", p.parent.dbPath)
+	// Create a connector with a boot function that runs on each new physical connection
+	// Boot function handles ONLY per-connection setup, not bucket-specific credentials
+	connector, err := duckdb.NewConnector(p.parent.dbPath, func(execer driver.ExecerContext) error {
+		// DuckDB's memory_limit is global but new connections don't inherit it
+		if p.parent.memoryLimitMB > 0 {
+			if _, err := execer.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", p.parent.memoryLimitMB), nil); err != nil {
+				slog.Warn("Failed to set memory_limit on connection", "error", err)
+			}
+		}
+
+		// Disable automatic extension loading/downloading for this connection
+		if _, err := execer.ExecContext(ctx, "SET autoinstall_known_extensions = false;", nil); err != nil {
+			slog.Warn("Failed to disable automatic extension installation", "error", err)
+		}
+		if _, err := execer.ExecContext(ctx, "SET autoload_known_extensions = false;", nil); err != nil {
+			slog.Warn("Failed to disable automatic extension loading", "error", err)
+		}
+
+		// Load extensions for this connection
+		if err := p.parent.loadExtensionsWithExecer(ctx, execer); err != nil {
+			return fmt.Errorf("load extensions for connection: %w", err)
+		}
+
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create connector: %w", err)
 	}
-	// one physical connection per DB handle
+
+	// Open a database handle using the connector, which will take ownership of it
+	db := sql.OpenDB(connector)
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
@@ -444,31 +472,6 @@ func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, e
 		return nil, err
 	}
 
-	// CRITICAL: Set memory limit on EVERY connection
-	// DuckDB's memory_limit is global but new connections don't inherit it
-	if p.parent.memoryLimitMB > 0 {
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", p.parent.memoryLimitMB)); err != nil {
-			slog.Warn("Failed to set memory_limit on connection", "error", err)
-		}
-	}
-
-	// Disable automatic extension loading/downloading for this connection
-	// These are connection-level settings that need to be set on each connection
-	if _, err := conn.ExecContext(ctx, "SET autoinstall_known_extensions = false;"); err != nil {
-		slog.Warn("Failed to disable automatic extension installation", "error", err)
-	}
-	if _, err := conn.ExecContext(ctx, "SET autoload_known_extensions = false;"); err != nil {
-		slog.Warn("Failed to disable automatic extension loading", "error", err)
-	}
-
-	// Load extensions for this connection (they need to be loaded per-connection)
-	if err := p.parent.loadExtensionsForConnection(ctx, conn); err != nil {
-		_ = conn.Close()
-		_ = db.Close()
-		return nil, fmt.Errorf("load extensions for connection: %w", err)
-	}
-
-	// create cloud storage secret for this bucket (serialize DDL)
 	if err := seedCloudSecretFromEnv(ctx, conn, bucket, region, endpoint); err != nil {
 		_ = conn.Close()
 		_ = db.Close()
@@ -585,21 +588,57 @@ func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
 	return nil
 }
 
-// loadExtensionsForConnection loads extensions for a specific connection.
-// Extensions need to be loaded per-connection in DuckDB, even if they were loaded
-// in the setup phase for other connections.
-func (s *S3DB) loadExtensionsForConnection(ctx context.Context, conn *sql.Conn) error {
-	// Load extensions for this connection - they need to be loaded from disk if not already available
-	// Use the same loading logic as in setup, but without the DDL mutex (not needed for LOAD operations)
-	if err := s.loadHTTPFS(ctx, conn); err != nil {
-		return fmt.Errorf("load httpfs for connection: %w", err)
+// loadExtensionsWithExecer loads extensions using a driver.ExecerContext interface.
+// This is used in the boot function when creating new connections.
+func (s *S3DB) loadExtensionsWithExecer(ctx context.Context, execer driver.ExecerContext) error {
+	// Load extensions - we'll check if they're already loaded to avoid duplicate registration errors
+
+	// Check and load httpfs
+	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+	if base == "" {
+		base = discoverExtensionsPath()
+		if base == "" {
+			return fmt.Errorf("httpfs extension required but not found: LAKERUNNER_EXTENSIONS_PATH not set")
+		}
 	}
-	if err := s.loadAWS(ctx, conn); err != nil {
-		return fmt.Errorf("load aws for connection: %w", err)
+
+	// Try to load httpfs extension
+	httpfsPath := filepath.Join(base, "httpfs.duckdb_extension")
+	if _, err := os.Stat(httpfsPath); err == nil {
+		if _, err := execer.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(httpfsPath)), nil); err != nil {
+			// Ignore "already registered secret type" error
+			if !strings.Contains(err.Error(), "already registered secret type") {
+				slog.Warn("Failed to load httpfs extension", "error", err)
+			}
+		}
 	}
-	if err := s.loadAzure(ctx, conn); err != nil {
-		return fmt.Errorf("load azure for connection: %w", err)
+
+	// Try to load aws extension
+	awsPath := filepath.Join(base, "aws.duckdb_extension")
+	if _, err := os.Stat(awsPath); err == nil {
+		if _, err := execer.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(awsPath)), nil); err != nil {
+			// AWS extension shouldn't have duplicate registration issues
+			if !strings.Contains(err.Error(), "already registered") {
+				slog.Warn("Failed to load aws extension", "error", err)
+			}
+		}
 	}
+
+	// Try to load azure extension
+	azurePath := filepath.Join(base, "azure.duckdb_extension")
+	if _, err := os.Stat(azurePath); err == nil {
+		if _, err := execer.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(azurePath)), nil); err != nil {
+			// Azure extension shouldn't have duplicate registration issues
+			if !strings.Contains(err.Error(), "already registered") {
+				slog.Warn("Failed to load azure extension", "error", err)
+			}
+		}
+		// Configure Azure transport
+		if _, err := execer.ExecContext(ctx, "SET azure_transport_option_type = 'curl';", nil); err != nil {
+			slog.Warn("Failed to set azure transport option", "error", err)
+		}
+	}
+
 	return nil
 }
 
@@ -607,18 +646,27 @@ func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
 	// Check if httpfs is already available (built-in or installed)
 	var loaded, installed bool
 	row := conn.QueryRowContext(ctx, `SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = 'httpfs'`)
-	if err := row.Scan(&loaded, &installed); err == nil && (loaded || installed) {
-		if !loaded && installed {
+	if err := row.Scan(&loaded, &installed); err == nil {
+		if loaded {
+			// Extension is already loaded in this database instance
+			slog.Debug("httpfs extension already loaded", "loaded", loaded, "installed", installed)
+			return nil
+		}
+		if installed {
 			// Extension is installed but not loaded, load it
 			if _, err := conn.ExecContext(ctx, "LOAD httpfs"); err != nil {
+				// Check if it's the duplicate registration error
+				if strings.Contains(err.Error(), "already registered secret type") {
+					// This means the extension is actually loaded, just not reported correctly
+					slog.Debug("httpfs extension already loaded (secret type registered)")
+					return nil
+				}
 				slog.Warn("Failed to load installed httpfs extension", "error", err)
 			} else {
 				slog.Info("Loaded installed httpfs extension")
 			}
-		} else {
-			slog.Debug("httpfs extension already available", "loaded", loaded, "installed", installed)
+			return nil
 		}
-		return nil
 	}
 
 	// Extension not available, try to load from disk
@@ -637,6 +685,12 @@ func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
 		return fmt.Errorf("httpfs extension file not found at %s: %w", path, err)
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
+		// Check if it's the duplicate registration error
+		if strings.Contains(err.Error(), "already registered secret type") {
+			// This means the extension is actually loaded, just not reported correctly
+			slog.Debug("httpfs extension already loaded from disk (secret type registered)")
+			return nil
+		}
 		return fmt.Errorf("LOAD httpfs: %w", err)
 	}
 	slog.Info("Loaded httpfs extension from disk", "path", path)
@@ -647,18 +701,21 @@ func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
 	// Check if aws is already available (built-in or installed)
 	var loaded, installed bool
 	row := conn.QueryRowContext(ctx, `SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = 'aws'`)
-	if err := row.Scan(&loaded, &installed); err == nil && (loaded || installed) {
-		if !loaded && installed {
+	if err := row.Scan(&loaded, &installed); err == nil {
+		if loaded {
+			// Extension is already loaded in this database instance
+			slog.Debug("aws extension already loaded", "loaded", loaded, "installed", installed)
+			return nil
+		}
+		if installed {
 			// Extension is installed but not loaded, load it
 			if _, err := conn.ExecContext(ctx, "LOAD aws"); err != nil {
 				slog.Warn("Failed to load installed aws extension", "error", err)
 			} else {
 				slog.Info("Loaded installed aws extension")
 			}
-		} else {
-			slog.Debug("aws extension already available", "loaded", loaded, "installed", installed)
+			return nil
 		}
-		return nil
 	}
 
 	// Extension not available, try to load from disk
@@ -676,6 +733,11 @@ func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
 		return fmt.Errorf("aws extension file not found at %s: %w", path, err)
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
+		// AWS extension shouldn't have duplicate registration issues, but check anyway
+		if strings.Contains(err.Error(), "already registered") {
+			slog.Debug("aws extension already loaded from disk")
+			return nil
+		}
 		return fmt.Errorf("LOAD aws: %w", err)
 	}
 	slog.Info("Loaded aws extension from disk", "path", path)
@@ -686,16 +748,17 @@ func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
 	// Check if azure is already available (built-in or installed)
 	var loaded, installed bool
 	row := conn.QueryRowContext(ctx, `SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = 'azure'`)
-	if err := row.Scan(&loaded, &installed); err == nil && (loaded || installed) {
-		if !loaded && installed {
+	if err := row.Scan(&loaded, &installed); err == nil {
+		if loaded {
+			// Extension is already loaded in this database instance
+			slog.Debug("azure extension already loaded", "loaded", loaded, "installed", installed)
+		} else if installed {
 			// Extension is installed but not loaded, load it
 			if _, err := conn.ExecContext(ctx, "LOAD azure"); err != nil {
 				slog.Warn("Failed to load installed azure extension", "error", err)
 			} else {
 				slog.Info("Loaded installed azure extension")
 			}
-		} else {
-			slog.Debug("azure extension already available", "loaded", loaded, "installed", installed)
 		}
 		// Configure Azure transport to use curl for better compatibility
 		if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
@@ -833,10 +896,10 @@ type S3SecretConfig struct {
 
 // seedS3SecretFromEnv fetches S3 credentials from environment and creates a DuckDB secret.
 func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
-	keyID := os.Getenv("S3_ACCESS_KEY_ID")
-	secret := os.Getenv("S3_SECRET_ACCESS_KEY")
+	keyID := os.Getenv("AWS_ACCESS_KEY_ID")
+	secret := os.Getenv("AWS_SECRET_ACCESS_KEY")
 	if keyID == "" || secret == "" {
-		return fmt.Errorf("missing AWS creds in env: S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY")
+		return fmt.Errorf("missing AWS credentials: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are required")
 	}
 	session := os.Getenv("AWS_SESSION_TOKEN")
 
