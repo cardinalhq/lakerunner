@@ -378,6 +378,15 @@ func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) 
 
 	// Create a connector with a boot function that runs on each new physical connection
 	connector, err := duckdb.NewConnector(p.parent.dbPath, func(execer driver.ExecerContext) error {
+		// FIRST: Disable automatic extension loading/downloading before anything else
+		// This prevents Azure and other extensions from trying to auto-install
+		if _, err := execer.ExecContext(ctx, "SET autoinstall_known_extensions = false;", nil); err != nil {
+			slog.Warn("Failed to disable automatic extension installation", "error", err)
+		}
+		if _, err := execer.ExecContext(ctx, "SET autoload_known_extensions = false;", nil); err != nil {
+			slog.Warn("Failed to disable automatic extension loading", "error", err)
+		}
+
 		// CRITICAL: Set memory limit on EVERY connection
 		// DuckDB's memory_limit is global but new connections don't inherit it
 		if p.parent.memoryLimitMB > 0 {
@@ -386,16 +395,7 @@ func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) 
 			}
 		}
 
-		// Disable automatic extension loading/downloading for this connection
-		if _, err := execer.ExecContext(ctx, "SET autoinstall_known_extensions = false;", nil); err != nil {
-			slog.Warn("Failed to disable automatic extension installation", "error", err)
-		}
-		if _, err := execer.ExecContext(ctx, "SET autoload_known_extensions = false;", nil); err != nil {
-			slog.Warn("Failed to disable automatic extension loading", "error", err)
-		}
-
-		// Load extensions for this connection
-		// For simplicity, we'll load the extensions directly here
+		// Load extensions for this connection - they must be loaded per-connection
 		if err := p.parent.loadExtensionsWithExecer(ctx, execer); err != nil {
 			return fmt.Errorf("load extensions for connection: %w", err)
 		}
@@ -435,14 +435,8 @@ func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, e
 	// Create a connector with a boot function that runs on each new physical connection
 	// Boot function handles ONLY per-connection setup, not bucket-specific credentials
 	connector, err := duckdb.NewConnector(p.parent.dbPath, func(execer driver.ExecerContext) error {
-		// DuckDB's memory_limit is global but new connections don't inherit it
-		if p.parent.memoryLimitMB > 0 {
-			if _, err := execer.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", p.parent.memoryLimitMB), nil); err != nil {
-				slog.Warn("Failed to set memory_limit on connection", "error", err)
-			}
-		}
-
-		// Disable automatic extension loading/downloading for this connection
+		// FIRST: Disable automatic extension loading/downloading before anything else
+		// This prevents Azure and other extensions from trying to auto-install
 		if _, err := execer.ExecContext(ctx, "SET autoinstall_known_extensions = false;", nil); err != nil {
 			slog.Warn("Failed to disable automatic extension installation", "error", err)
 		}
@@ -450,7 +444,14 @@ func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, e
 			slog.Warn("Failed to disable automatic extension loading", "error", err)
 		}
 
-		// Load extensions for this connection
+		// DuckDB's memory_limit is global but new connections don't inherit it
+		if p.parent.memoryLimitMB > 0 {
+			if _, err := execer.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", p.parent.memoryLimitMB), nil); err != nil {
+				slog.Warn("Failed to set memory_limit on connection", "error", err)
+			}
+		}
+
+		// Load extensions for this connection - they must be loaded per-connection
 		if err := p.parent.loadExtensionsWithExecer(ctx, execer); err != nil {
 			return fmt.Errorf("load extensions for connection: %w", err)
 		}
@@ -515,6 +516,15 @@ func (s *S3DB) ensureSetup(ctx context.Context) error {
 		defer func() { _ = conn.Close() }()
 
 		// Configure database-wide settings (these affect the shared instance)
+
+		// FIRST: Disable automatic extension loading/downloading
+		// This must be done before any extension-related operations
+		if _, err := conn.ExecContext(ctx, "SET autoinstall_known_extensions = false;"); err != nil {
+			slog.Warn("Failed to disable automatic extension installation", "error", err)
+		}
+		if _, err := conn.ExecContext(ctx, "SET autoload_known_extensions = false;"); err != nil {
+			slog.Warn("Failed to disable automatic extension loading", "error", err)
+		}
 
 		// Set extension_directory to prevent loading from ~/.duckdb/extensions
 		// Use the same directory as our database file or the configured extensions path
@@ -590,10 +600,9 @@ func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
 
 // loadExtensionsWithExecer loads extensions using a driver.ExecerContext interface.
 // This is used in the boot function when creating new connections.
+// Extensions are loaded per-connection since DuckDB doesn't share loaded extensions across connections.
 func (s *S3DB) loadExtensionsWithExecer(ctx context.Context, execer driver.ExecerContext) error {
-	// Load extensions - we'll check if they're already loaded to avoid duplicate registration errors
-
-	// Check and load httpfs
+	// Get extensions path
 	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
 	if base == "" {
 		base = discoverExtensionsPath()
@@ -602,41 +611,45 @@ func (s *S3DB) loadExtensionsWithExecer(ctx context.Context, execer driver.Exece
 		}
 	}
 
-	// Try to load httpfs extension
+	// Load httpfs extension (required for S3)
 	httpfsPath := filepath.Join(base, "httpfs.duckdb_extension")
 	if _, err := os.Stat(httpfsPath); err == nil {
 		if _, err := execer.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(httpfsPath)), nil); err != nil {
-			// Ignore "already registered secret type" error
-			if !strings.Contains(err.Error(), "already registered secret type") {
-				slog.Warn("Failed to load httpfs extension", "error", err)
+			// Only warn if it's not a duplicate registration error
+			if !strings.Contains(err.Error(), "already registered") && !strings.Contains(err.Error(), "already exists") {
+				return fmt.Errorf("load httpfs: %w", err)
 			}
 		}
+	} else {
+		return fmt.Errorf("httpfs extension file not found at %s", httpfsPath)
 	}
 
-	// Try to load aws extension
+	// Load aws extension (required)
 	awsPath := filepath.Join(base, "aws.duckdb_extension")
-	if _, err := os.Stat(awsPath); err == nil {
-		if _, err := execer.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(awsPath)), nil); err != nil {
-			// AWS extension shouldn't have duplicate registration issues
-			if !strings.Contains(err.Error(), "already registered") {
-				slog.Warn("Failed to load aws extension", "error", err)
-			}
+	if _, err := os.Stat(awsPath); err != nil {
+		return fmt.Errorf("aws extension file not found at %s", awsPath)
+	}
+	if _, err := execer.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(awsPath)), nil); err != nil {
+		// Only error if it's not a duplicate registration error
+		if !strings.Contains(err.Error(), "already registered") && !strings.Contains(err.Error(), "already exists") {
+			return fmt.Errorf("load aws: %w", err)
 		}
 	}
 
-	// Try to load azure extension
+	// Load azure extension (required)
 	azurePath := filepath.Join(base, "azure.duckdb_extension")
-	if _, err := os.Stat(azurePath); err == nil {
-		if _, err := execer.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(azurePath)), nil); err != nil {
-			// Azure extension shouldn't have duplicate registration issues
-			if !strings.Contains(err.Error(), "already registered") {
-				slog.Warn("Failed to load azure extension", "error", err)
-			}
+	if _, err := os.Stat(azurePath); err != nil {
+		return fmt.Errorf("azure extension file not found at %s", azurePath)
+	}
+	if _, err := execer.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(azurePath)), nil); err != nil {
+		// Only error if it's not a duplicate registration error
+		if !strings.Contains(err.Error(), "already registered") && !strings.Contains(err.Error(), "already exists") {
+			return fmt.Errorf("load azure: %w", err)
 		}
-		// Configure Azure transport
-		if _, err := execer.ExecContext(ctx, "SET azure_transport_option_type = 'curl';", nil); err != nil {
-			slog.Warn("Failed to set azure transport option", "error", err)
-		}
+	}
+	// Configure Azure transport
+	if _, err := execer.ExecContext(ctx, "SET azure_transport_option_type = 'curl';", nil); err != nil {
+		slog.Debug("Failed to set azure transport option", "error", err)
 	}
 
 	return nil
@@ -752,19 +765,23 @@ func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
 		if loaded {
 			// Extension is already loaded in this database instance
 			slog.Debug("azure extension already loaded", "loaded", loaded, "installed", installed)
+			// Configure Azure transport to use curl for better compatibility
+			if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
+				slog.Warn("Failed to set azure transport option", "error", err)
+			}
+			return nil
 		} else if installed {
 			// Extension is installed but not loaded, load it
 			if _, err := conn.ExecContext(ctx, "LOAD azure"); err != nil {
-				slog.Warn("Failed to load installed azure extension", "error", err)
-			} else {
-				slog.Info("Loaded installed azure extension")
+				return fmt.Errorf("failed to load installed azure extension: %w", err)
 			}
+			slog.Info("Loaded installed azure extension")
+			// Configure Azure transport after loading
+			if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
+				slog.Warn("Failed to set azure transport option", "error", err)
+			}
+			return nil
 		}
-		// Configure Azure transport to use curl for better compatibility
-		if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
-			slog.Warn("Failed to set azure transport option", "error", err)
-		}
-		return nil
 	}
 
 	// Extension not available, try to load from disk
@@ -784,11 +801,11 @@ func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
 		return fmt.Errorf("LOAD azure: %w", err)
 	}
+	slog.Info("Loaded azure extension from disk", "path", path)
 	// Configure Azure transport to use curl for better compatibility
 	if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
 		slog.Warn("Failed to set azure transport option", "error", err)
 	}
-	slog.Info("Loaded azure extension from disk", "path", path)
 	return nil
 }
 
