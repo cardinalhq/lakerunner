@@ -58,7 +58,7 @@ func NewWorkerService(
 	maxConcurrency int,
 	sp storageprofile.StorageProfileProvider,
 	cloudManagers cloudstorage.ClientProvider,
-) *WorkerService {
+) (*WorkerService, error) {
 	downloader := func(ctx context.Context, profile storageprofile.StorageProfile, keys []string) error {
 		if len(keys) == 0 {
 			return nil
@@ -141,8 +141,7 @@ func NewWorkerService(
 		duckdbx.WithS3DBMetrics(10 * time.Second), // Poll memory metrics every 10 seconds
 	)
 	if err != nil {
-		slog.Error("Failed to create shared S3DB pool", slog.Any("error", err))
-		return nil
+		return nil, fmt.Errorf("failed to create shared S3DB pool: %w", err)
 	}
 
 	return &WorkerService{
@@ -154,7 +153,7 @@ func NewWorkerService(
 		LogsGlobSize:         logsGlobSize,
 		TracesGlobSize:       tracesGlobSize,
 		s3Pool:               s3Pool,
-	}
+	}, nil
 }
 
 func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {

@@ -79,7 +79,10 @@ func init() {
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			worker := queryworker.NewWorkerService(5, 5, 5, 12, sp, cloudManagers)
+			worker, err := queryworker.NewWorkerService(5, 5, 5, 12, sp, cloudManagers)
+			if err != nil {
+				return fmt.Errorf("failed to create worker service: %w", err)
+			}
 			if err := worker.Run(ctx); err != nil {
 				if errors.Is(err, context.Canceled) {
 					slog.Info("shutting down", "error", err)

@@ -391,6 +391,14 @@ func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) 
 		return nil, err
 	}
 
+	// CRITICAL: Set memory limit on EVERY connection
+	// DuckDB's memory_limit is global but new connections don't inherit it
+	if p.parent.memoryLimitMB > 0 {
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", p.parent.memoryLimitMB)); err != nil {
+			slog.Warn("Failed to set memory_limit on connection", "error", err)
+		}
+	}
+
 	// Disable automatic extension loading/downloading for this connection
 	// These are connection-level settings that need to be set on each connection
 	if _, err := conn.ExecContext(ctx, "SET autoinstall_known_extensions = false;"); err != nil {
@@ -434,6 +442,14 @@ func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, e
 	if err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+
+	// CRITICAL: Set memory limit on EVERY connection
+	// DuckDB's memory_limit is global but new connections don't inherit it
+	if p.parent.memoryLimitMB > 0 {
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", p.parent.memoryLimitMB)); err != nil {
+			slog.Warn("Failed to set memory_limit on connection", "error", err)
+		}
 	}
 
 	// Disable automatic extension loading/downloading for this connection
