@@ -433,6 +433,7 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 	// Add standard resource fields
 	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.Bucket
 	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.ObjectID
+	(*row)[wkk.NewRowKey("resource.file")] = getResourceFile(t.ObjectID)
 	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.ObjectID)
 
 	// Ensure required CardinalhQ fields are set
