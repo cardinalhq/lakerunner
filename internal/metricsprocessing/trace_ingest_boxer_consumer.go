@@ -24,45 +24,45 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 )
 
-// MetricCompactionBoxerConsumer handles metric compaction bundling using CommonConsumer
-type MetricCompactionBoxerConsumer struct {
-	*CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]
+// TraceIngestBoxerConsumer handles trace ingestion bundling using CommonConsumer
+type TraceIngestBoxerConsumer struct {
+	*CommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
 }
 
-// NewMetricCompactionBoxerConsumer creates a new metric compaction boxer consumer using the common consumer framework
-func NewMetricCompactionBoxerConsumer(
+// NewTraceIngestBoxerConsumer creates a new trace ingestion boxer consumer using the common consumer framework
+func NewTraceIngestBoxerConsumer(
 	ctx context.Context,
 	cfg *config.Config,
 	store BoxerStore,
 	factory *fly.Factory,
-) (*MetricCompactionBoxerConsumer, error) {
+) (*TraceIngestBoxerConsumer, error) {
 
-	// Create Kafka producer for sending compaction bundles
+	// Create Kafka producer for sending trace ingestion bundles
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
-	// Create MetricCompactionBoxer processor
-	processor := newMetricCompactionBoxerProcessor(ctx, cfg, producer, store)
+	// Create TraceIngestBoxer processor
+	processor := newTraceIngestBoxerProcessor(ctx, cfg, producer, store)
 
-	// Set up timing - use shorter accumulation for compaction since it's more time-sensitive
+	// Set up timing - use shorter accumulation for ingestion since it's more time-sensitive
 	maxAccumulationTime := 2 * time.Minute
 	flushInterval := 30 * time.Second
 
-	// Configure the consumer - consuming from boxer compaction input topic
+	// Configure the consumer - consuming from objstore trace ingestion topic
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  registry.GetConsumerGroup(config.TopicBoxerMetricsCompact),
-		Topic:         registry.GetTopic(config.TopicBoxerMetricsCompact),
-		ConsumerGroup: registry.GetConsumerGroup(config.TopicBoxerMetricsCompact),
+		ConsumerName:  registry.GetConsumerGroup(config.TopicBoxerTracesIngest),
+		Topic:         registry.GetTopic(config.TopicObjstoreIngestTraces),
+		ConsumerGroup: registry.GetConsumerGroup(config.TopicObjstoreIngestTraces),
 		FlushInterval: flushInterval,
 		StaleAge:      maxAccumulationTime,
 		MaxAge:        maxAccumulationTime,
 	}
 
 	// Create common consumer with boxer store
-	commonConsumer, err := NewCommonConsumer[*messages.MetricCompactionMessage](
+	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage](
 		ctx,
 		factory,
 		cfg,
@@ -74,7 +74,7 @@ func NewMetricCompactionBoxerConsumer(
 		return nil, fmt.Errorf("failed to create common consumer: %w", err)
 	}
 
-	return &MetricCompactionBoxerConsumer{
+	return &TraceIngestBoxerConsumer{
 		CommonConsumer: commonConsumer,
 	}, nil
 }

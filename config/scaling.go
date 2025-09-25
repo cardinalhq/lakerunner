@@ -34,6 +34,9 @@ type ScalingConfig struct {
 	RollupMetrics ServiceScaling `mapstructure:"rollup_metrics" yaml:"rollup_metrics"`
 
 	// Boxer services (batch processing)
+	BoxerIngestLogs     ServiceScaling `mapstructure:"boxer_ingest_logs" yaml:"boxer_ingest_logs"`
+	BoxerIngestMetrics  ServiceScaling `mapstructure:"boxer_ingest_metrics" yaml:"boxer_ingest_metrics"`
+	BoxerIngestTraces   ServiceScaling `mapstructure:"boxer_ingest_traces" yaml:"boxer_ingest_traces"`
 	BoxerCompactLogs    ServiceScaling `mapstructure:"boxer_compact_logs" yaml:"boxer_compact_logs"`
 	BoxerCompactMetrics ServiceScaling `mapstructure:"boxer_compact_metrics" yaml:"boxer_compact_metrics"`
 	BoxerCompactTraces  ServiceScaling `mapstructure:"boxer_compact_traces" yaml:"boxer_compact_traces"`
@@ -55,6 +58,9 @@ func GetDefaultScalingConfig() ScalingConfig {
 		// Boxer and ingest behave in a similar way, and will often have what seem to be
 		// consumer lag where it is just duplicate avoidance and delayed checkpointing to
 		// prevent losing data.
+		BoxerIngestLogs:     ServiceScaling{TargetQueueSize: 1500},
+		BoxerIngestMetrics:  ServiceScaling{TargetQueueSize: 1500},
+		BoxerIngestTraces:   ServiceScaling{TargetQueueSize: 1500},
 		BoxerCompactLogs:    ServiceScaling{TargetQueueSize: 1500},
 		BoxerCompactMetrics: ServiceScaling{TargetQueueSize: 1500},
 		BoxerCompactTraces:  ServiceScaling{TargetQueueSize: 1500},
@@ -88,6 +94,12 @@ func (s *ScalingConfig) GetServiceScaling(serviceType string) (ServiceScaling, e
 		return s.CompactTraces, nil
 	case ServiceTypeRollupMetrics:
 		return s.RollupMetrics, nil
+	case ServiceTypeBoxerIngestLogs:
+		return s.BoxerIngestLogs, nil
+	case ServiceTypeBoxerIngestMetrics:
+		return s.BoxerIngestMetrics, nil
+	case ServiceTypeBoxerIngestTraces:
+		return s.BoxerIngestTraces, nil
 	case ServiceTypeBoxerCompactLogs:
 		return s.BoxerCompactLogs, nil
 	case ServiceTypeBoxerCompactMetrics:
