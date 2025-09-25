@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/oteltools/pkg/translate"
 
@@ -85,8 +86,8 @@ type timestampResult struct {
 }
 
 // detectTimestampField attempts to find a timestamp field in the row
-// Returns both millisecond and nanosecond precision if available
-func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) timestampResult {
+// Returns both millisecond and nanosecond precision if available, plus the field name that was used
+func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (timestampResult, string) {
 	// Check for nanosecond precision fields first
 	nanosecondFields := []string{
 		"timestamp_ns",
@@ -106,14 +107,14 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) timesta
 					ms:    v / 1000000, // Convert ns to ms
 					ns:    v,
 					found: true,
-				}
+				}, field
 			case float64:
 				ns := int64(v)
 				return timestampResult{
 					ms:    ns / 1000000,
 					ns:    ns,
 					found: true,
-				}
+				}, field
 			}
 		}
 	}
@@ -135,14 +136,14 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) timesta
 					ms:    v / 1000, // Convert us to ms
 					ns:    v * 1000, // Convert us to ns
 					found: true,
-				}
+				}, field
 			case float64:
 				us := int64(v)
 				return timestampResult{
 					ms:    us / 1000,
 					ns:    us * 1000,
 					found: true,
-				}
+				}, field
 			}
 		}
 	}
@@ -174,41 +175,57 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) timesta
 					ms:    v,
 					ns:    v * 1000000, // Convert ms to ns
 					found: true,
-				}
+				}, field
 			case int32:
 				ms := int64(v)
 				return timestampResult{
 					ms:    ms,
 					ns:    ms * 1000000,
 					found: true,
-				}
+				}, field
 			case float64:
 				ms := int64(v)
 				return timestampResult{
 					ms:    ms,
 					ns:    ms * 1000000,
 					found: true,
-				}
+				}, field
 			case float32:
 				ms := int64(v)
 				return timestampResult{
 					ms:    ms,
 					ns:    ms * 1000000,
 					found: true,
-				}
+				}, field
 			case int:
 				ms := int64(v)
 				return timestampResult{
 					ms:    ms,
 					ns:    ms * 1000000,
 					found: true,
-				}
+				}, field
 			case time.Time:
 				// Handle time.Time objects with full precision
 				return timestampResult{
 					ms:    v.UnixMilli(),
 					ns:    v.UnixNano(),
 					found: true,
+				}, field
+			case arrow.Timestamp:
+				// Handle Arrow timestamps - value is already in milliseconds
+				return timestampResult{
+					ms:    int64(v),
+					ns:    int64(v) * 1000000, // Convert ms to ns
+					found: true,
+				}, field
+			default:
+				// Try to extract int64 value from other types (like arrow types)
+				if tsValue, ok := extractInt64(v); ok {
+					return timestampResult{
+						ms:    tsValue,
+						ns:    tsValue * 1000000, // Convert ms to ns
+						found: true,
+					}, field
 				}
 			case *time.Time:
 				if v != nil {
@@ -216,7 +233,7 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) timesta
 						ms:    v.UnixMilli(),
 						ns:    v.UnixNano(),
 						found: true,
-					}
+					}, field
 				}
 			}
 		}
@@ -229,16 +246,45 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) timesta
 				ms:    ts,
 				ns:    ts * 1000000,
 				found: true,
-			}
+			}, "_cardinalhq.timestamp"
 		}
 	}
 
-	return timestampResult{found: false}
+	return timestampResult{found: false}, ""
+}
+
+// extractInt64 attempts to extract int64 value from various types
+func extractInt64(val interface{}) (int64, bool) {
+	switch v := val.(type) {
+	case int64:
+		return v, true
+	case int:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case float64:
+		return int64(v), true
+	case float32:
+		return int64(v), true
+	case uint64:
+		return int64(v), true
+	case uint32:
+		return int64(v), true
+	case interface{ String() string }:
+		// Try to parse string representation as number
+		if strVal := v.String(); strVal != "" {
+			var parsed int64
+			if _, err := fmt.Sscanf(strVal, "%d", &parsed); err == nil {
+				return parsed, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // detectLevelField attempts to find a severity/level field in the row
-// Returns the level string (uppercase) and a boolean indicating if found
-func (t *ParquetLogTranslator) detectLevelField(row *filereader.Row) (string, bool) {
+// Returns the level string (uppercase), a boolean indicating if found, and the field name used
+func (t *ParquetLogTranslator) detectLevelField(row *filereader.Row) (string, bool, string) {
 	// Check common level/severity field names
 	levelFields := []string{
 		"severity_text", "severityText", "severity.text",
@@ -252,21 +298,22 @@ func (t *ParquetLogTranslator) detectLevelField(row *filereader.Row) (string, bo
 			switch v := val.(type) {
 			case string:
 				if v != "" {
-					return strings.ToUpper(v), true
+					return strings.ToUpper(v), true, field
 				}
 			case []byte:
 				if len(v) > 0 {
-					return strings.ToUpper(string(v)), true
+					return strings.ToUpper(string(v)), true, field
 				}
 			}
 		}
 	}
 
-	return "", false
+	return "", false, ""
 }
 
 // detectMessageField attempts to find a message field in the row
-func (t *ParquetLogTranslator) detectMessageField(row *filereader.Row) (string, bool) {
+// Returns the message string, a boolean indicating if found, and the field name used
+func (t *ParquetLogTranslator) detectMessageField(row *filereader.Row) (string, bool, string) {
 	// Common message field names to check (in priority order)
 	messageFields := []string{
 		"message",
@@ -290,11 +337,11 @@ func (t *ParquetLogTranslator) detectMessageField(row *filereader.Row) (string, 
 			switch v := val.(type) {
 			case string:
 				if v != "" {
-					return v, true
+					return v, true, field
 				}
 			case []byte:
 				if len(v) > 0 {
-					return string(v), true
+					return string(v), true, field
 				}
 			}
 		}
@@ -304,11 +351,11 @@ func (t *ParquetLogTranslator) detectMessageField(row *filereader.Row) (string, 
 	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
 	if val, exists := (*row)[messageKey]; exists {
 		if msg, ok := val.(string); ok && msg != "" {
-			return msg, true
+			return msg, true, "_cardinalhq.message"
 		}
 	}
 
-	return "", false
+	return "", false, ""
 }
 
 // TranslateRow processes Parquet rows with timestamp detection and fingerprinting
@@ -320,8 +367,8 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 	// Track which fields are special (timestamp/message) so we don't duplicate them as attributes
 	specialFields := make(map[wkk.RowKey]bool)
 
-	// Detect timestamp first
-	timestampResult := t.detectTimestampField(row)
+	// Detect timestamp first before any field processing
+	timestampResult, usedTimestampField := t.detectTimestampField(row)
 	var timestampMs, timestampNs int64
 	if timestampResult.found {
 		timestampMs = timestampResult.ms
@@ -346,7 +393,7 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 	}
 
 	// Detect message
-	message, messageFound := t.detectMessageField(row)
+	message, messageFound, usedMessageField := t.detectMessageField(row)
 	if !messageFound {
 		message = ""
 	}
@@ -361,7 +408,7 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 	}
 
 	// Detect level/severity
-	level, levelFound := t.detectLevelField(row)
+	level, levelFound, usedLevelField := t.detectLevelField(row)
 	if !levelFound {
 		// Default to INFO if no level found
 		level = "INFO"
@@ -399,8 +446,11 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 		}
 
 		// Special fields get processed as resource attributes but the original field is removed
+		// However, exclude the specific fields that were used for timestamp, message, or level detection
 		if specialFields[key] {
-			fieldsToProcess[key] = value
+			if keyStr != usedTimestampField && keyStr != usedMessageField && keyStr != usedLevelField {
+				fieldsToProcess[key] = value
+			}
 			delete(*row, key) // Remove the original special field
 			continue
 		}

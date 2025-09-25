@@ -428,10 +428,14 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 	assert.True(t, hasOldResource, "resource.old should be kept")
 	assert.Equal(t, "keep", oldResource)
 
-	// Check that regular attributes are present with resource. prefix
-	level, hasLevel := row[wkk.NewRowKey("resource.level")]
-	assert.True(t, hasLevel, "Should have resource.level attribute")
-	assert.Equal(t, "info", level)
+	// Check that level was used for detection and not promoted to resource.level
+	_, hasLevel := row[wkk.NewRowKey("resource.level")]
+	assert.False(t, hasLevel, "Level field used for detection should not be promoted to resource.level")
+
+	// Check that level was correctly set in _cardinalhq.level
+	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("_cardinalhq.level")]
+	assert.True(t, hasCardinalLevel, "Should have _cardinalhq.level")
+	assert.Equal(t, "INFO", cardinalLevel, "Should have level as uppercase")
 
 	service, hasService := row[wkk.NewRowKey("resource.service")]
 	assert.True(t, hasService, "Should have resource.service attribute")
@@ -525,12 +529,77 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 
-	// Check that all non-special fields are preserved with resource. prefix
-	assert.Equal(t, "error", row[wkk.NewRowKey("resource.level")])
+	// Check that level was used for detection and not promoted to resource.level
+	_, hasResourceLevel := row[wkk.NewRowKey("resource.level")]
+	assert.False(t, hasResourceLevel, "Level field used for detection should not be promoted to resource.level")
+
+	// Check that level was correctly set in _cardinalhq.level
+	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("_cardinalhq.level")]
+	assert.True(t, hasCardinalLevel, "Should have _cardinalhq.level")
+	assert.Equal(t, "ERROR", cardinalLevel, "Should have level as uppercase")
+
+	// Check that all other non-special fields are preserved with resource. prefix
 	assert.Equal(t, "auth-service", row[wkk.NewRowKey("resource.service.name")])
 	assert.Equal(t, "abc123", row[wkk.NewRowKey("resource.trace.id")])
 	assert.Equal(t, "def456", row[wkk.NewRowKey("resource.span.id")])
 	assert.Equal(t, "POST", row[wkk.NewRowKey("resource.http.method")])
 	assert.Equal(t, int64(500), row[wkk.NewRowKey("resource.http.status")])
 	assert.Equal(t, float64(123.45), row[wkk.NewRowKey("resource.duration.ms")])
+}
+
+func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.T) {
+	translator := &ParquetLogTranslator{
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "syslog.parquet",
+	}
+
+	// Test case matching the user's example (sanitized)
+	row := filereader.Row{
+		wkk.NewRowKey("timestamp"):         int64(1757812155208), // Original timestamp from syslog.parquet
+		wkk.NewRowKey("application"):       "agent[1234]",
+		wkk.NewRowKey("controller_ip"):     "10.0.0.1",
+		wkk.NewRowKey("message"):           "2025-09-13 18:09:15 PDT | CORE | INFO | (pkg/logs/service.go:123 in handleLogRotation) | Log rotation happened to /var/log/system.log",
+		wkk.NewRowKey("level"):             "INFO",
+		wkk.NewRowKey("repeated_message"):  "(null)",
+		wkk.NewRowKey("source"):            "192.168.1.100",
+		wkk.NewRowKey("__index_level_0__"): int64(14),
+	}
+
+	err := translator.TranslateRow(context.Background(), &row)
+	require.NoError(t, err)
+
+	// Verify that the timestamp was correctly used for _cardinalhq.timestamp
+	cardinalTimestamp, exists := row[wkk.RowKeyCTimestamp]
+	assert.True(t, exists, "Should have _cardinalhq.timestamp")
+	assert.Equal(t, int64(1757812155208), cardinalTimestamp, "Should preserve original timestamp, not use current time")
+
+	// Verify that the timestamp field was NOT promoted to resource.timestamp
+	_, hasResourceTimestamp := row[wkk.NewRowKey("resource.timestamp")]
+	assert.False(t, hasResourceTimestamp, "Timestamp field used for detection should not be promoted to resource.timestamp")
+
+	// Verify other fields are promoted correctly
+	assert.Equal(t, "agent[1234]", row[wkk.NewRowKey("resource.application")])
+	assert.Equal(t, "10.0.0.1", row[wkk.NewRowKey("resource.controller_ip")])
+	assert.Equal(t, "192.168.1.100", row[wkk.NewRowKey("resource.source")])
+
+	// Verify message was extracted correctly
+	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
+	message, hasMessage := row[messageKey]
+	assert.True(t, hasMessage, "Should have extracted message")
+	expectedMessage := "2025-09-13 18:09:15 PDT | CORE | INFO | (pkg/logs/service.go:123 in handleLogRotation) | Log rotation happened to /var/log/system.log"
+	assert.Equal(t, expectedMessage, message)
+
+	// Verify that the message field was NOT promoted to resource.message (it was used for extraction)
+	_, hasResourceMessage := row[wkk.NewRowKey("resource.message")]
+	assert.False(t, hasResourceMessage, "Message field used for detection should not be promoted to resource.message")
+
+	// Verify that the level field was NOT promoted to resource.level (it was used for detection)
+	_, hasResourceLevel := row[wkk.NewRowKey("resource.level")]
+	assert.False(t, hasResourceLevel, "Level field used for detection should not be promoted to resource.level")
+
+	// Verify that the level was correctly set
+	cardinalLevel, hasLevel := row[wkk.NewRowKey("_cardinalhq.level")]
+	assert.True(t, hasLevel, "Should have _cardinalhq.level")
+	assert.Equal(t, "INFO", cardinalLevel, "Should preserve original level")
 }
