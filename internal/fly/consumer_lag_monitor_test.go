@@ -55,9 +55,9 @@ func TestNewConsumerLagMonitor(t *testing.T) {
 	foundBoxerCompactLogs := false
 
 	for _, mapping := range mappings {
-		if mapping.ServiceType == "ingest-logs" {
-			assert.Equal(t, "test.objstore.ingest.logs", mapping.Topic)
-			assert.Equal(t, "test.ingest.logs", mapping.ConsumerGroup)
+		if mapping.ServiceType == "worker-ingest-logs" {
+			assert.Equal(t, "test.segments.logs.ingest", mapping.Topic)
+			assert.Equal(t, "test.segments.logs.ingest", mapping.ConsumerGroup)
 			foundIngestLogs = true
 		}
 		if mapping.ServiceType == "boxer-compact-logs" {
@@ -88,7 +88,7 @@ func TestConsumerLagMonitor_GetQueueDepth(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test with no data initially - should return 0
-	lag, err := monitor.GetQueueDepth("ingest-logs")
+	lag, err := monitor.GetQueueDepth("worker-ingest-logs")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(0), lag)
 
@@ -200,9 +200,10 @@ func TestConsumerLagMonitor_ServiceMappings(t *testing.T) {
 
 	// Check that all expected service types are present
 	expectedServiceTypes := []string{
-		"ingest-logs", "ingest-metrics", "ingest-traces",
-		"compact-logs", "compact-metrics", "compact-traces",
-		"rollup-metrics",
+		"boxer-ingest-logs", "boxer-ingest-metrics", "boxer-ingest-traces",
+		"worker-ingest-logs", "worker-ingest-metrics", "worker-ingest-traces",
+		"worker-compact-logs", "worker-compact-metrics", "worker-compact-traces",
+		"worker-rollup-metrics",
 		"boxer-compact-logs", "boxer-compact-metrics", "boxer-compact-traces", "boxer-rollup-metrics",
 	}
 
@@ -263,16 +264,16 @@ func TestConsumerLagMonitor_PeriodicUpdate(t *testing.T) {
 			// Initial poll response (called immediately in Start())
 			{
 				{
-					GroupID:         "test.ingest.logs",
-					Topic:           "test.objstore.ingest.logs",
+					GroupID:         "test.segments.logs.ingest",
+					Topic:           "test.segments.logs.ingest",
 					Partition:       0,
 					CommittedOffset: 100,
 					HighWaterMark:   200,
 					Lag:             100,
 				},
 				{
-					GroupID:         "test.ingest.metrics",
-					Topic:           "test.objstore.ingest.metrics",
+					GroupID:         "test.segments.metrics.ingest",
+					Topic:           "test.segments.metrics.ingest",
 					Partition:       0,
 					CommittedOffset: 50,
 					HighWaterMark:   100,
@@ -282,16 +283,16 @@ func TestConsumerLagMonitor_PeriodicUpdate(t *testing.T) {
 			// Second poll response (after ~100ms) - lag increases
 			{
 				{
-					GroupID:         "test.ingest.logs",
-					Topic:           "test.objstore.ingest.logs",
+					GroupID:         "test.segments.logs.ingest",
+					Topic:           "test.segments.logs.ingest",
 					Partition:       0,
 					CommittedOffset: 100,
 					HighWaterMark:   300,
 					Lag:             200,
 				},
 				{
-					GroupID:         "test.ingest.metrics",
-					Topic:           "test.objstore.ingest.metrics",
+					GroupID:         "test.segments.metrics.ingest",
+					Topic:           "test.segments.metrics.ingest",
 					Partition:       0,
 					CommittedOffset: 50,
 					HighWaterMark:   200,
@@ -301,16 +302,16 @@ func TestConsumerLagMonitor_PeriodicUpdate(t *testing.T) {
 			// Third poll response (after ~200ms) - lag decreases
 			{
 				{
-					GroupID:         "test.ingest.logs",
-					Topic:           "test.objstore.ingest.logs",
+					GroupID:         "test.segments.logs.ingest",
+					Topic:           "test.segments.logs.ingest",
 					Partition:       0,
 					CommittedOffset: 250,
 					HighWaterMark:   300,
 					Lag:             50,
 				},
 				{
-					GroupID:         "test.ingest.metrics",
-					Topic:           "test.objstore.ingest.metrics",
+					GroupID:         "test.segments.metrics.ingest",
+					Topic:           "test.segments.metrics.ingest",
 					Partition:       0,
 					CommittedOffset: 180,
 					HighWaterMark:   200,
@@ -320,16 +321,16 @@ func TestConsumerLagMonitor_PeriodicUpdate(t *testing.T) {
 			// Fourth poll response (after ~300ms) - for safety
 			{
 				{
-					GroupID:         "test.ingest.logs",
-					Topic:           "test.objstore.ingest.logs",
+					GroupID:         "test.segments.logs.ingest",
+					Topic:           "test.segments.logs.ingest",
 					Partition:       0,
 					CommittedOffset: 290,
 					HighWaterMark:   300,
 					Lag:             10,
 				},
 				{
-					GroupID:         "test.ingest.metrics",
-					Topic:           "test.objstore.ingest.metrics",
+					GroupID:         "test.segments.metrics.ingest",
+					Topic:           "test.segments.metrics.ingest",
 					Partition:       0,
 					CommittedOffset: 195,
 					HighWaterMark:   200,
@@ -352,13 +353,13 @@ func TestConsumerLagMonitor_PeriodicUpdate(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// First check - should have initial values
-	lag1, err := monitor.GetQueueDepth("ingest-logs")
+	lag1, err := monitor.GetQueueDepth("worker-ingest-logs")
 	assert.NoError(t, err)
-	assert.Equal(t, int64(100), lag1, "Initial lag for ingest-logs should be 100")
+	assert.Equal(t, int64(100), lag1, "Initial lag for worker-ingest-logs should be 100")
 
-	lag2, err := monitor.GetQueueDepth("ingest-metrics")
+	lag2, err := monitor.GetQueueDepth("worker-ingest-metrics")
 	assert.NoError(t, err)
-	assert.Equal(t, int64(50), lag2, "Initial lag for ingest-metrics should be 50")
+	assert.Equal(t, int64(50), lag2, "Initial lag for worker-ingest-metrics should be 50")
 
 	// Verify detailed metrics are also updated
 	detailed1 := monitor.GetDetailedMetrics()
@@ -369,7 +370,7 @@ func TestConsumerLagMonitor_PeriodicUpdate(t *testing.T) {
 	time.Sleep(120 * time.Millisecond)
 
 	// Second check - lag should have increased
-	lag3, err := monitor.GetQueueDepth("ingest-logs")
+	lag3, err := monitor.GetQueueDepth("worker-ingest-logs")
 	assert.NoError(t, err)
 
 	// Check which update we're on
@@ -379,10 +380,10 @@ func TestConsumerLagMonitor_PeriodicUpdate(t *testing.T) {
 
 	// We expect 200 from the 2nd response but might already be on 3rd
 	if updateCount2 == 2 {
-		assert.Equal(t, int64(200), lag3, "After second update, lag for ingest-logs should be 200")
-		lag4, err := monitor.GetQueueDepth("ingest-metrics")
+		assert.Equal(t, int64(200), lag3, "After second update, lag for worker-ingest-logs should be 200")
+		lag4, err := monitor.GetQueueDepth("worker-ingest-metrics")
 		assert.NoError(t, err)
-		assert.Equal(t, int64(150), lag4, "After second update, lag for ingest-metrics should be 150")
+		assert.Equal(t, int64(150), lag4, "After second update, lag for worker-ingest-metrics should be 150")
 	}
 
 	// Wait for third poll
@@ -395,9 +396,9 @@ func TestConsumerLagMonitor_PeriodicUpdate(t *testing.T) {
 	t.Logf("After waiting, call count: %d", currentCallCount)
 
 	// Get current lag values
-	lag5, err := monitor.GetQueueDepth("ingest-logs")
+	lag5, err := monitor.GetQueueDepth("worker-ingest-logs")
 	assert.NoError(t, err)
-	lag6, err := monitor.GetQueueDepth("ingest-metrics")
+	lag6, err := monitor.GetQueueDepth("worker-ingest-metrics")
 	assert.NoError(t, err)
 
 	// Verify we're seeing changing values (not stuck on initial)
@@ -440,8 +441,8 @@ func TestConsumerLagMonitor_PeriodicUpdateWithErrors(t *testing.T) {
 			// First poll - success with initial lag
 			{
 				{
-					GroupID:         "test.ingest.logs",
-					Topic:           "test.objstore.ingest.logs",
+					GroupID:         "test.segments.logs.ingest",
+					Topic:           "test.segments.logs.ingest",
 					Partition:       0,
 					CommittedOffset: 100,
 					HighWaterMark:   200,
@@ -455,8 +456,8 @@ func TestConsumerLagMonitor_PeriodicUpdateWithErrors(t *testing.T) {
 			// Fourth poll - success with same lag (shows caching works during errors)
 			{
 				{
-					GroupID:         "test.ingest.logs",
-					Topic:           "test.objstore.ingest.logs",
+					GroupID:         "test.segments.logs.ingest",
+					Topic:           "test.segments.logs.ingest",
 					Partition:       0,
 					CommittedOffset: 100,
 					HighWaterMark:   200,
@@ -466,8 +467,8 @@ func TestConsumerLagMonitor_PeriodicUpdateWithErrors(t *testing.T) {
 			// Fifth poll - in case timing is off
 			{
 				{
-					GroupID:         "test.ingest.logs",
-					Topic:           "test.objstore.ingest.logs",
+					GroupID:         "test.segments.logs.ingest",
+					Topic:           "test.segments.logs.ingest",
 					Partition:       0,
 					CommittedOffset: 100,
 					HighWaterMark:   200,
@@ -496,7 +497,7 @@ func TestConsumerLagMonitor_PeriodicUpdateWithErrors(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Should have initial value
-	lag1, err := monitor.GetQueueDepth("ingest-logs")
+	lag1, err := monitor.GetQueueDepth("worker-ingest-logs")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(100), lag1)
 	assert.True(t, monitor.IsHealthy())
@@ -520,7 +521,7 @@ func TestConsumerLagMonitor_PeriodicUpdateWithErrors(t *testing.T) {
 	}
 
 	// Should still return cached value even with errors
-	lag2, err := monitor.GetQueueDepth("ingest-logs")
+	lag2, err := monitor.GetQueueDepth("worker-ingest-logs")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(100), lag2, "Should return cached value during errors")
 
@@ -528,7 +529,7 @@ func TestConsumerLagMonitor_PeriodicUpdateWithErrors(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	// Should still have same value (but error should be cleared)
-	lag3, err := monitor.GetQueueDepth("ingest-logs")
+	lag3, err := monitor.GetQueueDepth("worker-ingest-logs")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(100), lag3, "Should maintain value after recovery")
 

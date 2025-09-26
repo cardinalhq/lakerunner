@@ -133,19 +133,19 @@ func NewBoxerManagerWithFactory(ctx context.Context, factory ConsumerFactory, ta
 
 func (m *BoxerManager) createConsumerForTask(ctx context.Context, factory ConsumerFactory, task string) (BoxerConsumer, error) {
 	switch task {
-	case config.TaskIngestLogs:
+	case config.BoxerTaskIngestLogs:
 		return factory.CreateLogIngestConsumer(ctx)
-	case config.TaskIngestMetrics:
+	case config.BoxerTaskIngestMetrics:
 		return factory.CreateMetricIngestConsumer(ctx)
-	case config.TaskIngestTraces:
+	case config.BoxerTaskIngestTraces:
 		return factory.CreateTraceIngestConsumer(ctx)
-	case config.TaskCompactLogs:
+	case config.BoxerTaskCompactLogs:
 		return factory.CreateLogCompactionConsumer(ctx)
-	case config.TaskCompactMetrics:
+	case config.BoxerTaskCompactMetrics:
 		return factory.CreateMetricCompactionConsumer(ctx)
-	case config.TaskCompactTraces:
+	case config.BoxerTaskCompactTraces:
 		return factory.CreateTraceCompactionConsumer(ctx)
-	case config.TaskRollupMetrics:
+	case config.BoxerTaskRollupMetrics:
 		return factory.CreateMetricRollupConsumer(ctx)
 	default:
 		return nil, fmt.Errorf("unknown task: %s", task)

@@ -76,8 +76,8 @@ func TestService_IsActive(t *testing.T) {
 
 	// Setup mock expectations for known service types
 	knownServices := []string{
-		"ingest-logs", "ingest-metrics", "ingest-traces",
-		"compact-logs", "compact-traces", "rollup-metrics",
+		"worker-ingest-logs", "worker-ingest-metrics", "worker-ingest-traces",
+		"worker-compact-logs", "worker-compact-traces", "worker-rollup-metrics",
 	}
 	for _, svc := range knownServices {
 		mockMonitor.On("GetQueueDepth", svc).Return(int64(5), nil)
@@ -91,12 +91,12 @@ func TestService_IsActive(t *testing.T) {
 		serviceType    string
 		expectedResult bool
 	}{
-		{"ingest-logs", "ingest-logs", true},
-		{"ingest-metrics", "ingest-metrics", true},
-		{"ingest-traces", "ingest-traces", true},
-		{"compact-logs", "compact-logs", true},
-		{"compact-traces", "compact-traces", true},
-		{"rollup-metrics", "rollup-metrics", true},
+		{"worker-ingest-logs", "worker-ingest-logs", true},
+		{"worker-ingest-metrics", "worker-ingest-metrics", true},
+		{"worker-ingest-traces", "worker-ingest-traces", true},
+		{"worker-compact-logs", "worker-compact-logs", true},
+		{"worker-compact-traces", "worker-compact-traces", true},
+		{"worker-rollup-metrics", "worker-rollup-metrics", true},
 		{"unknown-service", "unknown-service", false},
 		{"empty-service", "", false},
 	}
@@ -136,7 +136,7 @@ func TestService_IsActive_Boxer(t *testing.T) {
 	}{
 		{
 			name:       "boxer with active task queue",
-			boxerTasks: config.TaskCompactLogs,
+			boxerTasks: config.BoxerTaskCompactLogs,
 			mockSetup: func(m *MockLagMonitor) {
 				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(5), nil)
 			},
@@ -144,7 +144,7 @@ func TestService_IsActive_Boxer(t *testing.T) {
 		},
 		{
 			name:       "boxer with inactive task queue",
-			boxerTasks: config.TaskCompactLogs,
+			boxerTasks: config.BoxerTaskCompactLogs,
 			mockSetup: func(m *MockLagMonitor) {
 				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(0), fmt.Errorf("queue not found"))
 			},
@@ -152,7 +152,7 @@ func TestService_IsActive_Boxer(t *testing.T) {
 		},
 		{
 			name:       "boxer with multiple tasks, one active",
-			boxerTasks: config.TaskCompactLogs + "," + config.TaskCompactMetrics,
+			boxerTasks: config.BoxerTaskCompactLogs + "," + config.BoxerTaskCompactMetrics,
 			mockSetup: func(m *MockLagMonitor) {
 				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(0), fmt.Errorf("queue not found"))
 				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactMetrics).Return(int64(3), nil)
@@ -161,7 +161,7 @@ func TestService_IsActive_Boxer(t *testing.T) {
 		},
 		{
 			name:       "boxer with multiple tasks, all inactive",
-			boxerTasks: config.TaskCompactLogs + "," + config.TaskCompactMetrics,
+			boxerTasks: config.BoxerTaskCompactLogs + "," + config.BoxerTaskCompactMetrics,
 			mockSetup: func(m *MockLagMonitor) {
 				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactLogs).Return(int64(0), fmt.Errorf("queue not found"))
 				m.On("GetQueueDepth", config.ServiceTypeBoxerCompactMetrics).Return(int64(0), fmt.Errorf("queue not found"))
@@ -206,10 +206,10 @@ func TestService_IsActive_Boxer(t *testing.T) {
 
 func TestService_GetMetricSpec(t *testing.T) {
 	scalingConfig := &config.ScalingConfig{
-		DefaultTarget:      100,
-		IngestLogs:         config.ServiceScaling{TargetQueueSize: 100},
-		RollupMetrics:      config.ServiceScaling{TargetQueueSize: 100},
-		BoxerRollupMetrics: config.ServiceScaling{TargetQueueSize: 1500},
+		DefaultTarget:       100,
+		WorkerIngestLogs:    config.ServiceScaling{TargetQueueSize: 100},
+		WorkerRollupMetrics: config.ServiceScaling{TargetQueueSize: 100},
+		BoxerRollupMetrics:  config.ServiceScaling{TargetQueueSize: 1500},
 	}
 
 	service := &Service{
@@ -223,8 +223,8 @@ func TestService_GetMetricSpec(t *testing.T) {
 		expectedTarget     float64
 		expectError        bool
 	}{
-		{"ingest-logs", "ingest-logs", "ingest-logs", 100.0, false},
-		{"rollup-metrics", "rollup-metrics", "rollup-metrics", 100.0, false},
+		{"worker-ingest-logs", "worker-ingest-logs", "worker-ingest-logs", 100.0, false},
+		{"worker-rollup-metrics", "worker-rollup-metrics", "worker-rollup-metrics", 100.0, false},
 		{"boxer-rollup-metrics", "boxer-rollup-metrics", "boxer-rollup-metrics", 1500.0, false},
 		{"missing-service-type", "", "", 0, true},
 		{"unknown-service-type", "unknown-service", "", 0, true},
@@ -267,54 +267,54 @@ func TestService_GetMetrics(t *testing.T) {
 	}{
 		{
 			name:        "ingest-logs success",
-			serviceType: "ingest-logs",
+			serviceType: "worker-ingest-logs",
 			mockSetup: func(m *MockLagMonitor) {
-				m.On("GetQueueDepth", "ingest-logs").Return(int64(5), nil)
+				m.On("GetQueueDepth", "worker-ingest-logs").Return(int64(5), nil)
 			},
 			expectedValue: 5.0,
 			expectError:   false,
 		},
 		{
 			name:        "ingest-metrics success",
-			serviceType: "ingest-metrics",
+			serviceType: "worker-ingest-metrics",
 			mockSetup: func(m *MockLagMonitor) {
-				m.On("GetQueueDepth", "ingest-metrics").Return(int64(5), nil)
+				m.On("GetQueueDepth", "worker-ingest-metrics").Return(int64(5), nil)
 			},
 			expectedValue: 5.0,
 			expectError:   false,
 		},
 		{
 			name:        "ingest-traces success",
-			serviceType: "ingest-traces",
+			serviceType: "worker-ingest-traces",
 			mockSetup: func(m *MockLagMonitor) {
-				m.On("GetQueueDepth", "ingest-traces").Return(int64(5), nil)
+				m.On("GetQueueDepth", "worker-ingest-traces").Return(int64(5), nil)
 			},
 			expectedValue: 5.0,
 			expectError:   false,
 		},
 		{
 			name:        "rollup-metrics success",
-			serviceType: "rollup-metrics",
+			serviceType: "worker-rollup-metrics",
 			mockSetup: func(m *MockLagMonitor) {
-				m.On("GetQueueDepth", "rollup-metrics").Return(int64(5), nil)
+				m.On("GetQueueDepth", "worker-rollup-metrics").Return(int64(5), nil)
 			},
 			expectedValue: 5.0,
 			expectError:   false,
 		},
 		{
 			name:        "compact-logs success",
-			serviceType: "compact-logs",
+			serviceType: "worker-compact-logs",
 			mockSetup: func(m *MockLagMonitor) {
-				m.On("GetQueueDepth", "compact-logs").Return(int64(3), nil)
+				m.On("GetQueueDepth", "worker-compact-logs").Return(int64(3), nil)
 			},
 			expectedValue: 3.0, // Fixed value from service
 			expectError:   false,
 		},
 		{
 			name:        "compact-traces success",
-			serviceType: "compact-traces",
+			serviceType: "worker-compact-traces",
 			mockSetup: func(m *MockLagMonitor) {
-				m.On("GetQueueDepth", "compact-traces").Return(int64(3), nil)
+				m.On("GetQueueDepth", "worker-compact-traces").Return(int64(3), nil)
 			},
 			expectedValue: 3.0,
 			expectError:   false,
@@ -376,19 +376,19 @@ func TestService_getQueueDepth(t *testing.T) {
 		expectError   bool
 	}{
 		{
-			name:        "ingest-logs",
-			serviceType: "ingest-logs",
+			name:        "worker-ingest-logs",
+			serviceType: "worker-ingest-logs",
 			mockSetup: func(m *MockLagMonitor) {
-				m.On("GetQueueDepth", "ingest-logs").Return(int64(5), nil)
+				m.On("GetQueueDepth", "worker-ingest-logs").Return(int64(5), nil)
 			},
 			expectedCount: 5,
 			expectError:   false,
 		},
 		{
-			name:        "rollup-metrics",
-			serviceType: "rollup-metrics",
+			name:        "worker-rollup-metrics",
+			serviceType: "worker-rollup-metrics",
 			mockSetup: func(m *MockLagMonitor) {
-				m.On("GetQueueDepth", "rollup-metrics").Return(int64(5), nil)
+				m.On("GetQueueDepth", "worker-rollup-metrics").Return(int64(5), nil)
 			},
 			expectedCount: 5,
 			expectError:   false,
