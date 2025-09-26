@@ -13,6 +13,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const listServiceNames = `-- name: ListServiceNames :many
+SELECT DISTINCT service_name::text
+FROM lrdb_service_identifiers
+WHERE organization_id = $1::uuid
+ORDER BY service_name
+`
+
+func (q *Queries) ListServiceNames(ctx context.Context, organizationID uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, listServiceNames, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var service_name string
+		if err := rows.Scan(&service_name); err != nil {
+			return nil, err
+		}
+		items = append(items, service_name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertServiceIdentifier = `-- name: UpsertServiceIdentifier :one
 INSERT INTO lrdb_service_identifiers
   (organization_id, service_name, cluster_name, namespace)
