@@ -17,20 +17,19 @@ package config
 const (
 	TargetFileSize = int64(2 * 1024 * 1024) // 2MB
 
-	// Service types for ingestion
-	ServiceTypeIngestLogs    = "ingest-logs"
-	ServiceTypeIngestMetrics = "ingest-metrics"
-	ServiceTypeIngestTraces  = "ingest-traces"
-
-	// Service types for compaction
-	ServiceTypeCompactLogs    = "compact-logs"
-	ServiceTypeCompactMetrics = "compact-metrics"
-	ServiceTypeCompactTraces  = "compact-traces"
-
-	// Service types for rollup
-	ServiceTypeRollupMetrics = "rollup-metrics"
+	// Service types for workers
+	ServiceTypeWorkerCompactLogs    = "worker-compact-logs"
+	ServiceTypeWorkerCompactMetrics = "worker-compact-metrics"
+	ServiceTypeWorkerCompactTraces  = "worker-compact-traces"
+	ServiceTypeWorkerIngestLogs     = "worker-ingest-logs"
+	ServiceTypeWorkerIngestMetrics  = "worker-ingest-metrics"
+	ServiceTypeWorkerIngestTraces   = "worker-ingest-traces"
+	ServiceTypeWorkerRollupMetrics  = "worker-rollup-metrics"
 
 	// Service types for boxer tasks
+	ServiceTypeBoxerIngestLogs     = "boxer-ingest-logs"
+	ServiceTypeBoxerIngestMetrics  = "boxer-ingest-metrics"
+	ServiceTypeBoxerIngestTraces   = "boxer-ingest-traces"
 	ServiceTypeBoxerCompactLogs    = "boxer-compact-logs"
 	ServiceTypeBoxerCompactMetrics = "boxer-compact-metrics"
 	ServiceTypeBoxerCompactTraces  = "boxer-compact-traces"
@@ -40,22 +39,31 @@ const (
 	ServiceTypeBoxer = "boxer"
 
 	// Task names (used in boxer command flags and KEDA boxerTasks)
-	TaskCompactLogs    = "compact-logs"
-	TaskCompactMetrics = "compact-metrics"
-	TaskCompactTraces  = "compact-traces"
-	TaskRollupMetrics  = "rollup-metrics"
+	BoxerTaskIngestLogs     = "ingest-logs"
+	BoxerTaskIngestMetrics  = "ingest-metrics"
+	BoxerTaskIngestTraces   = "ingest-traces"
+	BoxerTaskCompactLogs    = "compact-logs"
+	BoxerTaskCompactMetrics = "compact-metrics"
+	BoxerTaskCompactTraces  = "compact-traces"
+	BoxerTaskRollupMetrics  = "rollup-metrics"
 )
 
 // GetBoxerServiceType returns the service type for a boxer task
 func GetBoxerServiceType(task string) string {
 	switch task {
-	case TaskCompactLogs:
+	case BoxerTaskIngestLogs:
+		return ServiceTypeBoxerIngestLogs
+	case BoxerTaskIngestMetrics:
+		return ServiceTypeBoxerIngestMetrics
+	case BoxerTaskIngestTraces:
+		return ServiceTypeBoxerIngestTraces
+	case BoxerTaskCompactLogs:
 		return ServiceTypeBoxerCompactLogs
-	case TaskCompactMetrics:
+	case BoxerTaskCompactMetrics:
 		return ServiceTypeBoxerCompactMetrics
-	case TaskCompactTraces:
+	case BoxerTaskCompactTraces:
 		return ServiceTypeBoxerCompactTraces
-	case TaskRollupMetrics:
+	case BoxerTaskRollupMetrics:
 		return ServiceTypeBoxerRollupMetrics
 	default:
 		return "boxer-" + task // fallback for unknown tasks

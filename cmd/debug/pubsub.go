@@ -18,11 +18,12 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/spf13/cobra"
 	"io"
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/spf13/cobra"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/configdb"

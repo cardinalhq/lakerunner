@@ -84,29 +84,21 @@ func newLogIngestProcessor(
 	}
 }
 
-// validateLogIngestGroupConsistency ensures all messages in a log ingest group have consistent fields
-func validateLogIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]) error {
-	if len(group.Messages) == 0 {
+// validateLogIngestMessages validates the key and messages for consistency
+func validateLogIngestMessages(key messages.IngestKey, msgs []*messages.ObjStoreNotificationMessage) error {
+	if len(msgs) == 0 {
 		return &GroupValidationError{
 			Field:   "message_count",
-			Message: "group cannot be empty",
+			Message: "message list cannot be empty",
 		}
 	}
 
-	// Get expected values from the group key
-	expectedOrg := group.Key.OrganizationID
-	expectedInstance := group.Key.InstanceNum
+	// Get expected values from the key
+	expectedOrg := key.OrganizationID
+	expectedInstance := key.InstanceNum
 
 	// Validate each message against the expected values
-	for i, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
-		if !ok {
-			return &GroupValidationError{
-				Field:   "message_type",
-				Message: fmt.Sprintf("message %d is not an ObjStoreNotificationMessage", i),
-			}
-		}
-
+	for i, msg := range msgs {
 		if msg.OrganizationID != expectedOrg {
 			return &GroupValidationError{
 				Field:    "organization_id",
@@ -130,17 +122,16 @@ func validateLogIngestGroupConsistency(group *accumulationGroup[messages.IngestK
 }
 
 // Process implements the Processor interface and performs raw log ingestion
-func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
+func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.IngestKey, msgs []*messages.ObjStoreNotificationMessage, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx).With(
-		slog.String("organizationID", group.Key.OrganizationID.String()),
-		slog.Int("instanceNum", int(group.Key.InstanceNum)))
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("instanceNum", int(key.InstanceNum)))
 
 	ll.Info("Starting log ingestion",
-		slog.Int("messageCount", len(group.Messages)),
-		slog.Duration("groupAge", time.Since(group.CreatedAt)))
+		slog.Int("messageCount", len(msgs)))
 
-	if err := validateLogIngestGroupConsistency(group); err != nil {
-		return fmt.Errorf("group validation failed: %w", err)
+	if err := validateLogIngestMessages(key, msgs); err != nil {
+		return fmt.Errorf("message validation failed: %w", err)
 	}
 
 	// Create temporary directory for this ingestion run
@@ -154,7 +145,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		}
 	}()
 
-	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
+	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
@@ -181,11 +172,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
-	for _, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
-		if !ok {
-			continue // Skip non-ObjStoreNotificationMessage messages
-		}
+	for _, msg := range msgs {
 
 		ll.Debug("Processing raw log file",
 			slog.String("objectID", msg.ObjectID),
@@ -244,6 +231,14 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
+
+	// Create kafka offset info for tracking
+	kafkaOffsets := []lrdb.KafkaOffsetInfo{{
+		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsLogsIngest),
+		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsLogsIngest),
+		PartitionID:   partition,
+		Offsets:       []int64{offset},
+	}}
 
 	criticalCtx := context.WithoutCancel(ctx)
 	if err := p.store.InsertLogSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
@@ -307,10 +302,10 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		totalOutputSize += params.FileSize
 	}
 
-	reportTelemetry(ctx, "logs", "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "logs", "ingestion", int64(len(msgs)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Log ingestion completed successfully",
-		slog.Int("inputFiles", len(group.Messages)),
+		slog.Int("inputFiles", len(msgs)),
 		slog.Int64("totalFileSize", totalInputSize),
 		slog.Int("outputSegments", len(segmentParams)))
 
@@ -407,31 +402,26 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 					continue
 				}
 
-				// Extract timestamp to determine which bin this row belongs to
 				ts, ok := row[wkk.RowKeyCTimestamp].(int64)
 				if !ok {
 					ll.Warn("Row missing timestamp, skipping", slog.Int("rowIndex", i))
 					continue
 				}
 
-				// Group logs by dateint only - no time aggregation
 				dateint, _ := helpers.MSToDateintHour(ts)
-
-				// Get or create dateint bin
 				bin, err := binManager.getOrCreateBin(ctx, dateint)
 				if err != nil {
 					ll.Error("Failed to get/create dateint bin", slog.Int("dateint", int(dateint)), slog.Any("error", err))
 					continue
 				}
 
-				// Create a single-row batch for this bin
-				singleRowBatch := pipeline.GetBatch()
-				newRow := singleRowBatch.AddRow()
-				for k, v := range row {
-					newRow[k] = v
+				takenRow := batch.TakeRow(i)
+				if takenRow == nil {
+					continue
 				}
+				singleRowBatch := pipeline.GetBatch()
+				singleRowBatch.AppendRow(takenRow)
 
-				// Write to the bin's writer
 				if err := bin.Writer.WriteBatch(singleRowBatch); err != nil {
 					ll.Error("Failed to write row to dateint bin",
 						slog.Int("dateint", int(dateint)),

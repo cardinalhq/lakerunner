@@ -223,6 +223,28 @@ func (b *Batch) AddRow() Row {
 	return row
 }
 
+// AppendRow adds an existing row to the batch, taking ownership of it.
+// The batch becomes responsible for returning the row to the pool when done.
+// This is useful when transferring rows between batches without copying.
+func (b *Batch) AppendRow(row Row) {
+	if row == nil {
+		return
+	}
+
+	// If we have space in the existing slice, replace and use it
+	if b.validLen < len(b.rows) {
+		// Return the old row at this position to the pool
+		oldRow := b.rows[b.validLen]
+		returnRowToPool(oldRow)
+		// Put the new row in its place
+		b.rows[b.validLen] = row
+	} else {
+		// Append to the slice
+		b.rows = append(b.rows, row)
+	}
+	b.validLen++
+}
+
 // DeleteRow marks a row as deleted without losing the underlying map.
 // The map is preserved for future reuse.
 func (b *Batch) DeleteRow(index int) {

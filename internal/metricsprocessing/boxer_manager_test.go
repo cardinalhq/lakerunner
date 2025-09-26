@@ -45,6 +45,21 @@ type MockConsumerFactory struct {
 	mock.Mock
 }
 
+func (m *MockConsumerFactory) CreateLogIngestConsumer(ctx context.Context) (BoxerConsumer, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(BoxerConsumer), args.Error(1)
+}
+
+func (m *MockConsumerFactory) CreateMetricIngestConsumer(ctx context.Context) (BoxerConsumer, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(BoxerConsumer), args.Error(1)
+}
+
+func (m *MockConsumerFactory) CreateTraceIngestConsumer(ctx context.Context) (BoxerConsumer, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(BoxerConsumer), args.Error(1)
+}
+
 func (m *MockConsumerFactory) CreateLogCompactionConsumer(ctx context.Context) (BoxerConsumer, error) {
 	args := m.Called(ctx)
 	return args.Get(0).(BoxerConsumer), args.Error(1)

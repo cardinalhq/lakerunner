@@ -74,7 +74,7 @@ func NewMetricBoxerConsumer(
 	// Configure the consumer - consuming from boxer input topic
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  "lakerunner-boxer-metrics-rollup",
+		ConsumerName:  registry.GetConsumerGroup(config.TopicBoxerMetricsRollup),
 		Topic:         registry.GetTopic(config.TopicBoxerMetricsRollup),
 		ConsumerGroup: registry.GetConsumerGroup(config.TopicBoxerMetricsRollup),
 		FlushInterval: flushInterval,

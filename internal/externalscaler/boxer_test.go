@@ -58,9 +58,9 @@ func TestService_GetMetrics_Boxer(t *testing.T) {
 		},
 		{
 			name:          "non-boxer service should use original logic",
-			serviceType:   "ingest-logs",
-			metricName:    "ingest-logs",
-			taskDepths:    map[string]int64{"ingest-logs": 150},
+			serviceType:   "worker-ingest-logs",
+			metricName:    "worker-ingest-logs",
+			taskDepths:    map[string]int64{"worker-ingest-logs": 150},
 			expectedValue: 150,
 		},
 	}
@@ -143,7 +143,7 @@ func TestService_GetMetricSpec_Boxer(t *testing.T) {
 		{
 			name:        "boxer with single task",
 			serviceType: config.ServiceTypeBoxer,
-			boxerTasks:  config.TaskCompactLogs,
+			boxerTasks:  config.BoxerTaskCompactLogs,
 			taskTargets: map[string]int{
 				config.ServiceTypeBoxerCompactLogs: 10,
 			},
@@ -157,7 +157,7 @@ func TestService_GetMetricSpec_Boxer(t *testing.T) {
 		{
 			name:        "boxer with multiple tasks",
 			serviceType: config.ServiceTypeBoxer,
-			boxerTasks:  config.TaskCompactLogs + "," + config.TaskCompactMetrics,
+			boxerTasks:  config.BoxerTaskCompactLogs + "," + config.BoxerTaskCompactMetrics,
 			taskTargets: map[string]int{
 				config.ServiceTypeBoxerCompactLogs:    10,
 				config.ServiceTypeBoxerCompactMetrics: 20,
@@ -173,7 +173,7 @@ func TestService_GetMetricSpec_Boxer(t *testing.T) {
 		{
 			name:        "boxer with unknown task falls back to default",
 			serviceType: config.ServiceTypeBoxer,
-			boxerTasks:  config.TaskCompactLogs + ",unknown-task",
+			boxerTasks:  config.BoxerTaskCompactLogs + ",unknown-task",
 			taskTargets: map[string]int{
 				config.ServiceTypeBoxerCompactLogs: 10,
 				// unknown-task will fall back to DefaultTarget
@@ -189,15 +189,15 @@ func TestService_GetMetricSpec_Boxer(t *testing.T) {
 		},
 		{
 			name:        "non-boxer service should use original logic",
-			serviceType: "ingest-logs",
+			serviceType: "worker-ingest-logs",
 			taskTargets: map[string]int{
-				"ingest-logs": 25,
+				"worker-ingest-logs": 25,
 			},
 			expectedSpecs: []struct {
 				name   string
 				target float64
 			}{
-				{"ingest-logs", 25},
+				{"worker-ingest-logs", 25},
 			},
 		},
 	}
@@ -221,14 +221,14 @@ func TestService_GetMetricSpec_Boxer(t *testing.T) {
 					scalingConfig.BoxerCompactTraces = scaling
 				case config.ServiceTypeBoxerRollupMetrics:
 					scalingConfig.BoxerRollupMetrics = scaling
-				case config.ServiceTypeIngestLogs:
-					scalingConfig.IngestLogs = scaling
-				case config.ServiceTypeCompactLogs:
-					scalingConfig.CompactLogs = scaling
-				case config.ServiceTypeCompactMetrics:
-					scalingConfig.CompactMetrics = scaling
-				case config.ServiceTypeRollupMetrics:
-					scalingConfig.RollupMetrics = scaling
+				case config.ServiceTypeWorkerIngestLogs:
+					scalingConfig.WorkerIngestLogs = scaling
+				case config.ServiceTypeWorkerCompactLogs:
+					scalingConfig.WorkerCompactLogs = scaling
+				case config.ServiceTypeWorkerCompactMetrics:
+					scalingConfig.WorkerCompactMetrics = scaling
+				case config.ServiceTypeWorkerRollupMetrics:
+					scalingConfig.WorkerRollupMetrics = scaling
 				}
 			}
 
