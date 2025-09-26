@@ -523,17 +523,9 @@ func (s *S3DB) ensureSetup(ctx context.Context) error {
 }
 
 func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
-	// Load extensions from local files only
-	if err := s.loadExtension(ctx, conn, "httpfs", true); err != nil {
-		return err
-	}
-	if err := s.loadExtension(ctx, conn, "aws", false); err != nil {
-		return err
-	}
-	if err := s.loadExtension(ctx, conn, "azure", false); err != nil {
-		return err
-	}
-	return nil
+	// Wrap sql.Conn to implement driver.ExecerContext
+	execer := &connExecer{conn: conn, ctx: ctx}
+	return s.loadExtensionsWithExecer(ctx, execer)
 }
 
 // loadExtensionsWithExecer loads extensions using a driver.ExecerContext interface.
@@ -575,89 +567,16 @@ func (s *S3DB) loadExtensionsWithExecer(ctx context.Context, execer driver.Exece
 	return nil
 }
 
-// loadExtension loads a DuckDB extension if not already loaded.
-// The checkSecretType flag indicates whether to ignore "already registered secret type" errors (for httpfs).
-func (s *S3DB) loadExtension(ctx context.Context, conn *sql.Conn, name string, checkSecretType bool) error {
-	// Check if extension is already available (built-in or installed)
-	var loaded, installed bool
-	row := conn.QueryRowContext(ctx, `SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = ?`, name)
-	if err := row.Scan(&loaded, &installed); err == nil {
-		if loaded {
-			// Extension is already loaded in this database instance
-			slog.Debug(fmt.Sprintf("%s extension already loaded", name), "loaded", loaded, "installed", installed)
-			// Configure Azure-specific settings if needed
-			if name == "azure" {
-				if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
-					slog.Warn("Failed to set azure transport option", "error", err)
-				}
-			}
-			return nil
-		}
-		if installed {
-			// Extension is installed but not loaded, load it
-			if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD %s", name)); err != nil {
-				// Check if it's the duplicate registration error (mainly for httpfs)
-				if checkSecretType && strings.Contains(err.Error(), "already registered secret type") {
-					// This means the extension is actually loaded, just not reported correctly
-					slog.Debug(fmt.Sprintf("%s extension already loaded (secret type registered)", name))
-					return nil
-				}
-				if name == "azure" {
-					return fmt.Errorf("failed to load installed %s extension: %w", name, err)
-				}
-				slog.Warn(fmt.Sprintf("Failed to load installed %s extension", name), "error", err)
-			} else {
-				slog.Info(fmt.Sprintf("Loaded installed %s extension", name))
-			}
-			// Configure Azure-specific settings after loading
-			if name == "azure" {
-				if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
-					slog.Warn("Failed to set azure transport option", "error", err)
-				}
-			}
-			return nil
-		}
-	}
+// connExecer wraps a sql.Conn to implement driver.ExecerContext
+type connExecer struct {
+	conn *sql.Conn
+	ctx  context.Context
+}
 
-	// Extension not available, try to load from disk
-	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
-	if base == "" {
-		// Try to auto-discover extensions for testing
-		base = discoverExtensionsPath()
-		if base == "" {
-			return fmt.Errorf("%s extension required but not found: LAKERUNNER_EXTENSIONS_PATH not set and could not auto-discover extensions in docker/duckdb-extensions", name)
-		}
-		if name == "httpfs" {
-			slog.Debug("Auto-discovered extensions path", "path", base)
-		}
-	}
-
-	path := filepath.Join(base, fmt.Sprintf("%s.duckdb_extension", name))
-	if _, err := os.Stat(path); err != nil {
-		return fmt.Errorf("%s extension file not found at %s: %w", name, path, err)
-	}
-	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
-		// Check if it's the duplicate registration error
-		if checkSecretType && strings.Contains(err.Error(), "already registered secret type") {
-			// This means the extension is actually loaded, just not reported correctly
-			slog.Debug(fmt.Sprintf("%s extension already loaded from disk (secret type registered)", name))
-			return nil
-		}
-		// AWS extension might also have "already registered" errors
-		if name == "aws" && strings.Contains(err.Error(), "already registered") {
-			slog.Debug(fmt.Sprintf("%s extension already loaded from disk", name))
-			return nil
-		}
-		return fmt.Errorf("LOAD %s: %w", name, err)
-	}
-	slog.Info(fmt.Sprintf("Loaded %s extension from disk", name), "path", path)
-	// Configure Azure-specific settings after loading from disk
-	if name == "azure" {
-		if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
-			slog.Warn("Failed to set azure transport option", "error", err)
-		}
-	}
-	return nil
+func (c *connExecer) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	// Convert to sql.Exec call
+	result, err := c.conn.ExecContext(ctx, query)
+	return result, err
 }
 
 // CREATE OR REPLACE SECRET for a bucket (serialized).
