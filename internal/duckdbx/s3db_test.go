@@ -694,3 +694,77 @@ func TestGetDatabasePath(t *testing.T) {
 	require.Equal(t, testPath, path2)
 	t.Logf("Explicit path: %s", path2)
 }
+
+// TestCloseDoesNotDeleteUserProvidedPaths verifies that S3DB.Close() only removes
+// internally-created temp directories and not user-provided paths.
+func TestCloseDoesNotDeleteUserProvidedPaths(t *testing.T) {
+	ctx := context.Background()
+
+	// Test that user-provided paths are NOT deleted
+	t.Run("UserProvidedPath", func(t *testing.T) {
+		// Create a test directory with some files
+		testDir := t.TempDir()
+		dbPath := filepath.Join(testDir, "my.ddb")
+		otherFile := filepath.Join(testDir, "important.txt")
+
+		// Create an "important" file that should not be deleted
+		err := os.WriteFile(otherFile, []byte("important data"), 0644)
+		require.NoError(t, err)
+
+		// Create S3DB with user-provided path
+		s3db, err := NewS3DB(WithDatabasePath(dbPath))
+		require.NoError(t, err)
+
+		// Use it briefly to ensure it's working
+		conn, release, err := s3db.GetConnection(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, `SELECT 1`)
+		require.NoError(t, err)
+		release()
+
+		// Close the database
+		err = s3db.Close()
+		require.NoError(t, err)
+
+		// Verify that the directory and files still exist
+		_, err = os.Stat(testDir)
+		require.NoError(t, err, "user-provided directory should still exist")
+
+		_, err = os.Stat(otherFile)
+		require.NoError(t, err, "other files in user-provided directory should still exist")
+
+		// The database file itself should still exist
+		_, err = os.Stat(dbPath)
+		require.NoError(t, err, "database file should still exist")
+	})
+
+	// Test that internally-created temp directories ARE deleted
+	t.Run("InternalTempPath", func(t *testing.T) {
+		// Create S3DB without specifying a path (uses temp)
+		s3db, err := NewS3DB()
+		require.NoError(t, err)
+
+		dbPath := s3db.GetDatabasePath()
+		dbDir := filepath.Dir(dbPath)
+
+		// Verify the temp directory exists
+		_, err = os.Stat(dbDir)
+		require.NoError(t, err, "temp directory should exist before close")
+
+		// Use it briefly
+		conn, release, err := s3db.GetConnection(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, `SELECT 1`)
+		require.NoError(t, err)
+		release()
+
+		// Close the database
+		err = s3db.Close()
+		require.NoError(t, err)
+
+		// Verify that the temp directory was deleted
+		_, err = os.Stat(dbDir)
+		require.Error(t, err, "temp directory should be deleted after close")
+		require.True(t, os.IsNotExist(err), "temp directory should not exist")
+	})
+}

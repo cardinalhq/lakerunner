@@ -42,7 +42,8 @@ var duckdbDDLMu sync.Mutex
 // All connections open the same file and thus share the same in-process database instance.
 // Credentials are set per-bucket on each connection acquisition to support multiple buckets.
 type S3DB struct {
-	dbPath string // single on-disk database file for all connections
+	dbPath         string // single on-disk database file for all connections
+	cleanupOnClose bool   // whether to remove the database directory on Close
 
 	// config (applied once to the shared database instance)
 	memoryLimitMB int64
@@ -130,15 +131,19 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 	}
 
 	var dbPath string
+	var cleanupOnClose bool
 	if cfg.dbPath != nil {
 		dbPath = *cfg.dbPath
+		// User provided the path, don't clean it up
+		cleanupOnClose = false
 	} else {
-		// No options provided - create a temp file
+		// No options provided - create a temp file that we'll clean up
 		dbDir, err := os.MkdirTemp("", "")
 		if err != nil {
 			return nil, fmt.Errorf("create temp dir for S3DB: %w", err)
 		}
 		dbPath = filepath.Join(dbDir, "global.ddb")
+		cleanupOnClose = true
 	}
 
 	memoryMB := envInt64("DUCKDB_MEMORY_LIMIT", 0)
@@ -161,13 +166,14 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 		"threads", threads)
 
 	s3db := &S3DB{
-		dbPath:        dbPath,
-		memoryLimitMB: memoryMB,
-		tempDir:       os.Getenv("DUCKDB_TEMP_DIRECTORY"),
-		maxTempSize:   os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
-		poolSize:      poolSize,
-		threads:       threads,
-		metricsPeriod: cfg.metricsPeriod,
+		dbPath:         dbPath,
+		cleanupOnClose: cleanupOnClose,
+		memoryLimitMB:  memoryMB,
+		tempDir:        os.Getenv("DUCKDB_TEMP_DIRECTORY"),
+		maxTempSize:    os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
+		poolSize:       poolSize,
+		threads:        threads,
+		metricsPeriod:  cfg.metricsPeriod,
 	}
 
 	s3db.pool = &connectionPool{
@@ -199,7 +205,9 @@ func (s *S3DB) Close() error {
 		s.pool.closeAll()
 	}
 
-	if s.dbPath != "" {
+	// Only clean up the directory if we created it (temp directories)
+	// Never remove user-provided paths
+	if s.cleanupOnClose && s.dbPath != "" {
 		dbDir := filepath.Dir(s.dbPath)
 		_ = os.RemoveAll(dbDir)
 	}
