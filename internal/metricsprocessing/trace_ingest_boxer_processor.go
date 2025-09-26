@@ -94,7 +94,7 @@ func (b *TraceIngestBoxerProcessor) Process(ctx context.Context, group *accumula
 	return nil
 }
 
-// GetTargetRecordCount returns the estimated record count for trace ingestion
+// GetTargetRecordCount returns the target file size limit for trace ingestion batching
 func (b *TraceIngestBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
-	return b.store.GetTraceEstimate(ctx, groupingKey.OrganizationID)
+	return 5 * 1024 * 1024 // 5MB file size limit
 }

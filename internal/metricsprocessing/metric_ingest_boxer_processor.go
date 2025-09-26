@@ -94,7 +94,7 @@ func (b *MetricIngestBoxerProcessor) Process(ctx context.Context, group *accumul
 	return nil
 }
 
-// GetTargetRecordCount returns the estimated record count for ingestion
+// GetTargetRecordCount returns the target file size limit for metric ingestion batching
 func (b *MetricIngestBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
-	return b.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, 0) // frequencyMs not relevant for ingestion
+	return 20 * 1024 * 1024 // 20MB file size limit (metrics typically larger than logs)
 }
