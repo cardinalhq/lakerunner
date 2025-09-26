@@ -40,50 +40,71 @@ func TestTopicRegistry_DefaultConfig(t *testing.T) {
 			name:                  "objstore ingest logs",
 			topicKey:              TopicObjstoreIngestLogs,
 			expectedTopicName:     "lakerunner.objstore.ingest.logs",
-			expectedConsumerGroup: "lakerunner.ingest.logs",
-			expectedServiceType:   "ingest-logs",
+			expectedConsumerGroup: "lakerunner.boxer.logs.ingest",
+			expectedServiceType:   "boxer-ingest-logs",
 		},
 		{
 			name:                  "objstore ingest metrics",
 			topicKey:              TopicObjstoreIngestMetrics,
 			expectedTopicName:     "lakerunner.objstore.ingest.metrics",
-			expectedConsumerGroup: "lakerunner.ingest.metrics",
-			expectedServiceType:   "ingest-metrics",
+			expectedConsumerGroup: "lakerunner.boxer.metrics.ingest",
+			expectedServiceType:   "boxer-ingest-metrics",
 		},
 		{
 			name:                  "objstore ingest traces",
 			topicKey:              TopicObjstoreIngestTraces,
 			expectedTopicName:     "lakerunner.objstore.ingest.traces",
-			expectedConsumerGroup: "lakerunner.ingest.traces",
-			expectedServiceType:   "ingest-traces",
+			expectedConsumerGroup: "lakerunner.boxer.traces.ingest",
+			expectedServiceType:   "boxer-ingest-traces",
+		},
+		{
+			name:                  "segments logs ingest",
+			topicKey:              TopicSegmentsLogsIngest,
+			expectedTopicName:     "lakerunner.segments.logs.ingest",
+			expectedConsumerGroup: "lakerunner.segments.logs.ingest",
+			expectedServiceType:   "worker-ingest-logs",
+		},
+		{
+			name:                  "segments metrics ingest",
+			topicKey:              TopicSegmentsMetricsIngest,
+			expectedTopicName:     "lakerunner.segments.metrics.ingest",
+			expectedConsumerGroup: "lakerunner.segments.metrics.ingest",
+			expectedServiceType:   "worker-ingest-metrics",
+		},
+		{
+			name:                  "segments traces ingest",
+			topicKey:              TopicSegmentsTracesIngest,
+			expectedTopicName:     "lakerunner.segments.traces.ingest",
+			expectedConsumerGroup: "lakerunner.segments.traces.ingest",
+			expectedServiceType:   "worker-ingest-traces",
 		},
 		{
 			name:                  "segments logs compact",
 			topicKey:              TopicSegmentsLogsCompact,
 			expectedTopicName:     "lakerunner.segments.logs.compact",
 			expectedConsumerGroup: "lakerunner.compact.logs",
-			expectedServiceType:   "compact-logs",
+			expectedServiceType:   "worker-compact-logs",
 		},
 		{
 			name:                  "segments metrics compact",
 			topicKey:              TopicSegmentsMetricsCompact,
 			expectedTopicName:     "lakerunner.segments.metrics.compact",
 			expectedConsumerGroup: "lakerunner.compact.metrics",
-			expectedServiceType:   "compact-metrics",
+			expectedServiceType:   "worker-compact-metrics",
 		},
 		{
 			name:                  "segments traces compact",
 			topicKey:              TopicSegmentsTracesCompact,
 			expectedTopicName:     "lakerunner.segments.traces.compact",
 			expectedConsumerGroup: "lakerunner.compact.traces",
-			expectedServiceType:   "compact-traces",
+			expectedServiceType:   "worker-compact-traces",
 		},
 		{
 			name:                  "segments metrics rollup",
 			topicKey:              TopicSegmentsMetricsRollup,
 			expectedTopicName:     "lakerunner.segments.metrics.rollup",
 			expectedConsumerGroup: "lakerunner.rollup.metrics",
-			expectedServiceType:   "rollup-metrics",
+			expectedServiceType:   "worker-rollup-metrics",
 		},
 		{
 			name:                  "boxer logs compact",
@@ -152,7 +173,7 @@ func TestTopicRegistry_CustomPrefix(t *testing.T) {
 
 	// Test a few key topics to ensure prefix is applied correctly
 	assert.Equal(t, "custom.objstore.ingest.logs", registry.GetTopic(TopicObjstoreIngestLogs))
-	assert.Equal(t, "custom.ingest.logs", registry.GetConsumerGroup(TopicObjstoreIngestLogs))
+	assert.Equal(t, "custom.boxer.logs.ingest", registry.GetConsumerGroup(TopicObjstoreIngestLogs))
 
 	assert.Equal(t, "custom.boxer.metrics.rollup", registry.GetTopic(TopicBoxerMetricsRollup))
 	assert.Equal(t, "custom.boxer.metrics.rollup", registry.GetConsumerGroup(TopicBoxerMetricsRollup))
@@ -163,7 +184,7 @@ func TestTopicRegistry_EmptyPrefix(t *testing.T) {
 	registry := NewTopicRegistry("")
 
 	assert.Equal(t, "lakerunner.objstore.ingest.logs", registry.GetTopic(TopicObjstoreIngestLogs))
-	assert.Equal(t, "lakerunner.ingest.logs", registry.GetConsumerGroup(TopicObjstoreIngestLogs))
+	assert.Equal(t, "lakerunner.boxer.logs.ingest", registry.GetConsumerGroup(TopicObjstoreIngestLogs))
 }
 
 func TestTopicRegistry_GetAllServiceMappings(t *testing.T) {
@@ -172,11 +193,10 @@ func TestTopicRegistry_GetAllServiceMappings(t *testing.T) {
 
 	// Should have mappings for all service types
 	expectedServiceTypes := []string{
-		"ingest-logs", "ingest-metrics", "ingest-traces",
-		"segments-logs-ingest", "segments-metrics-ingest", "segments-traces-ingest",
-		"compact-logs", "compact-metrics", "compact-traces",
-		"rollup-metrics",
 		"boxer-ingest-logs", "boxer-ingest-metrics", "boxer-ingest-traces",
+		"worker-ingest-logs", "worker-ingest-metrics", "worker-ingest-traces",
+		"worker-compact-logs", "worker-compact-metrics", "worker-compact-traces",
+		"worker-rollup-metrics",
 		"boxer-compact-logs", "boxer-compact-metrics", "boxer-compact-traces",
 		"boxer-rollup-metrics",
 	}
@@ -250,9 +270,6 @@ func TestTopicRegistry_GetAllTopics(t *testing.T) {
 		"lakerunner.segments.metrics.compact",
 		"lakerunner.segments.traces.compact",
 		"lakerunner.segments.metrics.rollup",
-		"lakerunner.boxer.logs.ingest",
-		"lakerunner.boxer.metrics.ingest",
-		"lakerunner.boxer.traces.ingest",
 		"lakerunner.boxer.logs.compact",
 		"lakerunner.boxer.metrics.compact",
 		"lakerunner.boxer.traces.compact",
@@ -270,9 +287,9 @@ func TestTopicRegistry_ServiceTypeLookups(t *testing.T) {
 	registry := NewTopicRegistry("lakerunner")
 
 	// Test successful lookups
-	topic, found := registry.GetTopicByServiceType("ingest-logs")
-	assert.True(t, found, "Should find topic for ingest-logs service")
-	assert.Equal(t, "lakerunner.objstore.ingest.logs", topic)
+	topic, found := registry.GetTopicByServiceType("worker-ingest-logs")
+	assert.True(t, found, "Should find topic for worker-ingest-logs service")
+	assert.Equal(t, "lakerunner.segments.logs.ingest", topic)
 
 	consumerGroup, found := registry.GetConsumerGroupByServiceType("boxer-rollup-metrics")
 	assert.True(t, found, "Should find consumer group for boxer-rollup-metrics service")
@@ -305,10 +322,10 @@ func TestTopicRegistry_GenerateKafkaSyncConfig(t *testing.T) {
 			},
 		},
 		Topics: map[string]TopicCreationConfig{
-			"ingest-logs": {
+			"worker-ingest-logs": {
 				PartitionCount: testIntPtr(32),
 			},
-			"compact-logs": {
+			"worker-compact-logs": {
 				PartitionCount: testIntPtr(4),
 				Options: map[string]interface{}{
 					"cleanup.policy": "compact,delete",
@@ -344,9 +361,6 @@ func TestTopicRegistry_GenerateKafkaSyncConfig(t *testing.T) {
 		"lakerunner.segments.metrics.compact",
 		"lakerunner.segments.traces.compact",
 		"lakerunner.segments.metrics.rollup",
-		"lakerunner.boxer.logs.ingest",
-		"lakerunner.boxer.metrics.ingest",
-		"lakerunner.boxer.traces.ingest",
 		"lakerunner.boxer.logs.compact",
 		"lakerunner.boxer.metrics.compact",
 		"lakerunner.boxer.traces.compact",
@@ -361,14 +375,14 @@ func TestTopicRegistry_GenerateKafkaSyncConfig(t *testing.T) {
 		topicsByName[topic.Name] = topic
 	}
 
-	// Check ingest-logs has custom partition count
-	ingestLogs := topicsByName["lakerunner.objstore.ingest.logs"]
-	assert.Equal(t, 32, ingestLogs.PartitionCount, "ingest-logs should have custom partition count")
+	// Check worker-ingest-logs has custom partition count
+	ingestLogs := topicsByName["lakerunner.segments.logs.ingest"]
+	assert.Equal(t, 32, ingestLogs.PartitionCount, "worker-ingest-logs should have custom partition count")
 
-	// Check compact-logs has custom partition count and options
+	// Check worker-compact-logs has custom partition count and options
 	compactLogs := topicsByName["lakerunner.segments.logs.compact"]
-	assert.Equal(t, 4, compactLogs.PartitionCount, "compact-logs should have custom partition count")
-	assert.Equal(t, "compact,delete", compactLogs.TopicConfig["cleanup.policy"], "compact-logs should have custom cleanup policy")
+	assert.Equal(t, 4, compactLogs.PartitionCount, "worker-compact-logs should have custom partition count")
+	assert.Equal(t, "compact,delete", compactLogs.TopicConfig["cleanup.policy"], "worker-compact-logs should have custom cleanup policy")
 
 	// Check boxer-compact-metrics has custom options
 	boxerMetrics := topicsByName["lakerunner.boxer.metrics.compact"]
@@ -410,7 +424,7 @@ defaults:
   options:
     "cleanup.policy": "delete"
 workers:
-  ingest-logs:
+  worker-ingest-logs:
     partitionCount: 16
     options:
       "segment.ms": "3600000"
@@ -432,8 +446,8 @@ workers:
 	assert.Equal(t, 8, *override.Defaults.PartitionCount)
 	assert.Equal(t, 1, *override.Defaults.ReplicationFactor)
 	assert.Equal(t, "delete", override.Defaults.Options["cleanup.policy"])
-	assert.Equal(t, 16, *override.Workers["ingest-logs"].PartitionCount)
-	assert.Equal(t, "3600000", override.Workers["ingest-logs"].Options["segment.ms"])
+	assert.Equal(t, 16, *override.Workers["worker-ingest-logs"].PartitionCount)
+	assert.Equal(t, "3600000", override.Workers["worker-ingest-logs"].Options["segment.ms"])
 }
 
 func TestLoadKafkaTopicsOverride_InvalidVersion(t *testing.T) {
@@ -504,7 +518,7 @@ func TestMergeKafkaTopicsOverride(t *testing.T) {
 			},
 		},
 		Topics: map[string]TopicCreationConfig{
-			"ingest-logs": {
+			"worker-ingest-logs": {
 				PartitionCount: testIntPtr(32),
 			},
 		},
@@ -520,10 +534,10 @@ func TestMergeKafkaTopicsOverride(t *testing.T) {
 			},
 		},
 		Workers: map[string]TopicCreationOverrideConfig{
-			"ingest-logs": { // Override existing topic
+			"worker-ingest-logs": { // Override existing topic
 				PartitionCount: testIntPtr(64),
 			},
-			"ingest-metrics": { // Add new topic
+			"worker-ingest-metrics": { // Add new topic
 				PartitionCount: testIntPtr(12),
 			},
 		},
@@ -542,8 +556,8 @@ func TestMergeKafkaTopicsOverride(t *testing.T) {
 	assert.Equal(t, "5242880", result.Defaults.Options["max.message.bytes"]) // Added from override
 
 	// Verify topics merge
-	assert.Equal(t, 64, *result.Topics["ingest-logs"].PartitionCount)    // Overridden
-	assert.Equal(t, 12, *result.Topics["ingest-metrics"].PartitionCount) // Added from override
+	assert.Equal(t, 64, *result.Topics["worker-ingest-logs"].PartitionCount)    // Overridden
+	assert.Equal(t, 12, *result.Topics["worker-ingest-metrics"].PartitionCount) // Added from override
 }
 
 // testIntPtr helper function for tests (renamed to avoid conflict with config.go)

@@ -22,16 +22,14 @@ type ScalingConfig struct {
 	// Default target queue size for services not explicitly configured
 	DefaultTarget int `mapstructure:"default_target" yaml:"default_target"`
 
-	// Service-specific scaling configurations
-	IngestLogs    ServiceScaling `mapstructure:"ingest_logs" yaml:"ingest_logs"`
-	IngestMetrics ServiceScaling `mapstructure:"ingest_metrics" yaml:"ingest_metrics"`
-	IngestTraces  ServiceScaling `mapstructure:"ingest_traces" yaml:"ingest_traces"`
-
-	CompactLogs    ServiceScaling `mapstructure:"compact_logs" yaml:"compact_logs"`
-	CompactMetrics ServiceScaling `mapstructure:"compact_metrics" yaml:"compact_metrics"`
-	CompactTraces  ServiceScaling `mapstructure:"compact_traces" yaml:"compact_traces"`
-
-	RollupMetrics ServiceScaling `mapstructure:"rollup_metrics" yaml:"rollup_metrics"`
+	// Service-specific scaling configurations for workers
+	WorkerIngestLogs     ServiceScaling `mapstructure:"worker_ingest_logs" yaml:"worker_ingest_logs"`
+	WorkerIngestMetrics  ServiceScaling `mapstructure:"worker_ingest_metrics" yaml:"worker_ingest_metrics"`
+	WorkerIngestTraces   ServiceScaling `mapstructure:"worker_ingest_traces" yaml:"worker_ingest_traces"`
+	WorkerCompactLogs    ServiceScaling `mapstructure:"worker_compact_logs" yaml:"worker_compact_logs"`
+	WorkerCompactMetrics ServiceScaling `mapstructure:"worker_compact_metrics" yaml:"worker_compact_metrics"`
+	WorkerCompactTraces  ServiceScaling `mapstructure:"worker_compact_traces" yaml:"worker_compact_traces"`
+	WorkerRollupMetrics  ServiceScaling `mapstructure:"worker_rollup_metrics" yaml:"worker_rollup_metrics"`
 
 	// Boxer services (batch processing)
 	BoxerIngestLogs     ServiceScaling `mapstructure:"boxer_ingest_logs" yaml:"boxer_ingest_logs"`
@@ -55,9 +53,9 @@ func GetDefaultScalingConfig() ScalingConfig {
 	return ScalingConfig{
 		DefaultTarget: 100,
 
-		// Boxer and ingest behave in a similar way, and will often have what seem to be
-		// consumer lag where it is just duplicate avoidance and delayed checkpointing to
-		// prevent losing data.
+		// Boxers delay the ACK until all boxes are emitted that a partition has
+		// added a message to.  This means the numbers will get larger, but this
+		// is normal.  CPU is likely a better scaling here...
 		BoxerIngestLogs:     ServiceScaling{TargetQueueSize: 1500},
 		BoxerIngestMetrics:  ServiceScaling{TargetQueueSize: 1500},
 		BoxerIngestTraces:   ServiceScaling{TargetQueueSize: 1500},
@@ -65,35 +63,35 @@ func GetDefaultScalingConfig() ScalingConfig {
 		BoxerCompactMetrics: ServiceScaling{TargetQueueSize: 1500},
 		BoxerCompactTraces:  ServiceScaling{TargetQueueSize: 1500},
 		BoxerRollupMetrics:  ServiceScaling{TargetQueueSize: 1500},
-		IngestLogs:          ServiceScaling{TargetQueueSize: 500},
-		IngestMetrics:       ServiceScaling{TargetQueueSize: 500},
-		IngestTraces:        ServiceScaling{TargetQueueSize: 500},
 
-		// Compact and rollups are single-work-unit queues.
-		CompactLogs:    ServiceScaling{TargetQueueSize: 100},
-		CompactMetrics: ServiceScaling{TargetQueueSize: 100},
-		CompactTraces:  ServiceScaling{TargetQueueSize: 100},
-		RollupMetrics:  ServiceScaling{TargetQueueSize: 100},
+		// Workers should not fall behind as they are a single-work-item processor.
+		WorkerIngestLogs:     ServiceScaling{TargetQueueSize: 50},
+		WorkerIngestMetrics:  ServiceScaling{TargetQueueSize: 50},
+		WorkerIngestTraces:   ServiceScaling{TargetQueueSize: 50},
+		WorkerCompactLogs:    ServiceScaling{TargetQueueSize: 50},
+		WorkerCompactMetrics: ServiceScaling{TargetQueueSize: 50},
+		WorkerCompactTraces:  ServiceScaling{TargetQueueSize: 50},
+		WorkerRollupMetrics:  ServiceScaling{TargetQueueSize: 50},
 	}
 }
 
 // GetServiceScaling returns the scaling configuration for a specific service type
 func (s *ScalingConfig) GetServiceScaling(serviceType string) (ServiceScaling, error) {
 	switch serviceType {
-	case ServiceTypeIngestLogs:
-		return s.IngestLogs, nil
-	case ServiceTypeIngestMetrics:
-		return s.IngestMetrics, nil
-	case ServiceTypeIngestTraces:
-		return s.IngestTraces, nil
-	case ServiceTypeCompactLogs:
-		return s.CompactLogs, nil
-	case ServiceTypeCompactMetrics:
-		return s.CompactMetrics, nil
-	case ServiceTypeCompactTraces:
-		return s.CompactTraces, nil
-	case ServiceTypeRollupMetrics:
-		return s.RollupMetrics, nil
+	case ServiceTypeWorkerIngestLogs:
+		return s.WorkerIngestLogs, nil
+	case ServiceTypeWorkerIngestMetrics:
+		return s.WorkerIngestMetrics, nil
+	case ServiceTypeWorkerIngestTraces:
+		return s.WorkerIngestTraces, nil
+	case ServiceTypeWorkerCompactLogs:
+		return s.WorkerCompactLogs, nil
+	case ServiceTypeWorkerCompactMetrics:
+		return s.WorkerCompactMetrics, nil
+	case ServiceTypeWorkerCompactTraces:
+		return s.WorkerCompactTraces, nil
+	case ServiceTypeWorkerRollupMetrics:
+		return s.WorkerRollupMetrics, nil
 	case ServiceTypeBoxerIngestLogs:
 		return s.BoxerIngestLogs, nil
 	case ServiceTypeBoxerIngestMetrics:

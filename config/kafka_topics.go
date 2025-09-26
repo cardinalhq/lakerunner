@@ -72,20 +72,19 @@ func NewTopicRegistry(prefix string) *TopicRegistry {
 		specs:  make(map[string]TopicSpec),
 	}
 
-	// Initialize all topic specifications with exact current names/groups
-	tr.registerTopic(TopicObjstoreIngestLogs, "objstore.ingest.logs", "ingest.logs", ServiceTypeIngestLogs)
-	tr.registerTopic(TopicObjstoreIngestMetrics, "objstore.ingest.metrics", "ingest.metrics", ServiceTypeIngestMetrics)
-	tr.registerTopic(TopicObjstoreIngestTraces, "objstore.ingest.traces", "ingest.traces", ServiceTypeIngestTraces)
-	tr.registerTopic(TopicSegmentsLogsIngest, "segments.logs.ingest", "segments.logs.ingest", ServiceTypeSegmentsLogsIngest)
-	tr.registerTopic(TopicSegmentsMetricsIngest, "segments.metrics.ingest", "segments.metrics.ingest", ServiceTypeSegmentsMetricsIngest)
-	tr.registerTopic(TopicSegmentsTracesIngest, "segments.traces.ingest", "segments.traces.ingest", ServiceTypeSegmentsTracesIngest)
-	tr.registerTopic(TopicSegmentsLogsCompact, "segments.logs.compact", "compact.logs", ServiceTypeCompactLogs)
-	tr.registerTopic(TopicSegmentsMetricsCompact, "segments.metrics.compact", "compact.metrics", ServiceTypeCompactMetrics)
-	tr.registerTopic(TopicSegmentsTracesCompact, "segments.traces.compact", "compact.traces", ServiceTypeCompactTraces)
-	tr.registerTopic(TopicSegmentsMetricsRollup, "segments.metrics.rollup", "rollup.metrics", ServiceTypeRollupMetrics)
-	tr.registerTopic(TopicBoxerLogsIngest, "boxer.logs.ingest", "boxer.logs.ingest", ServiceTypeBoxerIngestLogs)
-	tr.registerTopic(TopicBoxerMetricsIngest, "boxer.metrics.ingest", "boxer.metrics.ingest", ServiceTypeBoxerIngestMetrics)
-	tr.registerTopic(TopicBoxerTracesIngest, "boxer.traces.ingest", "boxer.traces.ingest", ServiceTypeBoxerIngestTraces)
+	// Workers read from the boxed items, and process them as a single unit.
+	tr.registerTopic(TopicSegmentsLogsIngest, "segments.logs.ingest", "segments.logs.ingest", ServiceTypeWorkerIngestLogs)
+	tr.registerTopic(TopicSegmentsMetricsIngest, "segments.metrics.ingest", "segments.metrics.ingest", ServiceTypeWorkerIngestMetrics)
+	tr.registerTopic(TopicSegmentsTracesIngest, "segments.traces.ingest", "segments.traces.ingest", ServiceTypeWorkerIngestTraces)
+	tr.registerTopic(TopicSegmentsLogsCompact, "segments.logs.compact", "compact.logs", ServiceTypeWorkerCompactLogs)
+	tr.registerTopic(TopicSegmentsMetricsCompact, "segments.metrics.compact", "compact.metrics", ServiceTypeWorkerCompactMetrics)
+	tr.registerTopic(TopicSegmentsTracesCompact, "segments.traces.compact", "compact.traces", ServiceTypeWorkerCompactTraces)
+	tr.registerTopic(TopicSegmentsMetricsRollup, "segments.metrics.rollup", "rollup.metrics", ServiceTypeWorkerRollupMetrics)
+
+	// Boxer-ingest services read from objstore topics (raw events from pubsub)
+	tr.registerTopic(TopicObjstoreIngestLogs, "objstore.ingest.logs", "boxer.logs.ingest", ServiceTypeBoxerIngestLogs)
+	tr.registerTopic(TopicObjstoreIngestMetrics, "objstore.ingest.metrics", "boxer.metrics.ingest", ServiceTypeBoxerIngestMetrics)
+	tr.registerTopic(TopicObjstoreIngestTraces, "objstore.ingest.traces", "boxer.traces.ingest", ServiceTypeBoxerIngestTraces)
 	tr.registerTopic(TopicBoxerLogsCompact, "boxer.logs.compact", "boxer.logs.compact", ServiceTypeBoxerCompactLogs)
 	tr.registerTopic(TopicBoxerMetricsCompact, "boxer.metrics.compact", "boxer.metrics.compact", ServiceTypeBoxerCompactMetrics)
 	tr.registerTopic(TopicBoxerTracesCompact, "boxer.traces.compact", "boxer.traces.compact", ServiceTypeBoxerCompactTraces)

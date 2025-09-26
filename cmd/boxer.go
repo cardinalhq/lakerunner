@@ -151,25 +151,25 @@ func runBoxer(_ *cobra.Command, _ []string) error {
 func getSelectedTasks() []string {
 	var tasks []string
 	if ingestLogs {
-		tasks = append(tasks, config.TaskIngestLogs)
+		tasks = append(tasks, config.BoxerTaskIngestLogs)
 	}
 	if ingestMetrics {
-		tasks = append(tasks, config.TaskIngestMetrics)
+		tasks = append(tasks, config.BoxerTaskIngestMetrics)
 	}
 	if ingestTraces {
-		tasks = append(tasks, config.TaskIngestTraces)
+		tasks = append(tasks, config.BoxerTaskIngestTraces)
 	}
 	if compactLogs {
-		tasks = append(tasks, config.TaskCompactLogs)
+		tasks = append(tasks, config.BoxerTaskCompactLogs)
 	}
 	if compactMetrics {
-		tasks = append(tasks, config.TaskCompactMetrics)
+		tasks = append(tasks, config.BoxerTaskCompactMetrics)
 	}
 	if compactTraces {
-		tasks = append(tasks, config.TaskCompactTraces)
+		tasks = append(tasks, config.BoxerTaskCompactTraces)
 	}
 	if rollupMetrics {
-		tasks = append(tasks, config.TaskRollupMetrics)
+		tasks = append(tasks, config.BoxerTaskRollupMetrics)
 	}
 	return tasks
 }
