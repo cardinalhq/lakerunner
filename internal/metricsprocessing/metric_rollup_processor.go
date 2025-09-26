@@ -215,7 +215,6 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			continue
 		}
 
-		// Only include segments not already rolled up
 		if !segment.Rolledup {
 			segments = append(segments, segment)
 		}
@@ -265,7 +264,6 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		return nil
 	}
 
-	// Create simplified Kafka commit data
 	kafkaCommitData := &KafkaCommitData{
 		Topic:         r.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsRollup),
 		ConsumerGroup: r.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsRollup),

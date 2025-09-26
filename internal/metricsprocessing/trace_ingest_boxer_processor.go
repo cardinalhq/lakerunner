@@ -91,9 +91,6 @@ func (b *TraceIngestBoxerProcessor) Process(ctx context.Context, group *accumula
 		slog.String("topic", ingestionTopic),
 		slog.Int("bundledMessages", len(bundle.Messages)))
 
-	// Note: Offset tracking happens automatically when segments are inserted
-	// No manual offset commit needed here
-
 	return nil
 }
 

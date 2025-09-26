@@ -91,7 +91,6 @@ func (c *MetricRollupConsumer) Run(ctx context.Context) error {
 			}
 		}
 
-		// After successful processing, cleanup old offset tracking records
 		CleanupCommittedOffsets(handlerCtx, c.store, c.topic, c.consumerGroup, msgs)
 
 		return nil

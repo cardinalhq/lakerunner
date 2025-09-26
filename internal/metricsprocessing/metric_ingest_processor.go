@@ -216,13 +216,11 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 		return nil
 	}
 
-	// Step 4: Create unified reader pipeline
 	finalReader, err := p.createUnifiedReader(ctx, readers)
 	if err != nil {
 		return fmt.Errorf("failed to create unified reader: %w", err)
 	}
 
-	// Step 5-8: Process rows with time-based binning
 	timeBins, err := p.processRowsWithTimeBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
 		return fmt.Errorf("failed to process rows: %w", err)
@@ -285,11 +283,9 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 		rollupTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerMetricsRollup)
 
 		for _, segParams := range segmentParams {
-			// Calculate rollup interval start time for consistent key generation
 			rollupStartTime := (segParams.StartTs / int64(segParams.FrequencyMs)) * int64(segParams.FrequencyMs)
 			segmentStartTime := time.Unix(rollupStartTime/1000, (rollupStartTime%1000)*1000000)
 
-			// Create compaction message
 			compactionNotification := messages.MetricCompactionMessage{
 				Version:        1,
 				OrganizationID: segParams.OrganizationID,
@@ -302,7 +298,6 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 				QueuedAt:       time.Now(),
 			}
 
-			// Marshal compaction message
 			compactionMsgBytes, err := compactionNotification.Marshal()
 			if err != nil {
 				return fmt.Errorf("failed to marshal compaction notification: %w", err)
@@ -313,7 +308,6 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 				Value: compactionMsgBytes,
 			}
 
-			// Send to compaction topic
 			if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
 				return fmt.Errorf("failed to send compaction notification to Kafka: %w", err)
 			} else {
@@ -349,7 +343,6 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 					Value: rollupMsgBytes,
 				}
 
-				// Send to rollup topic only if rollup message was created
 				if err := p.kafkaProducer.Send(criticalCtx, rollupTopic, rollupMessage); err != nil {
 					return fmt.Errorf("failed to send rollup notification to Kafka: %w", err)
 				} else {
@@ -361,14 +354,12 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 		ll.Warn("No Kafka producer provided - segment notifications will not be sent")
 	}
 
-	// Calculate output metrics for telemetry
 	var totalOutputRecords, totalOutputSize int64
 	for _, params := range segmentParams {
 		totalOutputRecords += params.RecordCount
 		totalOutputSize += params.FileSize
 	}
 
-	// Report telemetry - ingestion transforms files into segments
 	reportTelemetry(ctx, "metrics", "ingestion", int64(len(msgs)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Metric ingestion completed successfully",
@@ -386,14 +377,14 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
-	// Step 1: Create proto reader for .binpb or .binpb.gz files
-	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{ExemplarProcessor: p.exemplarProcessor,
-		OrgID: orgID})
+	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{
+		ExemplarProcessor: p.exemplarProcessor,
+		OrgID:             orgID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proto reader: %w", err)
 	}
 
-	// Step 2: Add translation (adds TID and truncates timestamp)
 	translator := &MetricTranslator{
 		OrgID:    orgID,
 		Bucket:   bucket,
@@ -405,7 +396,6 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}
 
-	// Step 3: Add disk-based sorting (after translation so TID is available)
 	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 	reader, err = filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 	if err != nil {
@@ -469,6 +459,7 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 		if batch != nil {
 			// Process each row in the batch
 			for i := 0; i < batch.Len(); i++ {
+				// Peek at the row to check timestamp before taking it
 				row := batch.Get(i)
 				if row == nil {
 					continue
@@ -492,12 +483,12 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 					continue
 				}
 
-				// Create a single-row batch for this bin
-				singleRowBatch := pipeline.GetBatch()
-				newRow := singleRowBatch.AddRow()
-				for k, v := range row {
-					newRow[k] = v
+				takenRow := batch.TakeRow(i)
+				if takenRow == nil {
+					continue
 				}
+				singleRowBatch := pipeline.GetBatch()
+				singleRowBatch.AppendRow(takenRow)
 
 				// Write to the bin's writer
 				if err := bin.Writer.WriteBatch(singleRowBatch); err != nil {
