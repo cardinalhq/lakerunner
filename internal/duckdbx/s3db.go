@@ -347,6 +347,28 @@ func (p *connectionPool) release(pc *pooledConn) {
 
 // newConnLocal creates a new connection for local database queries (no S3 authentication).
 func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) {
+	return p.newConn(ctx)
+}
+
+// newConnForBucket creates a new connection configured with S3 credentials for the specified bucket.
+func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, endpoint string) (*pooledConn, error) {
+	pc, err := p.newConn(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := seedCloudSecretFromEnv(ctx, pc.conn, bucket, region, endpoint); err != nil {
+		_ = pc.conn.Close()
+		_ = pc.db.Close()
+		return nil, err
+	}
+
+	return pc, nil
+}
+
+// newConn creates a new pooled connection with standard configuration.
+// This is the common implementation used by both newConnLocal and newConnForBucket.
+func (p *connectionPool) newConn(ctx context.Context) (*pooledConn, error) {
 	// Ensure extensions are installed and database-wide settings are applied (once)
 	if err := p.parent.ensureSetup(ctx); err != nil {
 		return nil, err
@@ -398,66 +420,6 @@ func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) 
 	return &pooledConn{
 		conn: conn,
 		db:   db,
-	}, nil
-}
-
-// newConnForBucket creates a new connection configured with S3 credentials for the specified bucket.
-func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, endpoint string) (*pooledConn, error) {
-	// Ensure extensions are installed and database-wide settings are applied (once)
-	if err := p.parent.ensureSetup(ctx); err != nil {
-		return nil, err
-	}
-
-	// Create a connector with a boot function that runs on each new physical connection
-	// Boot function handles ONLY per-connection setup, not bucket-specific credentials
-	connector, err := duckdb.NewConnector(p.parent.dbPath, func(execer driver.ExecerContext) error {
-		// FIRST: Disable automatic extension loading/downloading before anything else
-		// This prevents Azure and other extensions from trying to auto-install
-		if _, err := execer.ExecContext(ctx, "SET autoinstall_known_extensions = false;", nil); err != nil {
-			slog.Warn("Failed to disable automatic extension installation", "error", err)
-		}
-		if _, err := execer.ExecContext(ctx, "SET autoload_known_extensions = false;", nil); err != nil {
-			slog.Warn("Failed to disable automatic extension loading", "error", err)
-		}
-
-		// DuckDB's memory_limit is global but new connections don't inherit it
-		if p.parent.memoryLimitMB > 0 {
-			if _, err := execer.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", p.parent.memoryLimitMB), nil); err != nil {
-				slog.Warn("Failed to set memory_limit on connection", "error", err)
-			}
-		}
-
-		// Load extensions for this connection - they must be loaded per-connection
-		if err := p.parent.loadExtensionsWithExecer(ctx, execer); err != nil {
-			return fmt.Errorf("load extensions for connection: %w", err)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create connector: %w", err)
-	}
-
-	// Open a database handle using the connector, which will take ownership of it
-	db := sql.OpenDB(connector)
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-
-	if err := seedCloudSecretFromEnv(ctx, conn, bucket, region, endpoint); err != nil {
-		_ = conn.Close()
-		_ = db.Close()
-		return nil, err
-	}
-
-	return &pooledConn{
-		db:   db,
-		conn: conn,
 	}, nil
 }
 
