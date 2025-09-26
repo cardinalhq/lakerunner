@@ -438,10 +438,36 @@ func (q *QuerierService) handleSpansQuery(w http.ResponseWriter, r *http.Request
 	}
 }
 
+func (q *QuerierService) handleListServices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "only GET method is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	orgUUID, ok := GetOrgIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "organization ID not found in context", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+	services, err := q.mdb.ListServiceNames(ctx, orgUUID)
+	if err != nil {
+		slog.Error("ListServiceNames failed", slog.Any("error", err))
+		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string][]string{"services": services})
+}
+
 func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/v1/services", q.apiKeyMiddleware(q.handleListServices))
 
 	mux.HandleFunc("/api/v1/metrics/metadata", q.apiKeyMiddleware(q.handleListPromQLMetricsMetadata))
 	mux.HandleFunc("/api/v1/metrics/tags", q.apiKeyMiddleware(q.handleListPromQLTags))
