@@ -96,5 +96,5 @@ func (b *MetricIngestBoxerProcessor) Process(ctx context.Context, group *accumul
 
 // GetTargetRecordCount returns the target file size limit for metric ingestion batching
 func (b *MetricIngestBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
-	return 20 * 1024 * 1024 // 20MB file size limit (metrics typically larger than logs)
+	return 5 * 1024 * 1024 // 5MB file size limit
 }
