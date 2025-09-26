@@ -82,7 +82,6 @@ type pooledConn struct {
 // s3DBConfig holds configuration options for S3DB
 type s3DBConfig struct {
 	dbPath        *string
-	inMemory      bool
 	metricsPeriod time.Duration
 	metricsCtx    context.Context
 }
@@ -91,22 +90,13 @@ type s3DBConfig struct {
 type S3DBOption func(*s3DBConfig)
 
 // WithDatabasePath sets the database path for S3DB.
-// The path must not be empty - use WithInMemory() for in-memory databases.
+// The path must not be empty.
 func WithDatabasePath(path string) S3DBOption {
 	return func(cfg *s3DBConfig) {
 		if path == "" {
-			panic("WithDatabasePath: path must not be empty, use WithInMemory() for in-memory databases")
+			panic("WithDatabasePath: path must not be empty")
 		}
 		cfg.dbPath = &path
-	}
-}
-
-// WithInMemory creates in-memory databases (isolated per connection, not pooled).
-func WithInMemory() S3DBOption {
-	return func(cfg *s3DBConfig) {
-		cfg.inMemory = true
-		empty := ""
-		cfg.dbPath = &empty
 	}
 }
 
@@ -132,7 +122,6 @@ func WithS3DBMetricsContext(ctx context.Context) S3DBOption {
 // NewS3DB creates a new S3DB instance with a shared database.
 // Database location behavior:
 //   - No options provided: creates a temporary file database (persistent across connections)
-//   - WithInMemory(): creates in-memory databases (isolated per connection, not pooled)
 //   - WithDatabasePath("/path/to/db"): uses specified file database (persistent across connections)
 func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 	cfg := &s3DBConfig{}
@@ -141,9 +130,7 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 	}
 
 	var dbPath string
-	if cfg.inMemory {
-		dbPath = ""
-	} else if cfg.dbPath != nil {
+	if cfg.dbPath != nil {
 		dbPath = *cfg.dbPath
 	} else {
 		// No options provided - create a temp file
@@ -164,16 +151,9 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 	// All connections share the same database, so threads setting applies to the shared instance
 	threads := envIntClamp("DUCKDB_THREADS", total, 1, 256)
 
-	dbType := "file"
-	displayPath := dbPath
-	if dbPath == "" {
-		dbType = "memory"
-		displayPath = ":memory:"
-	}
-
 	slog.Info("duckdbx: single shared database",
-		"type", dbType,
-		"dbPath", displayPath,
+		"type", "file",
+		"dbPath", dbPath,
 		"memoryLimitMB", memoryMB,
 		"tempDir", os.Getenv("DUCKDB_TEMP_DIRECTORY"),
 		"maxTempSize", os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
@@ -224,6 +204,12 @@ func (s *S3DB) Close() error {
 		_ = os.RemoveAll(dbDir)
 	}
 	return nil
+}
+
+// GetDatabasePath returns the path to the database file.
+// This can be useful for cleanup or debugging purposes.
+func (s *S3DB) GetDatabasePath() string {
+	return s.dbPath
 }
 
 // GetConnection returns a connection for local database queries (no S3 authentication).
@@ -345,17 +331,7 @@ func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, e
 }
 
 func (p *connectionPool) release(pc *pooledConn) {
-	// For in-memory databases, don't return to pool - just close
-	if p.parent.dbPath == "" {
-		_ = pc.conn.Close()
-		_ = pc.db.Close()
-		p.mu.Lock()
-		p.cur--
-		p.mu.Unlock()
-		return
-	}
-
-	// For file-based databases, return to pool
+	// Return to pool
 	select {
 	case p.ch <- pc:
 		// returned to pool

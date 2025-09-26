@@ -60,11 +60,17 @@ func getVersionCmd() *cobra.Command {
 
 // runExtensions lists DuckDB extensions and their status.
 func runExtensions(ctx context.Context) error {
-	s3db, err := duckdbx.NewS3DB(duckdbx.WithInMemory())
+	s3db, err := duckdbx.NewS3DB()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = s3db.Close() }()
+	defer func() {
+		_ = s3db.Close()
+		// Clean up the temp database file
+		if dbPath := s3db.GetDatabasePath(); dbPath != "" {
+			_ = os.RemoveAll(filepath.Dir(dbPath))
+		}
+	}()
 
 	c, release, err := s3db.GetConnection(ctx)
 	if err != nil {
@@ -210,12 +216,18 @@ func runExtensions(ctx context.Context) error {
 
 // runVersion checks DuckDB version and validates it matches expected version.
 func runVersion(ctx context.Context) error {
-	// Use in-memory S3DB pool
-	s3db, err := duckdbx.NewS3DB(duckdbx.WithInMemory())
+	// Use temporary file-based S3DB pool
+	s3db, err := duckdbx.NewS3DB()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = s3db.Close() }()
+	defer func() {
+		_ = s3db.Close()
+		// Clean up the temp database file
+		if dbPath := s3db.GetDatabasePath(); dbPath != "" {
+			_ = os.RemoveAll(filepath.Dir(dbPath))
+		}
+	}()
 
 	c, release, err := s3db.GetConnection(ctx)
 	if err != nil {
