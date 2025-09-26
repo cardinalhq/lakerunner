@@ -53,7 +53,7 @@ func NewTraceIngestBoxerConsumer(
 	// Configure the consumer - consuming from objstore trace ingestion topic
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  registry.GetConsumerGroup(config.TopicBoxerTracesIngest),
+		ConsumerName:  registry.GetConsumerGroup(config.TopicObjstoreIngestTraces),
 		Topic:         registry.GetTopic(config.TopicObjstoreIngestTraces),
 		ConsumerGroup: registry.GetConsumerGroup(config.TopicObjstoreIngestTraces),
 		FlushInterval: flushInterval,

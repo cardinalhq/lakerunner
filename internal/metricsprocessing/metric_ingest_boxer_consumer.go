@@ -53,7 +53,7 @@ func NewMetricIngestBoxerConsumer(
 	// Configure the consumer - consuming from objstore ingestion topic
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  registry.GetConsumerGroup(config.TopicBoxerMetricsIngest),
+		ConsumerName:  registry.GetConsumerGroup(config.TopicObjstoreIngestMetrics),
 		Topic:         registry.GetTopic(config.TopicObjstoreIngestMetrics),
 		ConsumerGroup: registry.GetConsumerGroup(config.TopicObjstoreIngestMetrics),
 		FlushInterval: flushInterval,

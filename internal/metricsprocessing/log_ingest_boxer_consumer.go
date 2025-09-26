@@ -53,7 +53,7 @@ func NewLogIngestBoxerConsumer(
 	// Configure the consumer - consuming from objstore log ingestion topic
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  registry.GetConsumerGroup(config.TopicBoxerLogsIngest),
+		ConsumerName:  registry.GetConsumerGroup(config.TopicObjstoreIngestLogs),
 		Topic:         registry.GetTopic(config.TopicObjstoreIngestLogs),
 		ConsumerGroup: registry.GetConsumerGroup(config.TopicObjstoreIngestLogs),
 		FlushInterval: flushInterval,
