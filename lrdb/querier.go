@@ -48,6 +48,7 @@ type Querier interface {
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]interface{}, error)
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
+	ListServiceMetrics(ctx context.Context, arg ListServiceMetricsParams) ([]string, error)
 	ListServiceNames(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error)
 	ListTraceSegmentsForQuery(ctx context.Context, arg ListTraceSegmentsForQueryParams) ([]ListTraceSegmentsForQueryRow, error)
