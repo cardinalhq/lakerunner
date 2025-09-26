@@ -80,6 +80,10 @@ func (c *LogIngestConsumer) Run(ctx context.Context) error {
 				return err
 			}
 		}
+
+		// After successful processing, cleanup old offset tracking records
+		CleanupCommittedOffsets(ctx, c.store, c.topic, c.consumerGroup, msgs)
+
 		return nil
 	}
 
