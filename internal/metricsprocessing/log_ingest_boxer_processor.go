@@ -93,7 +93,7 @@ func (b *LogIngestBoxerProcessor) Process(ctx context.Context, group *accumulati
 	return nil
 }
 
-// GetTargetRecordCount returns the estimated record count for log ingestion
+// GetTargetRecordCount returns the target file size limit for log ingestion batching
 func (b *LogIngestBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
-	return b.store.GetLogEstimate(ctx, groupingKey.OrganizationID)
+	return 5 * 1024 * 1024 // 5MB file size limit
 }

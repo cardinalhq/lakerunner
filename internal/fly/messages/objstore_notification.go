@@ -16,6 +16,7 @@ package messages
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,8 +58,23 @@ func (m *ObjStoreNotificationMessage) GroupingKey() any {
 	}
 }
 
-// RecordCount returns the file size for batching purposes (20MB limit)
+// RecordCount returns the adjusted file size for batching purposes
+// - .gz files: actual size
+// - Non-gz JSON or binpb: 10x smaller than actual size (since they're uncompressed)
+// - Parquet and other files: actual size
 func (m *ObjStoreNotificationMessage) RecordCount() int64 {
+	// Check if file is compressed (.gz)
+	if strings.HasSuffix(m.ObjectID, ".gz") {
+		return m.FileSize
+	}
+
+	// Check if file is uncompressed JSON or binpb
+	if strings.HasSuffix(m.ObjectID, ".json") || strings.HasSuffix(m.ObjectID, ".binpb") {
+		// These will expand significantly when processed, so use 10x smaller threshold
+		return m.FileSize / 10
+	}
+
+	// Parquet and other files use actual size
 	return m.FileSize
 }
 
