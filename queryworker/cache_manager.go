@@ -373,15 +373,13 @@ func streamFromS3[T promql.Timestamped](
 		out := make(chan T, ChannelBufferSize)
 		outs = append(outs, out)
 
-		urisCopy := append([]string(nil), uris...) // capture loop var
-
-		go func(out chan<- T) {
+		go func(out chan<- T, batch []string) {
 			defer close(out)
 
 			// Build read_parquet source
-			quoted := make([]string, len(urisCopy))
-			for i := range urisCopy {
-				quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
+			quoted := make([]string, len(batch))
+			for i := range batch {
+				quoted[i] = "'" + escapeSQL(batch[i]) + "'"
 			}
 			array := "[" + strings.Join(quoted, ", ") + "]"
 			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
@@ -433,7 +431,7 @@ func streamFromS3[T promql.Timestamped](
 			if err := rows.Err(); err != nil {
 				slog.Error("Rows iteration error", slog.Any("error", err))
 			}
-		}(out)
+		}(out, uris)
 	}
 
 	// enqueue is done in EvaluatePushDown(...) after ids/paths are known

@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,6 +50,53 @@ type WorkerService struct {
 	LogsGlobSize         int
 	TracesGlobSize       int
 	s3Pool               *duckdbx.S3DB // shared pool for all queries
+}
+
+type scanBuffers struct {
+	vals []any
+	ptrs []any
+}
+
+var scanBufferPool = sync.Pool{
+	New: func() any {
+		return &scanBuffers{
+			vals: make([]any, 0, 32),
+			ptrs: make([]any, 0, 32),
+		}
+	},
+}
+
+func acquireScanBuffers(n int) (*scanBuffers, func()) {
+	buf := scanBufferPool.Get().(*scanBuffers)
+
+	if cap(buf.vals) < n {
+		buf.vals = make([]any, n)
+	} else {
+		buf.vals = buf.vals[:n]
+	}
+
+	if cap(buf.ptrs) < n {
+		buf.ptrs = make([]any, n)
+	} else {
+		buf.ptrs = buf.ptrs[:n]
+	}
+
+	for i := 0; i < n; i++ {
+		buf.vals[i] = nil
+		buf.ptrs[i] = &buf.vals[i]
+	}
+
+	return buf, func() {
+		for i := range buf.vals {
+			buf.vals[i] = nil
+		}
+		for i := range buf.ptrs {
+			buf.ptrs[i] = nil
+		}
+		buf.vals = buf.vals[:0]
+		buf.ptrs = buf.ptrs[:0]
+		scanBufferPool.Put(buf)
+	}
 }
 
 func NewWorkerService(
@@ -157,20 +205,18 @@ func NewWorkerService(
 }
 
 func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
-	for i := range vals {
-		ptrs[i] = &vals[i]
-	}
+	buf, release := acquireScanBuffers(len(cols))
+	defer release()
 
-	if err := row.Scan(ptrs...); err != nil {
+	if err := row.Scan(buf.ptrs...); err != nil {
 		slog.Error("failed to scan row", "err", err)
 		return promql.SketchInput{}, fmt.Errorf("failed to scan row: %w", err)
 	}
 
 	var ts int64
-	agg := map[string]float64{}
-	tags := map[string]any{}
+	var agg map[string]float64
+	vals := buf.vals
+	tags := make(map[string]any, len(request.BaseExpr.Matchers)+len(cols)+1)
 
 	tags["name"] = request.BaseExpr.Metric
 	for _, matcher := range request.BaseExpr.Matchers {
@@ -198,6 +244,9 @@ func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql
 				continue
 			}
 			if f, ok := toFloat64(vals[i]); ok {
+				if agg == nil {
+					agg = make(map[string]float64, 4)
+				}
 				agg[col] = f
 			}
 		default:
@@ -221,15 +270,12 @@ func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql
 }
 
 func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
-	for i := range vals {
-		ptrs[i] = &vals[i]
-	}
+	buf, release := acquireScanBuffers(len(cols))
+	defer release()
 
-	tags := map[string]any{}
+	tags := make(map[string]any, len(cols))
 
-	if err := row.Scan(ptrs...); err != nil {
+	if err := row.Scan(buf.ptrs...); err != nil {
 		slog.Error("failed to scan row", "err", err)
 		return promql.Exemplar{}, fmt.Errorf("failed to scan row: %w", err)
 	}
@@ -238,6 +284,7 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 
 	exemplar := promql.Exemplar{}
 
+	vals := buf.vals
 	for i, col := range cols {
 		switch col {
 		case "chq_timestamp":
@@ -254,18 +301,16 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 }
 
 func tagValuesMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
-	for i := range vals {
-		ptrs[i] = &vals[i]
-	}
+	buf, release := acquireScanBuffers(len(cols))
+	defer release()
 
-	if err := row.Scan(ptrs...); err != nil {
+	if err := row.Scan(buf.ptrs...); err != nil {
 		slog.Error("failed to scan row", "err", err)
 		return promql.TagValue{}, fmt.Errorf("failed to scan row: %w", err)
 	}
 
 	tagValue := promql.TagValue{}
+	vals := buf.vals
 	for i, col := range cols {
 		switch col {
 		case "tag_value":
