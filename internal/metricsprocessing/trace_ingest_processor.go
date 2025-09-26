@@ -517,7 +517,6 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 		if batch != nil {
 			// Process each row in the batch
 			for i := 0; i < batch.Len(); i++ {
-				// Peek at the row to check timestamp before taking it
 				row := batch.Get(i)
 				if row == nil {
 					continue
