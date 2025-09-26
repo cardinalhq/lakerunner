@@ -137,7 +137,6 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 		activeSegments = append(activeSegments, segment)
 	}
 
-	// Mark large segments as compacted if any
 	if len(segmentsToMarkCompacted) > 0 {
 		if err := p.markLogSegmentsAsCompacted(ctx, segmentsToMarkCompacted, key); err != nil {
 			ll.Warn("Failed to mark segments as compacted", slog.Any("error", err))
@@ -185,7 +184,6 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 		},
 	}
 
-	// Atomic operation - mark old as compacted, insert new, update Kafka offsets
 	if err := p.atomicLogDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, key); err != nil {
 		ll.Error("Failed to perform atomic database update, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),

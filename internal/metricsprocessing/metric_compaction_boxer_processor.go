@@ -93,9 +93,6 @@ func (b *MetricCompactionBoxerProcessor) Process(ctx context.Context, group *acc
 		slog.String("topic", compactionTopic),
 		slog.Int("bundledMessages", len(bundle.Messages)))
 
-	// Note: Offset tracking happens automatically when segments are inserted/compacted
-	// No manual offset commit needed here
-
 	return nil
 }
 

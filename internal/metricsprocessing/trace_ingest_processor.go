@@ -494,10 +494,8 @@ func (p *TraceIngestProcessor) createUnifiedTraceReader(ctx context.Context, rea
 func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*TraceDateintBin, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Get RPF estimate for this org/instance - use trace estimator logic
 	rpfEstimate := p.store.GetTraceEstimate(ctx, storageProfile.OrganizationID)
 
-	// Create dateint bin manager
 	binManager := &TraceDateintBinManager{
 		bins:        make(map[int32]*TraceDateintBin),
 		tmpDir:      tmpDir,
@@ -519,6 +517,7 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 		if batch != nil {
 			// Process each row in the batch
 			for i := 0; i < batch.Len(); i++ {
+				// Peek at the row to check timestamp before taking it
 				row := batch.Get(i)
 				if row == nil {
 					continue
@@ -531,22 +530,22 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 					continue
 				}
 
-				// Group traces by dateint only - no time aggregation
 				dateint, _ := helpers.MSToDateintHour(ts)
-
-				// Get or create dateint bin
 				bin, err := binManager.getOrCreateBin(dateint)
 				if err != nil {
 					ll.Error("Failed to get/create dateint bin", slog.Int("dateint", int(dateint)), slog.Any("error", err))
 					continue
 				}
 
-				// Create a single-row batch for this bin
-				singleRowBatch := pipeline.GetBatch()
-				newRow := singleRowBatch.AddRow()
-				for k, v := range row {
-					newRow[k] = v
+				// Now take the row to avoid copying
+				takenRow := batch.TakeRow(i)
+				if takenRow == nil {
+					continue
 				}
+
+				// Create a single-row batch with the taken row
+				singleRowBatch := pipeline.GetBatch()
+				singleRowBatch.AppendRow(takenRow)
 
 				// Write to the bin's writer
 				if err := bin.Writer.WriteBatch(singleRowBatch); err != nil {

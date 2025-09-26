@@ -71,7 +71,6 @@ func (b *LogIngestBoxerProcessor) Process(ctx context.Context, group *accumulati
 		slog.Int("instanceNum", int(group.Key.InstanceNum)),
 		slog.Int("messageCount", len(bundle.Messages)))
 
-	// Marshal the bundle
 	bundleBytes, err := bundle.Marshal()
 	if err != nil {
 		return fmt.Errorf("failed to marshal log ingest bundle: %w", err)
@@ -90,9 +89,6 @@ func (b *LogIngestBoxerProcessor) Process(ctx context.Context, group *accumulati
 	ll.Info("Successfully sent log ingestion bundle to processing topic",
 		slog.String("topic", ingestionTopic),
 		slog.Int("bundledMessages", len(bundle.Messages)))
-
-	// Note: Offset tracking happens automatically when segments are inserted
-	// No manual offset commit needed here
 
 	return nil
 }

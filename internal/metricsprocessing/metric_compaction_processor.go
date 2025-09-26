@@ -349,7 +349,6 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		activeSegments = append(activeSegments, segment)
 	}
 
-	// Mark large segments as compacted if any
 	if len(segmentsToMarkCompacted) > 0 {
 		if err := p.markSegmentsAsCompacted(ctx, segmentsToMarkCompacted, key); err != nil {
 			ll.Warn("Failed to mark segments as compacted", slog.Any("error", err))
@@ -399,7 +398,6 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		},
 	}
 
-	// Atomic operation - mark old as compacted, insert new, update Kafka offsets
 	if err := p.atomicDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, key); err != nil {
 		ll.Error("Failed to perform atomic database update for metric compaction, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),

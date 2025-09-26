@@ -81,7 +81,6 @@ func (c *TraceIngestConsumer) Run(ctx context.Context) error {
 			}
 		}
 
-		// After successful processing, cleanup old offset tracking records
 		CleanupCommittedOffsets(ctx, c.store, c.topic, c.consumerGroup, msgs)
 
 		return nil

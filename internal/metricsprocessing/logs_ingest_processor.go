@@ -402,31 +402,26 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 					continue
 				}
 
-				// Extract timestamp to determine which bin this row belongs to
 				ts, ok := row[wkk.RowKeyCTimestamp].(int64)
 				if !ok {
 					ll.Warn("Row missing timestamp, skipping", slog.Int("rowIndex", i))
 					continue
 				}
 
-				// Group logs by dateint only - no time aggregation
 				dateint, _ := helpers.MSToDateintHour(ts)
-
-				// Get or create dateint bin
 				bin, err := binManager.getOrCreateBin(ctx, dateint)
 				if err != nil {
 					ll.Error("Failed to get/create dateint bin", slog.Int("dateint", int(dateint)), slog.Any("error", err))
 					continue
 				}
 
-				// Create a single-row batch for this bin
-				singleRowBatch := pipeline.GetBatch()
-				newRow := singleRowBatch.AddRow()
-				for k, v := range row {
-					newRow[k] = v
+				takenRow := batch.TakeRow(i)
+				if takenRow == nil {
+					continue
 				}
+				singleRowBatch := pipeline.GetBatch()
+				singleRowBatch.AppendRow(takenRow)
 
-				// Write to the bin's writer
 				if err := bin.Writer.WriteBatch(singleRowBatch); err != nil {
 					ll.Error("Failed to write row to dateint bin",
 						slog.Int("dateint", int(dateint)),
