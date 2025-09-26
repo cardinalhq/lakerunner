@@ -66,6 +66,8 @@ Many metrics include these standardized attributes:
 | `lakerunner.duckdb.memory.total_blocks` | DuckDB total blocks | 1 | - |
 | `lakerunner.duckdb.memory.used_blocks` | DuckDB used blocks | 1 | - |
 | `lakerunner.duckdb.memory.wal_size` | DuckDB WAL size | By | - |
+| `lakerunner.process.memory.rss` | Process resident set size (physical memory) | By | - |
+| `lakerunner.process.memory.vms` | Process virtual memory size | By | - |
 | `lakerunner.sweeper.cleanup_partitions_known` | Number of org-dateint combinations scheduled for cleanup | 1 | `signal` |
 | `lakerunner.sweeper.pack_estimate_target_records` | Target record estimates for pack tables | 1 | `signal`, `organization_id`, `frequency_ms` |
 | `lakerunner.exists` | Indicates if the service is running (1) or not (0) | - | - |
@@ -105,6 +107,7 @@ Many metrics include these standardized attributes:
 ### Service Health
 
 - `lakerunner.exists` - Service availability indicator
+- `lakerunner.process.memory.*` - Process-level memory metrics (RSS, VMS)
 
 ## Service-Level Attributes
 

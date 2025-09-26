@@ -23,6 +23,7 @@ import (
 	"github.com/cardinalhq/lakerunner/configdb"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryworker"
 
@@ -39,7 +40,7 @@ func init() {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "query-worker"
 			addlAttrs := attribute.NewSet()
-			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -50,17 +51,20 @@ func init() {
 				}
 			}()
 
-			// Start health check server
+			go diskUsageLoop(ctx)
+
+			go debugging.RunPprof(ctx)
+
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
 
 			go func() {
-				if err := healthServer.Start(doneCtx); err != nil {
+				if err := healthServer.Start(ctx); err != nil {
 					slog.Error("Health check server stopped", slog.Any("error", err))
 				}
 			}()
 
-			cdb, err := configdb.ConfigDBStore(context.Background())
+			cdb, err := configdb.ConfigDBStore(ctx)
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
 			if err != nil {
@@ -68,15 +72,18 @@ func init() {
 				return fmt.Errorf("failed to create query-worker service: %w", err)
 			}
 
-			cloudManagers, err := cloudstorage.NewCloudManagers(context.Background())
+			cloudManagers, err := cloudstorage.NewCloudManagers(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to create cloud managers: %w", err)
 			}
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			worker := queryworker.NewWorkerService(5, 5, 5, 12, sp, cloudManagers)
-			if err := worker.Run(doneCtx); err != nil {
+			worker, err := queryworker.NewWorkerService(5, 5, 5, 12, sp, cloudManagers)
+			if err != nil {
+				return fmt.Errorf("failed to create worker service: %w", err)
+			}
+			if err := worker.Run(ctx); err != nil {
 				if errors.Is(err, context.Canceled) {
 					slog.Info("shutting down", "error", err)
 					return nil

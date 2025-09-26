@@ -18,9 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,9 +26,8 @@ import (
 )
 
 type DDBSink struct {
-	db        *duckdbx.DB
-	parquetDb *sql.DB
-	table     string
+	s3Pool *duckdbx.S3DB // shared global pool - we use its database
+	table  string
 
 	// schema cache for quick diffs
 	schemaMu sync.RWMutex
@@ -54,57 +50,40 @@ type colDef struct {
 	Type string // DuckDB logical type
 }
 
-// NewDDBSink opens/creates the DuckDB database at dbPath and ensures `table` exists.
-// Clean slate: if dbPath looks like a file (not ":memory:"), we delete it first.
-// It also ensures a `segment_id VARCHAR` column is present (idempotent ALTER)
+// NewDDBSink creates a DDBSink that uses the shared global database and ensures `table` exists.
+// It also ensures a `segment_id BIGINT` column is present (idempotent ALTER)
 // and loads the schema cache.
-func NewDDBSink(dataset string, ctx context.Context) (*DDBSink, error) {
-	tempDir, err := os.MkdirTemp("", "duckdb-cache-*")
-	if err != nil {
-		return nil, fmt.Errorf("create temp dir: %w", err)
-	}
-
-	dbPath := filepath.Join(tempDir, fmt.Sprintf("%s_cached.ddb", dataset))
-
-	db, err := duckdbx.Open(dbPath,
-		duckdbx.WithMemoryLimitMB(2048),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("open duckdb: %w", err)
-	}
-
-	parquetDb, err := openForLocalParquet()
-	if err != nil {
-		return nil, fmt.Errorf("open duckdb for local parquet: %w", err)
-	}
+func NewDDBSink(dataset string, ctx context.Context, s3Pool *duckdbx.S3DB) (*DDBSink, error) {
 	s := &DDBSink{
-		db:        db,
-		parquetDb: parquetDb,
-		table:     fmt.Sprintf("%s_cached", dataset),
+		s3Pool: s3Pool,
+		table:  fmt.Sprintf("%s_cached", dataset),
 		schema: schemaCache{
 			index: make(map[string]int),
 		},
 	}
 
+	// Get a connection from the pool to create the table
+	conn, release, err := s.s3Pool.GetConnection(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get connection: %w", err)
+	}
+	defer release()
+
 	// Create table (idempotent). Keep minimal schema for compatibility.
-	_, conn, err := s.db.ExecContext(ctx,
+	_, err = conn.ExecContext(ctx,
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (ts BIGINT);`, ident(s.table)),
 	)
 	if err != nil {
-		_ = db.Close()
 		return nil, fmt.Errorf("create table: %w", err)
 	}
-	defer func() { _ = conn.Close() }()
 
 	// Ensure segment_id exists (handles pre-existing tables).
 	if err := s.ensureSegmentIDColumn(ctx); err != nil {
-		_ = db.Close()
 		return nil, fmt.Errorf("ensure segment_id: %w", err)
 	}
 
 	// Load schema into memory.
 	if err := s.reloadSchema(ctx); err != nil {
-		_ = db.Close()
 		return nil, fmt.Errorf("load schema: %w", err)
 	}
 
@@ -114,9 +93,10 @@ func NewDDBSink(dataset string, ctx context.Context) (*DDBSink, error) {
 	return s, nil
 }
 
-// Close closes the underlying DuckDB connection.
+// Close is a no-op since we're using the shared pool.
 func (s *DDBSink) Close() error {
-	return s.db.Close()
+	// No-op - the pool is managed externally
+	return nil
 }
 
 // RowCount returns the current cached idea of row count (no DB call).
@@ -225,23 +205,34 @@ FROM (
 JOIN %s ON f.filename = m.path;
 `, ident(s.table), leftCols(tableCols), strings.Join(sel, ", "), sqlStringArray(pathsChunk), mapping)
 
-		// 3e) Short transaction for the chunk.
-		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+		// 3e) Get connection and execute in a transaction
+		conn, release, err := s.s3Pool.GetConnection(ctx)
 		if err != nil {
+			return fmt.Errorf("get connection (chunk [%d:%d]): %w", start, end, err)
+		}
+
+		tx, err := conn.BeginTx(ctx, &sql.TxOptions{})
+		if err != nil {
+			release() // Release connection before returning error
 			return fmt.Errorf("begin tx (chunk [%d:%d]): %w", start, end, err)
 		}
 		res, execErr := tx.ExecContext(ctx, insSQL)
 		if execErr != nil {
 			_ = tx.Rollback()
+			release() // Release connection before returning error
 			return fmt.Errorf("insert chunk [%d:%d]: %w", start, end, execErr)
 		}
 		if err := tx.Commit(); err != nil {
+			release() // Release connection before returning error
 			return fmt.Errorf("commit (chunk [%d:%d]): %w", start, end, err)
 		}
 
 		if affected, err := res.RowsAffected(); err == nil && affected > 0 {
 			s.totalRows.Add(affected)
 		}
+
+		// Release connection immediately after processing chunk
+		release()
 	}
 
 	return nil
@@ -258,6 +249,13 @@ func (s *DDBSink) DeleteSegments(ctx context.Context, segmentIDs []int64) (int64
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
+	// Get connection from pool
+	conn, release, err := s.s3Pool.GetConnection(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("get connection: %w", err)
+	}
+	defer release()
+
 	// Use VALUES-table to bind arbitrary number of ids safely.
 	valHolders := make([]string, len(segmentIDs))
 	args := make([]any, len(segmentIDs))
@@ -271,11 +269,10 @@ WHERE segment_id IN (
   SELECT v FROM (VALUES %s) AS t(v)
 )`, ident(s.table), strings.Join(valHolders, ", "))
 
-	res, conn, err := s.db.ExecContext(ctx, sqlText, args...)
+	res, err := conn.ExecContext(ctx, sqlText, args...)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = conn.Close() }()
 	affected, _ := res.RowsAffected()
 	if affected > 0 {
 		s.totalRows.Add(-affected)
@@ -289,28 +286,40 @@ func (s *DDBSink) ensureSegmentIDColumn(ctx context.Context) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
+	// Get connection from pool
+	conn, release, err := s.s3Pool.GetConnection(ctx)
+	if err != nil {
+		return fmt.Errorf("get connection: %w", err)
+	}
+	defer release()
+
 	stmt := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS segment_id BIGINT;`, ident(s.table))
-	_, conn, err := s.db.ExecContext(ctx, stmt)
+	_, err = conn.ExecContext(ctx, stmt)
 	if err != nil {
 		return fmt.Errorf("alter add segment_id: %w", err)
 	}
-	defer func() { _ = conn.Close() }()
 	return nil
 }
 
 func (s *DDBSink) reloadSchema(ctx context.Context) error {
+	// Get connection from pool
+	conn, release, err := s.s3Pool.GetConnection(ctx)
+	if err != nil {
+		return fmt.Errorf("get connection: %w", err)
+	}
+	defer release()
+
 	const q = `
 SELECT column_name, data_type
 FROM duckdb_columns
 WHERE table_name = ?
 ORDER BY column_index;
 `
-	rows, conn, err := s.db.QueryContext(ctx, q, s.table)
+	rows, err := conn.QueryContext(ctx, q, s.table)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
-	defer func() { _ = conn.Close() }()
 
 	var cols []colDef
 	idx := make(map[string]int)
@@ -353,7 +362,14 @@ func (s *DDBSink) diffMissing(incoming map[string]string) map[string]string {
 
 // applyAltersLocked assumes writeMu is already held.
 func (s *DDBSink) applyAltersLocked(ctx context.Context, missing map[string]string) error {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	// Get connection from pool
+	conn, release, err := s.s3Pool.GetConnection(ctx)
+	if err != nil {
+		return fmt.Errorf("get connection: %w", err)
+	}
+	defer release()
+
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return err
 	}
@@ -372,18 +388,19 @@ func (s *DDBSink) applyAltersLocked(ctx context.Context, missing map[string]stri
 	return s.reloadSchema(ctx)
 }
 
-func openForLocalParquet() (*sql.DB, error) {
-	db, err := sql.Open("duckdb", "")
-	if err != nil {
-		slog.Error("Error opening duckdb for local parquet", "error", err.Error())
-	}
-	return db, err
-}
-
 // Batch insert over a list of files to discover union schema (for ALTER planning).
 func (s *DDBSink) probeParquetSchemaList(ctx context.Context, paths []string) (map[string]string, error) {
+	// For local files, we can query directly without needing S3 credentials
 	q := fmt.Sprintf(`SELECT * FROM read_parquet(%s, union_by_name=true) LIMIT 0`, sqlStringArray(paths))
-	rows, err := s.parquetDb.QueryContext(ctx, q)
+
+	// Get connection from pool
+	conn, release, err := s.s3Pool.GetConnection(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get connection: %w", err)
+	}
+	defer release()
+
+	rows, err := conn.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}

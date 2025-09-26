@@ -27,11 +27,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/cardinalhq/lakerunner/queryapi"
@@ -46,6 +48,7 @@ type WorkerService struct {
 	MetricsGlobSize      int
 	LogsGlobSize         int
 	TracesGlobSize       int
+	s3Pool               *duckdbx.S3DB // shared pool for all queries
 }
 
 func NewWorkerService(
@@ -55,7 +58,7 @@ func NewWorkerService(
 	maxConcurrency int,
 	sp storageprofile.StorageProfileProvider,
 	cloudManagers cloudstorage.ClientProvider,
-) *WorkerService {
+) (*WorkerService, error) {
 	downloader := func(ctx context.Context, profile storageprofile.StorageProfile, keys []string) error {
 		if len(keys) == 0 {
 			return nil
@@ -133,15 +136,24 @@ func NewWorkerService(
 		return nil
 	}
 
+	// Create a single shared S3DB pool for all queries with metrics enabled
+	s3Pool, err := duckdbx.NewS3DB(
+		duckdbx.WithS3DBMetrics(10 * time.Second), // Poll memory metrics every 10 seconds
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create shared S3DB pool: %w", err)
+	}
+
 	return &WorkerService{
-		MetricsCM:            NewCacheManager(downloader, "metrics", sp),
-		LogsCM:               NewCacheManager(downloader, "logs", sp),
-		TracesCM:             NewCacheManager(downloader, "traces", sp),
+		MetricsCM:            NewCacheManager(downloader, "metrics", sp, s3Pool),
+		LogsCM:               NewCacheManager(downloader, "logs", sp, s3Pool),
+		TracesCM:             NewCacheManager(downloader, "traces", sp, s3Pool),
 		StorageProfilePoller: sp,
 		MetricsGlobSize:      metricsGlobSize,
 		LogsGlobSize:         logsGlobSize,
 		TracesGlobSize:       tracesGlobSize,
-	}
+		s3Pool:               s3Pool,
+	}, nil
 }
 
 func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
@@ -529,5 +541,20 @@ func (ws *WorkerService) Run(doneCtx context.Context) error {
 		return fmt.Errorf("failed to shutdown HTTP server: %w", err)
 	}
 
+	// Clean up resources
+	ws.Close()
+
 	return nil
+}
+
+func (ws *WorkerService) Close() {
+	if ws.MetricsCM != nil {
+		ws.MetricsCM.Close()
+	}
+	if ws.LogsCM != nil {
+		ws.LogsCM.Close()
+	}
+	if ws.s3Pool != nil {
+		_ = ws.s3Pool.Close()
+	}
 }

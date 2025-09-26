@@ -55,7 +55,7 @@ type ingestJob struct {
 // CacheManager coordinates downloads, batch-ingest, queries, and LRU evictions.
 type CacheManager struct {
 	sink                   *DDBSink
-	s3Db                   *duckdbx.S3DB
+	s3Pool                 *duckdbx.S3DB // shared global pool
 	maxRows                int64
 	downloader             DownloadBatchFunc
 	storageProfileProvider storageprofile.StorageProfileProvider
@@ -79,21 +79,15 @@ const (
 	MaxRowsDefault = 1000000000 // 1 billion rows (approx 10GB on disk)
 )
 
-func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider) *CacheManager {
-	ddb, err := NewDDBSink(dataset, context.Background())
+func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider, s3Pool *duckdbx.S3DB) *CacheManager {
+	ddb, err := NewDDBSink(dataset, context.Background(), s3Pool)
 	if err != nil {
 		slog.Error("Failed to create DuckDB sink", slog.Any("error", err))
 		return nil
 	}
-	// TODO: Pass config when available in queryworker
-	s3DB, err := duckdbx.NewS3DB("s3")
-	if err != nil {
-		slog.Error("Failed to create S3 DuckDB database", slog.Any("error", err))
-		return nil
-	}
 	w := &CacheManager{
 		sink:                     ddb,
-		s3Db:                     s3DB,
+		s3Pool:                   s3Pool,
 		dataset:                  dataset,
 		storageProfileProvider:   storageProfileProvider,
 		profilesByOrgInstanceNum: make(map[uuid.UUID]map[int16]storageprofile.StorageProfile),
@@ -307,8 +301,16 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				cacheSQL = strings.Replace(cacheSQL, "AND true", "AND segment_id IN ("+inList+")", 1)
 			}
 
-			slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
-			rows, conn, err := w.sink.db.QueryContext(ctx, cacheSQL)
+			//slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
+			// Get connection from shared pool for local queries
+			conn, release, err := w.sink.s3Pool.GetConnection(ctx)
+			if err != nil {
+				slog.Error("Failed to get connection", slog.Any("error", err))
+				return
+			}
+			defer release()
+
+			rows, err := conn.QueryContext(ctx, cacheSQL)
 			if err != nil {
 				return
 			}
@@ -318,13 +320,6 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 					slog.Error("Error closing rows", slog.Any("error", err))
 				}
 			}(rows)
-
-			defer func(conn *sql.Conn) {
-				err := conn.Close()
-				if err != nil {
-					slog.Error("Error closing connection", slog.Any("error", err))
-				}
-			}(conn)
 
 			cols, err := rows.Columns()
 			if err != nil {
@@ -390,11 +385,9 @@ func streamFromS3[T promql.Timestamped](
 			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
-			slog.Info("Querying S3 segments", slog.Int("numSegments", len(array)), slog.String("sql", sqlReplaced))
-
 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
 			start := time.Now()
-			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region, endpoint)
+			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, bucket, region, endpoint)
 			connectionAcquireTime := time.Since(start)
 			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", bucket)
 

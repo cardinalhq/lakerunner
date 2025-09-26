@@ -38,7 +38,9 @@ import (
 // DuckDBParquetRawReader reads rows from a Parquet file using DuckDB.
 // It streams rows in batches without loading the entire file into memory.
 type DuckDBParquetRawReader struct {
-	db        *duckdbx.DB
+	s3db      *duckdbx.S3DB
+	conn      *sql.Conn
+	release   func()
 	rows      *sql.Rows
 	batchSize int
 
@@ -63,7 +65,8 @@ var rollupFieldNames = []string{
 // NewDuckDBParquetRawReader creates a new DuckDBParquetRawReader for the given
 // Parquet file paths. Multiple files will be read using DuckDB's
 // union_by_name option to unify schemas.
-func NewDuckDBParquetRawReader(ctx context.Context, paths []string, batchSize int) (*DuckDBParquetRawReader, error) {
+// The s3db parameter provides the DuckDB connection pool to use.
+func NewDuckDBParquetRawReader(ctx context.Context, s3db *duckdbx.S3DB, paths []string, batchSize int) (*DuckDBParquetRawReader, error) {
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
@@ -71,10 +74,10 @@ func NewDuckDBParquetRawReader(ctx context.Context, paths []string, batchSize in
 		return nil, errors.New("no parquet files provided")
 	}
 
-	// Disable httpfs extension to avoid network access during tests
-	db, err := duckdbx.Open(":memory:", duckdbx.WithoutExtension("httpfs"))
+	// Get a connection from the pool
+	conn, release, err := s3db.GetConnection(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("open duckdb: %w", err)
+		return nil, fmt.Errorf("get connection from pool: %w", err)
 	}
 
 	var (
@@ -92,16 +95,16 @@ func NewDuckDBParquetRawReader(ctx context.Context, paths []string, batchSize in
 		query = fmt.Sprintf("SELECT * FROM read_parquet([%s], union_by_name=true)", strings.Join(quoted, ","))
 	}
 
-	rows, err := db.Query(ctx, query, args...)
+	rows, err := conn.QueryContext(ctx, query, args...)
 	if err != nil {
-		db.Close()
+		release()
 		return nil, fmt.Errorf("duckdb query: %w", err)
 	}
 
 	cols, err := rows.Columns()
 	if err != nil {
 		rows.Close()
-		db.Close()
+		release()
 		return nil, fmt.Errorf("duckdb columns: %w", err)
 	}
 
@@ -139,7 +142,9 @@ func NewDuckDBParquetRawReader(ctx context.Context, paths []string, batchSize in
 	}
 
 	return &DuckDBParquetRawReader{
-		db:        db,
+		s3db:      s3db,
+		conn:      conn,
+		release:   release,
 		rows:      rows,
 		batchSize: batchSize,
 		rowKeys:   rowKeys,
@@ -267,9 +272,9 @@ func (r *DuckDBParquetRawReader) Close() error {
 		r.rows.Close()
 		r.rows = nil
 	}
-	if r.db != nil {
-		r.db.Close()
-		r.db = nil
+	if r.release != nil {
+		r.release()
+		r.release = nil
 	}
 	return nil
 }

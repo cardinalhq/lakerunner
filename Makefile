@@ -44,7 +44,7 @@ all_deps := $(shell find . -name '*.go' | grep -v _test) Makefile
 #
 
 .PHONY: all
-all: gofmt ${TARGETS}
+all: duckdb-extensions-decompress gofmt ${TARGETS}
 
 #
 # Help target - display available make targets
@@ -114,6 +114,56 @@ bin/golangci-lint bin/goimports:
 	./scripts/install-dev-tools.sh
 
 #
+# Download DuckDB extensions for air-gapped operation
+#
+.PHONY: duckdb-extensions-download
+duckdb-extensions-download:
+	@echo "Downloading DuckDB extensions (compressed) for linux and macOS ARM64..."
+	@mkdir -p docker/duckdb-extensions/linux_amd64
+	@mkdir -p docker/duckdb-extensions/linux_arm64
+	@mkdir -p docker/duckdb-extensions/osx_arm64
+	@DUCKDB_VERSION="v1.3.2"; \
+	\
+	echo "Downloading linux_amd64 extensions..."; \
+	BASE_URL="https://extensions.duckdb.org/$$DUCKDB_VERSION/linux_amd64"; \
+	curl -L -o docker/duckdb-extensions/linux_amd64/httpfs.duckdb_extension.gz "$$BASE_URL/httpfs.duckdb_extension.gz"; \
+	curl -L -o docker/duckdb-extensions/linux_amd64/aws.duckdb_extension.gz "$$BASE_URL/aws.duckdb_extension.gz"; \
+	curl -L -o docker/duckdb-extensions/linux_amd64/azure.duckdb_extension.gz "$$BASE_URL/azure.duckdb_extension.gz"; \
+	\
+	echo "Downloading linux_arm64 extensions..."; \
+	BASE_URL="https://extensions.duckdb.org/$$DUCKDB_VERSION/linux_arm64"; \
+	curl -L -o docker/duckdb-extensions/linux_arm64/httpfs.duckdb_extension.gz "$$BASE_URL/httpfs.duckdb_extension.gz"; \
+	curl -L -o docker/duckdb-extensions/linux_arm64/aws.duckdb_extension.gz "$$BASE_URL/aws.duckdb_extension.gz"; \
+	curl -L -o docker/duckdb-extensions/linux_arm64/azure.duckdb_extension.gz "$$BASE_URL/azure.duckdb_extension.gz"; \
+	\
+	echo "Downloading osx_arm64 extensions..."; \
+	BASE_URL="https://extensions.duckdb.org/$$DUCKDB_VERSION/osx_arm64"; \
+	curl -L -o docker/duckdb-extensions/osx_arm64/httpfs.duckdb_extension.gz "$$BASE_URL/httpfs.duckdb_extension.gz"; \
+	curl -L -o docker/duckdb-extensions/osx_arm64/aws.duckdb_extension.gz "$$BASE_URL/aws.duckdb_extension.gz"; \
+	curl -L -o docker/duckdb-extensions/osx_arm64/azure.duckdb_extension.gz "$$BASE_URL/azure.duckdb_extension.gz"; \
+	\
+	echo "Extensions downloaded (compressed) to docker/duckdb-extensions/"
+
+#
+# Decompress DuckDB extensions (if compressed versions exist)
+#
+.PHONY: duckdb-extensions-decompress
+duckdb-extensions-decompress:
+	@if [ -d docker/duckdb-extensions ]; then \
+		for dir in docker/duckdb-extensions/*/; do \
+			for gz in $$dir*.duckdb_extension.gz; do \
+				if [ -f "$$gz" ]; then \
+					target=$${gz%.gz}; \
+					if [ ! -f "$$target" ] || [ "$$gz" -nt "$$target" ]; then \
+						echo "Decompressing $$gz..."; \
+						gunzip -k -f "$$gz"; \
+					fi; \
+				fi; \
+			done; \
+		done; \
+	fi
+
+#
 # Run pre-commit checks
 #
 check: test license-check gofmt lint check-migration-integrity
@@ -167,11 +217,11 @@ bin/lakectl: ${all_deps}
 test: generate test-only
 
 .PHONY: test-only
-test-only:
+test-only: duckdb-extensions-decompress
 	go test -race ./...
 
 .PHONY: test-integration
-test-integration: bin/lakerunner
+test-integration: duckdb-extensions-decompress bin/lakerunner
 	@echo "Running integration tests (requires test databases)..."
 	@echo "Running database migrations..."
 	LRDB_HOST=$${LRDB_HOST:-localhost} \
@@ -231,6 +281,8 @@ coverage-serve: coverage-html
 .PHONY: clean
 clean:
 	rm -f bin/*
+	@# Remove decompressed DuckDB extensions (keep .gz files)
+	@find docker/duckdb-extensions -name "*.duckdb_extension" -type f -delete 2>/dev/null || true
 
 .PHONY: really-clean
 really-clean: clean
