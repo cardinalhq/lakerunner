@@ -3,6 +3,7 @@ module github.com/cardinalhq/lakerunner
 go 1.25.0
 
 require (
+	cloud.google.com/go/bigquery v1.67.0
 	cloud.google.com/go/pubsub/v2 v2.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.10.1
@@ -44,6 +45,7 @@ require (
 	github.com/rdforte/gomaxecs v1.1.1
 	github.com/samber/slog-multi v1.4.1
 	github.com/segmentio/kafka-go v0.4.49
+	github.com/shirou/gopsutil/v4 v4.25.7
 	github.com/sony/sonyflake v1.3.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.19.0
@@ -138,6 +140,7 @@ require (
 	github.com/anchore/quill v0.5.1 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
+	github.com/apache/arrow/go/v15 v15.0.2 // indirect
 	github.com/apache/skywalking-eyes v0.7.0 // indirect
 	github.com/apache/thrift v0.22.0 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
@@ -543,7 +546,6 @@ require (
 	github.com/securego/gosec/v2 v2.22.7 // indirect
 	github.com/sercand/kuberesolver/v5 v5.1.1 // indirect
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
-	github.com/shirou/gopsutil/v4 v4.25.7 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sigstore/cosign/v2 v2.4.1 // indirect
 	github.com/sigstore/protobuf-specs v0.3.2 // indirect
