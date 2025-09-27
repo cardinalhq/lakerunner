@@ -1,4 +1,17 @@
-// runner.go
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
 package bigquery
 
 import (
@@ -214,19 +227,3 @@ func Records(candidates []Candidate) []CandidateRecord {
 	return out
 }
 
-func ExampleRunAll() {
-	ctx := context.Background()
-	cands, onto, g, err := RunAll(ctx, []string{"sales", "ops"}, 50)
-	if err != nil {
-		fmt.Println("error:", err)
-		return
-	}
-	fmt.Printf("facts=%d dims=%d nodes=%d edges=%d\n", len(onto.Facts), len(onto.Dimensions), len(g.Nodes), len(g.Edges))
-
-	recs := Records(cands)
-	for i, r := range recs {
-		fmt.Printf("%2d) %.3f  %s  [bytes≈%d  $≈%.2f]  fact=%s  dims=%v  grain=%s  stage=%s\n",
-			i+1, r.Composite, r.Title, r.EstimatedBytes, r.EstimatedUSD, r.FactTable, r.Dimensions, r.Grain, r.Stage)
-		fmt.Printf("-- %s\n%s\n\n", r.Description, r.SQL)
-	}
-}
