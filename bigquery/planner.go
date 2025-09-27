@@ -1,5 +1,5 @@
 // joinplan.go
-package joinplan
+package bigquery
 
 import (
 	"context"
@@ -279,7 +279,7 @@ func AugmentGraphWithSamples(
 			ColumnName: col,
 			BQType:     typ,
 			Sample:     out,
-			ExtraNotes: deriveNotes(tableID, col, typ),
+			ExtraNotes: deriveNotes(col, typ),
 		}
 		samples[tableID][col] = s
 		return s, nil
@@ -472,7 +472,7 @@ func jaccard(a, b []string) float64 {
 	return float64(i) / float64(u)
 }
 
-func deriveNotes(tableID, col, typ string) string {
+func deriveNotes(col, typ string) string {
 	n := []string{}
 	ut := strings.ToUpper(typ)
 	if maybeIdentifier(col) {

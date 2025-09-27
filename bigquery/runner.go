@@ -1,10 +1,12 @@
 // runner.go
-package joinplan
+package bigquery
 
 import (
 	"context"
 	"fmt"
+	"github.com/openai/openai-go/option"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -42,7 +44,7 @@ func (SimpleOverlapScorer) ScoreColumns(ctx context.Context, a ColumnSample, b C
 
 const projectID = "chip-473401"
 
-// Build + augment the BQ graph.
+// BuildAndAugment builds a BQGraph for the given datasets and augments it with sampled column data.
 func BuildAndAugment(ctx context.Context, datasetIDs []string, sampleLimit int, minScore float64, maxPairsPerTable int) (*BQGraph, error) {
 	g, err := BuildGraphForDatasets(ctx, projectID, datasetIDs)
 	if err != nil {
@@ -123,10 +125,8 @@ func RunAll(ctx context.Context, datasetIDs []string, topN int) ([]Candidate, *O
 		return nil, nil, nil, err
 	}
 
-	// 4) Fact weights (simple heuristic; replace with your own if desired)
 	factW := computeFactWeights(onto)
 
-	// 5) Generate candidates with LLM phrasing + dry-run costs
 	cfg := CatalogConfig{
 		FactWeights:     factW,
 		DimWeights:      dimW,
@@ -141,8 +141,13 @@ func RunAll(ctx context.Context, datasetIDs []string, topN int) ([]Candidate, *O
 		WDemand:         0.10,
 	}
 
-	llm := BaselineLLM{}
-	demand := NullDemand{}
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	gptModel := os.Getenv("OPENAI_GPT_MODEL")
+	llm := NewOpenAILLM(gptModel, option.WithAPIKey(apiKey))
+	demand, err := NewOpenAIDemandModel(ctx, gptModel, g, onto, option.WithAPIKey(apiKey))
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
 	// Last 30 days window for dry-run parameter binding
 	window := func() (time.Time, time.Time) {
@@ -201,9 +206,9 @@ func (c Candidate) Record() CandidateRecord {
 }
 
 // Records maps a slice of Candidates to a slice of CandidateRecord.
-func Records(cands []Candidate) []CandidateRecord {
-	out := make([]CandidateRecord, len(cands))
-	for i, c := range cands {
+func Records(candidates []Candidate) []CandidateRecord {
+	out := make([]CandidateRecord, len(candidates))
+	for i, c := range candidates {
 		out[i] = c.Record()
 	}
 	return out

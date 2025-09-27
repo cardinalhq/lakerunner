@@ -1,5 +1,5 @@
 // generator.go
-package joinplan
+package bigquery
 
 import (
 	"context"
@@ -294,7 +294,7 @@ func scoreCoverage(cfg CatalogConfig, t *QueryTemplate) float64 {
 	for _, d := range t.DimCols {
 		k1 := d.TableID
 		k2 := d.TableID + "." + d.Column
-		score += maxf(cfg.DimWeights[k1], cfg.DimWeights[k2]) * (1.0 / float64(len(t.DimCols)+1))
+		score += maxF(cfg.DimWeights[k1], cfg.DimWeights[k2]) * (1.0 / float64(len(t.DimCols)+1))
 	}
 	return clamp01(score)
 }
@@ -412,7 +412,7 @@ func clamp01(x float64) float64 {
 	}
 	return x
 }
-func maxf(a, b float64) float64 {
+func maxF(a, b float64) float64 {
 	if a > b {
 		return a
 	}

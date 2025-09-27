@@ -1,5 +1,5 @@
 // dimweights.go
-package joinplan
+package bigquery
 
 import (
 	"context"

@@ -1,5 +1,5 @@
 // ontology.go
-package joinplan
+package bigquery
 
 import (
 	"fmt"
@@ -7,19 +7,16 @@ import (
 	"strings"
 )
 
-// ---------- Public types ----------
-
 type Ontology struct {
-	Facts      map[string]*Fact           // tableID -> fact
-	Dimensions map[string]*DimensionTable // tableID -> dim
+	Facts      map[string]*Fact
+	Dimensions map[string]*DimensionTable
 	Templates  []QueryTemplate
 }
 
 type Fact struct {
-	TableID   string
-	Measures  []Measure
-	TimeAttrs []TimeAttr
-	// Each reachable dimension with a chosen "display" attribute (e.g., name/category)
+	TableID       string
+	Measures      []Measure
+	TimeAttrs     []TimeAttr
 	ReachableDims []DimRef
 }
 
