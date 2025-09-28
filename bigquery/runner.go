@@ -20,40 +20,10 @@ import (
 	"github.com/openai/openai-go/option"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
 
 	bq "cloud.google.com/go/bigquery"
 )
-
-type SimpleOverlapScorer struct{}
-
-func (SimpleOverlapScorer) ScoreColumns(ctx context.Context, a ColumnSample, b ColumnSample) (float64, string, error) {
-	set := map[string]int{}
-	for _, v := range a.Sample {
-		set[strings.ToLower(v)] |= 1
-	}
-	for _, v := range b.Sample {
-		set[strings.ToLower(v)] |= 2
-	}
-	intersect, union := 0, 0
-	for _, m := range set {
-		if m == 3 {
-			intersect++
-			union++
-		} else if m == 1 || m == 2 {
-			union++
-		}
-	}
-	var score float64
-	if union > 0 {
-		score = float64(intersect) / float64(union)
-	} else {
-		score = 0.0
-	}
-	rationale := fmt.Sprintf("sample-overlap jaccard=%.2f on %d/%d unique values", score, intersect, union)
-	return score, rationale, nil
-}
 
 const projectID = "chip-473401"
 
@@ -74,8 +44,7 @@ func BuildAndAugment(ctx context.Context, datasetIDs []string, sampleLimit int, 
 		}
 	}(client)
 
-	scorer := SimpleOverlapScorer{}
-	if err := AugmentGraphWithSamples(ctx, client, projectID, g, scorer, sampleLimit, minScore, maxPairsPerTable); err != nil {
+	if err := AugmentGraphWithEdgesBetweenSimilarColumns(g, sampleLimit); err != nil {
 		return nil, err
 	}
 	return g, nil
@@ -102,10 +71,15 @@ func computeFactWeights(onto *Ontology) map[string]float64 {
 }
 
 func RunAll(ctx context.Context, datasetIDs []string, topN int) ([]Candidate, *Ontology, *BQGraph, error) {
-	g, err := BuildAndAugment(ctx, datasetIDs, 10, 0.70, 50)
+	g, err := BuildAndAugment(ctx, datasetIDs,
+		50,
+		0.40,
+		200,
+	)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	slog.Info("graph built", "nodes", len(g.Nodes), "edges", len(g.Edges), slog.Any("graph", g))
 
 	client, err := bq.NewClient(ctx, projectID)
 	if err != nil {
@@ -122,9 +96,18 @@ func RunAll(ctx context.Context, datasetIDs []string, topN int) ([]Candidate, *O
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	for _, f := range onto.Facts {
+		slog.Info("fact", "table", f.TableID, "measures", f.Measures, "reachable_dims", len(f.ReachableDims))
+	}
+	for _, d := range onto.Dimensions {
+		slog.Info("dim", "table", d.TableID, slog.Any("attributes", d.Attributes))
+	}
+	for _, t := range onto.Templates {
+		slog.Info("template", "sql", t.SQL, "grain", t.Grain)
+	}
 
 	dwCfg := DimWeightConfig{
-		SamplePercent:      0.5, // 0.5% samples
+		SamplePercent:      0.5,
 		WRole:              0.25,
 		WCardinality:       0.35,
 		WCoverage:          0.25,
@@ -226,4 +209,3 @@ func Records(candidates []Candidate) []CandidateRecord {
 	}
 	return out
 }
-

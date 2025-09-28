@@ -1,23 +1,21 @@
 // Copyright (C) 2025 CardinalHQ, Inc
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as
-// published by the Free Software Foundation, version 3.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <http://www.gnu.org/licenses/>.
+// SPDX-License-Identifier: AGPL-3.0-only
 
 package bigquery
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 )
 
 type Ontology struct {
@@ -76,19 +74,19 @@ type EdgeRef struct {
 
 type QueryTemplate struct {
 	FactTable string
-	Measure   Measure
+	Measure   Measure // still present for backward compat (LLM templates may set a benign default)
 	DimCols   []DimensionAttr
 	TimeAttr  *TimeAttr
 	Grain     string // one of TimeAttr.Grains
-	SQL       string // parameterized with @start_time, @end_time
+	SQL       string // fully rendered SQL (can be non-aggregate for LLM templates)
 }
 
 // ---------- BuildOntology entrypoint ----------
 
-// BuildOntology analyzes the BQGraph and the underlying columns to produce
-// facts, dimensions, and concrete, joinable templates.
+// BuildOntology analyzes the BQGraph and the underlying columns to produce facts, dimensions,
+// and concrete, joinable templates. It now also asks an LLM to propose per-table and cross-table
+// queries based on schemas and discovered join keys.
 func BuildOntology(projectID string, g *BQGraph, sampleLimit int) (*Ontology, error) {
-
 	if sampleLimit <= 0 {
 		sampleLimit = 10
 	}
@@ -123,20 +121,14 @@ func BuildOntology(projectID string, g *BQGraph, sampleLimit int) (*Ontology, er
 		f.ReachableDims = reachable
 	}
 
-	// 3) Generate joinable templates: (measure × subset of dims × a time grain)
-	templates := []QueryTemplate{}
+	// 3) Generate traditional measure × dims × time templates
+	var templates []QueryTemplate
 	for _, f := range o.Facts {
-		// pick a default time attribute (first timestamp/date if present)
 		var tattr *TimeAttr
 		if len(f.TimeAttrs) > 0 {
 			tattr = &f.TimeAttrs[0]
 		}
-
-		// choose a small number of best dims (you can expand/prioritize later)
-		// heuristic: prefer dims with "name"/"category"/"status" roles
 		cands := selectTopDims(f.ReachableDims, 6)
-
-		// powerset could blow up; start with up to pairs/triads
 		dimCombos := boundedDimCombos(cands, 0, 3) // 0..3 dims per template
 
 		for _, m := range f.Measures {
@@ -160,14 +152,274 @@ func BuildOntology(projectID string, g *BQGraph, sampleLimit int) (*Ontology, er
 		}
 	}
 
-	o.Templates = templates
+	// 4) LLM-driven templates (entity/lookup and cross-table join queries)
+	// These are additive and dataset-agnostic: driven purely by schema + join keys.
+	llm := newOntologyLLMFromEnv()
+	if llm != nil {
+		ctx := context.Background()
+
+		// 4a) Per-table queries
+		perTable := llmGeneratePerTableQueries(ctx, llm, projectID, g)
+		templates = append(templates, perTable...)
+
+		// 4b) Cross-table join queries (pairs of tables connected by edges)
+		cross := llmGenerateJoinQueries(ctx, llm, projectID, g)
+		templates = append(templates, cross...)
+	} else {
+		slog.Info("ontology LLM generation skipped (no OPENAI_API_KEY)")
+	}
+
+	// 5) Deduplicate templates by normalized SQL
+	o.Templates = dedupeTemplates(templates)
 	return o, nil
+}
+
+// ---------- LLM helpers for ontology ----------
+
+type ontologyLLM struct {
+	client  openai.Client
+	model   openai.ChatModel
+	timeout time.Duration
+}
+
+func newOntologyLLMFromEnv() *ontologyLLM {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if strings.TrimSpace(apiKey) == "" {
+		return nil
+	}
+	model := os.Getenv("OPENAI_GPT_MODEL")
+	if model == "" {
+		model = "gpt-5-thinking"
+	}
+	toSecs := 300
+	if v := os.Getenv("LLM_ONTOLOGY_TIMEOUT_SECS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			toSecs = n
+		}
+	}
+	return &ontologyLLM{
+		client:  openai.NewClient(option.WithAPIKey(apiKey)),
+		model:   model,
+		timeout: time.Duration(toSecs) * time.Second,
+	}
+}
+
+type llmQuery struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	SQL         string `json:"sql"`
+}
+
+type llmQueryList struct {
+	Queries []llmQuery `json:"queries"`
+}
+
+func (l *ontologyLLM) askForQueries(ctx context.Context, sys, usr string, maxItems int) ([]llmQuery, error) {
+	if l.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, l.timeout)
+		defer cancel()
+	}
+
+	// Strict JSON schema: required must include every key in properties.
+	respSchema := openai.ResponseFormatJSONSchemaJSONSchemaParam{
+		Name:   "ontology_queries",
+		Strict: openai.Bool(true),
+		Schema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"queries": map[string]any{
+					"type":     "array",
+					"minItems": 1,
+					"maxItems": maxItems,
+					"items": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"properties": map[string]any{
+							"title":       map[string]any{"type": "string"},
+							"description": map[string]any{"type": "string"},
+							"sql":         map[string]any{"type": "string"},
+						},
+						"required": []string{"title", "description", "sql"},
+					},
+				},
+			},
+			"required": []string{"queries"},
+		},
+	}
+
+	resp, err := l.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+		Model: l.model,
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.SystemMessage(sys),
+			openai.UserMessage(usr),
+		},
+		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{JSONSchema: respSchema},
+		},
+		Temperature: openai.Float(1.0),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("no choices returned")
+	}
+
+	var out llmQueryList
+	if err := json.Unmarshal([]byte(resp.Choices[0].Message.Content), &out); err != nil {
+		// If schema unmarshal ever fails, return nothing rather than crashing the pipeline.
+		return nil, err
+	}
+	return out.Queries, nil
+}
+
+func llmGeneratePerTableQueries(ctx context.Context, llm *ontologyLLM, projectID string, g *BQGraph) []QueryTemplate {
+	var out []QueryTemplate
+
+	for tableID, t := range g.Nodes {
+		// Skip purely technical tables (no attributes and no measures)
+		attrs := detectDimensionAttrs(t)
+		meas := detectMeasures(t)
+		if len(attrs) == 0 && len(meas) == 0 {
+			continue
+		}
+
+		// Build a compact schema card for the table + immediate join keys to neighbors.
+		tableCard := schemaCard(projectID, tableID, t)
+		joinNotes := joinKeyNotes(projectID, tableID, g)
+
+		sys := "You are an expert BigQuery SQL assistant. You will propose high-signal queries for analysts."
+		user := strings.Builder{}
+		user.WriteString("Given the table schema and its known join keys, propose 3–6 useful queries.\n")
+		user.WriteString("Mix of lookup/exploratory (no aggregation) and simple KPI questions.\n")
+		user.WriteString("Rules:\n")
+		user.WriteString("- Use **BigQuery Standard SQL**.\n")
+		user.WriteString("- Always fully-qualify tables like `")
+		user.WriteString(projectID)
+		user.WriteString(".dataset.table` and backtick identifiers.\n")
+		user.WriteString("- Prefer meaningful SELECT lists (e.g., names, types, dates) for lookups.\n")
+		user.WriteString("- For KPI queries, simple aggregates are OK (e.g., COUNT rows, MIN/MAX dates).\n")
+		user.WriteString("- Do **not** invent columns. Only use what’s shown.\n")
+		user.WriteString("- Avoid parameters; write runnable examples (e.g., top-N, group-bys).\n\n")
+		user.WriteString("TABLE SCHEMA:\n")
+		user.WriteString(tableCard)
+		user.WriteString("\n")
+		if joinNotes != "" {
+			user.WriteString("JOIN KEYS:\n")
+			user.WriteString(joinNotes)
+			user.WriteString("\n")
+		}
+
+		ideas, err := llm.askForQueries(ctx, sys, user.String(), 6)
+		if err != nil {
+			slog.Warn("llm per-table queries failed", "table", tableID, "error", err)
+			continue
+		}
+		anchorMeasure := chooseAnchorMeasureForTable(t) // benign default for downstream title gen
+
+		for _, q := range ideas {
+			sql := strings.TrimSpace(q.SQL)
+			if sql == "" {
+				continue
+			}
+			out = append(out, QueryTemplate{
+				FactTable: tableID,
+				Measure:   anchorMeasure,
+				DimCols:   nil,
+				TimeAttr:  nil,
+				Grain:     "",
+				SQL:       sql,
+			})
+		}
+	}
+	return out
+}
+
+func llmGenerateJoinQueries(ctx context.Context, llm *ontologyLLM, projectID string, g *BQGraph) []QueryTemplate {
+	var out []QueryTemplate
+
+	// Build candidate pairs for which we have at least one edge (in either direction).
+	type pair struct{ A, B string }
+	seen := map[string]bool{}
+	var pairs []pair
+
+	for from, edges := range g.Edges {
+		for _, e := range edges {
+			key := pairKey(from, e.To)
+			if !seen[key] {
+				seen[key] = true
+				pairs = append(pairs, pair{A: from, B: e.To})
+			}
+		}
+	}
+
+	for _, p := range pairs {
+		tA := g.Nodes[p.A]
+		tB := g.Nodes[p.B]
+		if tA == nil || tB == nil {
+			continue
+		}
+
+		sys := "You are an expert BigQuery SQL assistant. You will propose high-value join queries."
+		user := strings.Builder{}
+		user.WriteString("Given two joinable tables, propose 3–6 useful JOIN queries across them.\n")
+		user.WriteString("Cover: lookups (show attributes from both sides) and simple KPIs (counts, sums if numeric).\n")
+		user.WriteString("Rules:\n")
+		user.WriteString("- Use **BigQuery Standard SQL**.\n")
+		user.WriteString("- Always fully-qualify tables like `")
+		user.WriteString(projectID)
+		user.WriteString(".dataset.table` and backtick identifiers.\n")
+		user.WriteString("- Use only provided join keys; do **not** guess joins.\n")
+		user.WriteString("- Avoid parameters; write runnable examples (e.g., top-N).\n")
+		user.WriteString("- Do **not** invent columns. Only use what’s shown.\n\n")
+
+		user.WriteString("TABLE A:\n")
+		user.WriteString(schemaCard(projectID, p.A, tA))
+		user.WriteString("\nTABLE B:\n")
+		user.WriteString(schemaCard(projectID, p.B, tB))
+		user.WriteString("\nJOIN KEYS (A ↔ B):\n")
+		user.WriteString(joinKeyPairs(projectID, p.A, p.B, g))
+		user.WriteString("\n")
+
+		ideas, err := llm.askForQueries(ctx, sys, user.String(), 6)
+		if err != nil {
+			slog.Warn("llm join queries failed", "pair", p, "error", err)
+			continue
+		}
+
+		// Pick a benign measure from A if possible; else from B; else COUNT(*)
+		anchor := chooseAnchorMeasureForTable(tA)
+		if anchor.Column == "" {
+			anchor = chooseAnchorMeasureForTable(tB)
+		}
+		if anchor.Column == "" {
+			anchor = Measure{TableID: p.A, Column: "id", BQType: "INT64", Semantic: "count", Aggs: []string{"COUNT"}}
+		}
+
+		for _, q := range ideas {
+			sql := strings.TrimSpace(q.SQL)
+			if sql == "" {
+				continue
+			}
+			out = append(out, QueryTemplate{
+				FactTable: p.A, // anchor on A; SQL stands on its own
+				Measure:   anchor,
+				DimCols:   nil,
+				TimeAttr:  nil,
+				Grain:     "",
+				SQL:       sql,
+			})
+		}
+	}
+	return out
 }
 
 // ---------- Heuristics: detect measures, dims, time ----------
 
 func detectMeasures(t *Table) []Measure {
-	out := []Measure{}
+	var out []Measure
 	for col, typ := range t.Columns {
 		up := strings.ToUpper(typ)
 		if !isNumeric(up) {
@@ -178,6 +430,7 @@ func detectMeasures(t *Table) []Measure {
 		}
 		sem := measureSemantic(col)
 		if sem == "" {
+			// keep conservative; widen over time
 			continue
 		}
 		out = append(out, Measure{
@@ -192,7 +445,7 @@ func detectMeasures(t *Table) []Measure {
 }
 
 func detectDimensionAttrs(t *Table) []DimensionAttr {
-	attrs := []DimensionAttr{}
+	var attrs []DimensionAttr
 	for col, typ := range t.Columns {
 		up := strings.ToUpper(typ)
 		lc := strings.ToLower(col)
@@ -210,7 +463,7 @@ func detectDimensionAttrs(t *Table) []DimensionAttr {
 }
 
 func detectTimeAttrs(t *Table) []TimeAttr {
-	out := []TimeAttr{}
+	var out []TimeAttr
 	for col, typ := range t.Columns {
 		up := strings.ToUpper(typ)
 		lc := strings.ToLower(col)
@@ -231,23 +484,20 @@ func detectTimeAttrs(t *Table) []TimeAttr {
 	return out
 }
 
-// ---------- Joinability & path finding ----------
-
 func findReachableDims(g *BQGraph, o *Ontology, factID string) []DimRef {
-	// BFS allowing edges both directions; accumulate first-attempt path to dimension tables
 	type node struct {
 		ID   string
 		Path []EdgeRef
 	}
 	queue := []node{{ID: factID, Path: nil}}
 	seen := map[string]bool{factID: true}
-	refs := []DimRef{}
+	var refs []DimRef
 
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
 
-		// consider out-edges
+		// out-edges
 		for _, e := range g.Edges[cur.ID] {
 			er := EdgeRef{From: e.From, To: e.To, ColPairs: e.Cols, Kind: e.Kind, Note: e.Note}
 			next := e.To
@@ -256,17 +506,15 @@ func findReachableDims(g *BQGraph, o *Ontology, factID string) []DimRef {
 				p := append(append([]EdgeRef{}, cur.Path...), er)
 				queue = append(queue, node{ID: next, Path: p})
 				if dt, ok := o.Dimensions[next]; ok && len(dt.Attributes) > 0 {
-					// pick a "display" attribute to use by default
 					attr := chooseDisplayAttr(dt.Attributes)
 					refs = append(refs, DimRef{TableID: next, Attr: attr, JoinPath: p})
 				}
 			}
 		}
-		// also consider reverse edges (To -> From)
+		// reverse edges
 		for _, outs := range g.Edges {
 			for _, e := range outs {
 				if e.To == cur.ID {
-					// reverse
 					revPairs := make([][2]string, len(e.Cols))
 					for i, p := range e.Cols {
 						revPairs[i] = [2]string{p[1], p[0]}
@@ -298,7 +546,6 @@ func findReachableDims(g *BQGraph, o *Ontology, factID string) []DimRef {
 	for _, r := range keyed {
 		out = append(out, r)
 	}
-	// stable
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].TableID == out[j].TableID {
 			return out[i].Attr.Column < out[j].Attr.Column
@@ -308,10 +555,9 @@ func findReachableDims(g *BQGraph, o *Ontology, factID string) []DimRef {
 	return out
 }
 
-// ---------- Template selection ----------
+// ---------- Template selection helpers (unchanged) ----------
 
 func selectTopDims(dims []DimRef, max int) []DimRef {
-	// prioritize by role: name > category > status > id > others
 	score := func(r string) int {
 		switch r {
 		case "name":
@@ -348,11 +594,9 @@ func boundedDimCombos(dims []DimRef, min, max int) [][]DimRef {
 		max = len(dims)
 	}
 	var out [][]DimRef
-	// include empty set if min == 0
 	if min == 0 {
 		out = append(out, nil)
 	}
-	// combos of size 1..max
 	var dfs func(start, k int, cur []DimRef)
 	dfs = func(start, k int, cur []DimRef) {
 		if k == 0 {
@@ -381,15 +625,11 @@ func attrsOf(drs []DimRef) []DimensionAttr {
 	return out
 }
 
-// ---------- SQL rendering ----------
+// ---------- SQL rendering for classic measure templates (unchanged) ----------
 
 func renderTemplateSQL(projectID, factID string, m Measure, dims []DimRef, tattr *TimeAttr, grain string, g *BQGraph) string {
-	// Build FROM + JOINs from join paths
-	type aliasInfo struct {
-		Alias string
-	}
 	aliases := map[string]string{}
-	order := []string{} // order of tables in the query
+	var order []string
 	nextAliasIdx := 0
 	useAlias := func(tableID string) string {
 		if a, ok := aliases[tableID]; ok {
@@ -402,47 +642,48 @@ func renderTemplateSQL(projectID, factID string, m Measure, dims []DimRef, tattr
 		return alias
 	}
 
-	// start with fact
 	factAlias := useAlias(factID)
-	joins := []string{}
+	var joins []string
 
-	// collect all tables required by dimension join paths
 	for _, d := range dims {
-		prev := factID
 		prevAlias := factAlias
 		for _, e := range d.JoinPath {
 			next := e.To
 			nextAlias := useAlias(next)
+
 			// build join condition referencing prevAlias and nextAlias
-			conds := make([]string, 0, len(e.ColPairs))
+			conditions := make([]string, 0, len(e.ColPairs))
 			for _, p := range e.ColPairs {
-				conds = append(conds, fmt.Sprintf("%s.%s = %s.%s", prevAlias, bqIdent(p[0]), nextAlias, bqIdent(p[1])))
+				conditions = append(conditions,
+					fmt.Sprintf("%s.%s = %s.%s", prevAlias, bqIdent(p[0]), nextAlias, bqIdent(p[1])),
+				)
 			}
-			join := fmt.Sprintf("LEFT JOIN `%s.%s` %s ON %s", projectID, next, nextAlias, strings.Join(conds, " AND "))
+			join := fmt.Sprintf("LEFT JOIN `%s.%s` %s ON %s",
+				projectID, next, nextAlias, strings.Join(conditions, " AND "),
+			)
 			joins = append(joins, join)
-			prev = next
+
+			// advance the left side for multi-hop paths
 			prevAlias = nextAlias
 		}
-		_ = prev // not used further, but kept for clarity
 	}
 
-	// SELECT list
-	selects := []string{}
-	groupBys := []string{}
-	// time bucket
+	var selects []string
+	var groupBys []string
+
 	if tattr != nil && grain != "" {
 		tf := timeTruncExpr(fmt.Sprintf("%s.%s", factAlias, bqIdent(tattr.Column)), tattr.BQType, grain)
 		selects = append(selects, fmt.Sprintf("%s AS period", tf))
 		groupBys = append(groupBys, "period")
 	}
-	// dims
+
 	for _, d := range dims {
 		a := aliases[d.TableID]
 		col := fmt.Sprintf("%s.%s", a, bqIdent(d.Attr.Column))
 		selects = append(selects, fmt.Sprintf("%s AS %s", col, safeAlias(d.TableID+"_"+d.Attr.Column)))
-		groupBys = append(groupBys, fmt.Sprintf("%d", len(selects))) // group by ordinal
+		groupBys = append(groupBys, fmt.Sprintf("%d", len(selects)))
 	}
-	// measure (take first allowed agg)
+
 	agg := "SUM"
 	if len(m.Aggs) > 0 {
 		agg = m.Aggs[0]
@@ -450,21 +691,14 @@ func renderTemplateSQL(projectID, factID string, m Measure, dims []DimRef, tattr
 	measureExpr := aggregateExpr(fmt.Sprintf("%s.%s", factAlias, bqIdent(m.Column)), agg)
 	selects = append(selects, fmt.Sprintf("%s AS %s_%s", measureExpr, strings.ToLower(agg), safeAlias(m.Column)))
 
-	// FROM line
 	from := fmt.Sprintf("FROM `%s.%s` %s", projectID, factID, factAlias)
 
-	// WHERE time range
 	where := ""
 	if tattr != nil {
 		col := fmt.Sprintf("%s.%s", factAlias, bqIdent(tattr.Column))
-		if strings.Contains(strings.ToUpper(tattr.BQType), "DATE") && !strings.Contains(strings.ToUpper(tattr.BQType), "TIME") {
-			where = fmt.Sprintf("WHERE %s BETWEEN @start_time AND @end_time", col)
-		} else {
-			where = fmt.Sprintf("WHERE %s BETWEEN @start_time AND @end_time", col)
-		}
+		where = fmt.Sprintf("WHERE %s BETWEEN @start_time AND @end_time", col)
 	}
 
-	// GROUP BY (if any dims/time)
 	group := ""
 	if len(groupBys) > 0 {
 		group = "GROUP BY " + strings.Join(groupBys, ", ")
@@ -481,17 +715,15 @@ func renderTemplateSQL(projectID, factID string, m Measure, dims []DimRef, tattr
 func timeTruncExpr(qualifiedCol, bqType, grain string) string {
 	gr := strings.ToUpper(grain)
 	if strings.Contains(strings.ToUpper(bqType), "DATE") && !strings.Contains(strings.ToUpper(bqType), "TIME") {
-		// BigQuery: DATE_TRUNC(date_expression, DATE_PART)
 		switch gr {
 		case "WEEK":
 			return fmt.Sprintf("DATE_TRUNC(%s, WEEK)", qualifiedCol)
 		case "MONTH":
 			return fmt.Sprintf("DATE_TRUNC(%s, MONTH)", qualifiedCol)
-		default: // DAY
+		default:
 			return fmt.Sprintf("DATE_TRUNC(%s, DAY)", qualifiedCol)
 		}
 	}
-	// TIMESTAMP/DATETIME
 	switch gr {
 	case "HOUR":
 		return fmt.Sprintf("TIMESTAMP_TRUNC(%s, HOUR)", qualifiedCol)
@@ -499,7 +731,7 @@ func timeTruncExpr(qualifiedCol, bqType, grain string) string {
 		return fmt.Sprintf("TIMESTAMP_TRUNC(%s, WEEK)", qualifiedCol)
 	case "MONTH":
 		return fmt.Sprintf("TIMESTAMP_TRUNC(%s, MONTH)", qualifiedCol)
-	default: // DAY
+	default:
 		return fmt.Sprintf("TIMESTAMP_TRUNC(%s, DAY)", qualifiedCol)
 	}
 }
@@ -545,14 +777,13 @@ func isNumeric(upType string) bool {
 func measureSemantic(col string) string {
 	l := strings.ToLower(col)
 	switch {
-	case strings.Contains(l, "revenue"), strings.Contains(l, "amount"), strings.Contains(l, "price"), strings.Contains(l, "cost"), strings.Contains(l, "total"):
+	case strings.Contains(l, "revenue"), strings.Contains(l, "amount"), strings.Contains(l, "price"), strings.Contains(l, "cost"), strings.Contains(l, "total"), strings.Contains(l, "value"):
 		return "amount"
-	case strings.Contains(l, "count"):
+	case strings.Contains(l, "count"), strings.HasPrefix(l, "n_"), strings.HasSuffix(l, "_count"):
 		return "count"
 	case strings.Contains(l, "duration"), strings.Contains(l, "latency"), strings.HasSuffix(l, "_ms"), strings.HasSuffix(l, "_sec"), strings.HasSuffix(l, "_s"):
 		return "latency"
 	default:
-		// you can widen this over time or use a scorer
 		return ""
 	}
 }
@@ -562,12 +793,10 @@ func allowedAggs(semantic, upType string) []string {
 	case "amount":
 		return []string{"SUM"}
 	case "count":
-		return []string{"SUM", "COUNT"} // supports pre-counted field or row count
+		return []string{"SUM", "COUNT"}
 	case "latency":
-		// avoid SUM; prefer distribution-oriented stats
 		return []string{"P95", "P50", "AVG"}
 	default:
-		// fallback based on type
 		if strings.Contains(upType, "INT") || strings.Contains(upType, "NUMERIC") {
 			return []string{"SUM", "AVG"}
 		}
@@ -580,11 +809,11 @@ func dimRole(col string) string {
 	switch {
 	case l == "name" || strings.HasSuffix(l, "_name"):
 		return "name"
-	case strings.Contains(l, "category") || strings.HasSuffix(l, "_type"):
+	case strings.Contains(l, "category") || strings.HasSuffix(l, "_type") || strings.HasSuffix(l, "_class"):
 		return "category"
 	case strings.Contains(l, "status") || strings.HasSuffix(l, "_state"):
 		return "status"
-	case l == "id" || strings.HasSuffix(l, "_id"):
+	case l == "id" || strings.HasSuffix(l, "_id") || strings.Contains(l, "key"):
 		return "id"
 	default:
 		return "attr"
@@ -615,7 +844,114 @@ func chooseDisplayAttr(attrs []DimensionAttr) DimensionAttr {
 	return best
 }
 
-// ---------- Optional: tiny helper to preview a few templates in logs ----------
+// ---------- Utility: schema/joins → prompt text ----------
+
+func schemaCard(projectID, tableID string, t *Table) string {
+	var cols []string
+	for c, typ := range t.Columns {
+		cols = append(cols, fmt.Sprintf("%s %s", c, strings.ToUpper(typ)))
+	}
+	sort.Strings(cols)
+	return fmt.Sprintf("- %s: columns=[%s]", tableID, strings.Join(cols, ", "))
+}
+
+func joinKeyNotes(projectID, tableID string, g *BQGraph) string {
+	var lines []string
+	// outgoing
+	for _, e := range g.Edges[tableID] {
+		for _, p := range e.Cols {
+			lines = append(lines, fmt.Sprintf("%s.%s = %s.%s", tableID, p[0], e.To, p[1]))
+		}
+	}
+	// incoming
+	for from, edges := range g.Edges {
+		for _, e := range edges {
+			if e.To == tableID {
+				for _, p := range e.Cols {
+					lines = append(lines, fmt.Sprintf("%s.%s = %s.%s", from, p[0], tableID, p[1]))
+				}
+			}
+		}
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+func joinKeyPairs(projectID, a, b string, g *BQGraph) string {
+	var lines []string
+	// a -> b
+	for _, e := range g.Edges[a] {
+		if e.To != b {
+			continue
+		}
+		for _, p := range e.Cols {
+			lines = append(lines, fmt.Sprintf("%s.%s = %s.%s", a, p[0], b, p[1]))
+		}
+	}
+	// b -> a
+	for _, e := range g.Edges[b] {
+		if e.To != a {
+			continue
+		}
+		for _, p := range e.Cols {
+			lines = append(lines, fmt.Sprintf("%s.%s = %s.%s", b, p[0], a, p[1]))
+		}
+	}
+	if len(lines) == 0 {
+		return "(none)"
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+func chooseAnchorMeasureForTable(t *Table) Measure {
+	meas := detectMeasures(t)
+	if len(meas) > 0 {
+		return meas[0]
+	}
+	// benign default to keep downstream title-gen happy
+	// prefer an id-like column if present
+	var idCol string
+	for c := range t.Columns {
+		if maybeIdentifier(c) {
+			idCol = c
+			break
+		}
+	}
+	if idCol == "" {
+		// just pick a column to COUNT
+		for c := range t.Columns {
+			idCol = c
+			break
+		}
+	}
+	return Measure{TableID: t.ID, Column: idCol, BQType: "INT64", Semantic: "count", Aggs: []string{"COUNT"}}
+}
+
+func pairKey(a, b string) string {
+	if a < b {
+		return a + "||" + b
+	}
+	return b + "||" + a
+}
+
+func dedupeTemplates(in []QueryTemplate) []QueryTemplate {
+	seen := map[string]bool{}
+	var out []QueryTemplate
+	for _, t := range in {
+		key := strings.TrimSpace(strings.ToLower(t.SQL))
+		if key == "" {
+			continue
+		}
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// ---------- Optional: preview helper ----------
 
 func (o *Ontology) Summarize(n int) string {
 	if n <= 0 || n > len(o.Templates) {
@@ -632,8 +968,12 @@ func (o *Ontology) Summarize(n int) string {
 		if t.TimeAttr != nil && t.Grain != "" {
 			timeStr = fmt.Sprintf("%s @ %s", t.TimeAttr.Column, t.Grain)
 		}
+		agg := ""
+		if len(t.Measure.Aggs) > 0 {
+			agg = strings.ToLower(t.Measure.Aggs[0])
+		}
 		lines = append(lines, fmt.Sprintf("[%s] %s(%s) by [%s] %s",
-			t.FactTable, strings.ToLower(t.Measure.Aggs[0]), t.Measure.Column, strings.Join(dnames, ", "), timeStr))
+			t.FactTable, agg, t.Measure.Column, strings.Join(dnames, ", "), timeStr))
 	}
 	return strings.Join(lines, "\n")
 }

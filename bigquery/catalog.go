@@ -17,6 +17,7 @@ package bigquery
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"strings"
@@ -175,6 +176,7 @@ func GenerateCatalog(
 	reverse := buildReverse(graph)
 
 	cands := make([]Candidate, 0, len(onto.Templates))
+	slog.Info("Received templates", "count", len(onto.Templates))
 	for _, t := range onto.Templates {
 		// cap dims if configured
 		if cfg.MaxDims > 0 && len(t.DimCols) > cfg.MaxDims {
@@ -299,15 +301,26 @@ func normalizeConfig(cfg *CatalogConfig) {
 }
 
 func scoreCoverage(cfg CatalogConfig, t *QueryTemplate) float64 {
-	score := cfg.FactWeights[t.FactTable]
+	score := 0.0
+
+	hasMeasure := t.Measure.Column != ""
+	if hasMeasure {
+		score += cfg.FactWeights[t.FactTable]
+	} else {
+		score += maxF(cfg.FactWeights[t.FactTable], cfg.DimWeights[t.FactTable]) * 0.6
+		if score == 0 {
+			score = 0.15 // minimal baseline so they aren’t dominated by coverage=0
+		}
+	}
+
+	denom := float64(len(t.DimCols) + 1)
 	for _, d := range t.DimCols {
 		k1 := d.TableID
 		k2 := d.TableID + "." + d.Column
-		score += maxF(cfg.DimWeights[k1], cfg.DimWeights[k2]) * (1.0 / float64(len(t.DimCols)+1))
+		score += maxF(cfg.DimWeights[k1], cfg.DimWeights[k2]) * (1.0 / denom)
 	}
 	return clamp01(score)
 }
-
 func scoreExplainability(cfg CatalogConfig, t *QueryTemplate, g *BQGraph, reverse map[string][]*Edge) float64 {
 	pen := 0.0
 	for _, d := range t.DimCols {

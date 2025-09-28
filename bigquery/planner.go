@@ -52,33 +52,6 @@ type Edge struct {
 	Note       string      // freeform (e.g., "name+value similarity")
 }
 
-// BuildGraph constructs a graph from FK metadata across all datasets in the project.
-func BuildGraph(ctx context.Context, projectID string) (*BQGraph, error) {
-	client, err := bq.NewClient(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	defer client.Close()
-
-	g := &BQGraph{Nodes: map[string]*Table{}, Edges: map[string][]*Edge{}}
-
-	// List all datasets in project
-	it := client.Datasets(ctx)
-	for {
-		ds, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		if err := harvestDataset(ctx, client, projectID, ds.DatasetID, g); err != nil {
-			return nil, err
-		}
-	}
-	return g, nil
-}
-
 // BuildGraphForDatasets confines harvesting to the given dataset IDs.
 func BuildGraphForDatasets(ctx context.Context, projectID string, datasetIDs []string) (*BQGraph, error) {
 	client, err := bq.NewClient(ctx, projectID)
@@ -86,9 +59,8 @@ func BuildGraphForDatasets(ctx context.Context, projectID string, datasetIDs []s
 		return nil, err
 	}
 	defer func(client *bq.Client) {
-		err := client.Close()
-		if err != nil {
-			slog.Error("bigquery client close", "error", err)
+		if cerr := client.Close(); cerr != nil {
+			slog.Error("bigquery client close", "error", cerr)
 		}
 	}(client)
 
@@ -134,6 +106,7 @@ func loadColumns(ctx context.Context, c *bq.Client, proj, ds string, g *BQGraph)
 		tableName := toStr(row[0])
 		colName := toStr(row[1])
 		dataType := toStr(row[2])
+		slog.Info("Discovered column", "table", tableName, "column", colName, "type", dataType)
 
 		tid := fmt.Sprintf("%s.%s", ds, tableName)
 		t, ok := g.Nodes[tid]
@@ -227,76 +200,7 @@ func toStr(v bq.Value) string {
 	return fmt.Sprintf("%v", v)
 }
 
-type SimilarityScorer interface {
-	ScoreColumns(ctx context.Context, a ColumnSample, b ColumnSample) (score float64, rationale string, err error)
-}
-
-type ColumnSample struct {
-	TableID    string // "dataset.table"
-	ColumnName string
-	BQType     string
-	Sample     []string
-	ExtraNotes string
-}
-
-func AugmentGraphWithSamples(
-	ctx context.Context,
-	client *bq.Client,
-	projectID string,
-	g *BQGraph,
-	scorer SimilarityScorer,
-	sampleLimit int,
-	minScore float64,
-	maxPairsPerTable int,
-) error {
-	if sampleLimit <= 0 {
-		sampleLimit = 10
-	}
-	if minScore <= 0 {
-		minScore = 0.70
-	}
-	if maxPairsPerTable <= 0 {
-		maxPairsPerTable = 50
-	}
-
-	// Cache samples: table -> col -> ColumnSample
-	samples := map[string]map[string]ColumnSample{}
-
-	getSample := func(ctx context.Context, tableID, col, typ string) (ColumnSample, error) {
-		if samples[tableID] == nil {
-			samples[tableID] = map[string]ColumnSample{}
-		}
-		if s, ok := samples[tableID][col]; ok {
-			return s, nil
-		}
-		ds, tbl := splitTableID(tableID)
-		if ds == "" || tbl == "" {
-			return ColumnSample{}, fmt.Errorf("bad tableID: %s", tableID)
-		}
-
-		rows, err := selectSamples(ctx, client, projectID, ds, tbl, col, sampleLimit)
-		if err != nil {
-			return ColumnSample{}, err
-		}
-
-		seen := map[string]struct{}{}
-		out := make([]string, 0, len(rows))
-		for _, v := range rows {
-			if _, ok := seen[v]; !ok {
-				seen[v] = struct{}{}
-				out = append(out, v)
-			}
-		}
-		s := ColumnSample{
-			TableID:    tableID,
-			ColumnName: col,
-			BQType:     typ,
-			Sample:     out,
-			ExtraNotes: deriveNotes(col, typ),
-		}
-		samples[tableID][col] = s
-		return s, nil
-	}
+func AugmentGraphWithEdgesBetweenSimilarColumns(g *BQGraph, maxPairsPerTable int) error {
 
 	for aID, a := range g.Nodes {
 		targets := rankTargets(aID, g)
@@ -312,42 +216,36 @@ func AugmentGraphWithSamples(
 					continue
 				}
 				for bcol, btyp := range g.Nodes[bID].Columns {
-					if !typeCompatible(atyp, btyp) {
-						continue
-					}
 					nameSim := nameSimilarity(acol, bcol, baseName(bID))
-					if nameSim < 0.35 && !(strings.HasSuffix(strings.ToLower(acol), "_id") && strings.ToLower(bcol) == "id") {
+					if nameSim < 0.75 && !(strings.HasSuffix(strings.ToLower(acol), "_id") && strings.ToLower(bcol) == "id") {
 						continue
 					}
 
-					as, err := getSample(ctx, aID, acol, atyp)
-					if err != nil {
-						continue
+					compatible := typeCompatible(atyp, btyp)
+					if !compatible {
+						if isStringType(atyp) && isNumericType(btyp) {
+							compatible = true
+						} else if isStringType(btyp) && isNumericType(atyp) {
+							compatible = true
+						}
 					}
-					bs, err := getSample(ctx, bID, bcol, btyp)
-					if err != nil {
+					if !compatible {
 						continue
 					}
 
-					score, rationale, err := scorer.ScoreColumns(ctx, as, bs)
-					if err != nil {
-						continue
+					e := &Edge{
+						From:       aID,
+						To:         bID,
+						Kind:       EdgeHeur,
+						Cols:       [][2]string{{acol, bcol}},
+						Confidence: nameSim,
+						Note:       "name similarity",
 					}
-					combined := (0.3 * nameSim) + (0.7 * score)
-					if combined >= minScore {
-						e := &Edge{
-							From:       aID,
-							To:         bID,
-							Kind:       EdgeHeur,
-							Cols:       [][2]string{{acol, bcol}},
-							Confidence: combined,
-							Note:       "name+value similarity; " + rationale,
-						}
-						g.Edges[aID] = append(g.Edges[aID], e)
-						pairsAdded++
-						if pairsAdded >= maxPairsPerTable {
-							break
-						}
+					g.Edges[aID] = append(g.Edges[aID], e)
+					slog.Info("Adding heuristic edge", "from", fmt.Sprintf("%s.%s", bqIdent(aID), acol), "to", fmt.Sprintf("%s.%s", bqIdent(bID), bcol))
+					pairsAdded++
+					if pairsAdded >= maxPairsPerTable {
+						break
 					}
 				}
 				if pairsAdded >= maxPairsPerTable {
@@ -361,34 +259,6 @@ func AugmentGraphWithSamples(
 	}
 	return nil
 }
-
-// selectSamples: SELECT col FROM `proj.ds.tbl` WHERE col IS NOT NULL LIMIT N
-func selectSamples(ctx context.Context, client *bq.Client, proj, ds, tbl, col string, limit int) ([]string, error) {
-	q := client.Query(fmt.Sprintf(
-		"SELECT %s FROM `%s.%s.%s` WHERE %s IS NOT NULL LIMIT %d",
-		bqIdent(col), proj, ds, tbl, bqIdent(col), limit,
-	))
-	it, err := q.Read(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	out := []string{}
-	for {
-		var row []bq.Value
-		if err := it.Next(&row); err == iterator.Done {
-			break
-		} else if err != nil {
-			return nil, err
-		}
-		if len(row) > 0 && row[0] != nil {
-			out = append(out, fmt.Sprintf("%v", row[0]))
-		}
-	}
-	return out, nil
-}
-
-// ---------- Utilities ----------
 
 func dsIdent(project, dataset string) string {
 	return fmt.Sprintf("`%s.%s`", project, dataset)
@@ -418,7 +288,17 @@ func maybeIdentifier(col string) bool {
 
 func maybeJoinableType(typ string) bool {
 	t := strings.ToUpper(typ)
-	return strings.Contains(t, "STRING") || strings.Contains(t, "INT") || strings.Contains(t, "NUMERIC")
+	return strings.Contains(t, "STRING") || strings.Contains(t, "INT") || strings.Contains(t, "NUMERIC") || strings.Contains(t, "BIGNUMERIC")
+}
+
+func isStringType(t string) bool {
+	u := strings.ToUpper(t)
+	return strings.Contains(u, "STRING")
+}
+
+func isNumericType(t string) bool {
+	u := strings.ToUpper(t)
+	return strings.Contains(u, "INT") || strings.Contains(u, "NUMERIC") || strings.Contains(u, "BIGNUMERIC")
 }
 
 func typeCompatible(a, b string) bool {
@@ -427,8 +307,7 @@ func typeCompatible(a, b string) bool {
 	switch {
 	case strings.Contains(au, "STRING") && strings.Contains(bu, "STRING"):
 		return true
-	case (strings.Contains(au, "INT") || strings.Contains(au, "NUMERIC")) &&
-		(strings.Contains(bu, "INT") || strings.Contains(bu, "NUMERIC")):
+	case isNumericType(au) && isNumericType(bu):
 		return true
 	default:
 		return false
@@ -441,9 +320,27 @@ func nameSimilarity(aCol, bCol, bTable string) float64 {
 	if a == b {
 		return 1.0
 	}
-	if strings.HasSuffix(a, "_id") && b == "id" && strings.TrimSuffix(a, "_id") == bTable {
+
+	// underscore-insensitive equality
+	ar := strings.ReplaceAll(a, "_", "")
+	br := strings.ReplaceAll(b, "_", "")
+	if ar == br {
+		return 0.95
+	}
+
+	// table-name + id forms, e.g. portfolio_id ↔ portfolioid, security_id ↔ securityid
+	bt := strings.ReplaceAll(strings.ToLower(bTable), "_", "")
+	if strings.HasSuffix(a, "_id") && strings.TrimSuffix(a, "_id") == bt && (b == "id" || b == bt+"id" || br == bt+"id") {
 		return 0.9
 	}
+	if strings.HasSuffix(b, "_id") && strings.TrimSuffix(b, "_id") == bt && (a == "id" || a == bt+"id" || ar == bt+"id") {
+		return 0.9
+	}
+	if (a == bt+"id" && (b == "id" || b == bt+"_id")) || (b == bt+"id" && (a == "id" || a == bt+"_id")) {
+		return 0.9
+	}
+
+	// fallback jaccard on underscore-split tokens
 	ta := tokenize(a)
 	tb := tokenize(b)
 	return jaccard(ta, tb)
@@ -494,7 +391,7 @@ func deriveNotes(col, typ string) string {
 	if strings.Contains(ut, "STRING") {
 		n = append(n, "string")
 	}
-	if strings.Contains(ut, "INT") || strings.Contains(ut, "NUMERIC") {
+	if isNumericType(ut) {
 		n = append(n, "numeric-ish")
 	}
 	if len(n) == 0 {

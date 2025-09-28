@@ -81,7 +81,7 @@ func MakeSchemaSketch(g *BQGraph, onto *Ontology) SchemaSketch {
 // ---------- OpenAI-backed DemandModel ----------
 
 type OpenAIDemandModel struct {
-	client  openai.Client
+	client  *openai.Client
 	Model   openai.ChatModel
 	Timeout time.Duration
 	summary string // cached dataset summary
@@ -95,8 +95,9 @@ func NewOpenAIDemandModel(
 	onto *Ontology,
 	opts ...option.RequestOption,
 ) (*OpenAIDemandModel, error) {
+	c := openai.NewClient(opts...)
 	m := &OpenAIDemandModel{
-		client:  openai.NewClient(opts...),
+		client:  &c,
 		Model:   model,
 		Timeout: 45 * time.Second,
 	}
@@ -141,7 +142,7 @@ func (m *OpenAIDemandModel) summarizeImportance(ctx context.Context, sketch Sche
 				"summary": map[string]any{"type": "string"},
 				"themes":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			},
-			"required": []string{"summary"},
+			"required": []string{"summary", "themes"},
 		},
 	}
 
@@ -173,7 +174,7 @@ func (m *OpenAIDemandModel) summarizeImportance(ctx context.Context, sketch Sche
 		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{JSONSchema: sumSchema},
 		},
-		Temperature: openai.Float(0),
+		Temperature: openai.Float(1),
 	})
 	if err != nil {
 		return "", err
@@ -237,7 +238,7 @@ func (m *OpenAIDemandModel) scoreTemplate(ctx context.Context, summary string, t
 		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{JSONSchema: scoreSchema},
 		},
-		Temperature: openai.Float(0),
+		Temperature: openai.Float(1),
 	})
 	if err != nil {
 		return 0, err
