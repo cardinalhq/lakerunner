@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -295,6 +297,389 @@ func TestSliceSafe(t *testing.T) {
 			result := sliceSafe(tt.input, tt.start, tt.end)
 			if result != tt.expected {
 				t.Errorf("Expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestHandlePromQLValidateWithExemplar(t *testing.T) {
+	qs := &QuerierService{}
+
+	// Sample exemplar data for testing
+	validExemplar := map[string]any{
+		"http_requests_total": 100,
+		"job":                 "api-server",
+		"instance":            "localhost:8080",
+		"method":              "GET",
+		"status":              "200",
+		"handler":             "/api/users",
+		"up":                  1,
+		"cpu_usage":           45.2,
+	}
+
+	tests := []struct {
+		name                    string
+		query                   string
+		exemplar                map[string]any
+		expectedValid           bool
+		expectedStatus          int
+		expectedMissingFields   []string
+		expectedValidationCount int
+		expectedContexts        []string
+	}{
+		{
+			name:           "Valid query with all fields in exemplar",
+			query:          `sum(rate(http_requests_total[5m])) by (job, instance)`,
+			exemplar:       validExemplar,
+			expectedValid:  true,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Valid query - metric exists",
+			query:          `up`,
+			exemplar:       validExemplar,
+			expectedValid:  true,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Valid query - labels exist",
+			query:          `http_requests_total{job="api-server", method="GET"}`,
+			exemplar:       validExemplar,
+			expectedValid:  true,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:                    "Invalid query - metric not in exemplar",
+			query:                   `nonexistent_metric`,
+			exemplar:                validExemplar,
+			expectedValid:           false,
+			expectedStatus:          http.StatusOK,
+			expectedMissingFields:   []string{"nonexistent_metric"},
+			expectedValidationCount: 1,
+			expectedContexts:        []string{"metric_name"},
+		},
+		{
+			name:                    "Invalid query - label matcher field missing",
+			query:                   `http_requests_total{nonexistent_label="value"}`,
+			exemplar:                validExemplar,
+			expectedValid:           false,
+			expectedStatus:          http.StatusOK,
+			expectedMissingFields:   []string{"nonexistent_label"},
+			expectedValidationCount: 1,
+			expectedContexts:        []string{"label_matcher"},
+		},
+		{
+			name:                    "Invalid query - group by field missing",
+			query:                   `sum(http_requests_total) by (nonexistent_field)`,
+			exemplar:                validExemplar,
+			expectedValid:           false,
+			expectedStatus:          http.StatusOK,
+			expectedMissingFields:   []string{"nonexistent_field"},
+			expectedValidationCount: 1,
+			expectedContexts:        []string{"group_by"},
+		},
+		{
+			name:                    "Invalid query - multiple missing fields",
+			query:                   `sum(nonexistent_metric{missing_label="value"}) by (missing_group_field)`,
+			exemplar:                validExemplar,
+			expectedValid:           false,
+			expectedStatus:          http.StatusOK,
+			expectedMissingFields:   []string{"nonexistent_metric", "missing_label", "missing_group_field"},
+			expectedValidationCount: 3,
+			expectedContexts:        []string{"metric_name", "label_matcher", "group_by"},
+		},
+		{
+			name:                    "Invalid query - group without field missing",
+			query:                   `sum(http_requests_total) without (nonexistent_field)`,
+			exemplar:                validExemplar,
+			expectedValid:           false,
+			expectedStatus:          http.StatusOK,
+			expectedMissingFields:   []string{"nonexistent_field"},
+			expectedValidationCount: 1,
+			expectedContexts:        []string{"group_without"},
+		},
+		{
+			name:           "Valid query without exemplar - should pass syntax validation",
+			query:          `sum(rate(any_metric[5m])) by (any_label)`,
+			exemplar:       nil,
+			expectedValid:  true,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Valid query with empty exemplar - should pass syntax validation",
+			query:          `sum(rate(any_metric[5m])) by (any_label)`,
+			exemplar:       map[string]any{},
+			expectedValid:  true,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:                    "Complex query with mixed valid/invalid fields",
+			query:                   `rate(http_requests_total{job="api", missing_label="x"}[5m]) / rate(valid_metric{instance="localhost"}[5m])`,
+			exemplar:                validExemplar,
+			expectedValid:           false,
+			expectedStatus:          http.StatusOK,
+			expectedMissingFields:   []string{"missing_label", "valid_metric"},
+			expectedValidationCount: 2,
+		},
+		{
+			name:           "Binary operation with valid fields",
+			query:          `up + cpu_usage`,
+			exemplar:       validExemplar,
+			expectedValid:  true,
+			expectedStatus: http.StatusOK,
+		},
+		// Additional edge cases
+		{
+			name:           "Scalar literal query",
+			query:          `123`,
+			exemplar:       validExemplar,
+			expectedValid:  true,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:                    "Function with missing metric",
+			query:                   `rate(missing_metric[5m])`,
+			exemplar:                validExemplar,
+			expectedValid:           false,
+			expectedStatus:          http.StatusOK,
+			expectedMissingFields:   []string{"missing_metric"},
+			expectedValidationCount: 1,
+			expectedContexts:        []string{"metric_name"},
+		},
+		{
+			name:           "Complex aggregation with all fields present",
+			query:          `topk(5, sum(rate(http_requests_total[5m])) by (job))`,
+			exemplar:       validExemplar,
+			expectedValid:  true,
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create request body
+			reqBody := promQLValidateRequest{
+				Query:    tt.query,
+				Exemplar: tt.exemplar,
+			}
+			jsonBody, _ := json.Marshal(reqBody)
+
+			// Create HTTP request
+			req := httptest.NewRequest("POST", "/api/v1/promql/validate", bytes.NewReader(jsonBody))
+			req.Header.Set("Content-Type", "application/json")
+
+			// Create response recorder
+			w := httptest.NewRecorder()
+
+			// Call the handler
+			qs.handlePromQLValidate(w, req)
+
+			// Check status code
+			if w.Code != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+
+			// Parse response - handle both success and error response types
+			responseBody := w.Body.Bytes()
+
+			if tt.expectedValid {
+				// For valid responses, expect promQLValidateResponse
+				var response promQLValidateResponse
+				if err := json.Unmarshal(responseBody, &response); err != nil {
+					t.Fatalf("Failed to parse success response JSON: %v", err)
+				}
+
+				if response.Valid != tt.expectedValid {
+					t.Errorf("Expected valid=%v, got valid=%v", tt.expectedValid, response.Valid)
+				}
+			} else {
+				// For invalid responses, expect promQLValidateErrorResponse
+				var response promQLValidateErrorResponse
+				if err := json.Unmarshal(responseBody, &response); err != nil {
+					t.Fatalf("Failed to parse error response JSON: %v", err)
+				}
+
+				if response.Valid != tt.expectedValid {
+					t.Errorf("Expected valid=%v, got valid=%v", tt.expectedValid, response.Valid)
+				}
+
+				// Check missing fields
+				if len(tt.expectedMissingFields) > 0 {
+					sort.Strings(response.MissingFields)
+					expectedSorted := make([]string, len(tt.expectedMissingFields))
+					copy(expectedSorted, tt.expectedMissingFields)
+					sort.Strings(expectedSorted)
+
+					if !reflect.DeepEqual(response.MissingFields, expectedSorted) {
+						t.Errorf("Expected missing fields %v, got %v", expectedSorted, response.MissingFields)
+					}
+				}
+
+				// Check validation error count
+				if tt.expectedValidationCount > 0 {
+					if len(response.ValidationErrors) != tt.expectedValidationCount {
+						t.Errorf("Expected %d validation errors, got %d", tt.expectedValidationCount, len(response.ValidationErrors))
+					}
+				}
+
+				// Check contexts if specified
+				if len(tt.expectedContexts) > 0 {
+					contexts := make([]string, len(response.ValidationErrors))
+					for i, err := range response.ValidationErrors {
+						contexts[i] = err.Context
+					}
+					sort.Strings(contexts)
+					expectedContextsSorted := make([]string, len(tt.expectedContexts))
+					copy(expectedContextsSorted, tt.expectedContexts)
+					sort.Strings(expectedContextsSorted)
+
+					if !reflect.DeepEqual(contexts, expectedContextsSorted) {
+						t.Errorf("Expected contexts %v, got %v", expectedContextsSorted, contexts)
+					}
+				}
+
+				// Check that error message is present
+				if response.Error == "" {
+					t.Error("Expected error message for invalid query")
+				}
+			}
+		})
+	}
+}
+
+func TestExtractFieldsFromExemplar(t *testing.T) {
+	tests := []struct {
+		name           string
+		exemplar       map[string]any
+		expectedFields []string
+	}{
+		{
+			name: "Basic exemplar",
+			exemplar: map[string]any{
+				"metric1": 100,
+				"label1":  "value1",
+				"label2":  "value2",
+			},
+			expectedFields: []string{"metric1", "label1", "label2"},
+		},
+		{
+			name:           "Empty exemplar",
+			exemplar:       map[string]any{},
+			expectedFields: []string{},
+		},
+		{
+			name:           "Nil exemplar",
+			exemplar:       nil,
+			expectedFields: []string{},
+		},
+		{
+			name: "Mixed data types in exemplar",
+			exemplar: map[string]any{
+				"string_field": "value",
+				"int_field":    42,
+				"float_field":  3.14,
+				"bool_field":   true,
+				"array_field":  []string{"a", "b"},
+				"object_field": map[string]string{"nested": "value"},
+			},
+			expectedFields: []string{"string_field", "int_field", "float_field", "bool_field", "array_field", "object_field"},
+		},
+		{
+			name: "Special characters in field names",
+			exemplar: map[string]any{
+				"field_with_underscore": "value",
+				"field-with-dash":       "value",
+				"field.with.dots":       "value",
+			},
+			expectedFields: []string{"field_with_underscore", "field-with-dash", "field.with.dots"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fields := extractFieldsFromExemplar(tt.exemplar)
+
+			// Convert map to slice for comparison
+			var actualFields []string
+			for field := range fields {
+				actualFields = append(actualFields, field)
+			}
+
+			// Handle empty case specifically
+			if len(tt.expectedFields) == 0 && len(actualFields) == 0 {
+				return // Both empty, test passes
+			}
+
+			sort.Strings(actualFields)
+			expectedSorted := make([]string, len(tt.expectedFields))
+			copy(expectedSorted, tt.expectedFields)
+			sort.Strings(expectedSorted)
+
+			if !reflect.DeepEqual(actualFields, expectedSorted) {
+				t.Errorf("Expected fields %v, got %v", expectedSorted, actualFields)
+			}
+		})
+	}
+}
+
+func TestRemoveDuplicates(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{
+			name:     "No duplicates",
+			input:    []string{"a", "b", "c"},
+			expected: []string{"a", "b", "c"},
+		},
+		{
+			name:     "With duplicates",
+			input:    []string{"a", "b", "a", "c", "b"},
+			expected: []string{"a", "b", "c"},
+		},
+		{
+			name:     "All duplicates",
+			input:    []string{"a", "a", "a"},
+			expected: []string{"a"},
+		},
+		{
+			name:     "Empty slice",
+			input:    []string{},
+			expected: []string{},
+		},
+		{
+			name:     "Single element",
+			input:    []string{"a"},
+			expected: []string{"a"},
+		},
+		{
+			name:     "Nil slice",
+			input:    nil,
+			expected: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := removeDuplicates(tt.input)
+
+			// Handle nil/empty cases
+			if len(tt.expected) == 0 {
+				if len(result) != 0 {
+					t.Errorf("Expected empty result, got %v", result)
+				}
+				return
+			}
+
+			// Sort both slices for comparison since order isn't guaranteed
+			sort.Strings(result)
+			expectedSorted := make([]string, len(tt.expected))
+			copy(expectedSorted, tt.expected)
+			sort.Strings(expectedSorted)
+
+			if !reflect.DeepEqual(result, expectedSorted) {
+				t.Errorf("Expected %v, got %v", expectedSorted, result)
 			}
 		})
 	}
