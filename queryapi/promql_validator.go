@@ -69,7 +69,7 @@ func (q *QuerierService) handlePromQLValidate(w http.ResponseWriter, r *http.Req
 	}
 
 	// If no exemplar provided, just return syntax validation
-	if req.Exemplar == nil || len(req.Exemplar) == 0 {
+	if len(req.Exemplar) == 0 {
 		_ = json.NewEncoder(w).Encode(promQLValidateResponse{Valid: true})
 		return
 	}
