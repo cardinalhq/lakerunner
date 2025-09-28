@@ -201,7 +201,6 @@ func toStr(v bq.Value) string {
 }
 
 func AugmentGraphWithEdgesBetweenSimilarColumns(g *BQGraph, maxPairsPerTable int) error {
-
 	for aID, a := range g.Nodes {
 		targets := rankTargets(aID, g)
 

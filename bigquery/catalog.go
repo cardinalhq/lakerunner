@@ -17,8 +17,12 @@ package bigquery
 import (
 	"context"
 	"fmt"
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/packages/param"
 	"log/slog"
 	"math"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -102,7 +106,8 @@ type Candidate struct {
 	// Scores
 	Scores ScoreBreakdown
 
-	Stage string
+	Stage     string
+	Embedding []float64
 }
 
 type ScoreBreakdown struct {
@@ -205,6 +210,13 @@ func GenerateCatalog(
 
 		composite := cfg.WCoverage*coverage + cfg.WExplainability*explain + cfg.WCost*costEff + cfg.WDemand*dmd
 
+		apiKey := os.Getenv("OPENAI_API_KEY")
+		model := os.Getenv("OPENAI_GPT_MODEL") // optional, default in embedTextWithOpenAI
+		embeddings, err := embedTextWithOpenAI(ctx, apiKey, model, title+" "+desc+" \nSQL: "+t.SQL)
+		if err != nil {
+			slog.Warn("failed to embed candidate", "error", err, "title", title)
+			continue
+		}
 		cand := Candidate{
 			Title:          title,
 			Description:    desc,
@@ -224,7 +236,8 @@ func GenerateCatalog(
 				Demand:         dmd,
 				Composite:      composite,
 			},
-			Stage: "dev",
+			Stage:     "dev",
+			Embedding: embeddings,
 		}
 		cands = append(cands, cand)
 	}
@@ -360,10 +373,6 @@ func scoreCost(cfg CatalogConfig, bytes int64) float64 {
 	return clamp01(budget / math.Sqrt(b*budget))
 }
 
-//
-// Graph helpers (BFS shortest path in edges, allow reverse edges)
-//
-
 func buildReverse(g *BQGraph) map[string][]*Edge {
 	rev := map[string][]*Edge{}
 	for _, outs := range g.Edges {
@@ -407,7 +416,6 @@ func shortestPathLen(g *BQGraph, reverse map[string][]*Edge, from, to string) in
 				q = append(q, node{e.To, cur.D + 1})
 			}
 		}
-		// rev
 		for _, e := range reverse[cur.ID] {
 			if e.To == to {
 				return cur.D + 1
@@ -419,6 +427,39 @@ func shortestPathLen(g *BQGraph, reverse map[string][]*Edge, from, to string) in
 		}
 	}
 	return -1
+}
+
+func embedTextWithOpenAI(ctx context.Context, apiKey, model, text string) ([]float64, error) {
+	if apiKey == "" || text == "" {
+		return nil, nil
+	}
+	c := openai.NewClient(option.WithAPIKey(apiKey))
+
+	// Default model
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
+
+	resp, err := c.Embeddings.New(ctx, openai.EmbeddingNewParams{
+		Model: model,
+		Input: openai.EmbeddingNewParamsInputUnion{
+			OfString: param.NewOpt(text),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Data) == 0 {
+		return nil, fmt.Errorf("no embedding returned")
+	}
+
+	// Ensure []float32 (some SDKs return float32 already)
+	raw := resp.Data[0].Embedding
+	vec := make([]float64, len(raw))
+	for i := range raw {
+		vec[i] = raw[i]
+	}
+	return vec, nil
 }
 
 func clamp01(x float64) float64 {
