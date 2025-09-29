@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -37,6 +38,20 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, exem
 	slog.Info("Processing logs exemplars",
 		"num_exemplars", len(exemplars),
 		"organization_id", organizationID)
+
+	// Sort exemplars deterministically to prevent deadlocks
+	sort.Slice(exemplars, func(i, j int) bool {
+		if exemplars[i].Attributes["service.name"] != exemplars[j].Attributes["service.name"] {
+			return exemplars[i].Attributes["service.name"] < exemplars[j].Attributes["service.name"]
+		}
+		if exemplars[i].Attributes["k8s.cluster.name"] != exemplars[j].Attributes["k8s.cluster.name"] {
+			return exemplars[i].Attributes["k8s.cluster.name"] < exemplars[j].Attributes["k8s.cluster.name"]
+		}
+		if exemplars[i].Attributes["k8s.namespace.name"] != exemplars[j].Attributes["k8s.namespace.name"] {
+			return exemplars[i].Attributes["k8s.namespace.name"] < exemplars[j].Attributes["k8s.namespace.name"]
+		}
+		return exemplars[i].Attributes["fingerprint"] < exemplars[j].Attributes["fingerprint"]
+	})
 
 	records := make([]lrdb.BatchUpsertExemplarLogsParams, 0, len(exemplars))
 
@@ -129,6 +144,23 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, e
 		"num_exemplars", len(exemplars),
 		"organization_id", organizationID)
 
+	// Sort exemplars deterministically to prevent deadlocks
+	sort.Slice(exemplars, func(i, j int) bool {
+		if exemplars[i].Attributes["service.name"] != exemplars[j].Attributes["service.name"] {
+			return exemplars[i].Attributes["service.name"] < exemplars[j].Attributes["service.name"]
+		}
+		if exemplars[i].Attributes["k8s.cluster.name"] != exemplars[j].Attributes["k8s.cluster.name"] {
+			return exemplars[i].Attributes["k8s.cluster.name"] < exemplars[j].Attributes["k8s.cluster.name"]
+		}
+		if exemplars[i].Attributes["k8s.namespace.name"] != exemplars[j].Attributes["k8s.namespace.name"] {
+			return exemplars[i].Attributes["k8s.namespace.name"] < exemplars[j].Attributes["k8s.namespace.name"]
+		}
+		if exemplars[i].Attributes["metric.name"] != exemplars[j].Attributes["metric.name"] {
+			return exemplars[i].Attributes["metric.name"] < exemplars[j].Attributes["metric.name"]
+		}
+		return exemplars[i].Attributes["metric.type"] < exemplars[j].Attributes["metric.type"]
+	})
+
 	records := make([]lrdb.BatchUpsertExemplarMetricsParams, 0, len(exemplars))
 
 	for _, exemplar := range exemplars {
@@ -203,6 +235,20 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID string, ex
 	slog.Info("Processing traces exemplars",
 		"num_exemplars", len(exemplars),
 		"organization_id", organizationID)
+
+	// Sort exemplars deterministically to prevent deadlocks
+	sort.Slice(exemplars, func(i, j int) bool {
+		if exemplars[i].Attributes["service.name"] != exemplars[j].Attributes["service.name"] {
+			return exemplars[i].Attributes["service.name"] < exemplars[j].Attributes["service.name"]
+		}
+		if exemplars[i].Attributes["k8s.cluster.name"] != exemplars[j].Attributes["k8s.cluster.name"] {
+			return exemplars[i].Attributes["k8s.cluster.name"] < exemplars[j].Attributes["k8s.cluster.name"]
+		}
+		if exemplars[i].Attributes["k8s.namespace.name"] != exemplars[j].Attributes["k8s.namespace.name"] {
+			return exemplars[i].Attributes["k8s.namespace.name"] < exemplars[j].Attributes["k8s.namespace.name"]
+		}
+		return exemplars[i].Attributes["fingerprint"] < exemplars[j].Attributes["fingerprint"]
+	})
 
 	records := make([]lrdb.BatchUpsertExemplarTracesParams, 0, len(exemplars))
 
