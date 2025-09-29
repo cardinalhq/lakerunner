@@ -44,6 +44,7 @@ require (
 	github.com/rdforte/gomaxecs v1.1.1
 	github.com/samber/slog-multi v1.4.1
 	github.com/segmentio/kafka-go v0.4.49
+	github.com/shirou/gopsutil/v4 v4.25.7
 	github.com/sony/sonyflake v1.3.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.19.0
@@ -543,7 +544,6 @@ require (
 	github.com/securego/gosec/v2 v2.22.7 // indirect
 	github.com/sercand/kuberesolver/v5 v5.1.1 // indirect
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
-	github.com/shirou/gopsutil/v4 v4.25.7 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sigstore/cosign/v2 v2.4.1 // indirect
 	github.com/sigstore/protobuf-specs v0.3.2 // indirect
