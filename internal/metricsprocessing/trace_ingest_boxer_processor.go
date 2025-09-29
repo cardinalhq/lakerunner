@@ -96,5 +96,5 @@ func (b *TraceIngestBoxerProcessor) Process(ctx context.Context, group *accumula
 
 // GetTargetRecordCount returns the target file size limit for trace ingestion batching
 func (b *TraceIngestBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
-	return 5 * 1024 * 1024 // 5MB file size limit
+	return config.TargetFileSize
 }

@@ -38,10 +38,8 @@ var rollupAccumulationTimes = map[int32]time.Duration{
 
 // MetricRollupConsumer consumes MetricRollupBundle messages from boxer
 type MetricRollupConsumer struct {
-	consumer      fly.Consumer
-	store         MetricRollupStore
+	*WorkerConsumer
 	processor     *MetricRollupProcessor
-	cfg           *config.Config
 	topic         string
 	consumerGroup string
 }
@@ -69,37 +67,19 @@ func NewMetricRollupConsumer(
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	return &MetricRollupConsumer{
-		consumer:      consumer,
-		store:         store,
+	c := &MetricRollupConsumer{
 		processor:     processor,
-		cfg:           cfg,
 		topic:         topic,
 		consumerGroup: consumerGroup,
-	}, nil
-}
-
-func (c *MetricRollupConsumer) Run(ctx context.Context) error {
-	ll := logctx.FromContext(ctx)
-	ll.Info("Starting metric rollup consumer (bundle mode)")
-
-	handler := func(handlerCtx context.Context, msgs []fly.ConsumedMessage) error {
-		for _, msg := range msgs {
-			if err := c.processMessage(handlerCtx, msg); err != nil {
-				ll.Error("Error processing message", slog.Any("error", err))
-				return err // Return error to prevent committing bad batch
-			}
-		}
-
-		CleanupCommittedOffsets(handlerCtx, c.store, c.topic, c.consumerGroup, msgs)
-
-		return nil
 	}
 
-	return c.consumer.Consume(ctx, handler)
+	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
+
+	return c, nil
 }
 
-func (c *MetricRollupConsumer) processMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+// ProcessMessage implements MessageProcessor interface
+func (c *MetricRollupConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
 	ll := logctx.FromContext(ctx)
 
 	var bundle messages.MetricRollupBundle
@@ -129,10 +109,12 @@ func (c *MetricRollupConsumer) processMessage(ctx context.Context, msg fly.Consu
 	return nil
 }
 
-// Close stops the consumer
-func (c *MetricRollupConsumer) Close() error {
-	if c.consumer != nil {
-		return c.consumer.Close()
-	}
-	return nil
+// GetTopic implements MessageProcessor interface
+func (c *MetricRollupConsumer) GetTopic() string {
+	return c.topic
+}
+
+// GetConsumerGroup implements MessageProcessor interface
+func (c *MetricRollupConsumer) GetConsumerGroup() string {
+	return c.consumerGroup
 }

@@ -29,10 +29,8 @@ import (
 
 // MetricIngestConsumer handles metric ingest bundles from boxer
 type MetricIngestConsumer struct {
-	consumer      fly.Consumer
-	store         MetricIngestStore
+	*WorkerConsumer
 	processor     *MetricIngestProcessor
-	cfg           *config.Config
 	topic         string
 	consumerGroup string
 }
@@ -60,36 +58,19 @@ func NewMetricIngestConsumer(
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	return &MetricIngestConsumer{
-		consumer:      consumer,
-		store:         store,
+	c := &MetricIngestConsumer{
 		processor:     processor,
-		cfg:           cfg,
 		topic:         topic,
 		consumerGroup: consumerGroup,
-	}, nil
-}
-
-func (c *MetricIngestConsumer) Run(ctx context.Context) error {
-	ll := logctx.FromContext(ctx)
-	ll.Info("Starting metric ingest consumer", "topic", c.topic, "consumerGroup", c.consumerGroup)
-
-	handler := func(ctx context.Context, msgs []fly.ConsumedMessage) error {
-		for _, msg := range msgs {
-			if err := c.processMessage(ctx, msg); err != nil {
-				return err
-			}
-		}
-
-		CleanupCommittedOffsets(ctx, c.store, c.topic, c.consumerGroup, msgs)
-
-		return nil
 	}
 
-	return c.consumer.Consume(ctx, handler)
+	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
+
+	return c, nil
 }
 
-func (c *MetricIngestConsumer) processMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+// ProcessMessage implements MessageProcessor interface
+func (c *MetricIngestConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
 	ll := logctx.FromContext(ctx)
 
 	var bundle messages.MetricIngestBundle
@@ -111,9 +92,16 @@ func (c *MetricIngestConsumer) processMessage(ctx context.Context, msg fly.Consu
 		slog.Int("instanceNum", int(key.InstanceNum)),
 		slog.Int("messageCount", len(bundle.Messages)))
 
+	// ProcessBundle will insert the Kafka offsets into the database as part of its transaction
 	return c.processor.ProcessBundle(ctx, key, bundle.Messages, int32(msg.Partition), msg.Offset)
 }
 
-func (c *MetricIngestConsumer) Close() error {
-	return c.consumer.Close()
+// GetTopic implements MessageProcessor interface
+func (c *MetricIngestConsumer) GetTopic() string {
+	return c.topic
+}
+
+// GetConsumerGroup implements MessageProcessor interface
+func (c *MetricIngestConsumer) GetConsumerGroup() string {
+	return c.consumerGroup
 }

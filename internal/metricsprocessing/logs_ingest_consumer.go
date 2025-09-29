@@ -29,10 +29,8 @@ import (
 
 // LogIngestConsumer handles log ingest bundles from boxer
 type LogIngestConsumer struct {
-	consumer      fly.Consumer
-	store         LogIngestStore
+	*WorkerConsumer
 	processor     *LogIngestProcessor
-	cfg           *config.Config
 	topic         string
 	consumerGroup string
 }
@@ -60,36 +58,19 @@ func NewLogIngestConsumer(
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	return &LogIngestConsumer{
-		consumer:      consumer,
-		store:         store,
+	c := &LogIngestConsumer{
 		processor:     processor,
-		cfg:           cfg,
 		topic:         topic,
 		consumerGroup: consumerGroup,
-	}, nil
-}
-
-func (c *LogIngestConsumer) Run(ctx context.Context) error {
-	ll := logctx.FromContext(ctx)
-	ll.Info("Starting log ingest consumer", "topic", c.topic, "consumerGroup", c.consumerGroup)
-
-	handler := func(ctx context.Context, msgs []fly.ConsumedMessage) error {
-		for _, msg := range msgs {
-			if err := c.processMessage(ctx, msg); err != nil {
-				return err
-			}
-		}
-
-		CleanupCommittedOffsets(ctx, c.store, c.topic, c.consumerGroup, msgs)
-
-		return nil
 	}
 
-	return c.consumer.Consume(ctx, handler)
+	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
+
+	return c, nil
 }
 
-func (c *LogIngestConsumer) processMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+// ProcessMessage implements MessageProcessor interface
+func (c *LogIngestConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
 	ll := logctx.FromContext(ctx)
 
 	var bundle messages.LogIngestBundle
@@ -111,9 +92,16 @@ func (c *LogIngestConsumer) processMessage(ctx context.Context, msg fly.Consumed
 		slog.Int("instanceNum", int(key.InstanceNum)),
 		slog.Int("messageCount", len(bundle.Messages)))
 
+	// ProcessBundle will insert the Kafka offsets into the database as part of its transaction
 	return c.processor.ProcessBundle(ctx, key, bundle.Messages, int32(msg.Partition), msg.Offset)
 }
 
-func (c *LogIngestConsumer) Close() error {
-	return c.consumer.Close()
+// GetTopic implements MessageProcessor interface
+func (c *LogIngestConsumer) GetTopic() string {
+	return c.topic
+}
+
+// GetConsumerGroup implements MessageProcessor interface
+func (c *LogIngestConsumer) GetConsumerGroup() string {
+	return c.consumerGroup
 }

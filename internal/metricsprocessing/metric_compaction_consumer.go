@@ -29,10 +29,8 @@ import (
 
 // MetricCompactionConsumer consumes MetricCompactionBundle messages from boxer
 type MetricCompactionConsumer struct {
-	consumer      fly.Consumer
-	store         MetricCompactionStore
+	*WorkerConsumer
 	processor     *MetricCompactionProcessor
-	cfg           *config.Config
 	topic         string
 	consumerGroup string
 }
@@ -55,37 +53,19 @@ func NewMetricCompactionConsumer(
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	return &MetricCompactionConsumer{
-		consumer:      consumer,
-		store:         store,
+	c := &MetricCompactionConsumer{
 		processor:     processor,
-		cfg:           cfg,
 		topic:         topic,
 		consumerGroup: consumerGroup,
-	}, nil
-}
-
-func (c *MetricCompactionConsumer) Run(ctx context.Context) error {
-	ll := logctx.FromContext(ctx)
-	ll.Info("Starting metric compaction consumer")
-
-	handler := func(handlerCtx context.Context, msgs []fly.ConsumedMessage) error {
-		for _, msg := range msgs {
-			if err := c.processMessage(handlerCtx, msg); err != nil {
-				ll.Error("Error processing message", slog.Any("error", err))
-				return err // Return error to prevent committing bad batch
-			}
-		}
-
-		CleanupCommittedOffsets(handlerCtx, c.store, c.topic, c.consumerGroup, msgs)
-
-		return nil
 	}
 
-	return c.consumer.Consume(ctx, handler)
+	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
+
+	return c, nil
 }
 
-func (c *MetricCompactionConsumer) processMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+// ProcessMessage implements MessageProcessor interface
+func (c *MetricCompactionConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
 	ll := logctx.FromContext(ctx)
 
 	var bundle messages.MetricCompactionBundle
@@ -116,9 +96,12 @@ func (c *MetricCompactionConsumer) processMessage(ctx context.Context, msg fly.C
 	return nil
 }
 
-func (c *MetricCompactionConsumer) Close() error {
-	if c.consumer != nil {
-		return c.consumer.Close()
-	}
-	return nil
+// GetTopic implements MessageProcessor interface
+func (c *MetricCompactionConsumer) GetTopic() string {
+	return c.topic
+}
+
+// GetConsumerGroup implements MessageProcessor interface
+func (c *MetricCompactionConsumer) GetConsumerGroup() string {
+	return c.consumerGroup
 }

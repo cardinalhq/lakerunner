@@ -29,10 +29,8 @@ import (
 
 // TraceIngestConsumer handles trace ingest bundles from boxer
 type TraceIngestConsumer struct {
-	consumer      fly.Consumer
-	store         TraceIngestStore
+	*WorkerConsumer
 	processor     *TraceIngestProcessor
-	cfg           *config.Config
 	topic         string
 	consumerGroup string
 }
@@ -60,36 +58,19 @@ func NewTraceIngestConsumer(
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	return &TraceIngestConsumer{
-		consumer:      consumer,
-		store:         store,
+	c := &TraceIngestConsumer{
 		processor:     processor,
-		cfg:           cfg,
 		topic:         topic,
 		consumerGroup: consumerGroup,
-	}, nil
-}
-
-func (c *TraceIngestConsumer) Run(ctx context.Context) error {
-	ll := logctx.FromContext(ctx)
-	ll.Info("Starting trace ingest consumer", "topic", c.topic, "consumerGroup", c.consumerGroup)
-
-	handler := func(ctx context.Context, msgs []fly.ConsumedMessage) error {
-		for _, msg := range msgs {
-			if err := c.processMessage(ctx, msg); err != nil {
-				return err
-			}
-		}
-
-		CleanupCommittedOffsets(ctx, c.store, c.topic, c.consumerGroup, msgs)
-
-		return nil
 	}
 
-	return c.consumer.Consume(ctx, handler)
+	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
+
+	return c, nil
 }
 
-func (c *TraceIngestConsumer) processMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+// ProcessMessage implements MessageProcessor interface
+func (c *TraceIngestConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
 	ll := logctx.FromContext(ctx)
 
 	var bundle messages.TraceIngestBundle
@@ -111,10 +92,16 @@ func (c *TraceIngestConsumer) processMessage(ctx context.Context, msg fly.Consum
 		slog.Int("instanceNum", int(key.InstanceNum)),
 		slog.Int("messageCount", len(bundle.Messages)))
 
-	// Process the bundle using the ProcessBundle method
+	// ProcessBundle will insert the Kafka offsets into the database as part of its transaction
 	return c.processor.ProcessBundle(ctx, key, bundle.Messages, int32(msg.Partition), msg.Offset)
 }
 
-func (c *TraceIngestConsumer) Close() error {
-	return c.consumer.Close()
+// GetTopic implements MessageProcessor interface
+func (c *TraceIngestConsumer) GetTopic() string {
+	return c.topic
+}
+
+// GetConsumerGroup implements MessageProcessor interface
+func (c *TraceIngestConsumer) GetConsumerGroup() string {
+	return c.consumerGroup
 }

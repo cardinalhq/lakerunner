@@ -29,10 +29,8 @@ import (
 
 // LogCompactionConsumer consumes LogCompactionBundle messages from boxer
 type LogCompactionConsumer struct {
-	consumer      fly.Consumer
-	store         LogCompactionStore
+	*WorkerConsumer
 	processor     *LogCompactionProcessor
-	cfg           *config.Config
 	topic         string
 	consumerGroup string
 }
@@ -55,37 +53,19 @@ func NewLogCompactionConsumer(
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	return &LogCompactionConsumer{
-		consumer:      consumer,
-		store:         store,
+	c := &LogCompactionConsumer{
 		processor:     processor,
-		cfg:           cfg,
 		topic:         topic,
 		consumerGroup: consumerGroup,
-	}, nil
-}
-
-func (c *LogCompactionConsumer) Run(ctx context.Context) error {
-	ll := logctx.FromContext(ctx)
-	ll.Info("Starting log compaction consumer")
-
-	handler := func(handlerCtx context.Context, msgs []fly.ConsumedMessage) error {
-		for _, msg := range msgs {
-			if err := c.processMessage(handlerCtx, msg); err != nil {
-				ll.Error("Error processing message", slog.Any("error", err))
-				return err // Return error to prevent committing bad batch
-			}
-		}
-
-		CleanupCommittedOffsets(handlerCtx, c.store, c.topic, c.consumerGroup, msgs)
-
-		return nil
 	}
 
-	return c.consumer.Consume(ctx, handler)
+	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
+
+	return c, nil
 }
 
-func (c *LogCompactionConsumer) processMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+// ProcessMessage implements MessageProcessor interface
+func (c *LogCompactionConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
 	ll := logctx.FromContext(ctx)
 
 	var bundle messages.LogCompactionBundle
@@ -115,9 +95,12 @@ func (c *LogCompactionConsumer) processMessage(ctx context.Context, msg fly.Cons
 	return nil
 }
 
-func (c *LogCompactionConsumer) Close() error {
-	if c.consumer != nil {
-		return c.consumer.Close()
-	}
-	return nil
+// GetTopic implements MessageProcessor interface
+func (c *LogCompactionConsumer) GetTopic() string {
+	return c.topic
+}
+
+// GetConsumerGroup implements MessageProcessor interface
+func (c *LogCompactionConsumer) GetConsumerGroup() string {
+	return c.consumerGroup
 }

@@ -539,6 +539,11 @@ func (m *MockFlyConsumer) CommitMessages(ctx context.Context, messages ...fly.Co
 	return args.Error(0)
 }
 
+func (m *MockFlyConsumer) CommitPartitionOffsets(ctx context.Context, offsets map[int32]int64) error {
+	args := m.Called(ctx, offsets)
+	return args.Error(0)
+}
+
 func (m *MockFlyConsumer) Close() error {
 	args := m.Called()
 	return args.Error(0)
