@@ -112,6 +112,11 @@ func (m *mockCompactionStore) CleanupKafkaOffsets(ctx context.Context, params lr
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *mockCompactionStore) InsertKafkaOffsets(ctx context.Context, params lrdb.InsertKafkaOffsetsParams) error {
+	args := m.Called(ctx, params)
+	return args.Error(0)
+}
+
 func (m *mockCompactionStore) MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error {
 	args := m.Called(ctx, params)
 	return args.Error(0)

@@ -487,6 +487,10 @@ func (m *benchMockMetricIngestStore) CleanupKafkaOffsets(ctx context.Context, pa
 	return 0, nil // No-op for benchmarking
 }
 
+func (m *benchMockMetricIngestStore) InsertKafkaOffsets(ctx context.Context, params lrdb.InsertKafkaOffsetsParams) error {
+	return nil // No-op for benchmarking
+}
+
 // Helper function to write from reader (similar to logs benchmark)
 func writeFromMetricReader(ctx context.Context, reader filereader.Reader, writer interface{ WriteBatch(*pipeline.Batch) error }) error {
 	for {

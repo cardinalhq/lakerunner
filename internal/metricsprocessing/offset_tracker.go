@@ -25,6 +25,7 @@ import (
 type OffsetTrackerStore interface {
 	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
 	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
+	InsertKafkaOffsets(ctx context.Context, params lrdb.InsertKafkaOffsetsParams) error
 }
 
 // offsetTracker tracks processed offsets using arrays for deduplication

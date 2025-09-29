@@ -120,6 +120,13 @@ func (m *MockOffsetStore) CleanupKafkaOffsets(ctx context.Context, params lrdb.C
 	return deleted, nil
 }
 
+func (m *MockOffsetStore) InsertKafkaOffsets(ctx context.Context, params lrdb.InsertKafkaOffsetsParams) error {
+	key := params.ConsumerGroup + ":" + params.Topic + ":" + string(rune(params.PartitionID))
+	existing := m.processedOffsets[key]
+	m.processedOffsets[key] = append(existing, params.Offsets...)
+	return nil
+}
+
 func TestGatherer_ProcessMessage_Integration(t *testing.T) {
 	offsetStore := NewMockOffsetStore()
 	compactor := NewMockCompactor()

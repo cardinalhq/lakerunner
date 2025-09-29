@@ -86,6 +86,24 @@ func (b *MetricIngestBoxerProcessor) Process(ctx context.Context, group *accumul
 		return fmt.Errorf("failed to send bundle to processing topic: %w", err)
 	}
 
+	// Persist Kafka offsets to prevent duplicate processing on restart
+	for _, offset := range kafkaOffsets {
+		if len(offset.Offsets) == 0 {
+			continue // Skip empty offset arrays
+		}
+
+		err := b.store.InsertKafkaOffsets(ctx, lrdb.InsertKafkaOffsetsParams{
+			ConsumerGroup: offset.ConsumerGroup,
+			Topic:         offset.Topic,
+			PartitionID:   offset.PartitionID,
+			Offsets:       offset.Offsets,
+			CreatedAt:     nil, // Use default (now())
+		})
+		if err != nil {
+			return fmt.Errorf("failed to persist kafka offsets: %w", err)
+		}
+	}
+
 	ll.Info("Successfully sent ingestion bundle to processing topic",
 		slog.String("topic", ingestionTopic),
 		slog.Int("bundledMessages", len(bundle.Messages)))
