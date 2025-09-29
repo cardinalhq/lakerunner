@@ -36,6 +36,9 @@ type Consumer interface {
 	// CommitMessages after successful processing
 	CommitMessages(ctx context.Context, messages ...ConsumedMessage) error
 
+	// CommitPartitionOffsets commits specific offsets for given partitions
+	CommitPartitionOffsets(ctx context.Context, offsets map[int32]int64) error
+
 	// Close the consumer
 	Close() error
 }
@@ -268,6 +271,24 @@ func (c *kafkaConsumer) CommitMessages(ctx context.Context, messages ...Consumed
 			Offset:    msg.Offset,
 		}
 	}
+	return c.reader.CommitMessages(ctx, kmsgs...)
+}
+
+func (c *kafkaConsumer) CommitPartitionOffsets(ctx context.Context, offsets map[int32]int64) error {
+	if len(offsets) == 0 {
+		return nil
+	}
+
+	// Create kafka messages for each partition's offset
+	kmsgs := make([]kafka.Message, 0, len(offsets))
+	for partition, offset := range offsets {
+		kmsgs = append(kmsgs, kafka.Message{
+			Topic:     c.config.Topic,
+			Partition: int(partition),
+			Offset:    offset,
+		})
+	}
+
 	return c.reader.CommitMessages(ctx, kmsgs...)
 }
 
