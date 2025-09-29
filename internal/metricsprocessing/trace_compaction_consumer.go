@@ -29,10 +29,8 @@ import (
 
 // TraceCompactionConsumer consumes TraceCompactionBundle messages from boxer
 type TraceCompactionConsumer struct {
-	consumer      fly.Consumer
-	store         TraceCompactionStore
+	*WorkerConsumer
 	processor     *TraceCompactionProcessor
-	cfg           *config.Config
 	topic         string
 	consumerGroup string
 }
@@ -55,38 +53,19 @@ func NewTraceCompactionConsumer(
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	return &TraceCompactionConsumer{
-		consumer:      consumer,
-		store:         store,
+	c := &TraceCompactionConsumer{
 		processor:     processor,
-		cfg:           cfg,
 		topic:         topic,
 		consumerGroup: consumerGroup,
-	}, nil
-}
-
-func (c *TraceCompactionConsumer) Run(ctx context.Context) error {
-	ll := logctx.FromContext(ctx)
-	ll.Info("Starting trace compaction consumer (bundle mode)")
-
-	handler := func(handlerCtx context.Context, msgs []fly.ConsumedMessage) error {
-		for _, msg := range msgs {
-			if err := c.processMessage(handlerCtx, msg); err != nil {
-				ll.Error("Error processing message", slog.Any("error", err))
-				return err // Return error to prevent committing bad batch
-			}
-		}
-
-		// After successful processing, cleanup old offset tracking records
-		CleanupCommittedOffsets(handlerCtx, c.store, c.topic, c.consumerGroup, msgs)
-
-		return nil
 	}
 
-	return c.consumer.Consume(ctx, handler)
+	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
+
+	return c, nil
 }
 
-func (c *TraceCompactionConsumer) processMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+// ProcessMessage implements MessageProcessor interface
+func (c *TraceCompactionConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
 	ll := logctx.FromContext(ctx)
 
 	var bundle messages.TraceCompactionBundle
@@ -98,6 +77,20 @@ func (c *TraceCompactionConsumer) processMessage(ctx context.Context, msg fly.Co
 	if len(bundle.Messages) == 0 {
 		ll.Info("Dropping empty message bundle")
 		return nil
+	}
+
+	// Defensive check: Skip bundles with too many segments
+	const maxSegmentsPerBundle = 75
+	if len(bundle.Messages) > maxSegmentsPerBundle {
+		firstMsg := bundle.Messages[0]
+		key := firstMsg.GroupingKey().(messages.TraceCompactionKey)
+		ll.Warn("Skipping oversized bundle - too many segments",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("segmentCount", len(bundle.Messages)),
+			slog.Int("maxSegments", maxSegmentsPerBundle))
+		return nil // Skip this bundle but don't fail
 	}
 
 	firstMsg := bundle.Messages[0]
@@ -116,9 +109,12 @@ func (c *TraceCompactionConsumer) processMessage(ctx context.Context, msg fly.Co
 	return nil
 }
 
-func (c *TraceCompactionConsumer) Close() error {
-	if c.consumer != nil {
-		return c.consumer.Close()
-	}
-	return nil
+// GetTopic implements MessageProcessor interface
+func (c *TraceCompactionConsumer) GetTopic() string {
+	return c.topic
+}
+
+// GetConsumerGroup implements MessageProcessor interface
+func (c *TraceCompactionConsumer) GetConsumerGroup() string {
+	return c.consumerGroup
 }

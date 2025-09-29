@@ -337,3 +337,37 @@ func TestCBORCodec_SpecialCharacters(t *testing.T) {
 		assert.Equal(t, expected, decoded[key], "Field %s should match", key)
 	}
 }
+
+func TestCBORCodec_InvalidUTF8(t *testing.T) {
+	codec, err := NewCBOR()
+	require.NoError(t, err)
+
+	// Create strings with invalid UTF-8 sequences
+	invalidUTF8Strings := []string{
+		string([]byte{0xFF, 0xFE}),              // Invalid UTF-8 sequence
+		string([]byte{0xC3, 0x28}),              // Invalid continuation byte
+		string([]byte{0xE2, 0x82, 0x00}),        // Invalid continuation
+		string([]byte{0xF0, 0x90, 0x80}),        // Incomplete 4-byte sequence
+		"valid" + string([]byte{0xFF}) + "text", // Mixed valid and invalid
+	}
+
+	for i, invalidStr := range invalidUTF8Strings {
+		t.Run(fmt.Sprintf("invalid_utf8_%d", i), func(t *testing.T) {
+			testRow := map[string]any{
+				"field": invalidStr,
+			}
+
+			// Encode the row (this should work)
+			encoded, err := codec.Encode(testRow)
+			require.NoError(t, err)
+
+			// Decode should now work with UTF8DecodeInvalid option
+			decoded := make(map[string]any)
+			err = codec.Decode(encoded, decoded)
+			require.NoError(t, err, "Should be able to decode invalid UTF-8 with UTF8DecodeInvalid option")
+
+			// The decoded value should match the original, even with invalid UTF-8
+			assert.Equal(t, invalidStr, decoded["field"], "Invalid UTF-8 string should be preserved")
+		})
+	}
+}

@@ -95,9 +95,6 @@ func (b *MetricRollupBoxerProcessor) Process(ctx context.Context, group *accumul
 		slog.String("topic", rollupTopic),
 		slog.Int("bundledMessages", len(bundle.Messages)))
 
-	// Note: Offset tracking happens automatically when segments are inserted/compacted
-	// No manual offset commit needed here
-
 	return nil
 }
 

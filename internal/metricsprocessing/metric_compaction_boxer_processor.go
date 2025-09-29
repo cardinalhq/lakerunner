@@ -36,7 +36,6 @@ type MetricCompactionBoxerProcessor struct {
 
 // newMetricCompactionBoxerProcessor creates a new metric compaction boxer processor instance
 func newMetricCompactionBoxerProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	kafkaProducer fly.Producer, store BoxerStore) *MetricCompactionBoxerProcessor {
 	return &MetricCompactionBoxerProcessor{
@@ -92,9 +91,6 @@ func (b *MetricCompactionBoxerProcessor) Process(ctx context.Context, group *acc
 	ll.Info("Successfully sent compaction bundle to compaction topic",
 		slog.String("topic", compactionTopic),
 		slog.Int("bundledMessages", len(bundle.Messages)))
-
-	// Note: Offset tracking happens automatically when segments are inserted/compacted
-	// No manual offset commit needed here
 
 	return nil
 }

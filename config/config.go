@@ -96,7 +96,7 @@ type ExpiryConfig struct {
 }
 
 // TopicCreationConfig holds configuration for creating Kafka topics
-// WARNING: These settings are for topic creation only - never use partition counts in runtime code
+// These settings are for topic creation only - never use partition counts in runtime code
 type TopicCreationConfig struct {
 	PartitionCount    *int           `mapstructure:"partitionCount"`
 	ReplicationFactor *int           `mapstructure:"replicationFactor"`
@@ -161,10 +161,6 @@ type KafkaConfig struct {
 
 	// Connection settings
 	ConnectionTimeout time.Duration `mapstructure:"connection_timeout"`
-}
-
-type CompactionConfig struct {
-	TargetFileSizeBytes int64 `mapstructure:"target_file_size_bytes"` // Target file size in bytes for compaction (default: 1048576 = 1MB)
 }
 
 // IngestionConfig holds ingestion feature toggles.
@@ -283,131 +279,6 @@ func Load() (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, err
 	}
-	// Handle Kafka configuration with migration support from fly.* to kafka.*
-	var usedFlyConfig bool
-
-	// Brokers
-	if b := v.GetString("kafka.brokers"); b != "" {
-		cfg.Kafka.Brokers = strings.Split(b, ",")
-	} else if b := v.GetString("fly.brokers"); b != "" {
-		cfg.Kafka.Brokers = strings.Split(b, ",")
-		usedFlyConfig = true
-	}
-
-	// SASL authentication
-	if v.IsSet("kafka.sasl_enabled") {
-		cfg.Kafka.SASLEnabled = v.GetBool("kafka.sasl_enabled")
-	} else if v.IsSet("fly.sasl_enabled") {
-		cfg.Kafka.SASLEnabled = v.GetBool("fly.sasl_enabled")
-		usedFlyConfig = true
-	}
-
-	if u := v.GetString("kafka.sasl_mechanism"); u != "" {
-		cfg.Kafka.SASLMechanism = u
-	} else if u := v.GetString("fly.sasl_mechanism"); u != "" {
-		cfg.Kafka.SASLMechanism = u
-		usedFlyConfig = true
-	}
-
-	if u := v.GetString("kafka.sasl_username"); u != "" {
-		cfg.Kafka.SASLUsername = u
-	} else if u := v.GetString("fly.sasl_username"); u != "" {
-		cfg.Kafka.SASLUsername = u
-		usedFlyConfig = true
-	}
-
-	if u := v.GetString("kafka.sasl_password"); u != "" {
-		cfg.Kafka.SASLPassword = u
-	} else if u := v.GetString("fly.sasl_password"); u != "" {
-		cfg.Kafka.SASLPassword = u
-		usedFlyConfig = true
-	}
-
-	// TLS configuration
-	if v.IsSet("kafka.tls_enabled") {
-		cfg.Kafka.TLSEnabled = v.GetBool("kafka.tls_enabled")
-	} else if v.IsSet("fly.tls_enabled") {
-		cfg.Kafka.TLSEnabled = v.GetBool("fly.tls_enabled")
-		usedFlyConfig = true
-	}
-
-	if v.IsSet("kafka.tls_skip_verify") {
-		cfg.Kafka.TLSSkipVerify = v.GetBool("kafka.tls_skip_verify")
-	} else if v.IsSet("fly.tls_skip_verify") {
-		cfg.Kafka.TLSSkipVerify = v.GetBool("fly.tls_skip_verify")
-		usedFlyConfig = true
-	}
-
-	// Producer settings
-	if v.IsSet("kafka.producer_batch_size") {
-		cfg.Kafka.ProducerBatchSize = v.GetInt("kafka.producer_batch_size")
-	} else if v.IsSet("fly.producer_batch_size") {
-		cfg.Kafka.ProducerBatchSize = v.GetInt("fly.producer_batch_size")
-		usedFlyConfig = true
-	}
-
-	if v.IsSet("kafka.producer_batch_timeout") {
-		cfg.Kafka.ProducerBatchTimeout = v.GetDuration("kafka.producer_batch_timeout")
-	} else if v.IsSet("fly.producer_batch_timeout") {
-		cfg.Kafka.ProducerBatchTimeout = v.GetDuration("fly.producer_batch_timeout")
-		usedFlyConfig = true
-	}
-
-	if u := v.GetString("kafka.producer_compression"); u != "" {
-		cfg.Kafka.ProducerCompression = u
-	} else if u := v.GetString("fly.producer_compression"); u != "" {
-		cfg.Kafka.ProducerCompression = u
-		usedFlyConfig = true
-	}
-
-	// Consumer settings
-	if u := v.GetString("kafka.consumer_group_prefix"); u != "" {
-		cfg.Kafka.ConsumerGroupPrefix = u
-	} else if u := v.GetString("fly.consumer_group_prefix"); u != "" {
-		cfg.Kafka.ConsumerGroupPrefix = u
-		usedFlyConfig = true
-	}
-
-	if v.IsSet("kafka.consumer_batch_size") {
-		cfg.Kafka.ConsumerBatchSize = v.GetInt("kafka.consumer_batch_size")
-	} else if v.IsSet("fly.consumer_batch_size") {
-		cfg.Kafka.ConsumerBatchSize = v.GetInt("fly.consumer_batch_size")
-		usedFlyConfig = true
-	}
-
-	if v.IsSet("kafka.consumer_max_wait") {
-		cfg.Kafka.ConsumerMaxWait = v.GetDuration("kafka.consumer_max_wait")
-	} else if v.IsSet("fly.consumer_max_wait") {
-		cfg.Kafka.ConsumerMaxWait = v.GetDuration("fly.consumer_max_wait")
-		usedFlyConfig = true
-	}
-
-	if v.IsSet("kafka.consumer_min_bytes") {
-		cfg.Kafka.ConsumerMinBytes = v.GetInt("kafka.consumer_min_bytes")
-	} else if v.IsSet("fly.consumer_min_bytes") {
-		cfg.Kafka.ConsumerMinBytes = v.GetInt("fly.consumer_min_bytes")
-		usedFlyConfig = true
-	}
-
-	if v.IsSet("kafka.consumer_max_bytes") {
-		cfg.Kafka.ConsumerMaxBytes = v.GetInt("kafka.consumer_max_bytes")
-	} else if v.IsSet("fly.consumer_max_bytes") {
-		cfg.Kafka.ConsumerMaxBytes = v.GetInt("fly.consumer_max_bytes")
-		usedFlyConfig = true
-	}
-
-	// Connection settings
-	if v.IsSet("kafka.connection_timeout") {
-		cfg.Kafka.ConnectionTimeout = v.GetDuration("kafka.connection_timeout")
-	} else if v.IsSet("fly.connection_timeout") {
-		cfg.Kafka.ConnectionTimeout = v.GetDuration("fly.connection_timeout")
-		usedFlyConfig = true
-	}
-
-	// Log deprecation warning if any fly.* config was used
-	if usedFlyConfig {
-		fmt.Fprintf(os.Stderr, "WARNING: fly.* configuration keys are deprecated. Please migrate to kafka.* keys. See documentation for migration guide.\n")
-	}
 
 	// Initialize topic registry based on configured prefix
 	topicPrefix := cfg.KafkaTopics.TopicPrefix
@@ -437,13 +308,11 @@ func LoadKafkaTopicsOverride(filename string) (*KafkaTopicsOverrideConfig, error
 		return nil, fmt.Errorf("failed to read kafka topics override file: %w", err)
 	}
 
-	// First, check version with lenient parsing
+	// First, check version
 	var versionCheck KafkaTopicsOverrideVersionCheck
 	if err := yaml.Unmarshal(data, &versionCheck); err != nil {
 		return nil, fmt.Errorf("failed to parse version from kafka topics override file: %w", err)
 	}
-
-	// Validate version
 	if versionCheck.Version != KafkaTopicsOverrideVersion {
 		return nil, fmt.Errorf("unsupported kafka topics override file version %d, expected version %d",
 			versionCheck.Version, KafkaTopicsOverrideVersion)

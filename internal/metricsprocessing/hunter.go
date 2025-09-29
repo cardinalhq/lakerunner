@@ -103,7 +103,11 @@ func (h *hunter[M, K]) addMessage(msg M, metadata *messageMetadata, targetRecord
 		group.LatestOffsets[metadata.Partition] = metadata.Offset
 	}
 
-	if group.TotalRecordCount >= targetRecordCount {
+	// Emit the group if either:
+	// 1. We've reached the target record count, OR
+	// 2. We've accumulated 50 segments (messages) to prevent huge bundles
+	const maxSegmentsPerBundle = 50
+	if group.TotalRecordCount >= targetRecordCount || len(group.Messages) >= maxSegmentsPerBundle {
 		// Remove the group from the hunter since we're returning it
 		delete(h.groups, key)
 

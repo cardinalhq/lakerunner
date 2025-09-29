@@ -17,21 +17,25 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"time"
+	"log/slog"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// TraceIngestConsumer handles object store notification messages for trace ingestion using CommonConsumer
+// TraceIngestConsumer handles trace ingest bundles from boxer
 type TraceIngestConsumer struct {
-	*CommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
+	*WorkerConsumer
+	processor     *TraceIngestProcessor
+	topic         string
+	consumerGroup string
 }
 
-// NewTraceIngestConsumer creates a new trace ingest consumer using the common consumer framework
+// NewTraceIngestConsumer creates a new trace ingest consumer that processes bundles from boxer
 func NewTraceIngestConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
@@ -47,28 +51,57 @@ func NewTraceIngestConsumer(
 
 	processor := newTraceIngestProcessor(cfg, store, storageProvider, cmgr, kafkaProducer)
 
-	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  "lakerunner-trace-ingest-v2",
-		Topic:         cfg.TopicRegistry.GetTopic(config.TopicObjstoreIngestTraces),
-		ConsumerGroup: cfg.TopicRegistry.GetConsumerGroup(config.TopicObjstoreIngestTraces),
-		FlushInterval: 10 * time.Second,
-		StaleAge:      20 * time.Second,
-		MaxAge:        20 * time.Second,
-	}
-
-	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage](
-		ctx,
-		factory,
-		cfg,
-		consumerConfig,
-		store,
-		processor,
-	)
+	topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsTracesIngest)
+	consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesIngest)
+	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create common consumer: %w", err)
+		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	return &TraceIngestConsumer{
-		CommonConsumer: commonConsumer,
-	}, nil
+	c := &TraceIngestConsumer{
+		processor:     processor,
+		topic:         topic,
+		consumerGroup: consumerGroup,
+	}
+
+	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
+
+	return c, nil
+}
+
+// ProcessMessage implements MessageProcessor interface
+func (c *TraceIngestConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+	ll := logctx.FromContext(ctx)
+
+	var bundle messages.TraceIngestBundle
+	if err := bundle.Unmarshal(msg.Value); err != nil {
+		ll.Info("Dropping message that failed to unmarshal as bundle", slog.Any("error", err))
+		return nil // Don't fail the batch, just skip this message
+	}
+
+	if len(bundle.Messages) == 0 {
+		ll.Info("Dropping empty message bundle")
+		return nil
+	}
+
+	firstMsg := bundle.Messages[0]
+	key := firstMsg.GroupingKey().(messages.IngestKey)
+
+	ll.Info("Processing trace ingest bundle",
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("instanceNum", int(key.InstanceNum)),
+		slog.Int("messageCount", len(bundle.Messages)))
+
+	// ProcessBundle will insert the Kafka offsets into the database as part of its transaction
+	return c.processor.ProcessBundle(ctx, key, bundle.Messages, int32(msg.Partition), msg.Offset)
+}
+
+// GetTopic implements MessageProcessor interface
+func (c *TraceIngestConsumer) GetTopic() string {
+	return c.topic
+}
+
+// GetConsumerGroup implements MessageProcessor interface
+func (c *TraceIngestConsumer) GetConsumerGroup() string {
+	return c.consumerGroup
 }

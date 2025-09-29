@@ -33,6 +33,7 @@ type processor[M messages.GroupableMessage, K comparable] interface {
 type offsetStore interface {
 	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
 	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
+	InsertKafkaOffsets(ctx context.Context, params lrdb.InsertKafkaOffsetsParams) error
 }
 
 // gatherer processes a stream of GroupableMessage from Kafka with sync mode deduplication
@@ -41,6 +42,7 @@ type gatherer[M messages.GroupableMessage, K comparable] struct {
 	metadataTracker *metadataTracker[M, K]
 	processor       processor[M, K]
 	syncTracker     *offsetTracker
+	store           offsetStore
 	topic           string
 	consumerGroup   string
 }
@@ -54,9 +56,10 @@ func newGatherer[M messages.GroupableMessage, K comparable](
 	hunter := newHunter[M, K]()
 	return &gatherer[M, K]{
 		hunter:          hunter,
-		metadataTracker: newMetadataTracker[M, K](topic, consumerGroup, hunter),
+		metadataTracker: newMetadataTracker(topic, consumerGroup, hunter),
 		processor:       processor,
 		syncTracker:     newOffsetTracker(store, consumerGroup, topic),
+		store:           store,
 		topic:           topic,
 		consumerGroup:   consumerGroup,
 	}
@@ -166,5 +169,53 @@ func (g *gatherer[M, K]) processIdleGroups(ctx context.Context, lastUpdatedAge, 
 		g.metadataTracker.trackMetadata(group)
 	}
 
+	// After processing idle groups, clean up old committed offsets
+	g.cleanupCommittedOffsets(ctx)
+
 	return emitted, nil
+}
+
+// cleanupCommittedOffsets removes old offset tracking records for offsets that have been committed
+func (g *gatherer[M, K]) cleanupCommittedOffsets(ctx context.Context) {
+	ll := logctx.FromContext(ctx)
+
+	// Get the last committed offsets from the metadata tracker
+	g.metadataTracker.mu.Lock()
+	committedOffsets := make(map[int32]int64)
+	for partition, offset := range g.metadataTracker.lastCommittedOffsets {
+		committedOffsets[partition] = offset
+	}
+	g.metadataTracker.mu.Unlock()
+
+	// Safety buffer to handle potential replays during rebalancing
+
+	// Cleanup old offset tracking records for each partition
+	for partition, maxOffset := range committedOffsets {
+		// Apply safety buffer
+		safeCleanupOffset := maxOffset - offsetCleanupBuffer
+		if safeCleanupOffset < 0 {
+			// Don't cleanup anything if we haven't processed enough messages yet
+			continue
+		}
+
+		params := lrdb.CleanupKafkaOffsetsParams{
+			ConsumerGroup: g.consumerGroup,
+			Topic:         g.topic,
+			PartitionID:   partition,
+			MaxOffset:     safeCleanupOffset,
+		}
+
+		if rowsDeleted, err := g.store.CleanupKafkaOffsets(ctx, params); err != nil {
+			ll.Error("Failed to cleanup old Kafka offset tracking records",
+				slog.Any("error", err),
+				slog.Int("partition", int(partition)),
+				slog.Int64("maxOffset", maxOffset))
+		} else if rowsDeleted > 0 {
+			ll.Debug("Cleaned up old Kafka offset tracking records",
+				slog.Int("partition", int(partition)),
+				slog.Int64("committedOffset", maxOffset),
+				slog.Int64("cleanupOffset", safeCleanupOffset),
+				slog.Int64("rowsDeleted", rowsDeleted))
+		}
+	}
 }

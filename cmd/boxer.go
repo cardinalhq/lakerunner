@@ -32,6 +32,9 @@ import (
 )
 
 var (
+	ingestLogs     bool
+	ingestMetrics  bool
+	ingestTraces   bool
 	compactLogs    bool
 	compactMetrics bool
 	compactTraces  bool
@@ -46,11 +49,14 @@ func init() {
 		Long:  `Run boxer with one or more specified tasks. At least one task must be specified.`,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			// Validate at least one task is specified
-			if !allTasks && !compactLogs && !compactMetrics && !compactTraces && !rollupMetrics {
+			if !allTasks && !ingestLogs && !ingestMetrics && !ingestTraces && !compactLogs && !compactMetrics && !compactTraces && !rollupMetrics {
 				return fmt.Errorf("at least one task must be specified")
 			}
 			// If --all, set all task flags
 			if allTasks {
+				ingestLogs = true
+				ingestMetrics = true
+				ingestTraces = true
 				compactLogs = true
 				compactMetrics = true
 				compactTraces = true
@@ -61,6 +67,9 @@ func init() {
 		RunE: runBoxer,
 	}
 
+	boxerCmd.Flags().BoolVar(&ingestLogs, "ingest-logs", false, "Run log ingestion")
+	boxerCmd.Flags().BoolVar(&ingestMetrics, "ingest-metrics", false, "Run metrics ingestion")
+	boxerCmd.Flags().BoolVar(&ingestTraces, "ingest-traces", false, "Run trace ingestion")
 	boxerCmd.Flags().BoolVar(&compactLogs, "compact-logs", false, "Run log compaction")
 	boxerCmd.Flags().BoolVar(&compactMetrics, "compact-metrics", false, "Run metrics compaction")
 	boxerCmd.Flags().BoolVar(&compactTraces, "compact-traces", false, "Run trace compaction")
@@ -141,17 +150,26 @@ func runBoxer(_ *cobra.Command, _ []string) error {
 
 func getSelectedTasks() []string {
 	var tasks []string
+	if ingestLogs {
+		tasks = append(tasks, config.BoxerTaskIngestLogs)
+	}
+	if ingestMetrics {
+		tasks = append(tasks, config.BoxerTaskIngestMetrics)
+	}
+	if ingestTraces {
+		tasks = append(tasks, config.BoxerTaskIngestTraces)
+	}
 	if compactLogs {
-		tasks = append(tasks, config.TaskCompactLogs)
+		tasks = append(tasks, config.BoxerTaskCompactLogs)
 	}
 	if compactMetrics {
-		tasks = append(tasks, config.TaskCompactMetrics)
+		tasks = append(tasks, config.BoxerTaskCompactMetrics)
 	}
 	if compactTraces {
-		tasks = append(tasks, config.TaskCompactTraces)
+		tasks = append(tasks, config.BoxerTaskCompactTraces)
 	}
 	if rollupMetrics {
-		tasks = append(tasks, config.TaskRollupMetrics)
+		tasks = append(tasks, config.BoxerTaskRollupMetrics)
 	}
 	return tasks
 }

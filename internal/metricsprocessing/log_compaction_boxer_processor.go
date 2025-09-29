@@ -87,7 +87,6 @@ func (p *LogCompactionBoxerProcessor) Process(ctx context.Context, group *accumu
 
 	// Create Kafka message key for proper partitioning
 	kafkaMessage := fly.Message{
-		Key:   []byte(fmt.Sprintf("%s-%d-%d", group.Key.OrganizationID.String(), group.Key.DateInt, group.Key.InstanceNum)),
 		Value: bundleBytes,
 	}
 

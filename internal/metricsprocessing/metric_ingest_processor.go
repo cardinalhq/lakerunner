@@ -85,28 +85,21 @@ func newMetricIngestProcessor(
 	}
 }
 
-// validateIngestGroupConsistency ensures all messages in an ingest group have consistent fields
-func validateIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]) error {
-	if len(group.Messages) == 0 {
+// validateMetricIngestMessages validates the key and messages for consistency
+func validateMetricIngestMessages(key messages.IngestKey, msgs []*messages.ObjStoreNotificationMessage) error {
+	if len(msgs) == 0 {
 		return &GroupValidationError{
 			Field:   "message_count",
-			Message: "group cannot be empty",
+			Message: "message list cannot be empty",
 		}
 	}
 
-	expectedOrg := group.Key.OrganizationID
-	expectedInstance := group.Key.InstanceNum
+	// Get expected values from the key
+	expectedOrg := key.OrganizationID
+	expectedInstance := key.InstanceNum
 
 	// Validate each message against the expected values
-	for i, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
-		if !ok {
-			return &GroupValidationError{
-				Field:   "message_type",
-				Message: fmt.Sprintf("message %d is not an ObjStoreNotificationMessage", i),
-			}
-		}
-
+	for i, msg := range msgs {
 		if msg.OrganizationID != expectedOrg {
 			return &GroupValidationError{
 				Field:    "organization_id",
@@ -129,23 +122,19 @@ func validateIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]
 	return nil
 }
 
-// Process implements the Processor interface and performs raw metric ingestion
-func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
-	ll := logctx.FromContext(ctx)
+// ProcessBundle implements the Processor interface and performs raw metric ingestion
+func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.IngestKey, msgs []*messages.ObjStoreNotificationMessage, partition int32, offset int64) error {
+	ll := logctx.FromContext(ctx).With(
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("instanceNum", int(key.InstanceNum)))
 
 	defer runtime.GC() // TODO find a way to not need this
 
-	// Calculate group age from Hunter timestamp
-	groupAge := time.Since(group.CreatedAt)
-
 	ll.Info("Starting metric ingestion",
-		slog.String("organizationID", group.Key.OrganizationID.String()),
-		slog.Int("instanceNum", int(group.Key.InstanceNum)),
-		slog.Int("messageCount", len(group.Messages)),
-		slog.Duration("groupAge", groupAge))
+		slog.Int("messageCount", len(msgs)))
 
-	if err := validateIngestGroupConsistency(group); err != nil {
-		return fmt.Errorf("group validation failed: %w", err)
+	if err := validateMetricIngestMessages(key, msgs); err != nil {
+		return fmt.Errorf("message validation failed: %w", err)
 	}
 
 	// Create temporary directory for this ingestion run
@@ -159,7 +148,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		}
 	}()
 
-	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
+	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
@@ -186,11 +175,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
-	for _, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
-		if !ok {
-			continue // Skip non-ObjStoreNotificationMessage messages
-		}
+	for _, msg := range msgs {
 
 		ll.Debug("Processing raw metric file",
 			slog.String("objectID", msg.ObjectID),
@@ -231,13 +216,11 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		return nil
 	}
 
-	// Step 4: Create unified reader pipeline
 	finalReader, err := p.createUnifiedReader(ctx, readers)
 	if err != nil {
 		return fmt.Errorf("failed to create unified reader: %w", err)
 	}
 
-	// Step 5-8: Process rows with time-based binning
 	timeBins, err := p.processRowsWithTimeBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
 		return fmt.Errorf("failed to process rows: %w", err)
@@ -253,6 +236,14 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
 
+	// Create kafka offset info for tracking
+	kafkaOffsets := []lrdb.KafkaOffsetInfo{{
+		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsIngest),
+		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsIngest),
+		PartitionID:   partition,
+		Offsets:       []int64{offset},
+	}}
+
 	criticalCtx := context.WithoutCancel(ctx)
 	if err := p.store.InsertMetricSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
 		// Log detailed segment information for debugging
@@ -266,8 +257,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 
 		ll.Error("Failed to insert metric segments with Kafka offsets",
 			slog.Any("error", err),
-			slog.String("organization_id", group.Key.OrganizationID.String()),
-			slog.Int("instance_num", int(group.Key.InstanceNum)),
 			slog.Int("segmentCount", len(segmentParams)),
 			slog.Int64("totalRecords", totalRecords),
 			slog.Int64("totalSize", totalSize),
@@ -294,11 +283,9 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		rollupTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerMetricsRollup)
 
 		for _, segParams := range segmentParams {
-			// Calculate rollup interval start time for consistent key generation
 			rollupStartTime := (segParams.StartTs / int64(segParams.FrequencyMs)) * int64(segParams.FrequencyMs)
 			segmentStartTime := time.Unix(rollupStartTime/1000, (rollupStartTime%1000)*1000000)
 
-			// Create compaction message
 			compactionNotification := messages.MetricCompactionMessage{
 				Version:        1,
 				OrganizationID: segParams.OrganizationID,
@@ -311,7 +298,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 				QueuedAt:       time.Now(),
 			}
 
-			// Marshal compaction message
 			compactionMsgBytes, err := compactionNotification.Marshal()
 			if err != nil {
 				return fmt.Errorf("failed to marshal compaction notification: %w", err)
@@ -322,7 +308,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 				Value: compactionMsgBytes,
 			}
 
-			// Send to compaction topic
 			if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
 				return fmt.Errorf("failed to send compaction notification to Kafka: %w", err)
 			} else {
@@ -358,7 +343,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 					Value: rollupMsgBytes,
 				}
 
-				// Send to rollup topic only if rollup message was created
 				if err := p.kafkaProducer.Send(criticalCtx, rollupTopic, rollupMessage); err != nil {
 					return fmt.Errorf("failed to send rollup notification to Kafka: %w", err)
 				} else {
@@ -370,18 +354,16 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		ll.Warn("No Kafka producer provided - segment notifications will not be sent")
 	}
 
-	// Calculate output metrics for telemetry
 	var totalOutputRecords, totalOutputSize int64
 	for _, params := range segmentParams {
 		totalOutputRecords += params.RecordCount
 		totalOutputSize += params.FileSize
 	}
 
-	// Report telemetry - ingestion transforms files into segments
-	reportTelemetry(ctx, "metrics", "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "metrics", "ingestion", int64(len(msgs)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Metric ingestion completed successfully",
-		slog.Int("inputFiles", len(group.Messages)),
+		slog.Int("inputFiles", len(msgs)),
 		slog.Int64("totalFileSize", totalInputSize),
 		slog.Int("outputSegments", len(segmentParams)))
 
@@ -395,14 +377,14 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
-	// Step 1: Create proto reader for .binpb or .binpb.gz files
-	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{ExemplarProcessor: p.exemplarProcessor,
-		OrgID: orgID})
+	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{
+		ExemplarProcessor: p.exemplarProcessor,
+		OrgID:             orgID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proto reader: %w", err)
 	}
 
-	// Step 2: Add translation (adds TID and truncates timestamp)
 	translator := &MetricTranslator{
 		OrgID:    orgID,
 		Bucket:   bucket,
@@ -414,7 +396,6 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}
 
-	// Step 3: Add disk-based sorting (after translation so TID is available)
 	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 	reader, err = filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 	if err != nil {
@@ -501,12 +482,12 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 					continue
 				}
 
-				// Create a single-row batch for this bin
-				singleRowBatch := pipeline.GetBatch()
-				newRow := singleRowBatch.AddRow()
-				for k, v := range row {
-					newRow[k] = v
+				takenRow := batch.TakeRow(i)
+				if takenRow == nil {
+					continue
 				}
+				singleRowBatch := pipeline.GetBatch()
+				singleRowBatch.AppendRow(takenRow)
 
 				// Write to the bin's writer
 				if err := bin.Writer.WriteBatch(singleRowBatch); err != nil {

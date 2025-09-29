@@ -24,45 +24,45 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 )
 
-// LogCompactionBoxerConsumer handles log compaction using the generic framework
-type LogCompactionBoxerConsumer struct {
-	*CommonConsumer[*messages.LogCompactionMessage, messages.LogCompactionKey]
+// TraceIngestBoxerConsumer handles trace ingestion bundling using CommonConsumer
+type TraceIngestBoxerConsumer struct {
+	*CommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
 }
 
-// NewLogCompactionBoxerConsumer creates a new log compaction boxer consumer using the generic framework
-func NewLogCompactionBoxerConsumer(
+// NewTraceIngestBoxerConsumer creates a new trace ingestion boxer consumer using the common consumer framework
+func NewTraceIngestBoxerConsumer(
 	ctx context.Context,
 	cfg *config.Config,
 	store BoxerStore,
 	factory *fly.Factory,
-) (*LogCompactionBoxerConsumer, error) {
+) (*TraceIngestBoxerConsumer, error) {
 
-	// Create Kafka producer for sending compaction bundles
+	// Create Kafka producer for sending trace ingestion bundles
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
-	// Create LogCompactionBoxer processor
-	processor := newLogCompactionBoxerProcessor(cfg, producer, store)
+	// Create TraceIngestBoxer processor
+	processor := newTraceIngestBoxerProcessor(cfg, producer, store)
 
-	// Set up timing - use shorter accumulation for compaction since it's more time-sensitive
+	// Set up timing - use shorter accumulation for ingestion since it's more time-sensitive
 	maxAccumulationTime := 2 * time.Minute
 	flushInterval := 30 * time.Second
 
-	// Configure the consumer - consuming from boxer compaction input topic
+	// Configure the consumer - consuming from objstore trace ingestion topic
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  registry.GetConsumerGroup(config.TopicBoxerLogsCompact),
-		Topic:         registry.GetTopic(config.TopicBoxerLogsCompact),
-		ConsumerGroup: registry.GetConsumerGroup(config.TopicBoxerLogsCompact),
+		ConsumerName:  registry.GetConsumerGroup(config.TopicObjstoreIngestTraces),
+		Topic:         registry.GetTopic(config.TopicObjstoreIngestTraces),
+		ConsumerGroup: registry.GetConsumerGroup(config.TopicObjstoreIngestTraces),
 		FlushInterval: flushInterval,
 		StaleAge:      maxAccumulationTime,
 		MaxAge:        maxAccumulationTime,
 	}
 
 	// Create common consumer with boxer store
-	commonConsumer, err := NewCommonConsumer[*messages.LogCompactionMessage](
+	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage](
 		ctx,
 		factory,
 		cfg,
@@ -71,10 +71,10 @@ func NewLogCompactionBoxerConsumer(
 		processor,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create log compaction boxer consumer: %w", err)
+		return nil, fmt.Errorf("failed to create common consumer: %w", err)
 	}
 
-	return &LogCompactionBoxerConsumer{
+	return &TraceIngestBoxerConsumer{
 		CommonConsumer: commonConsumer,
 	}, nil
 }

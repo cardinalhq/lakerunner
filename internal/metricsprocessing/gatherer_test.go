@@ -120,6 +120,13 @@ func (m *MockOffsetStore) CleanupKafkaOffsets(ctx context.Context, params lrdb.C
 	return deleted, nil
 }
 
+func (m *MockOffsetStore) InsertKafkaOffsets(ctx context.Context, params lrdb.InsertKafkaOffsetsParams) error {
+	key := params.ConsumerGroup + ":" + params.Topic + ":" + string(rune(params.PartitionID))
+	existing := m.processedOffsets[key]
+	m.processedOffsets[key] = append(existing, params.Offsets...)
+	return nil
+}
+
 func TestGatherer_ProcessMessage_Integration(t *testing.T) {
 	offsetStore := NewMockOffsetStore()
 	compactor := NewMockCompactor()
@@ -161,7 +168,9 @@ func TestGatherer_ProcessMessage_Integration(t *testing.T) {
 	// Should have processed messages from the bundle
 	group := compactor.groups[0]
 	assert.Equal(t, orgID, group.Key.OrganizationID)
-	assert.GreaterOrEqual(t, group.TotalRecordCount, int64(3000)) // Updated to match new threshold
+	// With max 50 messages limit, we get 50 * 50 = 2500 records
+	assert.Equal(t, 50, len(group.Messages))             // Should be limited to 50 messages
+	assert.Equal(t, int64(2500), group.TotalRecordCount) // 50 messages * 50 records each
 }
 
 func TestGatherer_OffsetDeduplication(t *testing.T) {

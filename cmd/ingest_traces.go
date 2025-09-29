@@ -99,7 +99,7 @@ func init() {
 			ctx = logctx.WithLogger(ctx, ll)
 
 			kafkaFactory := fly.NewFactory(&cfg.Kafka)
-			slog.Info("Starting traces ingestion with accumulation consumer")
+			slog.Info("Starting traces ingestion worker (processing from boxer)")
 
 			consumer, err := metricsprocessing.NewTraceIngestConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {

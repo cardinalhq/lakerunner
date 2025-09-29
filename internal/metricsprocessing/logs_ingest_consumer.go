@@ -17,21 +17,25 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"time"
+	"log/slog"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// LogIngestConsumer handles object store notification messages for log ingestion using CommonConsumer
+// LogIngestConsumer handles log ingest bundles from boxer
 type LogIngestConsumer struct {
-	*CommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
+	*WorkerConsumer
+	processor     *LogIngestProcessor
+	topic         string
+	consumerGroup string
 }
 
-// NewLogIngestConsumer creates a new log ingest consumer using the common consumer framework
+// NewLogIngestConsumer creates a new log ingest consumer that processes bundles from boxer
 func NewLogIngestConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
@@ -40,41 +44,64 @@ func NewLogIngestConsumer(
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) (*LogIngestConsumer, error) {
-
-	// Create Kafka producer for segment notifications
 	kafkaProducer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
-	// Create LogIngestProcessor (reusing existing)
 	processor := newLogIngestProcessor(cfg, store, storageProvider, cmgr, kafkaProducer)
 
-	// Configure the consumer using centralized topic registry
-	registry := cfg.TopicRegistry
-	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  "lakerunner-log-ingest-v2",
-		Topic:         registry.GetTopic(config.TopicObjstoreIngestLogs),
-		ConsumerGroup: registry.GetConsumerGroup(config.TopicObjstoreIngestLogs),
-		FlushInterval: 10 * time.Second,
-		StaleAge:      20 * time.Second,
-		MaxAge:        20 * time.Second,
-	}
-
-	// Create common consumer
-	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage](
-		ctx,
-		factory,
-		cfg,
-		consumerConfig,
-		store,
-		processor,
-	)
+	topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsLogsIngest)
+	consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsLogsIngest)
+	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create common consumer: %w", err)
+		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	return &LogIngestConsumer{
-		CommonConsumer: commonConsumer,
-	}, nil
+	c := &LogIngestConsumer{
+		processor:     processor,
+		topic:         topic,
+		consumerGroup: consumerGroup,
+	}
+
+	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
+
+	return c, nil
+}
+
+// ProcessMessage implements MessageProcessor interface
+func (c *LogIngestConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+	ll := logctx.FromContext(ctx)
+
+	var bundle messages.LogIngestBundle
+	if err := bundle.Unmarshal(msg.Value); err != nil {
+		ll.Info("Dropping message that failed to unmarshal as bundle", slog.Any("error", err))
+		return nil // Don't fail the batch, just skip this message
+	}
+
+	if len(bundle.Messages) == 0 {
+		ll.Info("Dropping empty message bundle")
+		return nil
+	}
+
+	firstMsg := bundle.Messages[0]
+	key := firstMsg.GroupingKey().(messages.IngestKey)
+
+	ll.Info("Processing log ingest bundle",
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("instanceNum", int(key.InstanceNum)),
+		slog.Int("messageCount", len(bundle.Messages)))
+
+	// ProcessBundle will insert the Kafka offsets into the database as part of its transaction
+	return c.processor.ProcessBundle(ctx, key, bundle.Messages, int32(msg.Partition), msg.Offset)
+}
+
+// GetTopic implements MessageProcessor interface
+func (c *LogIngestConsumer) GetTopic() string {
+	return c.topic
+}
+
+// GetConsumerGroup implements MessageProcessor interface
+func (c *LogIngestConsumer) GetConsumerGroup() string {
+	return c.consumerGroup
 }

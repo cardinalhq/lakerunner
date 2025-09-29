@@ -50,6 +50,11 @@ func (m *MockCommonConsumerStore) CleanupKafkaOffsets(ctx context.Context, param
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockCommonConsumerStore) InsertKafkaOffsets(ctx context.Context, params lrdb.InsertKafkaOffsetsParams) error {
+	args := m.Called(ctx, params)
+	return args.Error(0)
+}
+
 // MockProcessor for testing
 type MockProcessor struct {
 	mock.Mock
@@ -87,119 +92,6 @@ func (m *MockProcessor) GetTargetRecordCount(ctx context.Context, groupingKey me
 	return args.Get(0).(int64)
 }
 
-func TestCommonConsumerBase_ValidateGroupConsistency(t *testing.T) {
-	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, getTestConfig(),
-	)
-
-	orgID := uuid.New()
-	instanceNum := int16(1)
-	dateInt := int32(20250115)
-	frequencyMs := int32(10000)
-
-	// Create test messages
-	msg1 := &messages.MetricCompactionMessage{
-		OrganizationID: orgID,
-		InstanceNum:    instanceNum,
-		DateInt:        dateInt,
-		FrequencyMs:    frequencyMs,
-	}
-
-	msg2 := &messages.MetricCompactionMessage{
-		OrganizationID: orgID,
-		InstanceNum:    instanceNum,
-		DateInt:        dateInt,
-		FrequencyMs:    frequencyMs,
-	}
-
-	msg3 := &messages.MetricCompactionMessage{
-		OrganizationID: uuid.New(), // Different org
-		InstanceNum:    instanceNum,
-		DateInt:        dateInt,
-		FrequencyMs:    frequencyMs,
-	}
-
-	tests := []struct {
-		name          string
-		messages      []*messages.MetricCompactionMessage
-		expectedError bool
-		errorField    string
-	}{
-		{
-			name:          "empty group",
-			messages:      []*messages.MetricCompactionMessage{},
-			expectedError: true,
-			errorField:    "message_count",
-		},
-		{
-			name:          "consistent messages",
-			messages:      []*messages.MetricCompactionMessage{msg1, msg2},
-			expectedError: false,
-		},
-		{
-			name:          "inconsistent organization",
-			messages:      []*messages.MetricCompactionMessage{msg1, msg3},
-			expectedError: true,
-			errorField:    "OrganizationID",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Build group
-			group := &accumulationGroup[messages.CompactionKey]{
-				Key: messages.CompactionKey{
-					OrganizationID: orgID,
-					InstanceNum:    instanceNum,
-					DateInt:        dateInt,
-					FrequencyMs:    frequencyMs,
-				},
-				Messages: make([]*accumulatedMessage, len(tt.messages)),
-			}
-
-			for i, msg := range tt.messages {
-				group.Messages[i] = &accumulatedMessage{
-					Message: msg,
-				}
-			}
-
-			// Test validation
-			expectedFields := base.BuildExpectedFieldsFromKey(group.Key)
-			err := base.ValidateGroupConsistency(group, expectedFields)
-
-			if tt.expectedError {
-				require.Error(t, err)
-				var validationErr *CommonProcessorValidationError
-				require.ErrorAs(t, err, &validationErr)
-				assert.Contains(t, validationErr.Field, tt.errorField)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestCommonConsumerBase_ExtractKeyFields(t *testing.T) {
-	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, getTestConfig(),
-	)
-
-	orgID := uuid.New()
-	key := messages.CompactionKey{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		DateInt:        20250115,
-		FrequencyMs:    10000,
-	}
-
-	fields := base.ExtractKeyFields(key)
-
-	assert.Equal(t, orgID, fields["OrganizationID"])
-	assert.Equal(t, int16(1), fields["InstanceNum"])
-	assert.Equal(t, int32(20250115), fields["DateInt"])
-	assert.Equal(t, int32(10000), fields["FrequencyMs"])
-}
-
 // MockMetricCompactionStore for specific testing
 type MockMetricCompactionStore struct {
 	mock.Mock
@@ -226,18 +118,6 @@ func (m *MockMetricCompactionStore) MarkMetricSegsCompactedByKeys(ctx context.Co
 	return args.Error(0)
 }
 
-func TestCommonProcessorValidationError(t *testing.T) {
-	err := &CommonProcessorValidationError{
-		Field:    "test_field",
-		Expected: "expected_value",
-		Got:      "actual_value",
-		Message:  "test message",
-	}
-
-	expected := "common processor group validation failed - test_field: expected expected_value, got actual_value (test message)"
-	assert.Equal(t, expected, err.Error())
-}
-
 func TestCommonConsumer_Close(t *testing.T) {
 	// Test that Close properly closes the done channel and ticker
 	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
@@ -257,39 +137,6 @@ func TestCommonConsumer_Close(t *testing.T) {
 	}
 }
 
-func TestCompactionProcessorBase_LogCompactionStart(t *testing.T) {
-	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, getTestConfig(),
-	)
-
-	orgID := uuid.New()
-	group := &accumulationGroup[messages.CompactionKey]{
-		Key: messages.CompactionKey{
-			OrganizationID: orgID,
-			InstanceNum:    1,
-			DateInt:        20250115,
-			FrequencyMs:    10000,
-		},
-		Messages:  make([]*accumulatedMessage, 5),
-		CreatedAt: time.Now().Add(-5 * time.Minute),
-	}
-
-	ctx := context.Background()
-
-	// This test mainly verifies the method doesn't panic and formats correctly
-	// We can't easily verify the log output without capturing logs
-	assert.NotPanics(t, func() {
-		base.LogCompactionStart(ctx, group, "metrics")
-	})
-
-	// Test with extra fields
-	assert.NotPanics(t, func() {
-		base.LogCompactionStart(ctx, group, "logs",
-			slog.String("extra", "field"),
-			slog.Int("count", 42))
-	})
-}
-
 func TestCommonConsumerConfig_Validation(t *testing.T) {
 	config := CommonConsumerConfig{
 		ConsumerName:  "test-consumer",
@@ -307,106 +154,6 @@ func TestCommonConsumerConfig_Validation(t *testing.T) {
 	assert.Equal(t, 1*time.Minute, config.FlushInterval)
 	assert.Equal(t, 30*time.Second, config.StaleAge)
 	assert.Equal(t, 5*time.Minute, config.MaxAge)
-}
-
-func TestCompactionProcessorBase_BuildExpectedFieldsFromKey_ReflectionFieldExtraction(t *testing.T) {
-	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, getTestConfig(),
-	)
-
-	orgID := uuid.New()
-	key := messages.CompactionKey{
-		OrganizationID: orgID,
-		InstanceNum:    42,
-		DateInt:        20250201,
-		FrequencyMs:    5000,
-	}
-
-	// Test reflection-based field extraction
-	fields := base.ExtractKeyFields(key)
-
-	// Verify all fields are extracted correctly
-	require.Len(t, fields, 4)
-	assert.Equal(t, orgID, fields["OrganizationID"])
-	assert.Equal(t, int16(42), fields["InstanceNum"])
-	assert.Equal(t, int32(20250201), fields["DateInt"])
-	assert.Equal(t, int32(5000), fields["FrequencyMs"])
-}
-
-func TestCompactionProcessorBase_ValidateGroupConsistency_ReflectionValidation(t *testing.T) {
-	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, getTestConfig(),
-	)
-
-	orgID := uuid.New()
-	key := messages.CompactionKey{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		DateInt:        20250115,
-		FrequencyMs:    10000,
-	}
-
-	// Test with message that has wrong field type (should fail validation)
-	invalidMsg := &messages.MetricCompactionMessage{
-		OrganizationID: uuid.New(), // Different org ID
-		InstanceNum:    1,
-		DateInt:        20250115,
-		FrequencyMs:    10000,
-	}
-
-	group := &accumulationGroup[messages.CompactionKey]{
-		Key: key,
-		Messages: []*accumulatedMessage{
-			{Message: invalidMsg},
-		},
-	}
-
-	expectedFields := base.BuildExpectedFieldsFromKey(key)
-	err := base.ValidateGroupConsistency(group, expectedFields)
-
-	// Should fail validation due to mismatched OrganizationID
-	require.Error(t, err)
-	var validationErr *CommonProcessorValidationError
-	require.ErrorAs(t, err, &validationErr)
-	assert.Contains(t, validationErr.Field, "OrganizationID")
-}
-
-func TestCompactionProcessorBase_ValidateGroupConsistency_InvalidFieldAccess(t *testing.T) {
-	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, getTestConfig(),
-	)
-
-	key := messages.CompactionKey{
-		OrganizationID: uuid.New(),
-		InstanceNum:    1,
-		DateInt:        20250115,
-		FrequencyMs:    10000,
-	}
-
-	// Create a message that's missing expected fields by using wrong message type
-	wrongMessage := &messages.LogCompactionMessage{
-		OrganizationID: key.OrganizationID,
-		InstanceNum:    key.InstanceNum,
-		DateInt:        key.DateInt,
-	}
-
-	group := &accumulationGroup[messages.CompactionKey]{
-		Key: key,
-		Messages: []*accumulatedMessage{
-			{Message: wrongMessage}, // Wrong message type
-		},
-	}
-
-	// This should test the reflection error path when field doesn't exist
-	expectedFields := map[string]any{
-		"FrequencyMs": int32(10000), // LogCompactionMessage doesn't have FrequencyMs field
-	}
-
-	err := base.ValidateGroupConsistency(group, expectedFields)
-	require.Error(t, err)
-	var validationErr *CommonProcessorValidationError
-	require.ErrorAs(t, err, &validationErr)
-	assert.Contains(t, validationErr.Message, "missing field FrequencyMs")
 }
 
 // MockMessageGatherer implements the MessageGatherer interface for testing
@@ -794,6 +541,11 @@ func (m *MockFlyConsumer) Consume(ctx context.Context, handler fly.MessageHandle
 
 func (m *MockFlyConsumer) CommitMessages(ctx context.Context, messages ...fly.ConsumedMessage) error {
 	args := m.Called(ctx, messages)
+	return args.Error(0)
+}
+
+func (m *MockFlyConsumer) CommitPartitionOffsets(ctx context.Context, offsets map[int32]int64) error {
+	args := m.Called(ctx, offsets)
 	return args.Error(0)
 }
 

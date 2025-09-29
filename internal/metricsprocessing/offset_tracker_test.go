@@ -90,6 +90,12 @@ func (m *mockOffsetStore) CleanupKafkaOffsets(ctx context.Context, params lrdb.C
 	return deleted, nil
 }
 
+func (m *mockOffsetStore) InsertKafkaOffsets(ctx context.Context, params lrdb.InsertKafkaOffsetsParams) error {
+	existing := m.offsets[params.PartitionID]
+	m.offsets[params.PartitionID] = append(existing, params.Offsets...)
+	return nil
+}
+
 func TestOffsetTracker_FirstMessage(t *testing.T) {
 	ctx := context.Background()
 	store := newMockOffsetStore()
