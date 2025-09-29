@@ -79,6 +79,20 @@ func (c *LogCompactionConsumer) ProcessMessage(ctx context.Context, msg fly.Cons
 		return nil
 	}
 
+	// Defensive check: Skip bundles with too many segments
+	const maxSegmentsPerBundle = 75
+	if len(bundle.Messages) > maxSegmentsPerBundle {
+		firstMsg := bundle.Messages[0]
+		key := firstMsg.GroupingKey().(messages.LogCompactionKey)
+		ll.Warn("Skipping oversized bundle - too many segments",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("segmentCount", len(bundle.Messages)),
+			slog.Int("maxSegments", maxSegmentsPerBundle))
+		return nil // Skip this bundle but don't fail
+	}
+
 	firstMsg := bundle.Messages[0]
 	key := firstMsg.GroupingKey().(messages.LogCompactionKey)
 
