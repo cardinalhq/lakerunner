@@ -131,20 +131,37 @@ func (s *Service) startGRPCServer(ctx context.Context) error {
 func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActiveResponse, error) {
 	ll := logctx.FromContext(ctx)
 
+	// Debug: Log incoming request
+	ll.Info("IsActive called",
+		"name", req.Name,
+		"namespace", req.Namespace,
+		"metadata", req.ScalerMetadata)
+
 	serviceType, exists := req.ScalerMetadata["serviceType"]
 	if !exists {
-		ll.Warn("serviceType not specified in scaler metadata",
+		ll.Warn("IsActive: serviceType not specified in scaler metadata",
 			"name", req.Name,
-			"namespace", req.Namespace)
+			"namespace", req.Namespace,
+			"metadata", req.ScalerMetadata)
 		return &IsActiveResponse{Result: false}, nil
 	}
 
 	if serviceType == config.ServiceTypeBoxer {
+		ll.Debug("IsActive: Handling boxer service type", "serviceType", serviceType)
 		return s.isBoxerActive(ctx, req.ScalerMetadata)
 	}
 
-	_, err := s.lagMonitor.GetQueueDepth(serviceType)
-	return &IsActiveResponse{Result: err == nil}, nil
+	depth, err := s.lagMonitor.GetQueueDepth(serviceType)
+	isActive := err == nil && depth > 0
+
+	// Debug: Log response
+	ll.Info("IsActive response",
+		"serviceType", serviceType,
+		"queueDepth", depth,
+		"isActive", isActive,
+		"error", err)
+
+	return &IsActiveResponse{Result: isActive}, nil
 }
 
 // isBoxerActive checks if any of the boxer task queues are active
@@ -181,28 +198,52 @@ func (s *Service) StreamIsActive(req *ScaledObjectRef, stream grpc.ServerStreami
 }
 
 func (s *Service) GetMetricSpec(ctx context.Context, req *ScaledObjectRef) (*GetMetricSpecResponse, error) {
+	ll := logctx.FromContext(ctx)
+
+	// Debug: Log incoming request
+	ll.Info("GetMetricSpec called",
+		"name", req.Name,
+		"namespace", req.Namespace,
+		"metadata", req.ScalerMetadata)
+
 	serviceType, exists := req.ScalerMetadata["serviceType"]
 	if !exists {
+		ll.Error("GetMetricSpec: serviceType not specified in scaler metadata",
+			"name", req.Name,
+			"metadata", req.ScalerMetadata)
 		return nil, status.Errorf(codes.InvalidArgument, "serviceType not specified in scaler metadata")
 	}
 
 	if serviceType == config.ServiceTypeBoxer {
+		ll.Debug("GetMetricSpec: Handling boxer service type", "serviceType", serviceType)
 		return s.getBoxerMetricSpecs(ctx, req.ScalerMetadata)
 	}
 
 	target, err := s.scalingConfig.GetTargetQueueSize(serviceType)
 	if err != nil {
+		ll.Error("GetMetricSpec: Failed to get target queue size",
+			"serviceType", serviceType,
+			"error", err)
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get target queue size: %v", err)
 	}
 
-	return &GetMetricSpecResponse{
+	response := &GetMetricSpecResponse{
 		MetricSpecs: []*MetricSpec{
 			{
 				MetricName:      serviceType,
 				TargetSizeFloat: float64(target),
 			},
 		},
-	}, nil
+	}
+
+	// Debug: Log response
+	ll.Info("GetMetricSpec response",
+		"serviceType", serviceType,
+		"metricName", serviceType,
+		"targetSize", target,
+		"metricSpecsCount", len(response.MetricSpecs))
+
+	return response, nil
 }
 
 // getBoxerMetricSpecs returns multiple metric specs for boxer tasks
@@ -242,27 +283,52 @@ func (s *Service) getBoxerMetricSpecs(ctx context.Context, metadata map[string]s
 		})
 	}
 
-	return &GetMetricSpecResponse{
+	response := &GetMetricSpecResponse{
 		MetricSpecs: metricSpecs,
-	}, nil
+	}
+
+	ll.Info("getBoxerMetricSpecs response",
+		"tasks", boxerTasks,
+		"metricSpecsCount", len(metricSpecs),
+		"metricSpecs", metricSpecs)
+
+	return response, nil
 }
 
 func (s *Service) GetMetrics(ctx context.Context, req *GetMetricsRequest) (*GetMetricsResponse, error) {
 	ll := logctx.FromContext(ctx)
 
+	// Debug: Log incoming request
+	ll.Info("GetMetrics called",
+		"metricName", req.MetricName,
+		"scaledObjectName", req.ScaledObjectRef.Name,
+		"namespace", req.ScaledObjectRef.Namespace)
+
 	serviceType := req.MetricName
 	depth, err := s.lagMonitor.GetQueueDepth(serviceType)
 	if err != nil {
-		ll.Error("Failed to get queue depth", "serviceType", serviceType, "metricName", req.MetricName, "error", err)
+		ll.Error("GetMetrics: Failed to get queue depth",
+			"serviceType", serviceType,
+			"metricName", req.MetricName,
+			"error", err)
 		return nil, status.Errorf(codes.Internal, "failed to get queue depth for %s: %v", serviceType, err)
 	}
 
-	return &GetMetricsResponse{
+	response := &GetMetricsResponse{
 		MetricValues: []*MetricValue{
 			{
 				MetricName:       req.MetricName,
 				MetricValueFloat: float64(depth),
 			},
 		},
-	}, nil
+	}
+
+	// Debug: Log response
+	ll.Info("GetMetrics response",
+		"serviceType", serviceType,
+		"metricName", req.MetricName,
+		"queueDepth", depth,
+		"metricValuesCount", len(response.MetricValues))
+
+	return response, nil
 }
