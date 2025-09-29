@@ -41,6 +41,7 @@ func (BaselineLLM) GenerateQuestion(ctx context.Context, t QueryTemplate) (strin
 	for _, d := range t.DimCols {
 		parts = append(parts, labelOf(d))
 	}
+
 	by := ""
 	if len(parts) > 0 {
 		by = " by " + strings.Join(parts, " and ")
@@ -49,12 +50,25 @@ func (BaselineLLM) GenerateQuestion(ctx context.Context, t QueryTemplate) (strin
 	if t.TimeAttr != nil && t.Grain != "" {
 		gr = " (" + strings.ToLower(t.Grain) + ")"
 	}
+
 	title := fmt.Sprintf("%s of %s%s%s",
 		strings.ToLower(firstAgg(t.Measure)), humanizeCol(t.Measure.Column), by, gr)
 
-	desc := fmt.Sprintf("Measure: %s(%s) on %s. Dimensions: %s. Time: %s %s.",
-		firstAgg(t.Measure), t.Measure.Column, t.FactTable, strings.Join(parts, ", "),
-		ifOr("(none)", func() bool { return t.TimeAttr != nil }, t.TimeAttr.Column), strings.ToLower(t.Grain))
+	timeLabel := "(none)"
+	if t.TimeAttr != nil {
+		timeLabel = t.TimeAttr.Column
+	}
+
+	desc := fmt.Sprintf(
+		"Measure: %s(%s) on %s. Dimensions: %s. Time: %s %s.",
+		firstAgg(t.Measure),
+		t.Measure.Column,
+		t.FactTable,
+		strings.Join(parts, ", "),
+		timeLabel,
+		strings.ToLower(t.Grain),
+	)
+
 	return title, desc, nil
 }
 
@@ -211,8 +225,7 @@ func GenerateCatalog(
 		composite := cfg.WCoverage*coverage + cfg.WExplainability*explain + cfg.WCost*costEff + cfg.WDemand*dmd
 
 		apiKey := os.Getenv("OPENAI_API_KEY")
-		model := os.Getenv("OPENAI_GPT_MODEL") // optional, default in embedTextWithOpenAI
-		embeddings, err := embedTextWithOpenAI(ctx, apiKey, model, title+" "+desc+" \nSQL: "+t.SQL)
+		embeddings, err := embedTextWithOpenAI(ctx, apiKey, title+" "+desc+" \nSQL: "+t.SQL)
 		if err != nil {
 			slog.Warn("failed to embed candidate", "error", err, "title", title)
 			continue
@@ -429,19 +442,14 @@ func shortestPathLen(g *BQGraph, reverse map[string][]*Edge, from, to string) in
 	return -1
 }
 
-func embedTextWithOpenAI(ctx context.Context, apiKey, model, text string) ([]float64, error) {
+func embedTextWithOpenAI(ctx context.Context, apiKey, text string) ([]float64, error) {
 	if apiKey == "" || text == "" {
 		return nil, nil
 	}
 	c := openai.NewClient(option.WithAPIKey(apiKey))
 
-	// Default model
-	if model == "" {
-		model = "text-embedding-3-small"
-	}
-
 	resp, err := c.Embeddings.New(ctx, openai.EmbeddingNewParams{
-		Model: model,
+		Model: "text-embedding-3-small",
 		Input: openai.EmbeddingNewParamsInputUnion{
 			OfString: param.NewOpt(text),
 		},

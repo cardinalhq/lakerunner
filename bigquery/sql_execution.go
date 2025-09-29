@@ -156,14 +156,6 @@ func (s *AnalystServer) ExecuteSQL(ctx context.Context, dataset, sql string) (*R
 			if len(qs.QueryPlan) > 0 {
 				planRows = planRowsFromQueryStats(qs)
 				pass("query_plan", "plan from job statistics")
-			} else {
-				// Try EXPLAIN fallback
-				if rows, err := s.ExplainSQL(ctx, sql); err == nil && len(rows) > 0 {
-					planRows = rows
-					pass("query_plan", "plan from EXPLAIN fallback")
-				} else {
-					fail("query_plan", "no plan available from job statistics or EXPLAIN")
-				}
 			}
 		}
 	}
@@ -184,15 +176,17 @@ func (s *AnalystServer) ExecuteSQL(ctx context.Context, dataset, sql string) (*R
 		rs.Evidence.Checks = checks
 		return rs, nil
 	}
+	totalRows := int(iter.TotalRows) // <-- total result size
+
 	const maxRows = 200
-	rows, rowCnt, readErr := readSampleRows(iter, maxRows)
+	rows, sampleCnt, readErr := readSampleRows(iter, maxRows)
 	if readErr != nil {
 		fail("scan_rows", readErr.Error())
 		rs.ErrorMsg = fmt.Sprintf("scan rows failed: %v", readErr)
 		rs.Evidence.Checks = checks
 		return rs, nil
 	}
-	pass("scan_rows", fmt.Sprintf("row_count=%d", rowCnt))
+	pass("scan_rows", fmt.Sprintf("sampled=%d total=%d", sampleCnt, totalRows))
 
 	// Hard-stop if any required check failed
 	for _, c := range checks {
@@ -227,7 +221,7 @@ func (s *AnalystServer) ExecuteSQL(ctx context.Context, dataset, sql string) (*R
 		ExecutionMs:        execMs,
 		BytesProcessed:     bytesProcessed,
 		BytesBilled:        bytesBilled,
-		RowCount:           rowCnt,
+		RowCount:           totalRows,
 		QueryPlan:          planRows,
 		Lineage:            CTELineage{},
 		Checks:             checks,
@@ -245,13 +239,20 @@ func (s *AnalystServer) dryRunBytes(ctx context.Context, dataset, sql string) (i
 	}
 	q.DryRun = true
 	q.DisableQueryCache = true
+
 	job, err := q.Run(ctx)
 	if err != nil {
 		return 0, err
 	}
-	st, err := job.Status(ctx)
-	if err != nil {
-		return 0, err
+
+	// Prefer the status returned from the dry-run insert response.
+	st := job.LastStatus()
+	if st == nil {
+		// Fallback (should rarely be needed)
+		st, err = job.Status(ctx)
+		if err != nil {
+			return 0, err
+		}
 	}
 	if st.Err() != nil {
 		return 0, st.Err()

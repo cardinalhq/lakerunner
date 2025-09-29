@@ -18,15 +18,16 @@ import (
 	bq "cloud.google.com/go/bigquery"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
-	"google.golang.org/api/iterator"
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
+
+// ---- small helpers ----
 
 func uniqueStrings(in []string) []string {
 	m := map[string]struct{}{}
@@ -70,52 +71,22 @@ func toDatasetTable(fq string) string {
 	return fq
 }
 
-// ExplainSQL runs EXPLAIN <sql> and returns each row as a map[field]value.
-// This does NOT execute the query.
-func (s *AnalystServer) ExplainSQL(ctx context.Context, sql string) ([]map[string]any, error) {
-	explain := "EXPLAIN\n" + sql
-	q := s.BQ.Query(explain)
-	it, err := q.Read(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var out []map[string]any
-	schema := it.Schema
-	for {
-		var vals []bq.Value
-		if err := it.Next(&vals); err != nil {
-			if errors.Is(err, iterator.Done) {
-				break
-			}
-			return nil, err
-		}
-		row := make(map[string]any, len(schema))
-		for i, f := range schema {
-			row[f.Name] = vals[i]
-		}
-		out = append(out, row)
-	}
-	return out, nil
-}
+// ---- graph subset for referenced tables ----
 
-// SubgraphForTables builds a TableGraphDTO filtered to referenced tables.
-// Accepts fully-qualified ("project.dataset.table") or dataset-qualified ("dataset.table").
 func (s *AnalystServer) SubgraphForTables(refs []string) *TableGraphDTO {
 	dto := &TableGraphDTO{}
 	if s.Graph == nil || len(refs) == 0 {
 		return dto
 	}
 
-	// Build allowlist of dataset.table
 	allow := map[string]struct{}{}
 	for _, r := range refs {
-		dt := strings.ToLower(toDatasetTable(r))
+		dt := strings.ToLower(toDatasetTable(r)) // dataset.table
 		allow[dt] = struct{}{}
 	}
 
-	// Tables
 	for id, t := range s.Graph.Nodes {
-		lid := strings.ToLower(id) // graph keys are "dataset.table" (or sometimes fq)
+		lid := strings.ToLower(id)
 		if _, ok := allow[lid]; !ok {
 			continue
 		}
@@ -130,7 +101,6 @@ func (s *AnalystServer) SubgraphForTables(refs []string) *TableGraphDTO {
 	}
 	sort.Slice(dto.Tables, func(i, j int) bool { return dto.Tables[i].TableID < dto.Tables[j].TableID })
 
-	// Edges (only those whose endpoints are kept)
 	kept := map[string]struct{}{}
 	for _, ts := range dto.Tables {
 		kept[strings.ToLower(ts.TableID)] = struct{}{}
@@ -166,15 +136,13 @@ func (s *AnalystServer) SubgraphForTables(refs []string) *TableGraphDTO {
 		}
 		return dto.Edges[i].From < dto.Edges[j].From
 	})
-
 	return dto
 }
 
-// llmApproveWithPlan asks the LLM to decide if the query plan (and referenced tables + joins)
-// can reasonably answer the question. It returns (approved, reason).
 func (s *AnalystServer) llmApproveWithPlan(
 	ctx context.Context,
 	question string,
+	sql string,
 	planRows []map[string]any,
 	graph *TableGraphDTO,
 	referenced []string,
@@ -187,48 +155,73 @@ func (s *AnalystServer) llmApproveWithPlan(
 		model = "gpt-5-mini"
 	}
 
-	// Compact the inputs for the model
 	planJSON, _ := json.Marshal(planRows)
 	graphJSON, _ := json.Marshal(graph)
 	refsJSON, _ := json.Marshal(referenced)
 
-	sys := "You are a strict data analyst. Decide if a SQL query's plan and referenced tables " +
-		"are sufficient to answer a natural-language question. Consider join paths, filterability, " +
-		"aggregation/measure presence, and whether the plan touches relevant columns/tables. " +
-		"Reply ONLY in strict JSON: {\"answerable\": <bool>, \"reason\": \"...\"}."
+	sys := "You are a strict data analyst. Decide if a SQL query can answer a natural-language question. " +
+		"Use the SQL as the primary evidence; use the query plan and table graph if available. " +
+		"Consider joins, filters, groupings, aggregations, and selected columns. " +
+		"Reply ONLY in JSON: {\"answerable\": <bool>, \"reason\": \"...\"}."
 
 	user := fmt.Sprintf(
-		"Question:\n%s\n\nReferencedTables(JSON): %s\n\nGraph(JSON): %s\n\nQueryPlan(JSON rows): %s\n\nReturn ONLY JSON with fields answerable and reason.",
-		strings.TrimSpace(question), string(refsJSON), string(graphJSON), string(planJSON),
+		"Question:\n%s\n\nSQL:\n%s\n\nReferencedTables(JSON): %s\n\nGraph(JSON): %s\n\nQueryPlan(JSON rows, optional): %s\n\nReturn ONLY JSON with fields answerable and reason.",
+		strings.TrimSpace(question), strings.TrimSpace(sql), string(refsJSON), string(graphJSON), string(planJSON),
 	)
 
 	client := openai.NewClient(option.WithAPIKey(s.OpenAIKey))
 	resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model: model,
+		Model:       model,
+		Temperature: openai.Float(1),
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage(sys),
 			openai.UserMessage(user),
 		},
-		Temperature: openai.Float(0),
 	})
 	if err != nil || len(resp.Choices) == 0 {
 		return true, "LLM check failed; defaulting to pass"
 	}
 
-	var out struct {
+	type llmOut struct {
 		Answerable bool   `json:"answerable"`
 		Reason     string `json:"reason"`
 	}
-	_ = json.Unmarshal([]byte(resp.Choices[0].Message.Content), &out)
-	if out.Reason == "" && resp.Choices[0].Message.Content != "" {
-		out.Reason = strings.TrimSpace(resp.Choices[0].Message.Content)
+
+	content := strings.TrimSpace(resp.Choices[0].Message.Content)
+
+	// Strip common code fences if present
+	clean := content
+	if strings.HasPrefix(clean, "```") {
+		if i := strings.Index(clean, "\n"); i >= 0 {
+			clean = clean[i+1:]
+		}
+		if j := strings.LastIndex(clean, "```"); j >= 0 {
+			clean = clean[:j]
+		}
+		clean = strings.TrimSpace(clean)
+	}
+	// If there’s extra prose, grab the first JSON object
+	if !strings.HasPrefix(clean, "{") {
+		if i := strings.Index(clean, "{"); i >= 0 {
+			clean = clean[i:]
+		}
+		if j := strings.LastIndex(clean, "}"); j >= 0 && j+1 <= len(clean) {
+			clean = clean[:j+1]
+		}
+	}
+
+	var out llmOut
+	if err := json.Unmarshal([]byte(clean), &out); err != nil {
+		// Default to pass if parsing fails (don’t block the workflow)
+		return true, "LLM JSON parse failed; defaulting to pass. Raw: " + content
+	}
+	if out.Reason == "" {
+		out.Reason = content
 	}
 	return out.Answerable, out.Reason
 }
 
-//
-// ---------- Public validation entrypoint (dry-run + explain + LLM) ----------
-//
+// ---- public validation entrypoint ----
 
 type QuestionValidationResult struct {
 	ValidationResult
@@ -239,33 +232,39 @@ type QuestionValidationResult struct {
 	LLMReason   string     `json:"llm_reason,omitempty"`
 }
 
-// ValidateQuestionSQL validates via BQ dry-run, collects referenced tables,
-// fetches the Query Plan via EXPLAIN, builds a subgraph among those tables,
-// and asks the LLM whether the plan appears to answer the question.
-func (s *AnalystServer) ValidateQuestionSQL(ctx context.Context, question, sql string) (*QuestionValidationResult, error) {
+func (s *AnalystServer) ValidateQuestionSQL(ctx context.Context, question, sql, dataset string) (*QuestionValidationResult, error) {
 	res := &QuestionValidationResult{
 		ValidationResult: ValidationResult{Valid: false},
 	}
 
-	// 0) quick safety gate
+	// 0) safety
 	if err := rejectNonSelect(sql); err != nil {
 		res.ErrorMsg = err.Error()
 		return res, nil
 	}
 
-	// 1) dry-run the query to verify it compiles & get referenced tables & bytes
+	// 1) dry-run to compile & collect referenced tables & byte estimate
 	q := s.BQ.Query(sql)
 	q.DryRun = true
 	q.DisableQueryCache = true
+	q.UseLegacySQL = false
+	q.DefaultProjectID = s.ProjectID
+	if v := strings.TrimSpace(dataset); v != "" {
+		q.DefaultDatasetID = v
+	}
+	q.DefaultProjectID = s.ProjectID
+
 	job, err := q.Run(ctx)
 	if err != nil {
 		res.ErrorMsg = err.Error()
 		return res, nil
 	}
-	st, err := job.Status(ctx)
-	if err != nil {
-		res.ErrorMsg = err.Error()
-		return res, nil
+	st := job.LastStatus()
+	if st == nil {
+		if st, err = job.Status(ctx); err != nil {
+			res.ErrorMsg = err.Error()
+			return res, nil
+		}
 	}
 	if st.Err() != nil {
 		res.ErrorMsg = st.Err().Error()
@@ -276,7 +275,7 @@ func (s *AnalystServer) ValidateQuestionSQL(ctx context.Context, question, sql s
 			res.Cost = float64(st.Statistics.TotalBytesProcessed) / (1 << 40) * 5.0
 		}
 		if qs, ok := st.Statistics.Details.(*bq.QueryStatistics); ok && qs != nil {
-			refs := make([]string, 0, len(qs.ReferencedTables))
+			var refs []string
 			for _, rt := range qs.ReferencedTables {
 				refs = append(refs, fmt.Sprintf("%s.%s.%s", rt.ProjectID, rt.DatasetID, rt.TableID))
 			}
@@ -284,20 +283,61 @@ func (s *AnalystServer) ValidateQuestionSQL(ctx context.Context, question, sql s
 		}
 	}
 
-	// 2) get the query plan via EXPLAIN (best-effort)
-	var planRows []map[string]any
-	if rows, err := s.ExplainSQL(ctx, sql); err == nil {
-		planRows = rows
-	}
+	// 2) get a plan via ephemeral run (no EXPLAIN). Best-effort.
+	planRows, _ := s.planFromEphemeralRun(ctx, sql, dataset)
 
-	// 3) build a subgraph across referenced tables
+	// 3) subgraph across referenced tables
 	subgraph := s.SubgraphForTables(res.Referenced)
 
-	// 4) ask the LLM if this plan + graph can answer the question
-	approved, reason := s.llmApproveWithPlan(ctx, question, planRows, subgraph, res.Referenced)
+	// 4) LLM approval (SQL is primary, plan optional)
+	approved, reason := s.llmApproveWithPlan(ctx, question, sql, planRows, subgraph, res.Referenced)
 	res.LLMAccepted, res.LLMReason = approved, reason
-
-	// 5) final flag
 	res.Valid = approved
 	return res, nil
+}
+
+// ---- plan via ephemeral run (no EXPLAIN) ----
+
+// planFromEphemeralRun runs the ORIGINAL SQL with a small MaximumBytesBilled cap
+func (s *AnalystServer) planFromEphemeralRun(ctx context.Context, sql, dataset string) ([]map[string]any, error) {
+	q := s.BQ.Query(strings.TrimSpace(sql))
+	q.DefaultProjectID = s.ProjectID
+	if v := strings.TrimSpace(dataset); v != "" {
+		q.DefaultDatasetID = v
+	}
+	q.DisableQueryCache = true
+	q.UseLegacySQL = false
+
+	const capMB = int64(64)
+	q.MaxBytesBilled = capMB * 1024 * 1024
+
+	job, err := q.Run(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Poll for a short period; plan often appears before completion.
+	for i := 0; i < 6; i++ {
+		st := job.LastStatus()
+		if st == nil {
+			if st, err = job.Status(ctx); err != nil {
+				return nil, err
+			}
+		}
+		if st != nil && st.Statistics != nil {
+			if qs, ok := st.Statistics.Details.(*bq.QueryStatistics); ok && qs != nil && len(qs.QueryPlan) > 0 {
+				return planRowsFromQueryStats(qs), nil
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Final attempt; even if it errors (bytes cap), stats may include a plan.
+	st, err := job.Wait(ctx)
+	if err == nil && st != nil && st.Statistics != nil {
+		if qs, ok := st.Statistics.Details.(*bq.QueryStatistics); ok && qs != nil && len(qs.QueryPlan) > 0 {
+			return planRowsFromQueryStats(qs), nil
+		}
+	}
+	return nil, fmt.Errorf("no query plan available from ephemeral run")
 }

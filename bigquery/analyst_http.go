@@ -109,12 +109,13 @@ func (s *AnalystServer) RegisterHTTPRoutes(mux *http.ServeMux) {
 		var req struct {
 			Question string `json:"question"`
 			SQL      string `json:"sql"`
+			Dataset  string `json:"dataset"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, httpErr{err.Error()})
 			return
 		}
-		out, err := s.ValidateQuestionSQL(r.Context(), req.Question, req.SQL)
+		out, err := s.ValidateQuestionSQL(r.Context(), req.Question, req.SQL, req.Dataset)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, httpErr{err.Error()})
 			return
