@@ -37,6 +37,27 @@ const (
 	TopicBoxerMetricsRollup     = "boxer.metrics.rollup"
 )
 
+// Consumer group suffixes - these define the single consumer group for each topic+worker combination
+const (
+	// Worker consumer groups
+	ConsumerGroupSegmentsLogsIngest    = "segments.logs.ingest"
+	ConsumerGroupSegmentsMetricsIngest = "segments.metrics.ingest"
+	ConsumerGroupSegmentsTracesIngest  = "segments.traces.ingest"
+	ConsumerGroupCompactLogs           = "compact.logs"
+	ConsumerGroupCompactMetrics        = "compact.metrics"
+	ConsumerGroupCompactTraces         = "compact.traces"
+	ConsumerGroupRollupMetrics         = "rollup.metrics"
+
+	// Boxer consumer groups
+	ConsumerGroupIngestLogs          = "ingest.logs"
+	ConsumerGroupIngestMetrics       = "ingest.metrics"
+	ConsumerGroupIngestTraces        = "ingest.traces"
+	ConsumerGroupBoxerLogsCompact    = "boxer.logs.compact"
+	ConsumerGroupBoxerMetricsCompact = "boxer.metrics.compact"
+	ConsumerGroupBoxerTracesCompact  = "boxer.traces.compact"
+	ConsumerGroupBoxerMetricsRollup  = "boxer.metrics.rollup"
+)
+
 // TopicSpec defines metadata for a Kafka topic
 type TopicSpec struct {
 	Key           string // Internal key for lookups
@@ -70,30 +91,30 @@ func NewTopicRegistry(prefix string) *TopicRegistry {
 	}
 
 	// Workers read from the boxed items, and process them as a single unit.
-	tr.registerTopic(TopicSegmentsLogsIngest, "segments.logs.ingest", "segments.logs.ingest", ServiceTypeWorkerIngestLogs)
-	tr.registerTopic(TopicSegmentsMetricsIngest, "segments.metrics.ingest", "segments.metrics.ingest", ServiceTypeWorkerIngestMetrics)
-	tr.registerTopic(TopicSegmentsTracesIngest, "segments.traces.ingest", "segments.traces.ingest", ServiceTypeWorkerIngestTraces)
-	tr.registerTopic(TopicSegmentsLogsCompact, "segments.logs.compact", "compact.logs", ServiceTypeWorkerCompactLogs)
-	tr.registerTopic(TopicSegmentsMetricsCompact, "segments.metrics.compact", "compact.metrics", ServiceTypeWorkerCompactMetrics)
-	tr.registerTopic(TopicSegmentsTracesCompact, "segments.traces.compact", "compact.traces", ServiceTypeWorkerCompactTraces)
-	tr.registerTopic(TopicSegmentsMetricsRollup, "segments.metrics.rollup", "rollup.metrics", ServiceTypeWorkerRollupMetrics)
+	tr.registerTopic(TopicSegmentsLogsIngest, ConsumerGroupSegmentsLogsIngest, ServiceTypeWorkerIngestLogs)
+	tr.registerTopic(TopicSegmentsMetricsIngest, ConsumerGroupSegmentsMetricsIngest, ServiceTypeWorkerIngestMetrics)
+	tr.registerTopic(TopicSegmentsTracesIngest, ConsumerGroupSegmentsTracesIngest, ServiceTypeWorkerIngestTraces)
+	tr.registerTopic(TopicSegmentsLogsCompact, ConsumerGroupCompactLogs, ServiceTypeWorkerCompactLogs)
+	tr.registerTopic(TopicSegmentsMetricsCompact, ConsumerGroupCompactMetrics, ServiceTypeWorkerCompactMetrics)
+	tr.registerTopic(TopicSegmentsTracesCompact, ConsumerGroupCompactTraces, ServiceTypeWorkerCompactTraces)
+	tr.registerTopic(TopicSegmentsMetricsRollup, ConsumerGroupRollupMetrics, ServiceTypeWorkerRollupMetrics)
 
 	// Boxer-ingest services read from objstore topics (raw events from pubsub)
-	tr.registerTopic(TopicObjstoreIngestLogs, "objstore.ingest.logs", "boxer.logs.ingest", ServiceTypeBoxerIngestLogs)
-	tr.registerTopic(TopicObjstoreIngestMetrics, "objstore.ingest.metrics", "boxer.metrics.ingest", ServiceTypeBoxerIngestMetrics)
-	tr.registerTopic(TopicObjstoreIngestTraces, "objstore.ingest.traces", "boxer.traces.ingest", ServiceTypeBoxerIngestTraces)
-	tr.registerTopic(TopicBoxerLogsCompact, "boxer.logs.compact", "boxer.logs.compact", ServiceTypeBoxerCompactLogs)
-	tr.registerTopic(TopicBoxerMetricsCompact, "boxer.metrics.compact", "boxer.metrics.compact", ServiceTypeBoxerCompactMetrics)
-	tr.registerTopic(TopicBoxerTracesCompact, "boxer.traces.compact", "boxer.traces.compact", ServiceTypeBoxerCompactTraces)
-	tr.registerTopic(TopicBoxerMetricsRollup, "boxer.metrics.rollup", "boxer.metrics.rollup", ServiceTypeBoxerRollupMetrics)
+	tr.registerTopic(TopicObjstoreIngestLogs, ConsumerGroupIngestLogs, ServiceTypeBoxerIngestLogs)
+	tr.registerTopic(TopicObjstoreIngestMetrics, ConsumerGroupIngestMetrics, ServiceTypeBoxerIngestMetrics)
+	tr.registerTopic(TopicObjstoreIngestTraces, ConsumerGroupIngestTraces, ServiceTypeBoxerIngestTraces)
+	tr.registerTopic(TopicBoxerLogsCompact, ConsumerGroupBoxerLogsCompact, ServiceTypeBoxerCompactLogs)
+	tr.registerTopic(TopicBoxerMetricsCompact, ConsumerGroupBoxerMetricsCompact, ServiceTypeBoxerCompactMetrics)
+	tr.registerTopic(TopicBoxerTracesCompact, ConsumerGroupBoxerTracesCompact, ServiceTypeBoxerCompactTraces)
+	tr.registerTopic(TopicBoxerMetricsRollup, ConsumerGroupBoxerMetricsRollup, ServiceTypeBoxerRollupMetrics)
 
 	return tr
 }
 
 // registerTopic adds a topic specification to the registry
-func (tr *TopicRegistry) registerTopic(key, suffix, consumerGroupSuffix, serviceType string) {
-	tr.specs[key] = TopicSpec{
-		Key:           key,
+func (tr *TopicRegistry) registerTopic(suffix, consumerGroupSuffix, serviceType string) {
+	tr.specs[suffix] = TopicSpec{
+		Key:           suffix,
 		Name:          fmt.Sprintf("%s.%s", tr.prefix, suffix),
 		ConsumerGroup: fmt.Sprintf("%s.%s", tr.prefix, consumerGroupSuffix),
 		ServiceType:   serviceType,

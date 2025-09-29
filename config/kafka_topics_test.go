@@ -40,21 +40,21 @@ func TestTopicRegistry_DefaultConfig(t *testing.T) {
 			name:                  "objstore ingest logs",
 			topicKey:              TopicObjstoreIngestLogs,
 			expectedTopicName:     "lakerunner.objstore.ingest.logs",
-			expectedConsumerGroup: "lakerunner.boxer.logs.ingest",
+			expectedConsumerGroup: "lakerunner.ingest.logs",
 			expectedServiceType:   "boxer-ingest-logs",
 		},
 		{
 			name:                  "objstore ingest metrics",
 			topicKey:              TopicObjstoreIngestMetrics,
 			expectedTopicName:     "lakerunner.objstore.ingest.metrics",
-			expectedConsumerGroup: "lakerunner.boxer.metrics.ingest",
+			expectedConsumerGroup: "lakerunner.ingest.metrics",
 			expectedServiceType:   "boxer-ingest-metrics",
 		},
 		{
 			name:                  "objstore ingest traces",
 			topicKey:              TopicObjstoreIngestTraces,
 			expectedTopicName:     "lakerunner.objstore.ingest.traces",
-			expectedConsumerGroup: "lakerunner.boxer.traces.ingest",
+			expectedConsumerGroup: "lakerunner.ingest.traces",
 			expectedServiceType:   "boxer-ingest-traces",
 		},
 		{
@@ -173,7 +173,7 @@ func TestTopicRegistry_CustomPrefix(t *testing.T) {
 
 	// Test a few key topics to ensure prefix is applied correctly
 	assert.Equal(t, "custom.objstore.ingest.logs", registry.GetTopic(TopicObjstoreIngestLogs))
-	assert.Equal(t, "custom.boxer.logs.ingest", registry.GetConsumerGroup(TopicObjstoreIngestLogs))
+	assert.Equal(t, "custom.ingest.logs", registry.GetConsumerGroup(TopicObjstoreIngestLogs))
 
 	assert.Equal(t, "custom.boxer.metrics.rollup", registry.GetTopic(TopicBoxerMetricsRollup))
 	assert.Equal(t, "custom.boxer.metrics.rollup", registry.GetConsumerGroup(TopicBoxerMetricsRollup))
@@ -184,7 +184,7 @@ func TestTopicRegistry_EmptyPrefix(t *testing.T) {
 	registry := NewTopicRegistry("")
 
 	assert.Equal(t, "lakerunner.objstore.ingest.logs", registry.GetTopic(TopicObjstoreIngestLogs))
-	assert.Equal(t, "lakerunner.boxer.logs.ingest", registry.GetConsumerGroup(TopicObjstoreIngestLogs))
+	assert.Equal(t, "lakerunner.ingest.logs", registry.GetConsumerGroup(TopicObjstoreIngestLogs))
 }
 
 func TestTopicRegistry_GetAllServiceMappings(t *testing.T) {
