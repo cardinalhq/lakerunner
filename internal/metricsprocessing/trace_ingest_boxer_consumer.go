@@ -44,7 +44,7 @@ func NewTraceIngestBoxerConsumer(
 	}
 
 	// Create TraceIngestBoxer processor
-	processor := newTraceIngestBoxerProcessor(ctx, cfg, producer, store)
+	processor := newTraceIngestBoxerProcessor(cfg, producer, store)
 
 	// Set up timing - use shorter accumulation for ingestion since it's more time-sensitive
 	maxAccumulationTime := 2 * time.Minute

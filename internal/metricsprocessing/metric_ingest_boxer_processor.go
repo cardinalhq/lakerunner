@@ -36,7 +36,6 @@ type MetricIngestBoxerProcessor struct {
 
 // newMetricIngestBoxerProcessor creates a new metric ingestion boxer processor instance
 func newMetricIngestBoxerProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	kafkaProducer fly.Producer, store BoxerStore) *MetricIngestBoxerProcessor {
 	return &MetricIngestBoxerProcessor{

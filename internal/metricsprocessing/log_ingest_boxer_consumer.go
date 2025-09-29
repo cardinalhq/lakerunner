@@ -41,7 +41,7 @@ func NewLogIngestBoxerConsumer(
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
-	processor := newLogIngestBoxerProcessor(ctx, cfg, producer, store)
+	processor := newLogIngestBoxerProcessor(cfg, producer, store)
 
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{

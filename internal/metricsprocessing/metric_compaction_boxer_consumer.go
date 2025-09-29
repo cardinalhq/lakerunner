@@ -44,7 +44,7 @@ func NewMetricCompactionBoxerConsumer(
 	}
 
 	// Create MetricCompactionBoxer processor
-	processor := newMetricCompactionBoxerProcessor(ctx, cfg, producer, store)
+	processor := newMetricCompactionBoxerProcessor(cfg, producer, store)
 
 	// Set up timing - use shorter accumulation for compaction since it's more time-sensitive
 	maxAccumulationTime := 2 * time.Minute

@@ -36,7 +36,6 @@ type LogIngestBoxerProcessor struct {
 
 // newLogIngestBoxerProcessor creates a new log ingestion boxer processor instance
 func newLogIngestBoxerProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	kafkaProducer fly.Producer, store BoxerStore) *LogIngestBoxerProcessor {
 	return &LogIngestBoxerProcessor{

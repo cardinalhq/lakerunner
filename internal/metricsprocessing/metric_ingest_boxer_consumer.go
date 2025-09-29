@@ -41,7 +41,7 @@ func NewMetricIngestBoxerConsumer(
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
-	processor := newMetricIngestBoxerProcessor(ctx, cfg, producer, store)
+	processor := newMetricIngestBoxerProcessor(cfg, producer, store)
 
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{

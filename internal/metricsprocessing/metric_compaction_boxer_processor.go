@@ -36,7 +36,6 @@ type MetricCompactionBoxerProcessor struct {
 
 // newMetricCompactionBoxerProcessor creates a new metric compaction boxer processor instance
 func newMetricCompactionBoxerProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	kafkaProducer fly.Producer, store BoxerStore) *MetricCompactionBoxerProcessor {
 	return &MetricCompactionBoxerProcessor{

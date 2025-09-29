@@ -36,7 +36,6 @@ type TraceIngestBoxerProcessor struct {
 
 // newTraceIngestBoxerProcessor creates a new trace ingestion boxer processor instance
 func newTraceIngestBoxerProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	kafkaProducer fly.Producer, store BoxerStore) *TraceIngestBoxerProcessor {
 	return &TraceIngestBoxerProcessor{
