@@ -44,6 +44,7 @@ func NewCBORCodec() (*CBORCodec, error) {
 		IndefLength:     cbor.IndefLengthAllowed,        // Allow indefinite length
 		MaxNestedLevels: 20,                             // Reasonable nesting limit
 		IntDec:          cbor.IntDecConvertSignedOrFail, // Always decode to int64 for consistency
+		UTF8:            cbor.UTF8DecodeInvalid,         // Allow invalid UTF-8 strings to be decoded
 	}.DecMode()
 	if err != nil {
 		return nil, fmt.Errorf("create CBOR decoder: %w", err)
