@@ -36,32 +36,23 @@ func NewMetricIngestBoxerConsumer(
 	store BoxerStore,
 	factory *fly.Factory,
 ) (*MetricIngestBoxerConsumer, error) {
-
-	// Create Kafka producer for sending ingestion bundles
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
-	// Create MetricIngestBoxer processor
 	processor := newMetricIngestBoxerProcessor(ctx, cfg, producer, store)
 
-	// Set up timing - use shorter accumulation for ingestion since it's more time-sensitive
-	maxAccumulationTime := 2 * time.Minute
-	flushInterval := 30 * time.Second
-
-	// Configure the consumer - consuming from objstore ingestion topic
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  registry.GetConsumerGroup(config.TopicObjstoreIngestMetrics),
 		Topic:         registry.GetTopic(config.TopicObjstoreIngestMetrics),
 		ConsumerGroup: registry.GetConsumerGroup(config.TopicObjstoreIngestMetrics),
-		FlushInterval: flushInterval,
-		StaleAge:      maxAccumulationTime,
-		MaxAge:        maxAccumulationTime,
+		FlushInterval: 10 * time.Second,
+		StaleAge:      20 * time.Second,
+		MaxAge:        20 * time.Second,
 	}
 
-	// Create common consumer with boxer store
 	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage](
 		ctx,
 		factory,

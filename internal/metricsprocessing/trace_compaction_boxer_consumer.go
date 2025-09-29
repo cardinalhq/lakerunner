@@ -36,32 +36,23 @@ func NewTraceCompactionBoxerConsumer(
 	store BoxerStore,
 	factory *fly.Factory,
 ) (*TraceCompactionBoxerConsumer, error) {
-
-	// Create Kafka producer for sending compaction bundles
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
-	// Create TraceCompactionBoxer processor
 	processor := newTraceCompactionBoxerProcessor(cfg, producer, store)
 
-	// Set up timing - use shorter accumulation for compaction since it's more time-sensitive
-	maxAccumulationTime := 2 * time.Minute
-	flushInterval := 30 * time.Second
-
-	// Configure the consumer - consuming from boxer compaction input topic
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  registry.GetConsumerGroup(config.TopicBoxerTracesCompact),
 		Topic:         registry.GetTopic(config.TopicBoxerTracesCompact),
 		ConsumerGroup: registry.GetConsumerGroup(config.TopicBoxerTracesCompact),
-		FlushInterval: flushInterval,
-		StaleAge:      maxAccumulationTime,
-		MaxAge:        maxAccumulationTime,
+		FlushInterval: 10 * time.Second,
+		StaleAge:      20 * time.Second,
+		MaxAge:        20 * time.Second,
 	}
 
-	// Create common consumer with boxer store
 	commonConsumer, err := NewCommonConsumer[*messages.TraceCompactionMessage](
 		ctx,
 		factory,
