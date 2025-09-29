@@ -27,8 +27,6 @@ import (
 	"time"
 )
 
-// ---- small helpers ----
-
 func uniqueStrings(in []string) []string {
 	m := map[string]struct{}{}
 	out := make([]string, 0, len(in))

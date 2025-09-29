@@ -28,7 +28,7 @@ import (
 const projectID = "chip-473401"
 
 // BuildAndAugment builds a BQGraph for the given datasets and augments it with sampled column data.
-func BuildAndAugment(ctx context.Context, datasetIDs []string, sampleLimit int, minScore float64, maxPairsPerTable int) (*BQGraph, error) {
+func BuildAndAugment(ctx context.Context, datasetIDs []string, sampleLimit int) (*BQGraph, error) {
 	g, err := BuildGraphForDatasets(ctx, projectID, datasetIDs)
 	if err != nil {
 		return nil, err
@@ -71,11 +71,7 @@ func computeFactWeights(onto *Ontology) map[string]float64 {
 }
 
 func RunAll(ctx context.Context, datasetIDs []string, topN int) ([]Candidate, *Ontology, *BQGraph, error) {
-	g, err := BuildAndAugment(ctx, datasetIDs,
-		50,
-		0.40,
-		200,
-	)
+	g, err := BuildAndAugment(ctx, datasetIDs, 50)
 	if err != nil {
 		return nil, nil, nil, err
 	}
