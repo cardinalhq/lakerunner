@@ -22,12 +22,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	// Create rows in unsorted order
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:        "memory.usage", // Should come after cpu.usage
 			wkk.RowKeyCTID:         int64(12345),
@@ -60,7 +61,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	defer func() { _ = sortingReader.Close() }()
 
 	// Read all results
-	var allRows []Row
+	var allRows []pipeline.Row
 	for {
 		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {
@@ -96,7 +97,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 }
 
 func TestMemorySortingReader_EmptyInput(t *testing.T) {
-	mockReader := NewMockReader([]Row{})
+	mockReader := NewMockReader([]pipeline.Row{})
 	sortingReader, err := NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
@@ -108,7 +109,7 @@ func TestMemorySortingReader_EmptyInput(t *testing.T) {
 
 func TestMemorySortingReader_MissingFields(t *testing.T) {
 	// Rows with missing required fields should be sorted to the end
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:        "cpu.usage",
 			wkk.RowKeyCTID:         int64(12345),
@@ -135,7 +136,7 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 	defer func() { _ = sortingReader.Close() }()
 
 	// Read all results
-	var allRows []Row
+	var allRows []pipeline.Row
 	for {
 		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {
@@ -173,7 +174,7 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 // reverseTimestampSortKeyProvider provides reversed timestamp sorting for testing
 type reverseTimestampSortKeyProvider struct{}
 
-func (p *reverseTimestampSortKeyProvider) MakeKey(row Row) SortKey {
+func (p *reverseTimestampSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
 	return &reverseTimestampSortKey{
 		timestamp: row[wkk.RowKeyCTimestamp].(int64),
 	}
@@ -201,7 +202,7 @@ func (k *reverseTimestampSortKey) Release() {
 
 func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 	// Test with a custom sort function that sorts by timestamp only (reverse order)
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:        "cpu.usage",
 			wkk.RowKeyCTimestamp:   int64(30000),
@@ -225,7 +226,7 @@ func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 	defer func() { _ = sortingReader.Close() }()
 
 	// Read all results
-	var allRows []Row
+	var allRows []pipeline.Row
 	for {
 		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {
@@ -248,7 +249,7 @@ func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 
 func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	// Test the built-in TimestampSort function
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:      "memory.usage", // Different names, but should sort by timestamp
 			wkk.RowKeyCTimestamp: int64(30000),
@@ -269,7 +270,7 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	defer func() { _ = sortingReader.Close() }()
 
 	// Read all results
-	var allRows []Row
+	var allRows []pipeline.Row
 	for {
 		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {

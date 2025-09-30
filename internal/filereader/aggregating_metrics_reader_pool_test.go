@@ -31,7 +31,7 @@ import (
 func runAggregation(t *testing.T) {
 	t.Helper()
 
-	rows := make([]Row, 200)
+	rows := make([]pipeline.Row, 200)
 	baseTs := int64(1700000000000)
 	for i := range rows {
 		// Create a sketch for each test row
@@ -39,7 +39,7 @@ func runAggregation(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, sketch.Add(float64(i)))
 
-		rows[i] = Row{
+		rows[i] = pipeline.Row{
 			wkk.RowKeyCName:       "metric",
 			wkk.RowKeyCTID:        int64(1),
 			wkk.RowKeyCTimestamp:  baseTs + int64(i*1000),

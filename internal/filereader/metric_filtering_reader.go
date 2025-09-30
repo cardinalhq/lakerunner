@@ -131,7 +131,7 @@ func (r *MetricFilteringReader) filterBatch(batch *Batch) *Batch {
 	}
 
 	// Create a new batch for filtered results
-	var filteredRows []Row
+	var filteredRows []pipeline.Row
 	needNewBatch := false
 
 	for i := 0; i < batch.Len(); i++ {
@@ -155,10 +155,10 @@ func (r *MetricFilteringReader) filterBatch(batch *Batch) *Batch {
 			r.mu.Unlock()
 
 			if filteredRows == nil {
-				filteredRows = make([]Row, 0, batch.Len())
+				filteredRows = make([]pipeline.Row, 0, batch.Len())
 			}
 			// Copy the row to our filtered batch
-			rowCopy := make(Row)
+			rowCopy := make(pipeline.Row)
 			for k, v := range row {
 				rowCopy[k] = v
 			}

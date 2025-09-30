@@ -137,7 +137,7 @@ func (r *IngestProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 }
 
 // getTraceRow handles reading the next trace row.
-func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context) (Row, error) {
+func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context) (pipeline.Row, error) {
 	if r.traces == nil {
 		return nil, io.EOF
 	}
@@ -260,8 +260,8 @@ func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Re
 }
 
 // processRow applies any processing to a row.
-func (r *IngestProtoTracesReader) processRow(row map[string]any) (Row, error) {
-	result := make(Row)
+func (r *IngestProtoTracesReader) processRow(row map[string]any) (pipeline.Row, error) {
+	result := make(pipeline.Row)
 	for k, v := range row {
 		result[wkk.NewRowKey(k)] = v
 	}

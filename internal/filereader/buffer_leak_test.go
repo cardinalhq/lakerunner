@@ -26,14 +26,14 @@ import (
 
 // mockLeakTestReader is a simple reader for testing buffer leaks
 type mockLeakTestReader struct {
-	rows  []Row
+	rows  []pipeline.Row
 	index int
 }
 
 func newMockLeakTestReader(numRows int) *mockLeakTestReader {
-	rows := make([]Row, numRows)
+	rows := make([]pipeline.Row, numRows)
 	for i := range rows {
-		row := make(Row)
+		row := make(pipeline.Row)
 		row[wkk.RowKeyCName] = "test_metric"
 		row[wkk.RowKeyCTID] = int64(i)
 		row[wkk.RowKeyCTimestamp] = int64(i * 1000)
@@ -324,7 +324,7 @@ func TestTranslatingReader_BufferLeak(t *testing.T) {
 // mockLeakTestTranslator for testing (avoid conflict with existing mockTranslator)
 type mockLeakTestTranslator struct{}
 
-func (m *mockLeakTestTranslator) TranslateRow(ctx context.Context, row *Row) error {
+func (m *mockLeakTestTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	// Simple translation: add a field
 	(*row)[wkk.NewRowKey("translated")] = true
 	return nil

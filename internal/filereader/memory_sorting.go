@@ -50,7 +50,7 @@ type MemorySortingReader struct {
 
 // rowWithKey pairs a row with its sort key for efficient sorting
 type rowWithKey struct {
-	row Row
+	row pipeline.Row
 	key SortKey
 }
 
@@ -104,7 +104,7 @@ func (r *MemorySortingReader) loadAndSortAllRows(ctx context.Context) error {
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
 			// Deep copy the row since we're retaining it beyond the batch lifetime
-			copiedRow := make(Row)
+			copiedRow := make(pipeline.Row)
 			for k, v := range row {
 				copiedRow[k] = v
 			}

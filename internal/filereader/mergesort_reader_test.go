@@ -34,8 +34,8 @@ import (
 func TestNewMergesortReader(t *testing.T) {
 	// Test with valid readers and keyProvider
 	readers := []Reader{
-		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(1)}}),
-		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}}),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
 
@@ -65,16 +65,16 @@ func TestNewMergesortReader(t *testing.T) {
 func TestMergesortReader_Next(t *testing.T) {
 	// Create readers with interleaved timestamps to test ordering
 	readers := []Reader{
-		newMockReader("r1", []Row{
+		newMockReader("r1", []pipeline.Row{
 			{wkk.NewRowKey("ts"): int64(1), wkk.NewRowKey("data"): "r1-first"},
 			{wkk.NewRowKey("ts"): int64(4), wkk.NewRowKey("data"): "r1-second"},
 			{wkk.NewRowKey("ts"): int64(7), wkk.NewRowKey("data"): "r1-third"},
 		}),
-		newMockReader("r2", []Row{
+		newMockReader("r2", []pipeline.Row{
 			{wkk.NewRowKey("ts"): int64(2), wkk.NewRowKey("data"): "r2-first"},
 			{wkk.NewRowKey("ts"): int64(5), wkk.NewRowKey("data"): "r2-second"},
 		}),
-		newMockReader("r3", []Row{
+		newMockReader("r3", []pipeline.Row{
 			{wkk.NewRowKey("ts"): int64(3), wkk.NewRowKey("data"): "r3-first"},
 			{wkk.NewRowKey("ts"): int64(6), wkk.NewRowKey("data"): "r3-second"},
 		}),
@@ -124,9 +124,9 @@ func TestMergesortReader_Next(t *testing.T) {
 
 func TestMergesortReader_NextBatched(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(100)}}),
-		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(200)}}),
-		newMockReader("r3", []Row{}), // Empty reader
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(100)}}),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(200)}}),
+		newMockReader("r3", []pipeline.Row{}), // Empty reader
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
@@ -163,8 +163,8 @@ func TestMergesortReader_NextBatched(t *testing.T) {
 
 func TestMergesortReader_ActiveReaderCount(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(1)}}),
-		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}}),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
@@ -196,8 +196,8 @@ func TestMergesortReader_ActiveReaderCount(t *testing.T) {
 
 func TestMergesortReader_AllEmptyReaders(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{}),
-		newMockReader("r2", []Row{}),
+		newMockReader("r1", []pipeline.Row{}),
+		newMockReader("r2", []pipeline.Row{}),
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
@@ -219,8 +219,8 @@ func TestMergesortReader_AllEmptyReaders(t *testing.T) {
 
 func TestMergesortReader_Close(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(1)}}),
-		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}}),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
@@ -265,9 +265,9 @@ func TestTimeOrderedSortKeyProvider(t *testing.T) {
 	provider := NewTimeOrderedSortKeyProvider("timestamp")
 
 	// Test basic key creation and comparison
-	row1 := Row{wkk.NewRowKey("timestamp"): int64(100), wkk.NewRowKey("data"): "first"}
-	row2 := Row{wkk.NewRowKey("timestamp"): int64(200), wkk.NewRowKey("data"): "second"}
-	row3 := Row{wkk.NewRowKey("timestamp"): int64(300), wkk.NewRowKey("data"): "third"}
+	row1 := pipeline.Row{wkk.NewRowKey("timestamp"): int64(100), wkk.NewRowKey("data"): "first"}
+	row2 := pipeline.Row{wkk.NewRowKey("timestamp"): int64(200), wkk.NewRowKey("data"): "second"}
+	row3 := pipeline.Row{wkk.NewRowKey("timestamp"): int64(300), wkk.NewRowKey("data"): "third"}
 
 	key1 := provider.MakeKey(row1)
 	key2 := provider.MakeKey(row2)
@@ -288,8 +288,8 @@ func TestTimeOrderedSortKeyProvider(t *testing.T) {
 	}
 
 	// Test with float64 timestamps
-	rowFloat1 := Row{wkk.NewRowKey("timestamp"): float64(100.1), wkk.NewRowKey("data"): "first"}
-	rowFloat2 := Row{wkk.NewRowKey("timestamp"): float64(200.2), wkk.NewRowKey("data"): "second"}
+	rowFloat1 := pipeline.Row{wkk.NewRowKey("timestamp"): float64(100.1), wkk.NewRowKey("data"): "first"}
+	rowFloat2 := pipeline.Row{wkk.NewRowKey("timestamp"): float64(200.2), wkk.NewRowKey("data"): "second"}
 
 	keyFloat1 := provider.MakeKey(rowFloat1)
 	keyFloat2 := provider.MakeKey(rowFloat2)
@@ -301,8 +301,8 @@ func TestTimeOrderedSortKeyProvider(t *testing.T) {
 	}
 
 	// Test with missing timestamp field
-	rowMissing := Row{wkk.NewRowKey("data"): "no timestamp"}
-	rowValid := Row{wkk.NewRowKey("timestamp"): int64(100), wkk.NewRowKey("data"): "has timestamp"}
+	rowMissing := pipeline.Row{wkk.NewRowKey("data"): "no timestamp"}
+	rowValid := pipeline.Row{wkk.NewRowKey("timestamp"): int64(100), wkk.NewRowKey("data"): "has timestamp"}
 
 	keyMissing := provider.MakeKey(rowMissing)
 	keyValid := provider.MakeKey(rowValid)
@@ -317,13 +317,13 @@ func TestTimeOrderedSortKeyProvider(t *testing.T) {
 // trackingReader is a test implementation that records the address of the row slice
 // provided to Read so tests can verify row recycling behavior.
 type trackingReader struct {
-	rows     []Row
+	rows     []pipeline.Row
 	index    int
 	ptrs     []string
 	rowCount int64
 }
 
-func newTrackingReader(rows []Row) *trackingReader {
+func newTrackingReader(rows []pipeline.Row) *trackingReader {
 	return &trackingReader{rows: rows}
 }
 
@@ -354,7 +354,7 @@ func (tr *trackingReader) Close() error { return nil }
 func (tr *trackingReader) TotalRowsReturned() int64 { return tr.rowCount }
 
 func TestMergesortReader_RowReuse(t *testing.T) {
-	tr := newTrackingReader([]Row{{wkk.NewRowKey("ts"): int64(1)}, {wkk.NewRowKey("ts"): int64(2)}, {wkk.NewRowKey("ts"): int64(3)}, {wkk.NewRowKey("ts"): int64(4)}})
+	tr := newTrackingReader([]pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}, {wkk.NewRowKey("ts"): int64(2)}, {wkk.NewRowKey("ts"): int64(3)}, {wkk.NewRowKey("ts"): int64(4)}})
 	or, err := NewMergesortReader(context.TODO(), []Reader{tr}, NewTimeOrderedSortKeyProvider("ts"), 1)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
@@ -580,12 +580,12 @@ func TestMergesortReader_MetricSortKeyOrdering(t *testing.T) {
 	}
 
 	// Generate test data for multiple readers with interleaved values
-	var allTestData []Row
+	var allTestData []pipeline.Row
 	readerCount := 3
 	rowsPerReader := 20
 
 	// Create data for each reader
-	readerData := make([][]Row, readerCount)
+	readerData := make([][]pipeline.Row, readerCount)
 	for readerIdx := range readerCount {
 		for rowIdx := range rowsPerReader {
 			// Pick random metric name
@@ -600,7 +600,7 @@ func TestMergesortReader_MetricSortKeyOrdering(t *testing.T) {
 			// Generate random timestamp in reasonable range
 			timestamp := int64(1700000000000) + rng.Int63n(86400000) // Random within 24 hours
 
-			row := Row{
+			row := pipeline.Row{
 				wkk.RowKeyCName:            metricName,
 				wkk.RowKeyCTID:             tid,
 				wkk.RowKeyCTimestamp:       timestamp,
@@ -795,12 +795,12 @@ func TestMergesortReader_KeyPoolingBug(t *testing.T) {
 	ctx := context.Background()
 
 	// Create two readers with data that should interleave
-	reader1Data := []Row{
+	reader1Data := []pipeline.Row{
 		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(100), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader1_row1"},
 		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(300), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader1_row2"},
 	}
 
-	reader2Data := []Row{
+	reader2Data := []pipeline.Row{
 		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(200), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader2_row1"},
 		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(400), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader2_row2"},
 	}

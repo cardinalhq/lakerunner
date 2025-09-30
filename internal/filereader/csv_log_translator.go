@@ -26,6 +26,7 @@ import (
 	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -61,7 +62,7 @@ func NewCSVLogTranslator(opts ReaderOptions) *CSVLogTranslator {
 }
 
 // TranslateRow handles CSV-specific field translation for logs
-func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
+func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
@@ -76,7 +77,7 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 		return wkk.RowKeyValue(keys[i]) < wkk.RowKeyValue(keys[j])
 	})
 
-	normalizedRow := make(Row)
+	normalizedRow := make(pipeline.Row)
 	usedNames := make(map[string]int) // Track how many times each lowercased name has been used
 
 	for _, key := range keys {

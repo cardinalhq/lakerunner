@@ -29,11 +29,11 @@ import (
 // activeReader represents a reader that has data available for merging
 type activeReader struct {
 	reader       Reader
-	currentKey   SortKey // Our owned reference to the current sort key
-	currentRow   Row     // Cache of current row
-	currentBatch *Batch  // Current batch from reader
-	batchIndex   int     // Index within current batch
-	index        int     // Original reader index for error reporting
+	currentKey   SortKey      // Our owned reference to the current sort key
+	currentRow   pipeline.Row // Cache of current row
+	currentBatch *Batch       // Current batch from reader
+	batchIndex   int          // Index within current batch
+	index        int          // Original reader index for error reporting
 }
 
 // advance loads the next row from this reader, updating the key and row cache

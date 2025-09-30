@@ -22,8 +22,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -46,7 +46,7 @@ func NewLogTranslator(orgID, bucket, objectID string, exemplarProcessor *exempla
 }
 
 // TranslateRow adds resource fields to each row
-func (t *LogTranslator) TranslateRow(ctx context.Context, row *filereader.Row) error {
+func (t *LogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
@@ -77,7 +77,7 @@ func getResourceFile(objectid string) string {
 	return "unknown"
 }
 
-func (t *LogTranslator) setFingerprint(ctx context.Context, row *filereader.Row) {
+func (t *LogTranslator) setFingerprint(ctx context.Context, row *pipeline.Row) {
 	if t.exemplarProcessor == nil {
 		return
 	}

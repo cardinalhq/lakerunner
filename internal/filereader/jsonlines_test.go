@@ -26,19 +26,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // readAllRows is a helper function that reads all rows from a reader
-func readAllRows(reader Reader) ([]Row, error) {
-	var allRows []Row
+func readAllRows(reader Reader) ([]pipeline.Row, error) {
+	var allRows []pipeline.Row
 	for {
 		batch, err := reader.Next(context.TODO())
 		if batch != nil {
 			// Copy the rows since they are owned by the reader
 			for i := 0; i < batch.Len(); i++ {
 				row := batch.Get(i)
-				rowCopy := make(Row)
+				rowCopy := make(pipeline.Row)
 				maps.Copy(rowCopy, row)
 				allRows = append(allRows, rowCopy)
 			}

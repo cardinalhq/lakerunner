@@ -23,6 +23,7 @@ import (
 	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -43,12 +44,12 @@ func NewProtoBinLogTranslator(opts ReaderOptions) *ProtoBinLogTranslator {
 }
 
 // TranslateRow handles protobuf-specific field translation
-func (t *ProtoBinLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
+func (t *ProtoBinLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	return t.translateRowWithContext(ctx, row)
 }
 
 // translateRowWithContext handles protobuf-specific field translation with context
-func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row *Row) error {
+func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}

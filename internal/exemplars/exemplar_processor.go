@@ -27,6 +27,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
@@ -330,6 +331,52 @@ func (p *Processor) ProcessLogs(ctx context.Context, organizationID string, rl p
 	return nil
 }
 
+// ProcessLogsFromRow processes logs from a Row and generates exemplars
+// This method uses the already-processed Row data with underscore field names
+func (p *Processor) ProcessLogsFromRow(ctx context.Context, organizationID string, row map[wkk.RowKey]any, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) error {
+	if !p.config.Logs.Enabled {
+		return nil
+	}
+
+	tenant := p.GetTenant(ctx, organizationID)
+	if tenant.logCache == nil {
+		return nil
+	}
+
+	// Extract key fields from the Row using underscore names
+	clusterName := p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_cluster_name"))
+	namespaceName := p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_namespace_name"))
+	serviceName := p.getStringFromRow(row, wkk.NewRowKey("resource_service_name"))
+
+	// Get fingerprint from the Row if available
+	var fingerprint int64
+	if val, ok := row[wkk.NewRowKey("_cardinalhq_fingerprint")]; ok {
+		switch v := val.(type) {
+		case int64:
+			fingerprint = v
+		case int:
+			fingerprint = int64(v)
+		default:
+			// Fall back to getting it from the log record
+			fingerprint = getLogFingerprint(lr)
+		}
+	} else {
+		fingerprint = getLogFingerprint(lr)
+	}
+
+	// Build cache key using underscore field names from Row
+	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + strconv.FormatInt(fingerprint, 10)
+
+	if tenant.logCache.Contains(key) {
+		return nil
+	}
+
+	// Still use OTEL format for the actual exemplar data
+	exemplarRecord := toLogExemplar(rl, sl, lr)
+	tenant.logCache.Put(key, exemplarRecord)
+	return nil
+}
+
 // ProcessMetrics processes metrics and generates exemplars for a specific organization
 func (p *Processor) ProcessMetrics(ctx context.Context, organizationID string, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, m pmetric.Metric) error {
 	if !p.config.Metrics.Enabled {
@@ -343,6 +390,49 @@ func (p *Processor) ProcessMetrics(ctx context.Context, organizationID string, r
 
 	p.addMetricsExemplar(tenant, rm, sm, m, m.Name(), m.Type())
 	return nil
+}
+
+// ProcessMetricsFromRow processes metrics from a Row and generates exemplars
+// This method uses the already-processed Row data with underscore field names
+func (p *Processor) ProcessMetricsFromRow(ctx context.Context, organizationID string, row map[wkk.RowKey]any, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, m pmetric.Metric) error {
+	if !p.config.Metrics.Enabled {
+		return nil
+	}
+
+	tenant := p.GetTenant(ctx, organizationID)
+	if tenant.metricCache == nil {
+		return nil
+	}
+
+	// Extract key fields from the Row using underscore names
+	clusterName := p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_cluster_name"))
+	namespaceName := p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_namespace_name"))
+	serviceName := p.getStringFromRow(row, wkk.NewRowKey("resource_service_name"))
+
+	metricName := p.getStringFromRow(row, wkk.RowKeyCName)
+	metricType := p.getStringFromRow(row, wkk.RowKeyCMetricType)
+
+	// Build cache key using underscore field names from Row
+	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + metricName + "|" + metricType
+
+	if tenant.metricCache.Contains(key) {
+		return nil
+	}
+
+	// Still use OTEL format for the actual exemplar data
+	exemplarRecord := toMetricExemplar(rm, sm, m, m.Type())
+	tenant.metricCache.Put(key, exemplarRecord)
+	return nil
+}
+
+// getStringFromRow safely extracts a string value from a Row
+func (p *Processor) getStringFromRow(row map[wkk.RowKey]any, key wkk.RowKey) string {
+	if val, ok := row[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return "unknown"
 }
 
 // ProcessTraces processes traces and generates exemplars for a specific organization

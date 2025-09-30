@@ -20,7 +20,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -31,7 +31,7 @@ func TestMetricTranslator(t *testing.T) {
 		ObjectID: "metrics/test.json.gz",
 	}
 
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.RowKeyCName:                              "cpu.usage",
 		wkk.RowKeyCTimestamp:                         int64(1756049235874),
 		wkk.NewRowKey("resource_service_name"):       "web-server-1",
@@ -91,7 +91,7 @@ func TestMetricTranslator_TimestampTruncation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			row := filereader.Row{
+			row := pipeline.Row{
 				wkk.RowKeyCName:      "test.metric",
 				wkk.RowKeyCTimestamp: tc.inputTimestamp,
 			}
@@ -110,7 +110,7 @@ func TestMetricTranslator_AttributeFiltering(t *testing.T) {
 		ObjectID: "metrics/test.json.gz",
 	}
 
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.RowKeyCName:      "test.metric",
 		wkk.RowKeyCTimestamp: int64(1640995200000),
 		// Resource attributes that should be kept

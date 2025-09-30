@@ -24,6 +24,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -81,7 +83,7 @@ func TestIngestProtoLogsReader_TimestampHandling(t *testing.T) {
 
 			// Since convertLogRecord is private, we'll test through the protobuf translator
 			// which is the actual path used in production
-			row := make(Row)
+			row := make(pipeline.Row)
 			row[wkk.NewRowKey("timestamp")] = tt.timestamp.UnixMilli()
 			row[wkk.NewRowKey("observed_timestamp")] = tt.observedTimestamp.UnixMilli()
 			row[wkk.NewRowKey("body")] = "test message"
@@ -139,13 +141,13 @@ func TestProtoBinLogTranslator_TimestampValidation(t *testing.T) {
 
 	tests := []struct {
 		name              string
-		inputRow          Row
+		inputRow          pipeline.Row
 		expectCurrentTime bool
 		description       string
 	}{
 		{
 			name: "Row with valid _cardinalhq_timestamp",
-			inputRow: Row{
+			inputRow: pipeline.Row{
 				wkk.RowKeyCTimestamp: int64(1704110400000), // 2024-01-01 12:00:00 UTC
 			},
 			expectCurrentTime: false,
@@ -153,7 +155,7 @@ func TestProtoBinLogTranslator_TimestampValidation(t *testing.T) {
 		},
 		{
 			name: "Row with zero timestamp field",
-			inputRow: Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(0),
 			},
 			expectCurrentTime: true,
@@ -161,7 +163,7 @@ func TestProtoBinLogTranslator_TimestampValidation(t *testing.T) {
 		},
 		{
 			name: "Row with valid timestamp field",
-			inputRow: Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1704110400000),
 			},
 			expectCurrentTime: false,
@@ -169,7 +171,7 @@ func TestProtoBinLogTranslator_TimestampValidation(t *testing.T) {
 		},
 		{
 			name: "Row with zero timestamp but valid observed_timestamp",
-			inputRow: Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"):          int64(0),
 				wkk.NewRowKey("observed_timestamp"): int64(1704110400000),
 			},
@@ -178,7 +180,7 @@ func TestProtoBinLogTranslator_TimestampValidation(t *testing.T) {
 		},
 		{
 			name: "Row with both timestamps zero",
-			inputRow: Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"):          int64(0),
 				wkk.NewRowKey("observed_timestamp"): int64(0),
 			},
@@ -187,7 +189,7 @@ func TestProtoBinLogTranslator_TimestampValidation(t *testing.T) {
 		},
 		{
 			name: "Row with negative timestamp",
-			inputRow: Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(-1),
 			},
 			expectCurrentTime: true,
@@ -198,7 +200,7 @@ func TestProtoBinLogTranslator_TimestampValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Make a copy of the input row to avoid modifying the test data
-			row := make(Row)
+			row := make(pipeline.Row)
 			for k, v := range tt.inputRow {
 				row[k] = v
 			}

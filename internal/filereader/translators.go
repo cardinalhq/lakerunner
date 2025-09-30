@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -31,7 +32,7 @@ func NewNoopTranslator() *NoopTranslator {
 }
 
 // TranslateRow does nothing for maximum performance.
-func (nt *NoopTranslator) TranslateRow(ctx context.Context, row *Row) error {
+func (nt *NoopTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	// No-op - row is unchanged
 	return nil
 }
@@ -47,7 +48,7 @@ func NewTagsTranslator(tags map[string]string) *TagsTranslator {
 }
 
 // TranslateRow adds tags to the row in-place.
-func (tt *TagsTranslator) TranslateRow(ctx context.Context, row *Row) error {
+func (tt *TagsTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	for k, v := range tt.tags {
 		(*row)[wkk.NewRowKey(k)] = v
 	}
@@ -66,7 +67,7 @@ func NewChainTranslator(translators ...RowTranslator) *ChainTranslator {
 }
 
 // TranslateRow applies all translators in sequence to the row.
-func (ct *ChainTranslator) TranslateRow(ctx context.Context, row *Row) error {
+func (ct *ChainTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	for i, translator := range ct.translators {
 		if err := translator.TranslateRow(ctx, row); err != nil {
 			return fmt.Errorf("translator %d failed: %w", i, err)

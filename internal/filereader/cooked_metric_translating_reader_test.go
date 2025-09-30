@@ -263,12 +263,12 @@ func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
 				// Test shouldDropRow with the actual row data
 				if tempCookedReader.shouldDropRow(ctx, row) {
 					droppedCount++
-					t.Logf("File %s: Row %d would be DROPPED by shouldDropRow", testFile.filename, i)
+					t.Logf("File %s: pipeline.Row %d would be DROPPED by shouldDropRow", testFile.filename, i)
 
 					// Log the row content for debugging
 					t.Logf("File %s: Dropped row data: %+v", testFile.filename, row)
 				} else {
-					t.Logf("File %s: Row %d would be KEPT by shouldDropRow", testFile.filename, i)
+					t.Logf("File %s: pipeline.Row %d would be KEPT by shouldDropRow", testFile.filename, i)
 				}
 			}
 

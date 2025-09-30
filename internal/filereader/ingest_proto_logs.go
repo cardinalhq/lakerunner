@@ -119,7 +119,7 @@ func (r *IngestProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 }
 
 // getLogRow handles reading the next log row.
-func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (Row, error) {
+func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (pipeline.Row, error) {
 	if r.logs == nil {
 		return nil, io.EOF
 	}
@@ -134,14 +134,17 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (Row, error) {
 			if r.logIndex < sl.LogRecords().Len() {
 				logRecord := sl.LogRecords().At(r.logIndex)
 				row := r.buildLogRow(ctx, rl, sl, logRecord)
-				if r.exemplarProcessor != nil {
-					err := r.exemplarProcessor.ProcessLogs(ctx, r.orgId, rl, sl, logRecord)
-					if err != nil {
-						continue // Skip exemplar errors
-					}
-				}
 				r.logIndex++
-				return r.processRow(row)
+				processedRow, err := r.processRow(row)
+				if err != nil {
+					return nil, err
+				}
+				if r.exemplarProcessor != nil {
+					// Use the new Row-based method with underscore field names
+					_ = r.exemplarProcessor.ProcessLogsFromRow(ctx, r.orgId, processedRow, rl, sl, logRecord)
+					// Skip exemplar errors - don't fail the whole row
+				}
+				return processedRow, nil
 			}
 
 			r.scopeIndex++
@@ -197,8 +200,8 @@ func (r *IngestProtoLogsReader) buildLogRow(ctx context.Context, rl plog.Resourc
 	return ret
 }
 
-func (r *IngestProtoLogsReader) processRow(row map[string]any) (Row, error) {
-	result := make(Row)
+func (r *IngestProtoLogsReader) processRow(row map[string]any) (pipeline.Row, error) {
+	result := make(pipeline.Row)
 	for k, v := range row {
 		result[wkk.NewRowKey(k)] = v
 	}

@@ -139,7 +139,7 @@ func putTraceIDTimestampSortKey(key *TraceIDTimestampSortKey) {
 type TraceIDTimestampSortKeyProvider struct{}
 
 // MakeKey implements filereader.SortKeyProvider interface for trace ID + timestamp sorting
-func (p *TraceIDTimestampSortKeyProvider) MakeKey(row filereader.Row) filereader.SortKey {
+func (p *TraceIDTimestampSortKeyProvider) MakeKey(row pipeline.Row) filereader.SortKey {
 	key := getTraceIDTimestampSortKey()
 
 	// Get trace_id from the common keys
@@ -714,7 +714,7 @@ func NewTraceTranslator(orgID, bucket, objectID string) *TraceTranslator {
 }
 
 // TranslateRow adds resource fields to each row
-func (t *TraceTranslator) TranslateRow(_ context.Context, row *filereader.Row) error {
+func (t *TraceTranslator) TranslateRow(_ context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}

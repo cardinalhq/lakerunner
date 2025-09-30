@@ -40,13 +40,13 @@ func createTestSketch(t *testing.T, value float64) []byte {
 
 // mockAggregatingMetricsReader implements Reader interface for testing aggregation
 type mockAggregatingMetricsReader struct {
-	rows     []Row
+	rows     []pipeline.Row
 	index    int
 	rowCount int64
 	closed   bool
 }
 
-func newMockAggregatingMetricsReader(rows []Row) *mockAggregatingMetricsReader {
+func newMockAggregatingMetricsReader(rows []pipeline.Row) *mockAggregatingMetricsReader {
 	return &mockAggregatingMetricsReader{rows: rows}
 }
 
@@ -84,7 +84,7 @@ func (r *mockAggregatingMetricsReader) TotalRowsReturned() int64 {
 
 func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 	// Single singleton row - should pass through unchanged
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:       "cpu.usage",
 			wkk.RowKeyCTID:        int64(12345),
@@ -126,7 +126,7 @@ func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 
 func TestAggregatingMetricsReader_MultipleSingletons(t *testing.T) {
 	// Multiple singleton rows with same key - should be aggregated into sketch
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:       "cpu.usage",
 			wkk.RowKeyCTID:        int64(12345),
@@ -185,7 +185,7 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 	testSketch.Encode(&sketchBytes, false)
 
 	// Mix of sketch and singleton rows with same key - should merge properly
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:       "cpu.usage",
 			wkk.RowKeyCTID:        int64(12345),
@@ -240,7 +240,7 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 
 func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 	// Rows with different keys - should not be aggregated
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:       "cpu.usage",
 			wkk.RowKeyCTID:        int64(12345),
@@ -281,7 +281,7 @@ func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all results
-	var allRows []Row
+	var allRows []pipeline.Row
 	for {
 		batch, err := aggregatingReader.Next(context.TODO())
 		if err == io.EOF {
@@ -305,7 +305,7 @@ func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 
 func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 	// Rows with missing required fields - should be skipped
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:       "cpu.usage",
 			wkk.RowKeyCTID:        int64(12345),
@@ -338,7 +338,7 @@ func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all results
-	var allRows []Row
+	var allRows []pipeline.Row
 	for {
 		batch, err := aggregatingReader.Next(context.TODO())
 		if err == io.EOF {
@@ -361,7 +361,7 @@ func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 
 func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 	// Test that timestamps are properly truncated to aggregation period
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:       "cpu.usage",
 			wkk.RowKeyCTID:        int64(12345),
@@ -394,7 +394,7 @@ func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all results
-	var allRows []Row
+	var allRows []pipeline.Row
 	for {
 		batch, err := aggregatingReader.Next(context.TODO())
 		if err == io.EOF {
@@ -442,7 +442,7 @@ func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
 	sketch2.Encode(&sketch2Bytes, false)
 
 	// Two rows with sketches - should be merged
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:       "response.time",
 			wkk.RowKeyCTID:        int64(12345),
@@ -487,13 +487,13 @@ func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
 
 // mockEOFReader implements Reader interface for testing EOF with data condition
 type mockEOFReader struct {
-	rows     []Row
+	rows     []pipeline.Row
 	index    int
 	rowCount int64
 	closed   bool
 }
 
-func newMockEOFReader(rows []Row) *mockEOFReader {
+func newMockEOFReader(rows []pipeline.Row) *mockEOFReader {
 	return &mockEOFReader{rows: rows}
 }
 
@@ -531,7 +531,7 @@ func (r *mockEOFReader) TotalRowsReturned() int64 {
 
 func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 	// Test the n>0 && io.EOF case: ensure last row is processed correctly
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:       "cpu.usage",
 			wkk.RowKeyCTID:        int64(12345),
@@ -569,7 +569,7 @@ func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 
 func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 	// Test that histogram rows without sketches are dropped
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:       "http.request_duration",
 			wkk.RowKeyCTID:        int64(12345),
@@ -610,7 +610,7 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 }
 
 func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
-	inputRows := []Row{
+	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:         "cpu.usage",
 			wkk.RowKeyCTID:          int64(12345),
@@ -636,7 +636,7 @@ func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
 	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all results - they should be in separate batches since they have different keys
-	var allRows []Row
+	var allRows []pipeline.Row
 	for {
 		batch, err := aggregatingReader.Next(context.TODO())
 		if err == io.EOF {
@@ -662,7 +662,7 @@ func TestAggregatingMetricsReader_ArbitraryRowCountBatchBoundary(t *testing.T) {
 
 	// Create test data with 1234 rows that will aggregate into 150 groups (10 names * 5 TIDs * 3 timestamps)
 	// IMPORTANT: Must be sorted by [name, tid, timestamp] for streaming aggregation to work
-	testRows := make([]Row, totalRows)
+	testRows := make([]pipeline.Row, totalRows)
 	rowIndex := 0
 
 	// Generate sorted data: for each name, for each tid, for each timestamp, create multiple rows
@@ -680,7 +680,7 @@ func TestAggregatingMetricsReader_ArbitraryRowCountBatchBoundary(t *testing.T) {
 				}
 
 				for r := 0; r < rowsForThisGroup && rowIndex < totalRows; r++ {
-					testRows[rowIndex] = Row{
+					testRows[rowIndex] = pipeline.Row{
 						wkk.RowKeyCName:       fmt.Sprintf("metric_%d", nameIdx),
 						wkk.RowKeyCTID:        int64(tid),
 						wkk.RowKeyCTimestamp:  timestamp,
@@ -733,7 +733,7 @@ func TestAggregatingMetricsReader_ArbitraryRowCountBatchBoundary(t *testing.T) {
 		if batchCount == 1 {
 			for i := 0; i < min(3, batch.Len()); i++ {
 				row := batch.Get(i)
-				t.Logf("  Row %d: name=%v, tid=%v, ts=%v, count=%v", i,
+				t.Logf("  pipeline.Row %d: name=%v, tid=%v, ts=%v, count=%v", i,
 					row[wkk.RowKeyCName],
 					row[wkk.RowKeyCTID],
 					row[wkk.RowKeyCTimestamp],
@@ -772,9 +772,9 @@ func TestAggregatingMetricsReader_NoAggregationPassthrough(t *testing.T) {
 	const aggregationPeriodMs = 10000
 
 	// Create 1234 rows with unique aggregation keys (each row gets unique metric name or timestamp)
-	testRows := make([]Row, totalRows)
+	testRows := make([]pipeline.Row, totalRows)
 	for i := 0; i < totalRows; i++ {
-		testRows[i] = Row{
+		testRows[i] = pipeline.Row{
 			wkk.RowKeyCName:       fmt.Sprintf("unique_metric_%d", i),  // Each row has unique metric name
 			wkk.RowKeyCTID:        int64(42),                           // Same TID for all
 			wkk.RowKeyCTimestamp:  int64(1000 + i*aggregationPeriodMs), // Each row in different time bucket
@@ -802,7 +802,7 @@ func TestAggregatingMetricsReader_NoAggregationPassthrough(t *testing.T) {
 	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all rows back - they should pass through unchanged
-	var allOutputRows []Row
+	var allOutputRows []pipeline.Row
 	totalRead := 0
 	batchCount := 0
 	for {

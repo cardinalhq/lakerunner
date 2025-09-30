@@ -26,9 +26,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-// Row represents a single row of data as a map of column names to values.
-type Row = pipeline.Row
-
 // Reader is the core interface for reading rows from any file format using pipeline semantics.
 // This eliminates memory ownership issues by establishing clear ownership: batches are owned
 // by the reader and must not be retained beyond the next Next() call.
@@ -50,7 +47,7 @@ type Reader interface {
 // RowTranslator transforms rows from one format to another.
 type RowTranslator interface {
 	// TranslateRow transforms a row in-place by modifying the provided row pointer.
-	TranslateRow(ctx context.Context, row *Row) error
+	TranslateRow(ctx context.Context, row *pipeline.Row) error
 }
 
 // OTELMetricsProvider provides access to the underlying OpenTelemetry metrics structure.
@@ -74,7 +71,7 @@ type OTELLogsProvider interface {
 type Batch = pipeline.Batch
 
 // extractTimestamp extracts a timestamp from a row, handling various numeric types.
-func extractTimestamp(row Row, fieldName string) int64 {
+func extractTimestamp(row pipeline.Row, fieldName string) int64 {
 	// Convert string field name to RowKey for lookup
 	rowKey := wkk.NewRowKey(fieldName)
 	val, exists := row[rowKey]
@@ -143,7 +140,7 @@ func (k *TimeOrderedSortKey) Release() {
 	// No resources to release for simple int64 key
 }
 
-func (p *TimeOrderedSortKeyProvider) MakeKey(row Row) SortKey {
+func (p *TimeOrderedSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
 	timestamp := extractTimestamp(row, p.fieldName)
 	return &TimeOrderedSortKey{
 		timestamp: timestamp,

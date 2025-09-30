@@ -26,8 +26,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -216,7 +216,7 @@ type timestampResult struct {
 
 // detectTimestampField attempts to find a timestamp field in the row
 // Returns both millisecond and nanosecond precision if available, plus the field name that was used
-func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (timestampResult, string) {
+func (t *ParquetLogTranslator) detectTimestampField(row *pipeline.Row) (timestampResult, string) {
 	// Check for nanosecond precision fields first
 	nanosecondFields := []wkk.RowKey{
 		timestampNsKey,
@@ -404,7 +404,7 @@ func extractInt64(val any) (int64, bool) {
 
 // detectLevelField attempts to find a severity/level field in the row
 // Returns the level string (uppercase), a boolean indicating if found, and the field name used
-func (t *ParquetLogTranslator) detectLevelField(row *filereader.Row) (string, bool, string) {
+func (t *ParquetLogTranslator) detectLevelField(row *pipeline.Row) (string, bool, string) {
 	// Check common level/severity field names
 	levelFields := []wkk.RowKey{
 		severityTextKey,
@@ -440,7 +440,7 @@ func (t *ParquetLogTranslator) detectLevelField(row *filereader.Row) (string, bo
 
 // detectMessageField attempts to find a message field in the row
 // Returns the message string, a boolean indicating if found, and the field name used
-func (t *ParquetLogTranslator) detectMessageField(row *filereader.Row) (string, bool, string) {
+func (t *ParquetLogTranslator) detectMessageField(row *pipeline.Row) (string, bool, string) {
 	// Common message field names to check (in priority order)
 	messageFields := []wkk.RowKey{
 		messageKey,
@@ -484,7 +484,7 @@ func (t *ParquetLogTranslator) detectMessageField(row *filereader.Row) (string, 
 }
 
 // TranslateRow processes Parquet rows with timestamp detection and fingerprinting
-func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader.Row) error {
+func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}

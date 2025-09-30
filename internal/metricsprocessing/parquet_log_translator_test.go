@@ -24,7 +24,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
 
-	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -43,14 +43,14 @@ func TestParquetLogTranslator_TranslateRow_NilRow(t *testing.T) {
 func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 	tests := []struct {
 		name           string
-		inputRow       filereader.Row
+		inputRow       pipeline.Row
 		expectedMs     int64
 		expectedNs     int64
 		shouldFindTime bool
 	}{
 		{
 			name: "nanosecond precision timestamp",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp_ns"): int64(1234567890123456789),
 				wkk.NewRowKey("message"):      "test message",
 			},
@@ -60,7 +60,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "microsecond precision timestamp",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp_us"): int64(1234567890123456),
 				wkk.NewRowKey("message"):      "test message",
 			},
@@ -70,7 +70,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "millisecond precision timestamp",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 			},
@@ -80,7 +80,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "time.Time object",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): time.Unix(1234567890, 123456789),
 				wkk.NewRowKey("message"):   "test message",
 			},
@@ -90,7 +90,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "@timestamp field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("@timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):    "test message",
 			},
@@ -100,7 +100,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "no timestamp field - should use current time",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("message"): "test message",
 			},
 			expectedMs:     0, // Will check that it's close to current time
@@ -109,7 +109,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "timestamp_millis field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp_millis"): int64(1234567890123),
 				wkk.NewRowKey("message"):          "test message",
 			},
@@ -119,7 +119,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "float64 timestamp",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): float64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 			},
@@ -129,7 +129,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "int32 timestamp",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int32(1234567890),
 				wkk.NewRowKey("message"):   "test message",
 			},
@@ -148,7 +148,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 			}
 
 			// Create a copy of the row to avoid mutation
-			row := make(filereader.Row)
+			row := make(pipeline.Row)
 			for k, v := range tt.inputRow {
 				row[k] = v
 			}
@@ -190,12 +190,12 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 	tests := []struct {
 		name            string
-		inputRow        filereader.Row
+		inputRow        pipeline.Row
 		expectedMessage string
 	}{
 		{
 			name: "message field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 			},
@@ -203,7 +203,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "msg field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("msg"):       "test msg",
 			},
@@ -211,7 +211,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "body field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("body"):      "test body",
 			},
@@ -219,7 +219,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "log field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("log"):       "test log",
 			},
@@ -227,7 +227,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "byte slice message",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   []byte("byte message"),
 			},
@@ -235,7 +235,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "no message field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("level"):     "info",
 			},
@@ -243,7 +243,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "empty message",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "",
 			},
@@ -260,7 +260,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 			}
 
 			// Create a copy of the row
-			row := make(filereader.Row)
+			row := make(pipeline.Row)
 			for k, v := range tt.inputRow {
 				row[k] = v
 			}
@@ -280,12 +280,12 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.T) {
 	tests := []struct {
 		name     string
-		inputRow filereader.Row
+		inputRow pipeline.Row
 		expected map[string]any
 	}{
 		{
 			name: "nested map structure",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 				wkk.NewRowKey("metadata"): map[string]any{
@@ -304,7 +304,7 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 		},
 		{
 			name: "array structure",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 				wkk.NewRowKey("tags"):      []any{"tag1", "tag2", "tag3"},
@@ -317,7 +317,7 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 		},
 		{
 			name: "complex nested structure",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 				wkk.NewRowKey("data"): map[string]any{ // Changed from "event" to avoid message field detection
@@ -348,7 +348,7 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 			}
 
 			// Create a copy of the row
-			row := make(filereader.Row)
+			row := make(pipeline.Row)
 			for k, v := range tt.inputRow {
 				row[k] = v
 			}
@@ -388,7 +388,7 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 		ObjectID: "test.parquet",
 	}
 
-	row := filereader.Row{
+	row := pipeline.Row{
 		// These should be detected and not duplicated as attributes
 		wkk.NewRowKey("timestamp"):  int64(1234567890123),
 		wkk.NewRowKey("message"):    "test message",
@@ -449,7 +449,7 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 		ObjectID: "logs/2024/01/data.parquet",
 	}
 
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"): int64(1234567890123),
 		wkk.NewRowKey("message"):   "test message",
 	}
@@ -488,7 +488,7 @@ func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
 	}
 
 	// Create a row with an empty key (edge case)
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"): int64(1234567890123),
 		wkk.NewRowKey("message"):   "test message",
 		wkk.NewRowKey(""):          "value with empty key", // This should be skipped
@@ -514,7 +514,7 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 		ObjectID: "test.parquet",
 	}
 
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"):    int64(1234567890123),
 		wkk.NewRowKey("message"):      "test message",
 		wkk.NewRowKey("level"):        "error",
@@ -555,7 +555,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 	}
 
 	// Test case matching the user's example (sanitized)
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"):         int64(1757812155208), // Original timestamp from syslog.parquet
 		wkk.NewRowKey("application"):       "agent[1234]",
 		wkk.NewRowKey("controller_ip"):     "10.0.0.1",
@@ -618,7 +618,7 @@ func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testin
 		ObjectID: "test.parquet",
 	}
 
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"):   mockStringTimestamp{value: "2025-09-13 18:09:15"},
 		wkk.NewRowKey("application"): "test-app",
 		wkk.NewRowKey("message"):     "test message",

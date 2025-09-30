@@ -28,8 +28,8 @@ import (
 func TestNewSequentialReader(t *testing.T) {
 	// Test with valid readers
 	readers := []Reader{
-		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
-		newMockReader("r2", []Row{{wkk.NewRowKey("data"): "r2"}}),
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("data"): "r1"}}),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("data"): "r2"}}),
 	}
 
 	sr, err := NewSequentialReader(readers, 1000)
@@ -50,7 +50,7 @@ func TestNewSequentialReader(t *testing.T) {
 
 	// Test with nil reader
 	readersWithNil := []Reader{
-		newMockReader("r1", []Row{}),
+		newMockReader("r1", []pipeline.Row{}),
 		nil,
 	}
 	_, err = NewSequentialReader(readersWithNil, 1000)
@@ -62,15 +62,15 @@ func TestNewSequentialReader(t *testing.T) {
 func TestSequentialReader_Next(t *testing.T) {
 	// Create readers with different data
 	readers := []Reader{
-		newMockReader("r1", []Row{
+		newMockReader("r1", []pipeline.Row{
 			{wkk.NewRowKey("data"): "r1-first"},
 			{wkk.NewRowKey("data"): "r1-second"},
 		}),
-		newMockReader("r2", []Row{
+		newMockReader("r2", []pipeline.Row{
 			{wkk.NewRowKey("data"): "r2-first"},
 		}),
-		newMockReader("r3", []Row{}), // Empty reader
-		newMockReader("r4", []Row{
+		newMockReader("r3", []pipeline.Row{}), // Empty reader
+		newMockReader("r4", []pipeline.Row{
 			{wkk.NewRowKey("data"): "r4-first"},
 		}),
 	}
@@ -108,11 +108,11 @@ func TestSequentialReader_Next(t *testing.T) {
 func TestSequentialReader_NextBatched(t *testing.T) {
 	// Create readers with different data
 	readers := []Reader{
-		newMockReader("r1", []Row{
+		newMockReader("r1", []pipeline.Row{
 			{wkk.NewRowKey("data"): "r1-first"},
 			{wkk.NewRowKey("data"): "r1-second"},
 		}),
-		newMockReader("r2", []Row{
+		newMockReader("r2", []pipeline.Row{
 			{wkk.NewRowKey("data"): "r2-first"},
 		}),
 	}
@@ -159,9 +159,9 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 
 func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
-		newMockReader("r2", []Row{{wkk.NewRowKey("data"): "r2"}}),
-		newMockReader("r3", []Row{}), // Empty reader
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("data"): "r1"}}),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("data"): "r2"}}),
+		newMockReader("r3", []pipeline.Row{}), // Empty reader
 	}
 
 	sr, err := NewSequentialReader(readers, 1000)
@@ -211,9 +211,9 @@ func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 
 func TestSequentialReader_TotalReaderCount(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{}),
-		newMockReader("r2", []Row{}),
-		newMockReader("r3", []Row{}),
+		newMockReader("r1", []pipeline.Row{}),
+		newMockReader("r2", []pipeline.Row{}),
+		newMockReader("r3", []pipeline.Row{}),
 	}
 
 	sr, err := NewSequentialReader(readers, 1000)
@@ -229,9 +229,9 @@ func TestSequentialReader_TotalReaderCount(t *testing.T) {
 
 func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
-		newMockReader("r2", []Row{{wkk.NewRowKey("data"): "r2"}}),
-		newMockReader("r3", []Row{{wkk.NewRowKey("data"): "r3"}}),
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("data"): "r1"}}),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("data"): "r2"}}),
+		newMockReader("r3", []pipeline.Row{{wkk.NewRowKey("data"): "r3"}}),
 	}
 
 	sr, err := NewSequentialReader(readers, 1000)
@@ -275,8 +275,8 @@ func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 
 func TestSequentialReader_Close(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
-		newMockReader("r2", []Row{{wkk.NewRowKey("data"): "r2"}}),
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("data"): "r1"}}),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("data"): "r2"}}),
 	}
 
 	sr, err := NewSequentialReader(readers, 1000)
@@ -321,9 +321,9 @@ func TestSequentialReader_Close(t *testing.T) {
 
 func TestSequentialReader_AllEmptyReaders(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{}),
-		newMockReader("r2", []Row{}),
-		newMockReader("r3", []Row{}),
+		newMockReader("r1", []pipeline.Row{}),
+		newMockReader("r2", []pipeline.Row{}),
+		newMockReader("r3", []pipeline.Row{}),
 	}
 
 	sr, err := NewSequentialReader(readers, 1000)
@@ -341,7 +341,7 @@ func TestSequentialReader_AllEmptyReaders(t *testing.T) {
 
 func TestSequentialReader_WithErrors(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("data"): "r1"}}),
 		&errorReader{}, // This reader always returns errors
 	}
 
@@ -368,11 +368,11 @@ func TestSequentialReader_WithErrors(t *testing.T) {
 func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	// Create a reader that succeeds once then errors
 	delayedErrorReader := &delayedErrorReaderImpl{
-		data: []Row{{wkk.NewRowKey("data"): "delayed"}},
+		data: []pipeline.Row{{wkk.NewRowKey("data"): "delayed"}},
 	}
 
 	readers := []Reader{
-		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("data"): "r1"}}),
 		delayedErrorReader,
 	}
 
@@ -409,7 +409,7 @@ func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 
 // delayedErrorReaderImpl is a helper type that succeeds once then errors
 type delayedErrorReaderImpl struct {
-	data     []Row
+	data     []pipeline.Row
 	position int
 	closed   bool
 	rowCount int64

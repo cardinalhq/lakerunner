@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -33,7 +33,7 @@ type MetricTranslator struct {
 
 // TranslateRow adds resource fields to each row
 // Assumes all other metric fields (including sketches) are properly set by the proto reader
-func (t *MetricTranslator) TranslateRow(_ context.Context, row *filereader.Row) error {
+func (t *MetricTranslator) TranslateRow(_ context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
@@ -84,7 +84,7 @@ var (
 	}
 )
 
-func filterKeys(row *filereader.Row) {
+func filterKeys(row *pipeline.Row) {
 	for k := range *row {
 		name := wkk.RowKeyValue(k)
 		if !strings.HasPrefix(name, "resource_") {

@@ -30,6 +30,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -855,7 +856,7 @@ func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 	defer func() { _ = reader.Close() }()
 
 	// Read all available rows
-	var allRows []Row
+	var allRows []pipeline.Row
 	for {
 		batch, err := reader.Next(context.TODO())
 		if batch != nil {
@@ -892,7 +893,7 @@ func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 // 10. All metrics must have scope_url, scope_name, description, unit, type fields
 // 11. _cardinalhq.tid computation should be done after transform (not in reader)
 // 12. For histograms, len(sketch) must be > 0; for gauge/count, len(sketch) must be 0
-func ValidateMetricsReaderContract(t *testing.T, rows []Row) {
+func ValidateMetricsReaderContract(t *testing.T, rows []pipeline.Row) {
 	require.NotEmpty(t, rows, "ValidateMetricsReaderContract requires at least one row to validate")
 
 	for i, row := range rows {

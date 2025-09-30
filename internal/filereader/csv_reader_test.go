@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -281,12 +282,12 @@ func TestCSVReader_TotalRowsReturned(t *testing.T) {
 func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    Row
+		input    pipeline.Row
 		expected map[string]any
 	}{
 		{
 			name: "Data field as message",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "This is a log message",
 				wkk.NewRowKey("timestamp"): int64(1758397185000),
 				wkk.NewRowKey("level"):     "INFO",
@@ -299,7 +300,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Timestamp normalization from nanoseconds",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "Test message",
 				wkk.NewRowKey("timestamp"): int64(1758397185000000000),
 			},
@@ -310,7 +311,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Timestamp normalization from seconds",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "Test message",
 				wkk.NewRowKey("timestamp"): int64(1758397185),
 			},
@@ -321,7 +322,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Field name sanitization",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):         "Message",
 				wkk.NewRowKey("user-name"):    "alice",
 				wkk.NewRowKey("request.type"): "GET",
@@ -336,7 +337,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Alternative timestamp fields",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):       "Message",
 				wkk.NewRowKey("event_time"): int64(1758397185000),
 				wkk.NewRowKey("user"):       "bob",
@@ -349,7 +350,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Normalized field names - Timestamp",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "Message",
 				wkk.NewRowKey("Timestamp"): int64(1758397185000),
 				wkk.NewRowKey("User"):      "alice",
@@ -362,7 +363,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Normalized field names - Publish_Time",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):         "Message",
 				wkk.NewRowKey("Publish_Time"): int64(1758397185000),
 				wkk.NewRowKey("User"):         "bob",
@@ -375,7 +376,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Normalized field names - EVENT_TIMESTAMP",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):            "Message",
 				wkk.NewRowKey("EVENT_TIMESTAMP"): int64(1758397185000),
 				wkk.NewRowKey("User"):            "charlie",
@@ -388,7 +389,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Normalized field names - EventTime",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "Message",
 				wkk.NewRowKey("EventTime"): int64(1758397185000),
 				wkk.NewRowKey("User"):      "david",
@@ -401,7 +402,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Duplicate field names with different cases",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):  "Message",
 				wkk.NewRowKey("alice"): "lowercase",
 				wkk.NewRowKey("Alice"): "titlecase",
@@ -416,7 +417,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Multiple duplicate field names",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):  "Message",
 				wkk.NewRowKey("field"): "first",
 				wkk.NewRowKey("Field"): "second",
@@ -433,7 +434,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Sanitization collision - different special chars",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):    "Message",
 				wkk.NewRowKey("foo-bar"): "dash",
 				wkk.NewRowKey("foo bar"): "space",
@@ -450,7 +451,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 		},
 		{
 			name: "Complex sanitization collision",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "Message",
 				wkk.NewRowKey("user-name"): "dash",
 				wkk.NewRowKey("user name"): "space",

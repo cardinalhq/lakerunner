@@ -32,7 +32,7 @@ import (
 
 // aggregationState holds the minimal data needed for aggregation
 type aggregationState struct {
-	baseRow     Row                // Template row with all metadata fields
+	baseRow     pipeline.Row       // Template row with all metadata fields
 	ownsBaseRow bool               // Whether we own baseRow (taken from batch)
 	sketch      *ddsketch.DDSketch // Accumulated sketch (required for all metrics)
 	rowCount    int                // Number of rows aggregated
@@ -95,7 +95,7 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64, batch
 
 // makeAggregationKey creates a key for aggregation from [metric_name, tid, timestamp].
 // Assumes timestamp has already been truncated to aggregation period.
-func (ar *AggregatingMetricsReader) makeAggregationKey(row Row) (SortKey, error) {
+func (ar *AggregatingMetricsReader) makeAggregationKey(row pipeline.Row) (SortKey, error) {
 	// Validate required fields
 	_, nameOk := row[wkk.RowKeyCName].(string)
 	if !nameOk {
@@ -117,7 +117,7 @@ func (ar *AggregatingMetricsReader) makeAggregationKey(row Row) (SortKey, error)
 }
 
 // isSketchEmpty checks if a row has an empty sketch (indicating singleton value).
-func isSketchEmpty(row Row) bool {
+func isSketchEmpty(row pipeline.Row) bool {
 	sketch := row[wkk.RowKeySketch]
 	if sketch == nil {
 		return true
@@ -162,7 +162,7 @@ func getSketchBytes(sketchData interface{}) ([]byte, error) {
 
 // updateRowFromSketch updates all rollup fields in a row based on the sketch.
 // This should only be called for valid sketches with data.
-func updateRowFromSketch(row Row, sketch *ddsketch.DDSketch) error {
+func updateRowFromSketch(row pipeline.Row, sketch *ddsketch.DDSketch) error {
 	count := sketch.GetCount()
 	if count == 0 {
 		return fmt.Errorf("cannot update row from empty sketch")
@@ -204,7 +204,7 @@ func updateRowFromSketch(row Row, sketch *ddsketch.DDSketch) error {
 }
 
 // aggregateGroup finalizes the current aggregation and returns the result.
-func (ar *AggregatingMetricsReader) aggregateGroup(ctx context.Context) (Row, error) {
+func (ar *AggregatingMetricsReader) aggregateGroup(ctx context.Context) (pipeline.Row, error) {
 	if ar.aggState == nil {
 		// No aggregation state - nothing to return
 		ar.resetAggregation()
@@ -215,7 +215,7 @@ func (ar *AggregatingMetricsReader) aggregateGroup(ctx context.Context) (Row, er
 	metricType, _ := ar.aggState.baseRow[wkk.RowKeyCMetricType].(string)
 
 	// Finalize the aggregation based on metric type
-	var result Row
+	var result pipeline.Row
 	var err error
 	if metricType == "histogram" {
 		result, err = ar.finalizeHistogramAggregation(ctx, ar.aggState)
@@ -245,7 +245,7 @@ func (ar *AggregatingMetricsReader) aggregateGroup(ctx context.Context) (Row, er
 }
 
 // finalizeHistogramAggregation completes aggregation for a histogram metric.
-func (ar *AggregatingMetricsReader) finalizeHistogramAggregation(ctx context.Context, state *aggregationState) (Row, error) {
+func (ar *AggregatingMetricsReader) finalizeHistogramAggregation(ctx context.Context, state *aggregationState) (pipeline.Row, error) {
 	// VALIDATION: Histograms must always have a sketch - no singleton values allowed
 	if state.sketch == nil {
 		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
@@ -268,7 +268,7 @@ func (ar *AggregatingMetricsReader) finalizeHistogramAggregation(ctx context.Con
 }
 
 // finalizeCounterGaugeAggregation completes aggregation for counter/gauge metrics.
-func (ar *AggregatingMetricsReader) finalizeCounterGaugeAggregation(_ context.Context, state *aggregationState) (Row, error) {
+func (ar *AggregatingMetricsReader) finalizeCounterGaugeAggregation(_ context.Context, state *aggregationState) (pipeline.Row, error) {
 	// Use the base row directly - we own it and will transfer ownership to the caller
 	result := state.baseRow
 
@@ -307,7 +307,7 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 // addRowToAggregation adds a row to the current aggregation state.
 // All metrics must have sketches for proper aggregation.
 // rowIndex is the index in pendingBatch (-1 if not from current batch).
-func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row Row, rowIndex int) error {
+func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row pipeline.Row, rowIndex int) error {
 	// VALIDATION: All metrics must have sketches
 	if isSketchEmpty(row) {
 		metricType := "unknown"
@@ -332,7 +332,7 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row
 	// Create aggregation state if this is the first row for this key
 	if ar.aggState == nil {
 		// First row for this aggregation key - create new state
-		var baseRow Row
+		var baseRow pipeline.Row
 		var ownsRow bool
 
 		// Try zero-copy: take ownership of the row from the batch
@@ -439,7 +439,7 @@ func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying(ctx context.Cont
 // processRow processes a single row and adds aggregated results to the batch.
 // Returns an error if processing fails.
 // rowIndex is the index of this row in pendingBatch (for zero-copy optimization).
-func (ar *AggregatingMetricsReader) processRow(ctx context.Context, row Row, rowIndex int, batch *Batch) error {
+func (ar *AggregatingMetricsReader) processRow(ctx context.Context, row pipeline.Row, rowIndex int, batch *Batch) error {
 
 	// Create aggregation key for this row
 	key, err := ar.makeAggregationKey(row)
