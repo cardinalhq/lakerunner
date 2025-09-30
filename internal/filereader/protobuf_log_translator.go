@@ -108,22 +108,10 @@ func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row
 		}
 	}
 
-	// Calculate fingerprint from message
-	//fingerprint, err := t.calculateFingerprint(*row)
-	//if err != nil {
-	//	return fmt.Errorf("failed to calculate fingerprint: %w", err)
-	//}
-
-	//if fingerprint != 0 {
-	//	(*row)[wkk.RowKeyCFingerprint] = fingerprint
-	//} else {
-	//	delete(*row, wkk.RowKeyCFingerprint)
-	//}
-
 	// Add resource fields (only for logs signal)
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.NewRowKey("resource_bucket_name")] = t.bucket
+	(*row)[wkk.NewRowKey("resource_file_name")] = "./" + t.objectID
+	(*row)[wkk.NewRowKey("resource_file_type")] = helpers.GetFileType(t.objectID)
 
 	return nil
 }
