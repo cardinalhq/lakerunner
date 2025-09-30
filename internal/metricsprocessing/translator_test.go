@@ -34,9 +34,9 @@ func TestMetricTranslator(t *testing.T) {
 	row := filereader.Row{
 		wkk.RowKeyCName:                              "cpu.usage",
 		wkk.RowKeyCTimestamp:                         int64(1756049235874),
-		wkk.NewRowKey("resource.service.name"):       "web-server-1",
-		wkk.NewRowKey("resource.k8s.namespace.name"): "default",
-		wkk.NewRowKey("resource.should.be.filtered"): "value",
+		wkk.NewRowKey("resource_service_name"):       "web-server-1",
+		wkk.NewRowKey("resource_k8s_namespace_name"): "default",
+		wkk.NewRowKey("resource_should_be_filtered"): "value",
 	}
 
 	err := translator.TranslateRow(context.Background(), &row)
@@ -44,9 +44,9 @@ func TestMetricTranslator(t *testing.T) {
 	require.Equal(t, "test-org", row[wkk.RowKeyCCustomerID])
 	require.Equal(t, "metrics", row[wkk.RowKeyCTelemetryType])
 	require.Equal(t, "cpu.usage", row[wkk.RowKeyCName])                            // Original field preserved
-	require.Equal(t, "web-server-1", row[wkk.NewRowKey("resource.service.name")])  // Kept attribute
-	require.Equal(t, "default", row[wkk.NewRowKey("resource.k8s.namespace.name")]) // Kept attribute
-	require.Nil(t, row[wkk.NewRowKey("resource.should.be.filtered")])              // Filtered attribute
+	require.Equal(t, "web-server-1", row[wkk.NewRowKey("resource_service_name")])  // Kept attribute
+	require.Equal(t, "default", row[wkk.NewRowKey("resource_k8s_namespace_name")]) // Kept attribute
+	require.Nil(t, row[wkk.NewRowKey("resource_should_be_filtered")])              // Filtered attribute
 	require.Equal(t, int64(1756049230000), row[wkk.RowKeyCTimestamp])              // Timestamp truncated to 10s boundary
 
 	// Check that TID was computed and added
@@ -114,58 +114,58 @@ func TestMetricTranslator_AttributeFiltering(t *testing.T) {
 		wkk.RowKeyCName:      "test.metric",
 		wkk.RowKeyCTimestamp: int64(1640995200000),
 		// Resource attributes that should be kept
-		wkk.NewRowKey("resource.app"):                  "myapp",
-		wkk.NewRowKey("resource.container.image.name"): "nginx",
-		wkk.NewRowKey("resource.container.image.tag"):  "latest",
-		wkk.NewRowKey("resource.k8s.cluster.name"):     "prod-cluster",
-		wkk.NewRowKey("resource.k8s.daemonset.name"):   "fluentd",
-		wkk.NewRowKey("resource.k8s.deployment.name"):  "web-app",
-		wkk.NewRowKey("resource.k8s.namespace.name"):   "default",
-		wkk.NewRowKey("resource.k8s.pod.ip"):           "10.0.0.1",
-		wkk.NewRowKey("resource.k8s.pod.name"):         "web-app-123",
-		wkk.NewRowKey("resource.k8s.statefulset.name"): "database",
-		wkk.NewRowKey("resource.service.name"):         "frontend",
-		wkk.NewRowKey("resource.service.version"):      "v1.2.3",
+		wkk.NewRowKey("resource_app"):                  "myapp",
+		wkk.NewRowKey("resource_container_image_name"): "nginx",
+		wkk.NewRowKey("resource_container_image_tag"):  "latest",
+		wkk.NewRowKey("resource_k8s_cluster_name"):     "prod-cluster",
+		wkk.NewRowKey("resource_k8s_daemonset_name"):   "fluentd",
+		wkk.NewRowKey("resource_k8s_deployment_name"):  "web-app",
+		wkk.NewRowKey("resource_k8s_namespace_name"):   "default",
+		wkk.NewRowKey("resource_k8s_pod_ip"):           "10.0.0.1",
+		wkk.NewRowKey("resource_k8s_pod_name"):         "web-app-123",
+		wkk.NewRowKey("resource_k8s_statefulset_name"): "database",
+		wkk.NewRowKey("resource_service_name"):         "frontend",
+		wkk.NewRowKey("resource_service_version"):      "v1.2.3",
 		// Resource attributes that should be filtered
-		wkk.NewRowKey("resource.k8s.pod.uid"):    "abc-123-def",
-		wkk.NewRowKey("resource.k8s.node.name"):  "node-1",
-		wkk.NewRowKey("resource.process.pid"):    "12345",
-		wkk.NewRowKey("resource.host.name"):      "server-1",
-		wkk.NewRowKey("resource.cloud.provider"): "aws",
-		wkk.NewRowKey("resource.cloud.region"):   "us-east-1",
+		wkk.NewRowKey("resource_k8s_pod_uid"):    "abc-123-def",
+		wkk.NewRowKey("resource_k8s_node_name"):  "node-1",
+		wkk.NewRowKey("resource_process_pid"):    "12345",
+		wkk.NewRowKey("resource_host_name"):      "server-1",
+		wkk.NewRowKey("resource_cloud_provider"): "aws",
+		wkk.NewRowKey("resource_cloud_region"):   "us-east-1",
 		// Non-resource attributes (should not be touched)
-		wkk.NewRowKey("metric.unit"):  "bytes",
-		wkk.NewRowKey("scope.name"):   "io.opentelemetry",
-		wkk.NewRowKey("custom.field"): "value",
+		wkk.NewRowKey("metric_unit"):  "bytes",
+		wkk.NewRowKey("scope_name"):   "io.opentelemetry",
+		wkk.NewRowKey("custom_field"): "value",
 	}
 
 	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 
 	// Check that kept resource attributes are still present
-	require.Equal(t, "myapp", row[wkk.NewRowKey("resource.app")])
-	require.Equal(t, "nginx", row[wkk.NewRowKey("resource.container.image.name")])
-	require.Equal(t, "latest", row[wkk.NewRowKey("resource.container.image.tag")])
-	require.Equal(t, "prod-cluster", row[wkk.NewRowKey("resource.k8s.cluster.name")])
-	require.Equal(t, "fluentd", row[wkk.NewRowKey("resource.k8s.daemonset.name")])
-	require.Equal(t, "web-app", row[wkk.NewRowKey("resource.k8s.deployment.name")])
-	require.Equal(t, "default", row[wkk.NewRowKey("resource.k8s.namespace.name")])
-	require.Equal(t, "10.0.0.1", row[wkk.NewRowKey("resource.k8s.pod.ip")])
-	require.Equal(t, "web-app-123", row[wkk.NewRowKey("resource.k8s.pod.name")])
-	require.Equal(t, "database", row[wkk.NewRowKey("resource.k8s.statefulset.name")])
-	require.Equal(t, "frontend", row[wkk.NewRowKey("resource.service.name")])
-	require.Equal(t, "v1.2.3", row[wkk.NewRowKey("resource.service.version")])
+	require.Equal(t, "myapp", row[wkk.NewRowKey("resource_app")])
+	require.Equal(t, "nginx", row[wkk.NewRowKey("resource_container_image_name")])
+	require.Equal(t, "latest", row[wkk.NewRowKey("resource_container_image_tag")])
+	require.Equal(t, "prod-cluster", row[wkk.NewRowKey("resource_k8s_cluster_name")])
+	require.Equal(t, "fluentd", row[wkk.NewRowKey("resource_k8s_daemonset_name")])
+	require.Equal(t, "web-app", row[wkk.NewRowKey("resource_k8s_deployment_name")])
+	require.Equal(t, "default", row[wkk.NewRowKey("resource_k8s_namespace_name")])
+	require.Equal(t, "10.0.0.1", row[wkk.NewRowKey("resource_k8s_pod_ip")])
+	require.Equal(t, "web-app-123", row[wkk.NewRowKey("resource_k8s_pod_name")])
+	require.Equal(t, "database", row[wkk.NewRowKey("resource_k8s_statefulset_name")])
+	require.Equal(t, "frontend", row[wkk.NewRowKey("resource_service_name")])
+	require.Equal(t, "v1.2.3", row[wkk.NewRowKey("resource_service_version")])
 
 	// Check that filtered resource attributes were removed
-	require.Nil(t, row[wkk.NewRowKey("resource.k8s.pod.uid")])
-	require.Nil(t, row[wkk.NewRowKey("resource.k8s.node.name")])
-	require.Nil(t, row[wkk.NewRowKey("resource.process.pid")])
-	require.Nil(t, row[wkk.NewRowKey("resource.host.name")])
-	require.Nil(t, row[wkk.NewRowKey("resource.cloud.provider")])
-	require.Nil(t, row[wkk.NewRowKey("resource.cloud.region")])
+	require.Nil(t, row[wkk.NewRowKey("resource_k8s_pod_uid")])
+	require.Nil(t, row[wkk.NewRowKey("resource_k8s_node_name")])
+	require.Nil(t, row[wkk.NewRowKey("resource_process_pid")])
+	require.Nil(t, row[wkk.NewRowKey("resource_host_name")])
+	require.Nil(t, row[wkk.NewRowKey("resource_cloud_provider")])
+	require.Nil(t, row[wkk.NewRowKey("resource_cloud_region")])
 
 	// Check that non-resource attributes were not touched
-	require.Equal(t, "bytes", row[wkk.NewRowKey("metric.unit")])
-	require.Equal(t, "io.opentelemetry", row[wkk.NewRowKey("scope.name")])
-	require.Equal(t, "value", row[wkk.NewRowKey("custom.field")])
+	require.Equal(t, "bytes", row[wkk.NewRowKey("metric_unit")])
+	require.Equal(t, "io.opentelemetry", row[wkk.NewRowKey("scope_name")])
+	require.Equal(t, "value", row[wkk.NewRowKey("custom_field")])
 }

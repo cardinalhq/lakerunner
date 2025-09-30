@@ -31,15 +31,15 @@ func ComputeTID(tags map[string]any) int64 {
 		}
 
 		// Collect fields we want to include:
-		// 1. _cardinalhq.name and _cardinalhq.metric_type
-		// 2. resource.* and metric.* fields
+		// 1. _cardinalhq_name and _cardinalhq_metric_type
+		// 2. resource_* and metric_* fields
 		// Skip all other fields
 
-		if k == "_cardinalhq.name" || k == "_cardinalhq.metric_type" {
+		if k == "_cardinalhq_name" || k == "_cardinalhq_metric_type" {
 			keys = append(keys, k)
-		} else if len(k) > 9 && k[:9] == "resource." {
+		} else if len(k) > 9 && k[:9] == "resource_" {
 			keys = append(keys, k)
-		} else if len(k) > 7 && k[:7] == "metric." {
+		} else if len(k) > 7 && k[:7] == "metric_" {
 			keys = append(keys, k)
 		}
 	}

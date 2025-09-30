@@ -49,7 +49,7 @@ func NewParquetLogTranslator(orgID, bucket, objectID string, exemplarProcessor *
 	}
 }
 
-// flattenValue recursively flattens nested structures into dot-notation fields
+// flattenValue recursively flattens nested structures into underscore-notation fields
 func (t *ParquetLogTranslator) flattenValue(prefix string, value any, result map[wkk.RowKey]any) {
 	switch v := value.(type) {
 	case map[string]any:
@@ -57,7 +57,7 @@ func (t *ParquetLogTranslator) flattenValue(prefix string, value any, result map
 		for key, nestedVal := range v {
 			newPrefix := key
 			if prefix != "" {
-				newPrefix = prefix + "." + key
+				newPrefix = prefix + "_" + key
 			}
 			t.flattenValue(newPrefix, nestedVal, result)
 		}
@@ -429,13 +429,13 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 			continue
 		}
 
-		// Skip _cardinalhq fields, underscore fields, and fields already with resource. prefix
-		if strings.HasPrefix(keyStr, "_cardinalhq.") || strings.HasPrefix(keyStr, "resource.") || keyStr[0] == '_' {
-			// Remove underscore fields but keep existing resource. fields
-			if keyStr[0] == '_' {
+		// Skip _cardinalhq fields, underscore fields, and fields already with resource_ prefix
+		if strings.HasPrefix(keyStr, "_cardinalhq") || strings.HasPrefix(keyStr, "resource_") || keyStr[0] == '_' {
+			// Remove underscore fields but keep existing resource_ fields
+			if keyStr[0] == '_' && !strings.HasPrefix(keyStr, "_cardinalhq") {
 				delete(*row, key)
 			}
-			// Keep existing resource. fields as-is
+			// Keep existing resource_ fields as-is
 			continue
 		}
 
@@ -462,40 +462,40 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 		switch v := value.(type) {
 		case map[string]any:
 			flattened := make(map[wkk.RowKey]any)
-			t.flattenValue("resource."+keyStr, v, flattened)
+			t.flattenValue("resource_"+keyStr, v, flattened)
 			maps.Copy((*row), flattened)
 		case []any:
 			flattened := make(map[wkk.RowKey]any)
-			t.flattenValue("resource."+keyStr, v, flattened)
+			t.flattenValue("resource_"+keyStr, v, flattened)
 			maps.Copy((*row), flattened)
 		default:
-			// Simple value - add with resource. prefix
-			(*row)[wkk.NewRowKey("resource."+keyStr)] = value
+			// Simple value - add with resource_ prefix
+			(*row)[wkk.NewRowKey("resource_"+keyStr)] = value
 		}
 	}
 
 	// Add standard resource fields
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.Bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.ObjectID
-	(*row)[wkk.NewRowKey("resource.file")] = getResourceFile(t.ObjectID)
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.ObjectID)
+	(*row)[wkk.NewRowKey("resource_bucket_name")] = t.Bucket
+	(*row)[wkk.NewRowKey("resource_file_name")] = "./" + t.ObjectID
+	(*row)[wkk.NewRowKey("resource_file")] = getResourceFile(t.ObjectID)
+	(*row)[wkk.NewRowKey("resource_file_type")] = helpers.GetFileType(t.ObjectID)
 
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"
-	(*row)[wkk.RowKeyCName] = "log.events"
+	(*row)[wkk.RowKeyCName] = "log_events"
 	(*row)[wkk.RowKeyCValue] = float64(1.0)
 
 	// Set timestamp fields with proper precision
 	(*row)[wkk.RowKeyCTimestamp] = timestampMs
 	// Set nanosecond timestamp with preserved precision
-	(*row)[wkk.NewRowKey("_cardinalhq.tsns")] = timestampNs
+	(*row)[wkk.NewRowKey("_cardinalhq_tsns")] = timestampNs
 
 	// Set message field
 	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
 	(*row)[messageKey] = message
 
 	// Set level field
-	(*row)[wkk.NewRowKey("_cardinalhq.level")] = level
+	(*row)[wkk.NewRowKey("_cardinalhq_level")] = level
 
 	// Fingerprint the message if we have one and an exemplar processor
 	if message != "" && t.ExemplarProcessor != nil {

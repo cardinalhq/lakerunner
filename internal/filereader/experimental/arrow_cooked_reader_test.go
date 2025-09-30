@@ -46,7 +46,7 @@ func TestArrowCookedReaderWithRealFile(t *testing.T) {
 		if batch != nil {
 			if !checkedTimestamp && batch.Len() > 0 {
 				_, ok := batch.Get(0)[wkk.RowKeyCTimestamp].(int64)
-				assert.True(t, ok, "_cardinalhq.timestamp should be int64")
+				assert.True(t, ok, "_cardinalhq_timestamp should be int64")
 				checkedTimestamp = true
 			}
 			count += int64(batch.Len())

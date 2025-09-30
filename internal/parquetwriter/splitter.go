@@ -182,14 +182,14 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		}
 
 		// Convert pipeline.Row to map[string]any efficiently
-		stringRow := make(map[string]any, len(row)+1) // +1 for _cardinalhq.id
+		stringRow := make(map[string]any, len(row)+1) // +1 for _cardinalhq_id
 		for key, value := range row {
 			fieldName := string(key.Value())
 			// Apply string conversion for fields with configured prefixes
 			stringRow[fieldName] = s.convertToStringIfNeeded(fieldName, value)
 		}
 
-		stringRow["_cardinalhq.id"] = idgen.NextBase32ID()
+		stringRow["_cardinalhq_id"] = idgen.NextBase32ID()
 
 		// Add to schema builder for evolution tracking
 		if err := s.currentSchema.AddRow(stringRow); err != nil {

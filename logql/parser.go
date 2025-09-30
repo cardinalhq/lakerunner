@@ -257,9 +257,7 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 		}
 		if v.Grouping != nil && len(v.Grouping.Groups) > 0 {
 			norm := make([]string, 0, len(v.Grouping.Groups))
-			for _, g := range v.Grouping.Groups {
-				norm = append(norm, normalizeLabelName(g))
-			}
+			norm = append(norm, v.Grouping.Groups...)
 			if v.Grouping.Without {
 				ra.Without = norm
 			} else {
@@ -286,9 +284,7 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 
 		if v.Grouping != nil && len(v.Grouping.Groups) > 0 {
 			norm := make([]string, 0, len(v.Grouping.Groups))
-			for _, g := range v.Grouping.Groups {
-				norm = append(norm, normalizeLabelName(g))
-			}
+			norm = append(norm, v.Grouping.Groups...)
 			if v.Grouping.Without {
 				va.Without = norm
 			} else {
@@ -426,7 +422,9 @@ func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 					// 2) Compile to SQL using your existing builder
 					exprSQL, err := buildLabelFormatExprTemplate(
 						tmpl,
-						func(col string) string { return quoteIdent(normalizeLabelName(col)) },
+						func(col string) string {
+							return quoteIdent(col)
+						},
 					)
 					if err != nil {
 						return fmt.Errorf("label_format: %w", err)
@@ -756,7 +754,7 @@ func parseUnwrapParams(stage string) (map[string]string, bool) {
 	if i := strings.IndexAny(tok, "[ )"); i >= 0 {
 		tok = tok[:i]
 	}
-	tok = normalizeLabelName(normalizeLabelFormatLiteral(tok))
+	tok = normalizeLabelFormatLiteral(tok)
 	if tok == "" {
 		return nil, false
 	}
@@ -955,48 +953,10 @@ func tryParseLabelFilter(stage string) (LabelFilter, bool) {
 					val = u
 				}
 			}
-			return LabelFilter{Label: normalizeLabelName(lab), Op: toMatchOpString(op), Value: val}, true
+			return LabelFilter{Label: lab, Op: toMatchOpString(op), Value: val}, true
 		}
 	}
 	return LabelFilter{}, false
-}
-
-// spanFieldMappings maps LogQL underscore syntax to actual Parquet column names
-// for span fields that have underscores in the column name that should be preserved
-var spanFieldMappings = map[string]string{
-	"span_has_error":                                "span.has_error",
-	"span_cardinalhq_stats_collector_id":            "span.cardinalhq.stats_collector_id",
-	"span_cardinalhq_stats_collector_name":          "span.cardinalhq.stats_collector_name",
-	"span_cardinalhq_stats_customer_id":             "span.cardinalhq.stats_customer_id",
-	"span_http_request_content_length_uncompressed": "span.http.request_content_length_uncompressed",
-	"span_http_request_method_original":             "span.http.request.method_original",
-	"span_http_response_header_content_length":      "span.http.response.header.content-length",
-	"span_http_response_status_code":                "span.http.response.status_code",
-	"span_http_status_code":                         "span.http.status_code",
-	"span_http_status_text":                         "span.http.status_text",
-	"span_http_user_agent":                          "span.http.user_agent",
-	"span_user_agent_original":                      "span.user_agent.original",
-}
-
-func normalizeLabelName(label string) string {
-	if strings.HasPrefix(label, "_cardinalhq_") {
-		remainder := strings.TrimPrefix(label, "_cardinalhq_")
-		return "_cardinalhq." + remainder
-	}
-
-	// For span fields, check explicit mappings first
-	if strings.HasPrefix(label, "span_") {
-		if mapped, exists := spanFieldMappings[label]; exists {
-			return mapped
-		}
-		// Fallback to generic replacement for span fields not in mapping
-		return strings.ReplaceAll(label, "_", ".")
-	}
-
-	if strings.HasPrefix(label, "resource_") || strings.HasPrefix(label, "log_") {
-		return strings.ReplaceAll(label, "_", ".")
-	}
-	return label
 }
 
 func toLabelMatches(ms []*labels.Matcher) []LabelMatch {
@@ -1008,7 +968,7 @@ func toLabelMatches(ms []*labels.Matcher) []LabelMatch {
 		if m.Name == "__name__" {
 			continue
 		}
-		out = append(out, LabelMatch{Label: normalizeLabelName(m.Name), Op: toMatchOp(m.Type), Value: m.Value})
+		out = append(out, LabelMatch{Label: m.Name, Op: toMatchOp(m.Type), Value: m.Value})
 	}
 	return out
 }

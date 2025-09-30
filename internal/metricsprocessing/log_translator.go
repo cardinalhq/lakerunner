@@ -52,14 +52,14 @@ func (t *LogTranslator) TranslateRow(ctx context.Context, row *filereader.Row) e
 	}
 
 	// Only set the specific required fields - assume all other fields are properly set
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file")] = getResourceFile(t.objectID)
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.NewRowKey("resource_bucket_name")] = t.bucket
+	(*row)[wkk.NewRowKey("resource_file_name")] = "./" + t.objectID
+	(*row)[wkk.NewRowKey("resource_file")] = getResourceFile(t.objectID)
+	(*row)[wkk.NewRowKey("resource_file_type")] = helpers.GetFileType(t.objectID)
 
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"
-	(*row)[wkk.RowKeyCName] = "log.events"
+	(*row)[wkk.RowKeyCName] = "log_events"
 	(*row)[wkk.RowKeyCValue] = float64(1.0)
 
 	t.setFingerprint(ctx, row)

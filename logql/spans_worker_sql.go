@@ -18,11 +18,11 @@ import (
 	"fmt"
 )
 
-// ToSpansWorkerSQL generates SQL for spans queries with _cardinalhq.name and _cardinalhq.kind as default fields
+// ToSpansWorkerSQL generates SQL for spans queries with _cardinalhq_name and _cardinalhq_kind as default fields
 func (be *LogLeaf) ToSpansWorkerSQL(limit int, order string, fields []string) string {
 	const baseRel = "{table}"
-	const spansNameCol = "\"_cardinalhq.name\""
-	const tsCol = "\"_cardinalhq.timestamp\""
+	const spansNameCol = "\"_cardinalhq_name\""
+	const tsCol = "\"_cardinalhq_timestamp\""
 
 	// 1) Prepare sets: group keys, parser-created, feature flags
 	groupKeys := dedupeStrings(be.OutBy)
@@ -46,7 +46,7 @@ func (be *LogLeaf) ToSpansWorkerSQL(limit int, order string, fields []string) st
 
 	// s0+: normalize fingerprint type to string once up-front so downstream filters/clients are stable
 	pb.push([]string{
-		pb.top() + `.* REPLACE(CAST("_cardinalhq.fingerprint" AS VARCHAR) AS "_cardinalhq.fingerprint")`,
+		pb.top() + `.* REPLACE(CAST("_cardinalhq_fingerprint" AS VARCHAR) AS "_cardinalhq_fingerprint")`,
 	}, pb.top(), nil)
 
 	// s1: time window sentinel so segment filters can be spliced
@@ -57,7 +57,7 @@ func (be *LogLeaf) ToSpansWorkerSQL(limit int, order string, fields []string) st
 	pb.push([]string{pb.top() + ".*"}, pb.top(), []string{"1=1", "true", timePred})
 
 	// 3) Apply selector & line filters before parsers
-	emitSpansSelectorAndLineFilters(be, &pb, spansNameCol)
+	emitSpansSelectorAndLineFilters(be, &pb)
 
 	// 4) Collect future-created labels (from label_format), unwrap needs
 	futureCreated := collectFutureCreated(be)
@@ -91,22 +91,22 @@ func (be *LogLeaf) ToSpansWorkerSQLWithLimit(limit int, order string, fields []s
 // isSpansBaseCol checks if a column is a base column for spans
 func isSpansBaseCol(col string) bool {
 	spansBaseCols := map[string]struct{}{
-		"\"_cardinalhq.name\"":          {},
-		"\"_cardinalhq.kind\"":          {},
-		"\"_cardinalhq.span_id\"":       {},
-		"\"_cardinalhq.span_trace_id\"": {},
-		"\"_cardinalhq.status_code\"":   {},
-		"\"_cardinalhq.span_duration\"": {},
-		"\"_cardinalhq.timestamp\"":     {},
-		"\"_cardinalhq.id\"":            {},
-		"\"_cardinalhq.fingerprint\"":   {},
+		"\"_cardinalhq_name\"":          {},
+		"\"_cardinalhq_kind\"":          {},
+		"\"_cardinalhq_span_id\"":       {},
+		"\"_cardinalhq_span_trace_id\"": {},
+		"\"_cardinalhq_status_code\"":   {},
+		"\"_cardinalhq_span_duration\"": {},
+		"\"_cardinalhq_timestamp\"":     {},
+		"\"_cardinalhq_id\"":            {},
+		"\"_cardinalhq_fingerprint\"":   {},
 	}
 	_, ok := spansBaseCols[col]
 	return ok
 }
 
 // emitSpansSelectorAndLineFilters applies selector and line filters for spans queries
-func emitSpansSelectorAndLineFilters(be *LogLeaf, pb *pipelineBuilder, spansNameCol string) {
+func emitSpansSelectorAndLineFilters(be *LogLeaf, pb *pipelineBuilder) {
 	// Apply selector matchers early
 	if len(be.Matchers) > 0 {
 		mLfs := make([]LabelFilter, 0, len(be.Matchers))

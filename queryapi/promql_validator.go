@@ -256,7 +256,7 @@ func extractFieldsFromExemplar(exemplar map[string]any) map[string]struct{} {
 				for _, a := range attrs {
 					if am, ok := a.(map[string]any); ok {
 						if k := str(am["key"]); k != "" {
-							fields["resource."+k] = struct{}{}
+							fields["resource_"+k] = struct{}{}
 						}
 					}
 				}

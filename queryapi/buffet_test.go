@@ -82,9 +82,9 @@ func TestComputeHash(t *testing.T) {
 			expect: -3949595362870219360,
 		},
 		{
-			name:   "_cardinalhq.telemetry_type:log",
-			input:  "_cardinalhq.telemetry_type:log",
-			expect: -2057809196342244688,
+			name:   "_cardinalhq_telemetry_type:log",
+			input:  "_cardinalhq_telemetry_type:log",
+			expect: -1269926491184316255,
 		},
 	}
 
@@ -105,21 +105,21 @@ func TestComputeFingerprint(t *testing.T) {
 	}{
 		{
 			name:      "simple case",
-			fieldName: "_cardinalhq.name",
+			fieldName: "_cardinalhq_name",
 			trigram:   "foo",
-			expected:  computeHash("_cardinalhq.name:foo"),
+			expected:  computeHash("_cardinalhq_name:foo"),
 		},
 		{
 			name:      "exists regex",
-			fieldName: "_cardinalhq.message",
+			fieldName: "_cardinalhq_message",
 			trigram:   existsRegex,
-			expected:  computeHash("_cardinalhq.message:.*"),
+			expected:  computeHash("_cardinalhq_message:.*"),
 		},
 		{
 			name:      "telemetry type",
-			fieldName: "_cardinalhq.telemetry_type",
+			fieldName: "_cardinalhq_telemetry_type",
 			trigram:   "log",
-			expected:  computeHash("_cardinalhq.telemetry_type:log"),
+			expected:  computeHash("_cardinalhq_telemetry_type:log"),
 		},
 	}
 

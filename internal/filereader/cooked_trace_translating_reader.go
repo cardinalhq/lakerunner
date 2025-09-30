@@ -97,7 +97,7 @@ func (r *CookedTraceTranslatingReader) shouldDropRow(ctx context.Context, row pi
 	}
 
 	// Check for required trace ID
-	if _, hasTraceID := row[wkk.NewRowKey("_cardinalhq.span_trace_id")]; !hasTraceID {
+	if _, hasTraceID := row[wkk.NewRowKey("_cardinalhq_span_trace_id")]; !hasTraceID {
 		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "CookedTraceTranslatingReader"),
 			attribute.String("reason", "missing_trace_id"),
@@ -118,23 +118,23 @@ func (r *CookedTraceTranslatingReader) transformRow(row pipeline.Row) {
 	}
 
 	// Normalize span name field if needed
-	if spanNameValue, exists := row[wkk.NewRowKey("_cardinalhq.span_name")]; exists {
+	if spanNameValue, exists := row[wkk.NewRowKey("_cardinalhq_span_name")]; exists {
 		if spanNameBytes, ok := spanNameValue.([]byte); ok {
 			// Convert bytes to string for consistency
-			row[wkk.NewRowKey("_cardinalhq.span_name")] = string(spanNameBytes)
+			row[wkk.NewRowKey("_cardinalhq_span_name")] = string(spanNameBytes)
 		}
 	}
 
 	// Ensure trace ID and span ID are strings
-	if traceIDValue, exists := row[wkk.NewRowKey("_cardinalhq.span_trace_id")]; exists {
+	if traceIDValue, exists := row[wkk.NewRowKey("_cardinalhq_span_trace_id")]; exists {
 		if traceIDBytes, ok := traceIDValue.([]byte); ok {
-			row[wkk.NewRowKey("_cardinalhq.span_trace_id")] = string(traceIDBytes)
+			row[wkk.NewRowKey("_cardinalhq_span_trace_id")] = string(traceIDBytes)
 		}
 	}
 
-	if spanIDValue, exists := row[wkk.NewRowKey("_cardinalhq.span_id")]; exists {
+	if spanIDValue, exists := row[wkk.NewRowKey("_cardinalhq_span_id")]; exists {
 		if spanIDBytes, ok := spanIDValue.([]byte); ok {
-			row[wkk.NewRowKey("_cardinalhq.span_id")] = string(spanIDBytes)
+			row[wkk.NewRowKey("_cardinalhq_span_id")] = string(spanIDBytes)
 		}
 	}
 

@@ -14,12 +14,16 @@
 
 package filereader
 
+import "strings"
+
 func prefixAttribute(name, prefix string) string {
 	if name == "" {
 		return ""
 	}
 	if name[0] == '_' {
-		return name
+		// Convert dots to underscores even for _cardinalhq fields
+		return strings.ReplaceAll(name, ".", "_")
 	}
-	return prefix + "." + name
+	// Use underscore separator for PromQL/LogQL compatibility
+	return prefix + "_" + strings.ReplaceAll(name, ".", "_")
 }

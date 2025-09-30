@@ -78,7 +78,7 @@ func TestNewCookedLogParquetReader(t *testing.T) {
 
 	// Check for required timestamp field
 	timestamp, hasTimestamp := row[wkk.RowKeyCTimestamp]
-	assert.True(t, hasTimestamp, "should have _cardinalhq.timestamp")
+	assert.True(t, hasTimestamp, "should have _cardinalhq_timestamp")
 	assert.IsType(t, int64(0), timestamp, "timestamp should be int64")
 
 	// Check message field if present

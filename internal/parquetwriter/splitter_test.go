@@ -551,27 +551,27 @@ func TestStringConversionForPrefixedFields(t *testing.T) {
 		splitter := NewFileSplitter(config)
 
 		// Test conversion methods directly
-		assert.True(t, splitter.shouldConvertToString("resource.foo"))
-		assert.True(t, splitter.shouldConvertToString("scope.bar"))
-		assert.True(t, splitter.shouldConvertToString("log.baz"))
-		assert.True(t, splitter.shouldConvertToString("metric.qux"))
-		assert.True(t, splitter.shouldConvertToString("span.trace"))
-		assert.False(t, splitter.shouldConvertToString("other.field"))
+		assert.True(t, splitter.shouldConvertToString("resource_foo"))
+		assert.True(t, splitter.shouldConvertToString("scope_bar"))
+		assert.True(t, splitter.shouldConvertToString("log_baz"))
+		assert.True(t, splitter.shouldConvertToString("metric_qux"))
+		assert.True(t, splitter.shouldConvertToString("span_trace"))
+		assert.False(t, splitter.shouldConvertToString("other_field"))
 		assert.False(t, splitter.shouldConvertToString("timestamp"))
 
 		// Test conversion of different types
-		assert.Equal(t, "123", splitter.convertToStringIfNeeded("resource.id", int64(123)))
-		assert.Equal(t, "45", splitter.convertToStringIfNeeded("scope.level", int32(45)))
-		assert.Equal(t, "3.14", splitter.convertToStringIfNeeded("metric.value", float64(3.14)))
-		assert.Equal(t, "true", splitter.convertToStringIfNeeded("log.enabled", true))
-		assert.Equal(t, "already_string", splitter.convertToStringIfNeeded("span.name", "already_string"))
+		assert.Equal(t, "123", splitter.convertToStringIfNeeded("resource_id", int64(123)))
+		assert.Equal(t, "45", splitter.convertToStringIfNeeded("scope_level", int32(45)))
+		assert.Equal(t, "3.14", splitter.convertToStringIfNeeded("metric_value", float64(3.14)))
+		assert.Equal(t, "true", splitter.convertToStringIfNeeded("log_enabled", true))
+		assert.Equal(t, "already_string", splitter.convertToStringIfNeeded("span_name", "already_string"))
 
 		// Fields without matching prefix should not be converted
-		assert.Equal(t, int64(999), splitter.convertToStringIfNeeded("other.value", int64(999)))
+		assert.Equal(t, int64(999), splitter.convertToStringIfNeeded("other_value", int64(999)))
 		assert.Equal(t, float64(2.71), splitter.convertToStringIfNeeded("timestamp", float64(2.71)))
 
 		// Nil values should remain nil
-		assert.Nil(t, splitter.convertToStringIfNeeded("resource.nil", nil))
+		assert.Nil(t, splitter.convertToStringIfNeeded("resource_nil", nil))
 	})
 
 	// Test with custom prefixes
@@ -579,20 +579,20 @@ func TestStringConversionForPrefixedFields(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:                   tmpDir,
 			RecordsPerFile:           100,
-			StringConversionPrefixes: []string{"custom.", "special."},
+			StringConversionPrefixes: []string{"custom_", "special_"},
 		}
 
 		splitter := NewFileSplitter(config)
 
 		// Test that custom prefixes are used instead of defaults
-		assert.True(t, splitter.shouldConvertToString("custom.field"))
-		assert.True(t, splitter.shouldConvertToString("special.value"))
-		assert.False(t, splitter.shouldConvertToString("resource.foo"))
-		assert.False(t, splitter.shouldConvertToString("log.bar"))
+		assert.True(t, splitter.shouldConvertToString("custom_field"))
+		assert.True(t, splitter.shouldConvertToString("special_value"))
+		assert.False(t, splitter.shouldConvertToString("resource_foo"))
+		assert.False(t, splitter.shouldConvertToString("log_bar"))
 
 		// Test conversion with custom prefixes
-		assert.Equal(t, "42", splitter.convertToStringIfNeeded("custom.id", int64(42)))
-		assert.Equal(t, int64(99), splitter.convertToStringIfNeeded("resource.id", int64(99)))
+		assert.Equal(t, "42", splitter.convertToStringIfNeeded("custom_id", int64(42)))
+		assert.Equal(t, int64(99), splitter.convertToStringIfNeeded("resource_id", int64(99)))
 	})
 
 	// Test actual batch processing with mixed types
@@ -610,17 +610,17 @@ func TestStringConversionForPrefixedFields(t *testing.T) {
 
 		// First row has resource.id as int64
 		row1 := batch.AddRow()
-		row1[wkk.NewRowKey("resource.id")] = int64(12345)
-		row1[wkk.NewRowKey("resource.name")] = "service-a"
-		row1[wkk.NewRowKey("metric.value")] = float64(99.5)
-		row1[wkk.NewRowKey("regular.field")] = int64(777)
+		row1[wkk.NewRowKey("resource_id")] = int64(12345)
+		row1[wkk.NewRowKey("resource_name")] = "service-a"
+		row1[wkk.NewRowKey("metric_value")] = float64(99.5)
+		row1[wkk.NewRowKey("regular_field")] = int64(777)
 
-		// Second row has resource.id as string (simulating type conflict)
+		// Second row has resource_id as string (simulating type conflict)
 		row2 := batch.AddRow()
-		row2[wkk.NewRowKey("resource.id")] = "67890"
-		row2[wkk.NewRowKey("resource.name")] = "service-b"
-		row2[wkk.NewRowKey("metric.value")] = int64(100)
-		row2[wkk.NewRowKey("regular.field")] = int64(888)
+		row2[wkk.NewRowKey("resource_id")] = "67890"
+		row2[wkk.NewRowKey("resource_name")] = "service-b"
+		row2[wkk.NewRowKey("metric_value")] = int64(100)
+		row2[wkk.NewRowKey("regular_field")] = int64(888)
 
 		// Write batch - should not error despite type mismatch
 		err := splitter.WriteBatchRows(ctx, batch)

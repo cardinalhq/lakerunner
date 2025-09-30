@@ -200,7 +200,7 @@ func (q *QuerierService) spansPushDown(
 		spansRequest.LogLeaf = &leaf
 	}
 
-	return PushDownStream[promql.Timestamped](ctx, worker, spansRequest,
+	return PushDownStream(ctx, worker, spansRequest,
 		func(typ string, data json.RawMessage) (promql.Timestamped, bool, error) {
 			var zero promql.Timestamped
 			if typ != "result" {
@@ -216,7 +216,7 @@ func (q *QuerierService) spansPushDown(
 
 type TraceSegmentLookupFunc func(context.Context, lrdb.ListTraceSegmentsForQueryParams) ([]lrdb.ListTraceSegmentsForQueryRow, error)
 
-const spansNameField = "_cardinalhq.name"
+const spansNameField = "_cardinalhq_name"
 
 func (q *QuerierService) lookupSpansSegments(
 	ctx context.Context,

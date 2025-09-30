@@ -41,14 +41,14 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, exem
 
 	// Sort exemplars deterministically to prevent deadlocks
 	sort.Slice(exemplars, func(i, j int) bool {
-		if exemplars[i].Attributes["service.name"] != exemplars[j].Attributes["service.name"] {
-			return exemplars[i].Attributes["service.name"] < exemplars[j].Attributes["service.name"]
+		if exemplars[i].Attributes["service_name"] != exemplars[j].Attributes["service_name"] {
+			return exemplars[i].Attributes["service_name"] < exemplars[j].Attributes["service_name"]
 		}
-		if exemplars[i].Attributes["k8s.cluster.name"] != exemplars[j].Attributes["k8s.cluster.name"] {
-			return exemplars[i].Attributes["k8s.cluster.name"] < exemplars[j].Attributes["k8s.cluster.name"]
+		if exemplars[i].Attributes["k8s_cluster_name"] != exemplars[j].Attributes["k8s_cluster_name"] {
+			return exemplars[i].Attributes["k8s_cluster_name"] < exemplars[j].Attributes["k8s_cluster_name"]
 		}
-		if exemplars[i].Attributes["k8s.namespace.name"] != exemplars[j].Attributes["k8s.namespace.name"] {
-			return exemplars[i].Attributes["k8s.namespace.name"] < exemplars[j].Attributes["k8s.namespace.name"]
+		if exemplars[i].Attributes["k8s_namespace_name"] != exemplars[j].Attributes["k8s_namespace_name"] {
+			return exemplars[i].Attributes["k8s_namespace_name"] < exemplars[j].Attributes["k8s_namespace_name"]
 		}
 		return exemplars[i].Attributes["fingerprint"] < exemplars[j].Attributes["fingerprint"]
 	})
@@ -56,9 +56,9 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, exem
 	records := make([]lrdb.BatchUpsertExemplarLogsParams, 0, len(exemplars))
 
 	for _, exemplar := range exemplars {
-		serviceName := exemplar.Attributes["service.name"]
-		clusterName := exemplar.Attributes["k8s.cluster.name"]
-		namespaceName := exemplar.Attributes["k8s.namespace.name"]
+		serviceName := exemplar.Attributes["service_name"]
+		clusterName := exemplar.Attributes["k8s_cluster_name"]
+		namespaceName := exemplar.Attributes["k8s_namespace_name"]
 		fingerprintStr := exemplar.Attributes["fingerprint"]
 		oldFingerprintStr := exemplar.Attributes["old_fingerprint"]
 
@@ -146,29 +146,29 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, e
 
 	// Sort exemplars deterministically to prevent deadlocks
 	sort.Slice(exemplars, func(i, j int) bool {
-		if exemplars[i].Attributes["service.name"] != exemplars[j].Attributes["service.name"] {
-			return exemplars[i].Attributes["service.name"] < exemplars[j].Attributes["service.name"]
+		if exemplars[i].Attributes["service_name"] != exemplars[j].Attributes["service_name"] {
+			return exemplars[i].Attributes["service_name"] < exemplars[j].Attributes["service_name"]
 		}
-		if exemplars[i].Attributes["k8s.cluster.name"] != exemplars[j].Attributes["k8s.cluster.name"] {
-			return exemplars[i].Attributes["k8s.cluster.name"] < exemplars[j].Attributes["k8s.cluster.name"]
+		if exemplars[i].Attributes["k8s_cluster_name"] != exemplars[j].Attributes["k8s_cluster_name"] {
+			return exemplars[i].Attributes["k8s_cluster_name"] < exemplars[j].Attributes["k8s_cluster_name"]
 		}
-		if exemplars[i].Attributes["k8s.namespace.name"] != exemplars[j].Attributes["k8s.namespace.name"] {
-			return exemplars[i].Attributes["k8s.namespace.name"] < exemplars[j].Attributes["k8s.namespace.name"]
+		if exemplars[i].Attributes["k8s_namespace_name"] != exemplars[j].Attributes["k8s_namespace_name"] {
+			return exemplars[i].Attributes["k8s_namespace_name"] < exemplars[j].Attributes["k8s_namespace_name"]
 		}
-		if exemplars[i].Attributes["metric.name"] != exemplars[j].Attributes["metric.name"] {
-			return exemplars[i].Attributes["metric.name"] < exemplars[j].Attributes["metric.name"]
+		if exemplars[i].Attributes["metric_name"] != exemplars[j].Attributes["metric_name"] {
+			return exemplars[i].Attributes["metric_name"] < exemplars[j].Attributes["metric_name"]
 		}
-		return exemplars[i].Attributes["metric.type"] < exemplars[j].Attributes["metric.type"]
+		return exemplars[i].Attributes["metric_type"] < exemplars[j].Attributes["metric_type"]
 	})
 
 	records := make([]lrdb.BatchUpsertExemplarMetricsParams, 0, len(exemplars))
 
 	for _, exemplar := range exemplars {
-		serviceName := exemplar.Attributes["service.name"]
-		clusterName := exemplar.Attributes["k8s.cluster.name"]
-		namespaceName := exemplar.Attributes["k8s.namespace.name"]
-		metricName := exemplar.Attributes["metric.name"]
-		metricType := exemplar.Attributes["metric.type"]
+		serviceName := exemplar.Attributes["service_name"]
+		clusterName := exemplar.Attributes["k8s_cluster_name"]
+		namespaceName := exemplar.Attributes["k8s_namespace_name"]
+		metricName := exemplar.Attributes["metric_name"]
+		metricType := exemplar.Attributes["metric_type"]
 
 		if metricName == "" || metricType == "" {
 			slog.Warn("Missing metric name or type", "metric_name", metricName, "metric_type", metricType)
@@ -238,14 +238,14 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID string, ex
 
 	// Sort exemplars deterministically to prevent deadlocks
 	sort.Slice(exemplars, func(i, j int) bool {
-		if exemplars[i].Attributes["service.name"] != exemplars[j].Attributes["service.name"] {
-			return exemplars[i].Attributes["service.name"] < exemplars[j].Attributes["service.name"]
+		if exemplars[i].Attributes["service_name"] != exemplars[j].Attributes["service_name"] {
+			return exemplars[i].Attributes["service_name"] < exemplars[j].Attributes["service_name"]
 		}
-		if exemplars[i].Attributes["k8s.cluster.name"] != exemplars[j].Attributes["k8s.cluster.name"] {
-			return exemplars[i].Attributes["k8s.cluster.name"] < exemplars[j].Attributes["k8s.cluster.name"]
+		if exemplars[i].Attributes["k8s_cluster_name"] != exemplars[j].Attributes["k8s_cluster_name"] {
+			return exemplars[i].Attributes["k8s_cluster_name"] < exemplars[j].Attributes["k8s_cluster_name"]
 		}
-		if exemplars[i].Attributes["k8s.namespace.name"] != exemplars[j].Attributes["k8s.namespace.name"] {
-			return exemplars[i].Attributes["k8s.namespace.name"] < exemplars[j].Attributes["k8s.namespace.name"]
+		if exemplars[i].Attributes["k8s_namespace_name"] != exemplars[j].Attributes["k8s_namespace_name"] {
+			return exemplars[i].Attributes["k8s_namespace_name"] < exemplars[j].Attributes["k8s_namespace_name"]
 		}
 		return exemplars[i].Attributes["fingerprint"] < exemplars[j].Attributes["fingerprint"]
 	})
@@ -253,12 +253,12 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID string, ex
 	records := make([]lrdb.BatchUpsertExemplarTracesParams, 0, len(exemplars))
 
 	for _, exemplar := range exemplars {
-		serviceName := exemplar.Attributes["service.name"]
-		clusterName := exemplar.Attributes["k8s.cluster.name"]
-		namespaceName := exemplar.Attributes["k8s.namespace.name"]
+		serviceName := exemplar.Attributes["service_name"]
+		clusterName := exemplar.Attributes["k8s_cluster_name"]
+		namespaceName := exemplar.Attributes["k8s_namespace_name"]
 		fingerprintStr := exemplar.Attributes["fingerprint"]
-		spanName := exemplar.Attributes["span.name"]
-		spanKind := exemplar.Attributes["span.kind"]
+		spanName := exemplar.Attributes["span_name"]
+		spanKind := exemplar.Attributes["span_kind"]
 
 		if fingerprintStr == "" {
 			slog.Warn("Missing fingerprint", "fingerprint", fingerprintStr)

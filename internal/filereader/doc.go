@@ -145,7 +145,7 @@
 //	    NewJSONLinesReader(file3),
 //	}
 //
-//	keyProvider := NewTimeOrderedSortKeyProvider("_cardinalhq.timestamp")
+//	keyProvider := NewTimeOrderedSortKeyProvider("_cardinalhq_timestamp")
 //	ordered := NewMergesortReader(readers, keyProvider)
 //	defer ordered.Close()
 //

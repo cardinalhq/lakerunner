@@ -25,10 +25,10 @@ import (
 func TestToStringMap_KeysArePureStrings(t *testing.T) {
 	// Create a row with various RowKeys
 	row := make(Row)
-	row[wkk.NewRowKey("_cardinalhq.name")] = "test_metric"
-	row[wkk.NewRowKey("_cardinalhq.tid")] = int64(123)
-	row[wkk.NewRowKey("metric.test_field")] = "test_value"
-	row[wkk.NewRowKey("resource.service.name")] = "test_service"
+	row[wkk.NewRowKey("_cardinalhq_name")] = "test_metric"
+	row[wkk.NewRowKey("_cardinalhq_tid")] = int64(123)
+	row[wkk.NewRowKey("metric_test_field")] = "test_value"
+	row[wkk.NewRowKey("resource_service_name")] = "test_service"
 
 	// Convert to string map
 	stringMap := ToStringMap(row)
@@ -37,10 +37,10 @@ func TestToStringMap_KeysArePureStrings(t *testing.T) {
 	assert.Equal(t, 4, len(stringMap))
 
 	// Check that all keys exist with expected values
-	assert.Equal(t, "test_metric", stringMap["_cardinalhq.name"])
-	assert.Equal(t, int64(123), stringMap["_cardinalhq.tid"])
-	assert.Equal(t, "test_value", stringMap["metric.test_field"])
-	assert.Equal(t, "test_service", stringMap["resource.service.name"])
+	assert.Equal(t, "test_metric", stringMap["_cardinalhq_name"])
+	assert.Equal(t, int64(123), stringMap["_cardinalhq_tid"])
+	assert.Equal(t, "test_value", stringMap["metric_test_field"])
+	assert.Equal(t, "test_service", stringMap["resource_service_name"])
 
 	// Most importantly: verify that the keys are pure Go strings, not string aliases
 	for key := range stringMap {
@@ -61,16 +61,13 @@ func TestToStringMap_KeysArePureStrings(t *testing.T) {
 }
 
 func TestCopyRow(t *testing.T) {
-	// Create original row
 	original := make(Row)
 	original[wkk.NewRowKey("id")] = 1
 	original[wkk.NewRowKey("name")] = "test"
 	original[wkk.NewRowKey("value")] = 42.5
 
-	// Copy the row
 	copied := CopyRow(original)
 
-	// Verify deep copy
 	assert.Equal(t, len(original), len(copied))
 	assert.Equal(t, original[wkk.NewRowKey("id")], copied[wkk.NewRowKey("id")])
 	assert.Equal(t, original[wkk.NewRowKey("name")], copied[wkk.NewRowKey("name")])

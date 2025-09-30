@@ -179,18 +179,18 @@ func (r *IngestProtoLogsReader) buildLogRow(ctx context.Context, rl plog.Resourc
 	})
 
 	message := logRecord.Body().AsString()
-	ret[translate.CardinalFieldMessage] = message
-	ret[translate.CardinalFieldTimestamp] = logRecord.Timestamp().AsTime().UnixMilli()
-	ret["_cardinalhq.tsns"] = int64(logRecord.Timestamp())
+	ret["_cardinalhq_message"] = message
+	ret["_cardinalhq_timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
+	ret["_cardinalhq_tsns"] = int64(logRecord.Timestamp())
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
-	ret["_cardinalhq.level"] = logRecord.SeverityText()
+	ret["_cardinalhq_level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
 	if r.exemplarProcessor != nil {
 		tenant := r.exemplarProcessor.GetTenant(ctx, r.orgId)
 		trieClusterManager := tenant.GetTrieClusterManager()
 		fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
 		if err == nil {
-			ret[translate.CardinalFieldFingerprint] = fingerprint
+			ret["_cardinalhq_fingerprint"] = fingerprint
 		}
 		logRecord.Attributes().PutInt(translate.CardinalFieldFingerprint, fingerprint)
 	}

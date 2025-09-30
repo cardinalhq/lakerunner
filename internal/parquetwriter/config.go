@@ -23,11 +23,11 @@ const (
 // DefaultStringConversionPrefixes are the default field name prefixes that will have
 // their values converted to strings to avoid type conflicts.
 var DefaultStringConversionPrefixes = []string{
-	"resource.",
-	"scope.",
-	"log.",
-	"metric.",
-	"span.",
+	"resource_",
+	"scope_",
+	"log_",
+	"metric_",
+	"span_",
 }
 
 // WriterConfig contains all configuration options for creating a ParquetWriter.

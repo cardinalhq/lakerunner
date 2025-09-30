@@ -354,7 +354,7 @@ func TestRewrite_Grouping_QuotesDotLabels_By(t *testing.T) {
 	// sum by("resource.cluster","_cardinalhq.foo",plain) (rate(...))
 	root := &logql.LAggNode{
 		Op: "sum",
-		By: []string{"resource.cluster", "_cardinalhq.foo", "plain"},
+		By: []string{"resource.cluster", "test.foo", "plain"},
 		Child: &logql.LRangeAggNode{
 			Op:    "rate",
 			Child: &logql.LLeafNode{Leaf: leaf},
@@ -366,7 +366,7 @@ func TestRewrite_Grouping_QuotesDotLabels_By(t *testing.T) {
 		t.Fatalf("RewriteToPromQL error: %v", err)
 	}
 
-	want := `sum by ("resource.cluster","_cardinalhq.foo",plain) (rate(` + SynthLogCount + `{` + LeafMatcher + `="idDotBy"}[1m]))`
+	want := `sum by ("resource.cluster","test.foo",plain) (rate(` + SynthLogCount + `{` + LeafMatcher + `="idDotBy"}[1m]))`
 	if got.PromQL != want {
 		t.Fatalf("promql mismatch:\nwant: %s\ngot : %s", want, got.PromQL)
 	}
@@ -383,10 +383,10 @@ func TestRewrite_Grouping_QuotesDotLabels_By(t *testing.T) {
 func TestRewrite_Grouping_QuotesDotLabels_Without(t *testing.T) {
 	leaf := logql.LogLeaf{ID: "idDotWo", Range: "2m"}
 
-	// sum without("log.level","_cardinalhq.foo",plain) (increase(...))
+	// sum without("log.level","test.foo",plain) (increase(...))
 	root := &logql.LAggNode{
 		Op:      "sum",
-		Without: []string{"log.level", "_cardinalhq.foo", "plain"},
+		Without: []string{"log.level", "test.foo", "plain"},
 		Child: &logql.LRangeAggNode{
 			Op:    "bytes_over_time",
 			Child: &logql.LLeafNode{Leaf: leaf},
@@ -398,7 +398,7 @@ func TestRewrite_Grouping_QuotesDotLabels_Without(t *testing.T) {
 		t.Fatalf("RewriteToPromQL error: %v", err)
 	}
 
-	want := `sum without ("log.level","_cardinalhq.foo",plain) (increase(` + SynthLogBytes + `{` + LeafMatcher + `="idDotWo"}[2m]))`
+	want := `sum without ("log.level","test.foo",plain) (increase(` + SynthLogBytes + `{` + LeafMatcher + `="idDotWo"}[2m]))`
 	if got.PromQL != want {
 		t.Fatalf("promql mismatch:\nwant: %s\ngot : %s", want, got.PromQL)
 	}

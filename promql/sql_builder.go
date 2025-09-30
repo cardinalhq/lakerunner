@@ -89,8 +89,8 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 
 func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
-	tsCol := "\"_cardinalhq.timestamp\""
-	bodyCol := "\"_cardinalhq.message\""
+	tsCol := "\"_cardinalhq_timestamp\""
+	bodyCol := "\"_cardinalhq_message\""
 
 	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, "", nil))
 
@@ -192,7 +192,7 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 	where := withTime(whereFor(be))
 
 	bucketExpr := fmt.Sprintf(
-		"(CAST(\"_cardinalhq.timestamp\" AS BIGINT) - (CAST(\"_cardinalhq.timestamp\" AS BIGINT) %% %d))",
+		"(CAST(\"_cardinalhq_timestamp\" AS BIGINT) - (CAST(\"_cardinalhq_timestamp\" AS BIGINT) %% %d))",
 		stepMs,
 	)
 
@@ -238,7 +238,7 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 // buildDDS: bucket timestamps, project group-by labels + sketch
 func buildDDS(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
-	bucket := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
+	bucket := fmt.Sprintf("(\"_cardinalhq_timestamp\" - (\"_cardinalhq_timestamp\" %% %d))", stepMs)
 
 	// Use aligned, end-exclusive time like the numeric paths
 	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
@@ -246,7 +246,7 @@ func buildDDS(be *BaseExpr, step time.Duration) string {
 
 	base := whereFor(be)
 	timeWhere := func() string {
-		tc := fmt.Sprintf("\"_cardinalhq.timestamp\" >= %s AND \"_cardinalhq.timestamp\" < %s", alignedStart, alignedEndEx)
+		tc := fmt.Sprintf("\"_cardinalhq_timestamp\" >= %s AND \"_cardinalhq_timestamp\" < %s", alignedStart, alignedEndEx)
 		if base == "" {
 			return " WHERE " + tc
 		}
@@ -273,12 +273,12 @@ type need struct {
 }
 
 const (
-	timePredicate = "\"_cardinalhq.timestamp\" >= {start} AND \"_cardinalhq.timestamp\" < {end}"
+	timePredicate = "\"_cardinalhq_timestamp\" >= {start} AND \"_cardinalhq_timestamp\" < {end}"
 )
 
 func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	stepMs := step.Milliseconds()
-	bucketExpr := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
+	bucketExpr := fmt.Sprintf("(\"_cardinalhq_timestamp\" - (\"_cardinalhq_timestamp\" %% %d))", stepMs)
 
 	where := withTime(whereFor(be))
 
@@ -434,7 +434,7 @@ func whereFor(be *BaseExpr) string {
 
 	// For synthetic log metrics, we do NOT filter by metric name at all.
 	if be.Metric != "" && !be.isSyntheticLogMetric() {
-		parts = append(parts, fmt.Sprintf("\"_cardinalhq.name\" = %s", sqlLit(be.Metric)))
+		parts = append(parts, fmt.Sprintf("\"_cardinalhq_name\" = %s", sqlLit(be.Metric)))
 	}
 
 	for _, m := range be.Matchers {

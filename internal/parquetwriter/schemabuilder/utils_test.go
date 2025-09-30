@@ -48,8 +48,8 @@ func TestWantDictionary(t *testing.T) {
 		fieldName string
 		expected  bool
 	}{
-		{"_cardinalhq.message", false}, // Overridden to false
-		{"_cardinalhq.tid", false},     // Overridden to false
+		{"_cardinalhq_message", false}, // Overridden to false
+		{"_cardinalhq_tid", false},     // Overridden to false
 		{"regular_field", true},        // Default value
 		{"another_field", true},        // Default value
 	}

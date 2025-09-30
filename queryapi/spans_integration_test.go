@@ -37,17 +37,17 @@ func TestSpansQueryIntegration(t *testing.T) {
 
 	// Create spans table with the expected schema
 	mustExecSpans(t, db, `CREATE TABLE spans(
-  "_cardinalhq.timestamp" BIGINT,
-  "_cardinalhq.id" VARCHAR,
-  "_cardinalhq.fingerprint" BIGINT,
-  "_cardinalhq.name" VARCHAR,
-  "_cardinalhq.kind" VARCHAR,
-  "_cardinalhq.span_id" VARCHAR,
-  "_cardinalhq.span_trace_id" VARCHAR,
-  "_cardinalhq.status_code" VARCHAR,
-  "_cardinalhq.span_duration" BIGINT,
-  "service.name" VARCHAR,
-  "service.version" VARCHAR
+  "_cardinalhq_timestamp" BIGINT,
+  "_cardinalhq_id" VARCHAR,
+  "_cardinalhq_fingerprint" BIGINT,
+  "_cardinalhq_name" VARCHAR,
+  "_cardinalhq_kind" VARCHAR,
+  "_cardinalhq_span_id" VARCHAR,
+  "_cardinalhq_span_trace_id" VARCHAR,
+  "_cardinalhq_status_code" VARCHAR,
+  "_cardinalhq_span_duration" BIGINT,
+  "service_name" VARCHAR,
+  "service_version" VARCHAR
 );`)
 
 	// Insert test spans data
@@ -57,25 +57,25 @@ func TestSpansQueryIntegration(t *testing.T) {
 	 (3000, 'span3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1'),
 	 (4000, 'span4', -4446492996171837732, 'PUT /api/users/123', 'client', 'span4', 'trace4', 'OK', 300000000, 'my-service', 'v1.0');`)
 
-	// Test 1: Basic spans query with _cardinalhq.name matcher
+	// Test 1: Basic spans query with _cardinalhq_name matcher
 	t.Run("BasicSpanNameQuery", func(t *testing.T) {
 		leaf := logql.LogLeaf{
 			Matchers: []logql.LabelMatch{
-				{Label: "_cardinalhq.name", Op: logql.MatchEq, Value: "GET /api/users"},
+				{Label: "_cardinalhq_name", Op: logql.MatchEq, Value: "GET /api/users"},
 			},
 		}
-		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)))
 
 		rows := queryAllSpans(t, db, sql)
 		if len(rows) != 1 {
-			t.Fatalf("expected 1 row (_cardinalhq.name=GET /api/users), got %d\nsql:\n%s", len(rows), sql)
+			t.Fatalf("expected 1 row (_cardinalhq_name=GET /api/users), got %d\nsql:\n%s", len(rows), sql)
 		}
 
-		// Verify all returned rows have _cardinalhq.name = "GET /api/users"
+		// Verify all returned rows have _cardinalhq_name = "GET /api/users"
 		for _, row := range rows {
-			spanName := getString(row["_cardinalhq.name"])
+			spanName := getString(row["_cardinalhq_name"])
 			if spanName != "GET /api/users" {
-				t.Fatalf("expected _cardinalhq.name='GET /api/users', got %q", spanName)
+				t.Fatalf("expected _cardinalhq_name='GET /api/users', got %q", spanName)
 			}
 		}
 	})
@@ -84,21 +84,21 @@ func TestSpansQueryIntegration(t *testing.T) {
 	t.Run("SpanKindQuery", func(t *testing.T) {
 		leaf := logql.LogLeaf{
 			Matchers: []logql.LabelMatch{
-				{Label: "_cardinalhq.kind", Op: logql.MatchEq, Value: "server"},
+				{Label: "_cardinalhq_kind", Op: logql.MatchEq, Value: "server"},
 			},
 		}
-		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)))
 
 		rows := queryAllSpans(t, db, sql)
 		if len(rows) != 2 {
-			t.Fatalf("expected 2 rows (_cardinalhq.kind=server), got %d\nsql:\n%s", len(rows), sql)
+			t.Fatalf("expected 2 rows (_cardinalhq_kind=server), got %d\nsql:\n%s", len(rows), sql)
 		}
 
 		// Verify all returned rows have _cardinalhq.kind = "server"
 		for _, row := range rows {
-			spanKind := getString(row["_cardinalhq.kind"])
+			spanKind := getString(row["_cardinalhq_kind"])
 			if spanKind != "server" {
-				t.Fatalf("expected _cardinalhq.kind='server', got %q", spanKind)
+				t.Fatalf("expected _cardinalhq_kind='server', got %q", spanKind)
 			}
 		}
 	})
@@ -107,23 +107,23 @@ func TestSpansQueryIntegration(t *testing.T) {
 	t.Run("MultipleMatchersQuery", func(t *testing.T) {
 		leaf := logql.LogLeaf{
 			Matchers: []logql.LabelMatch{
-				{Label: "_cardinalhq.name", Op: logql.MatchRe, Value: "GET.*"},
-				{Label: "_cardinalhq.kind", Op: logql.MatchEq, Value: "server"},
+				{Label: "_cardinalhq_name", Op: logql.MatchRe, Value: "GET.*"},
+				{Label: "_cardinalhq_kind", Op: logql.MatchEq, Value: "server"},
 			},
 		}
-		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)))
 
 		rows := queryAllSpans(t, db, sql)
 		if len(rows) != 2 {
-			t.Fatalf("expected 2 rows (_cardinalhq.name matching GET.* AND _cardinalhq.kind=server), got %d\nsql:\n%s", len(rows), sql)
+			t.Fatalf("expected 2 rows (_cardinalhq_name matching GET.* AND _cardinalhq_kind=server), got %d\nsql:\n%s", len(rows), sql)
 		}
 
 		// Verify all returned rows have both conditions
 		for _, row := range rows {
-			spanName := getString(row["_cardinalhq.name"])
-			spanKind := getString(row["_cardinalhq.kind"])
+			spanName := getString(row["_cardinalhq_name"])
+			spanKind := getString(row["_cardinalhq_kind"])
 			if !strings.HasPrefix(spanName, "GET") || spanKind != "server" {
-				t.Fatalf("expected _cardinalhq.name starting with 'GET' AND _cardinalhq.kind='server', got _cardinalhq.name=%q _cardinalhq.kind=%q", spanName, spanKind)
+				t.Fatalf("expected _cardinalhq_name starting with 'GET' AND _cardinalhq_kind='server', got _cardinalhq_name=%q _cardinalhq_kind=%q", spanName, spanKind)
 			}
 		}
 	})
@@ -132,26 +132,26 @@ func TestSpansQueryIntegration(t *testing.T) {
 	t.Run("FieldsParameterQuery", func(t *testing.T) {
 		leaf := logql.LogLeaf{
 			Matchers: []logql.LabelMatch{
-				{Label: "_cardinalhq.name", Op: logql.MatchRe, Value: "GET.*"},
+				{Label: "_cardinalhq_name", Op: logql.MatchRe, Value: "GET.*"},
 			},
 		}
-		fields := []string{"_cardinalhq.name", "_cardinalhq.kind", "service.name", "_cardinalhq.span_trace_id"}
-		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
+		fields := []string{"_cardinalhq_name", "_cardinalhq_kind", "service_name", "_cardinalhq_span_trace_id"}
+		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", fields)))
 
 		rows := queryAllSpans(t, db, sql)
 		if len(rows) != 2 {
-			t.Fatalf("expected 2 rows (_cardinalhq.name matching GET.*), got %d\nsql:\n%s", len(rows), sql)
+			t.Fatalf("expected 2 rows (_cardinalhq_name matching GET.*), got %d\nsql:\n%s", len(rows), sql)
 		}
 
 		// Verify that the specified fields are present and have values
 		for i, row := range rows {
-			spanName := getString(row["_cardinalhq.name"])
-			spanKind := getString(row["_cardinalhq.kind"])
-			serviceName := getString(row["service.name"])
-			traceID := getString(row["_cardinalhq.span_trace_id"])
+			spanName := getString(row["_cardinalhq_name"])
+			spanKind := getString(row["_cardinalhq_kind"])
+			serviceName := getString(row["service_name"])
+			traceID := getString(row["_cardinalhq_span_trace_id"])
 
 			if spanName == "" || spanKind == "" || serviceName == "" || traceID == "" {
-				t.Fatalf("row %d missing expected field values: _cardinalhq.name=%q _cardinalhq.kind=%q service.name=%q _cardinalhq.span_trace_id=%q",
+				t.Fatalf("row %d missing expected field values: _cardinalhq_name=%q _cardinalhq_kind=%q service_name=%q _cardinalhq_span_trace_id=%q",
 					i, spanName, spanKind, serviceName, traceID)
 			}
 		}
@@ -161,21 +161,21 @@ func TestSpansQueryIntegration(t *testing.T) {
 	t.Run("RegexMatcherQuery", func(t *testing.T) {
 		leaf := logql.LogLeaf{
 			Matchers: []logql.LabelMatch{
-				{Label: "_cardinalhq.name", Op: logql.MatchRe, Value: "GET.*"},
+				{Label: "_cardinalhq_name", Op: logql.MatchRe, Value: "GET.*"},
 			},
 		}
-		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)))
 
 		rows := queryAllSpans(t, db, sql)
 		if len(rows) != 2 {
-			t.Fatalf("expected 2 rows (_cardinalhq.name matching 'GET.*'), got %d\nsql:\n%s", len(rows), sql)
+			t.Fatalf("expected 2 rows (_cardinalhq_name matching 'GET.*'), got %d\nsql:\n%s", len(rows), sql)
 		}
 
-		// Verify all returned rows have _cardinalhq.name starting with "GET"
+		// Verify all returned rows have _cardinalhq_name starting with "GET"
 		for _, row := range rows {
-			spanName := getString(row["_cardinalhq.name"])
+			spanName := getString(row["_cardinalhq_name"])
 			if !strings.HasPrefix(spanName, "GET") {
-				t.Fatalf("expected _cardinalhq.name to start with 'GET', got %q", spanName)
+				t.Fatalf("expected _cardinalhq_name to start with 'GET', got %q", spanName)
 			}
 		}
 	})
@@ -192,17 +192,17 @@ func TestSpansQueryWithTimeRange(t *testing.T) {
 
 	// Create spans table
 	mustExecSpans(t, db, `CREATE TABLE spans(
-  "_cardinalhq.timestamp" BIGINT,
-  "_cardinalhq.id" VARCHAR,
-  "_cardinalhq.fingerprint" BIGINT,
-  "_cardinalhq.name" VARCHAR,
-  "_cardinalhq.kind" VARCHAR,
-  "_cardinalhq.span_id" VARCHAR,
-  "_cardinalhq.span_trace_id" VARCHAR,
-  "_cardinalhq.status_code" VARCHAR,
-  "_cardinalhq.span_duration" BIGINT,
-  "service.name" VARCHAR,
-  "service.version" VARCHAR
+  "_cardinalhq_timestamp" BIGINT,
+  "_cardinalhq_id" VARCHAR,
+  "_cardinalhq_fingerprint" BIGINT,
+  "_cardinalhq_name" VARCHAR,
+  "_cardinalhq_kind" VARCHAR,
+  "_cardinalhq_span_id" VARCHAR,
+  "_cardinalhq_span_trace_id" VARCHAR,
+  "_cardinalhq_status_code" VARCHAR,
+  "_cardinalhq_span_duration" BIGINT,
+  "service_name" VARCHAR,
+  "service_version" VARCHAR
 );`)
 
 	// Insert test data with different timestamps
@@ -215,7 +215,7 @@ func TestSpansQueryWithTimeRange(t *testing.T) {
 	// Test time range filtering
 	leaf := logql.LogLeaf{
 		Matchers: []logql.LabelMatch{
-			{Label: "_cardinalhq.name", Op: logql.MatchRe, Value: "GET.*"},
+			{Label: "_cardinalhq_name", Op: logql.MatchRe, Value: "GET.*"},
 		},
 	}
 
@@ -231,7 +231,7 @@ func TestSpansQueryWithTimeRange(t *testing.T) {
 
 	// Verify the returned spans are within the time range
 	for _, row := range rows {
-		timestamp := getInt64(row["_cardinalhq.timestamp"])
+		timestamp := getInt64(row["_cardinalhq_timestamp"])
 		if timestamp < 1500 || timestamp >= 3500 {
 			t.Fatalf("expected timestamp in range [1500, 3500), got %d", timestamp)
 		}
@@ -247,17 +247,17 @@ func mustExecSpans(t *testing.T, db *sql.DB, query string) {
 
 func replaceSpansTable(sql string) string {
 	base := `(SELECT *,
-  COALESCE("_cardinalhq.id", ''::VARCHAR) AS "_cardinalhq.id",
-  COALESCE("_cardinalhq.kind", ''::VARCHAR) AS "_cardinalhq.kind",
-  COALESCE("_cardinalhq.name", ''::VARCHAR) AS "_cardinalhq.name",
-  COALESCE("_cardinalhq.span_id", ''::VARCHAR) AS "_cardinalhq.span_id",
-  COALESCE("_cardinalhq.span_trace_id", ''::VARCHAR) AS "_cardinalhq.span_trace_id",
-  COALESCE("_cardinalhq.status_code", ''::VARCHAR) AS "_cardinalhq.status_code",
-  COALESCE("_cardinalhq.span_duration", 0::BIGINT) AS "_cardinalhq.span_duration",
-  COALESCE("_cardinalhq.timestamp", 0::BIGINT) AS "_cardinalhq.timestamp",
-  COALESCE("_cardinalhq.fingerprint", -4446492996171837732::BIGINT) AS "_cardinalhq.fingerprint",
-  COALESCE("service.name", ''::VARCHAR) AS "service.name",
-  COALESCE("service.version", ''::VARCHAR) AS "service.version"
+  COALESCE("_cardinalhq_id", ''::VARCHAR) AS "_cardinalhq_id",
+  COALESCE("_cardinalhq_kind", ''::VARCHAR) AS "_cardinalhq_kind",
+  COALESCE("_cardinalhq_name", ''::VARCHAR) AS "_cardinalhq_name",
+  COALESCE("_cardinalhq_span_id", ''::VARCHAR) AS "_cardinalhq_span_id",
+  COALESCE("_cardinalhq_span_trace_id", ''::VARCHAR) AS "_cardinalhq_span_trace_id",
+  COALESCE("_cardinalhq_status_code", ''::VARCHAR) AS "_cardinalhq_status_code",
+  COALESCE("_cardinalhq_span_duration", 0::BIGINT) AS "_cardinalhq_span_duration",
+  COALESCE("_cardinalhq_timestamp", 0::BIGINT) AS "_cardinalhq_timestamp",
+  COALESCE("_cardinalhq_fingerprint", -4446492996171837732::BIGINT) AS "_cardinalhq_fingerprint",
+  COALESCE("service_name", ''::VARCHAR) AS "service_name",
+  COALESCE("service_version", ''::VARCHAR) AS "service_version"
 FROM spans) AS _t`
 
 	// Substitute table and time placeholders.
@@ -279,7 +279,7 @@ func getInt64(v any) int64 {
 }
 
 // Helper functions from ddb_harness_test.go
-func replaceStartEnd(sql string, start, end int64) string {
+func replaceStartEnd(sql string) string {
 	sql = strings.ReplaceAll(sql, "{start}", "500")
 	sql = strings.ReplaceAll(sql, "{end}", "5000")
 	return sql

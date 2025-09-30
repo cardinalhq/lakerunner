@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/parquet-go/parquet-go"
 	"go.opentelemetry.io/otel/attribute"
@@ -38,6 +39,7 @@ type ParquetRawReader struct {
 	exhausted bool
 	rowCount  int64
 	batchSize int
+	readBuf   []map[string]any // reusable buffer for reading parquet rows
 }
 
 // NewParquetRawReader creates a new ParquetRawReader for the given io.ReaderAt.
@@ -57,10 +59,17 @@ func NewParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*Parque
 		batchSize = 1000
 	}
 
+	// Pre-allocate reusable buffer for reading parquet rows
+	readBuf := make([]map[string]any, batchSize)
+	for i := range readBuf {
+		readBuf[i] = make(map[string]any)
+	}
+
 	return &ParquetRawReader{
 		pf:        pf,
 		pfr:       pfr,
 		batchSize: batchSize,
+		readBuf:   readBuf,
 	}, nil
 }
 
@@ -74,13 +83,14 @@ func (r *ParquetRawReader) Next(ctx context.Context) (*Batch, error) {
 		return nil, io.EOF
 	}
 
-	// Create fresh maps for parquet reader to populate
-	parquetRows := make([]map[string]any, r.batchSize)
-	for i := range parquetRows {
-		parquetRows[i] = make(map[string]any)
+	// Clear the reusable buffer maps from previous use
+	for i := range r.readBuf {
+		for k := range r.readBuf[i] {
+			delete(r.readBuf[i], k)
+		}
 	}
 
-	n, err := r.pfr.Read(parquetRows)
+	n, err := r.pfr.Read(r.readBuf)
 	if err != nil && err != io.EOF {
 		return nil, fmt.Errorf("parquet reader error: %w", err)
 	}
@@ -89,38 +99,31 @@ func (r *ParquetRawReader) Next(ctx context.Context) (*Batch, error) {
 		return nil, io.EOF
 	}
 
-	// Track rows read from parquet
 	rowsInCounter.Add(ctx, int64(n), otelmetric.WithAttributes(
 		attribute.String("reader", "ParquetRawReader"),
 	))
 
 	batch := pipeline.GetBatch()
 
-	// Transfer raw parquet data to batch without any transformations
-	for i := 0; i < n; i++ {
-		row := parquetRows[i]
-
-		// Add raw row to batch, converting keys to RowKey type
+	for i := range n {
+		row := r.readBuf[i]
 		batchRow := batch.AddRow()
 		for k, v := range row {
-			batchRow[wkk.NewRowKeyFromBytes([]byte(k))] = v
+			fieldName := strings.ReplaceAll(k, ".", "_")
+			batchRow[wkk.NewRowKeyFromBytes([]byte(fieldName))] = v
 		}
 	}
 
-	// Increment rowCount for all rows read
 	r.rowCount += int64(n)
 
-	// Track rows output to downstream
 	rowsOutCounter.Add(ctx, int64(n), otelmetric.WithAttributes(
 		attribute.String("reader", "ParquetRawReader"),
 	))
 
-	// If underlying reader hit EOF, mark as exhausted for next call
 	if err == io.EOF {
 		r.exhausted = true
 	}
 
-	// Return batch with all raw data
 	return batch, nil
 }
 

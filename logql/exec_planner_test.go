@@ -40,8 +40,8 @@ func TestBasicQuery(t *testing.T) {
 func TestBasicQueryWithDots(t *testing.T) {
 	q := `{resource_service_name="api-gateway"}` // legal LogQL
 	ast, _ := FromLogQL(q)
-	if ast.LogSel.Matchers[0].Label != "resource.service.name" {
-		t.Fatalf("expected label resource.service.name, got %q", ast.LogSel.Matchers[0].Label)
+	if ast.LogSel.Matchers[0].Label != "resource_service_name" {
+		t.Fatalf("expected label resource_service_name, got %q", ast.LogSel.Matchers[0].Label)
 	}
 }
 
@@ -50,12 +50,12 @@ func TestPipelineFilterNormalizationWithDots(t *testing.T) {
 	ast, _ := FromLogQL(q)
 	found := false
 	for _, lf := range ast.LogSel.LabelFilters {
-		if lf.Label == "resource.service.name" && lf.Op == MatchEq && lf.Value == "api-gateway" {
+		if lf.Label == "resource_service_name" && lf.Op == MatchEq && lf.Value == "api-gateway" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected label filter resource.service.name=\"api-gateway\", got %#v", ast.LogSel.LabelFilters)
+		t.Fatalf("expected label filter resource_service_name=\"api-gateway\", got %#v", ast.LogSel.LabelFilters)
 	}
 }
 
@@ -513,9 +513,8 @@ func TestPlanner_AvgOverTime_Regexp_UnwrapBytes(t *testing.T) {
 	}
 
 	// Matcher normalization: resource_service_name → resource.service.name
-	if !(hasMatcher(leaf.Matchers, "resource.service.name", "kafka") ||
-		hasMatcher(leaf.Matchers, "resource_service_name", "kafka")) {
-		t.Fatalf("missing matcher resource.service.name=kafka; matchers=%#v", leaf.Matchers)
+	if !hasMatcher(leaf.Matchers, "resource_service_name", "kafka") {
+		t.Fatalf("missing matcher resource_service_name=kafka; matchers=%#v", leaf.Matchers)
 	}
 
 	// Must have both regexp and unwrap stages, in that order.
@@ -593,9 +592,8 @@ func TestPlanner_CountOverTime_WithRegexLineFilter(t *testing.T) {
 	}
 
 	// Matcher normalization: resource_service_name → resource.service.name
-	if !(hasMatcher(leaf.Matchers, "resource.service.name", "kafka") ||
-		hasMatcher(leaf.Matchers, "resource_service_name", "kafka")) {
-		t.Fatalf("missing matcher resource.service.name=\"kafka\"; matchers=%#v", leaf.Matchers)
+	if !hasMatcher(leaf.Matchers, "resource_service_name", "kafka") {
+		t.Fatalf("missing matcher resource_service_name=\"kafka\"; matchers=%#v", leaf.Matchers)
 	}
 
 	// Regex line filter |~ "deleted" must be present.

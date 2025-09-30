@@ -185,7 +185,7 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 				usedSanitizedNames[sanitized] = 1
 			}
 
-			newKey := wkk.NewRowKey("log." + finalSanitized)
+			newKey := wkk.NewRowKey("log_" + finalSanitized)
 			newFields[newKey] = value
 		}
 	}
@@ -193,15 +193,15 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	// Replace row content with new fields
 	*row = newFields
 
-	// Add resource fields (standard for all log readers)
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
-	(*row)[wkk.NewRowKey("resource.service.name")] = "csv-import"
+	// Add resource fields (standard for all log readers) - using underscore format
+	(*row)[wkk.NewRowKey("resource_bucket_name")] = t.bucket
+	(*row)[wkk.NewRowKey("resource_file_name")] = "./" + t.objectID
+	(*row)[wkk.NewRowKey("resource_file_type")] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.NewRowKey("resource_service_name")] = "csv-import"
 
 	// Add organization ID if available
 	if t.orgID != "" {
-		(*row)[wkk.NewRowKey("_cardinalhq.organization_id")] = t.orgID
+		(*row)[wkk.NewRowKey("_cardinalhq_organization_id")] = t.orgID
 	}
 
 	return nil

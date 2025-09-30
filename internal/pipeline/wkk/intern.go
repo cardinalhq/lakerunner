@@ -47,23 +47,23 @@ var commonKeys = map[string]RowKey{
 	"body":               unique.Make(rowkey("body")),
 
 	// Resource fields
-	"resource.service.name":    unique.Make(rowkey("resource.service.name")),
-	"resource.service.version": unique.Make(rowkey("resource.service.version")),
-	"resource.deployment.env":  unique.Make(rowkey("resource.deployment.env")),
-	"resource.bucket.name":     unique.Make(rowkey("resource.bucket.name")),
-	"resource.file.name":       unique.Make(rowkey("resource.file.name")),
-	"resource.file.type":       unique.Make(rowkey("resource.file.type")),
+	"resource_service_name":    unique.Make(rowkey("resource_service_name")),
+	"resource_service_version": unique.Make(rowkey("resource_service_version")),
+	"resource_deployment_env":  unique.Make(rowkey("resource_deployment_env")),
+	"resource_bucket_name":     unique.Make(rowkey("resource_bucket_name")),
+	"resource_file_name":       unique.Make(rowkey("resource_file_name")),
+	"resource_file_type":       unique.Make(rowkey("resource_file_type")),
 
 	// Scope fields
-	"scope.scope.type": unique.Make(rowkey("scope.scope.type")),
+	"scope_scope_type": unique.Make(rowkey("scope_scope_type")),
 
 	// Span attributes
-	"span.http.method":      unique.Make(rowkey("span.http.method")),
-	"span.http.status_code": unique.Make(rowkey("span.http.status_code")),
-	"span.db.system":        unique.Make(rowkey("span.db.system")),
-	"span.db.operation":     unique.Make(rowkey("span.db.operation")),
-	"span.component":        unique.Make(rowkey("span.component")),
-	"span.record.count":     unique.Make(rowkey("span.record.count")),
+	"span_http_method":      unique.Make(rowkey("span_http_method")),
+	"span_http_status_code": unique.Make(rowkey("span_http_status_code")),
+	"span_db_system":        unique.Make(rowkey("span_db_system")),
+	"span_db_operation":     unique.Make(rowkey("span_db_operation")),
+	"span_component":        unique.Make(rowkey("span_component")),
+	"span_record_count":     unique.Make(rowkey("span_record_count")),
 
 	// Common metric/log fields
 	"metric":      unique.Make(rowkey("metric")),
@@ -75,22 +75,6 @@ var commonKeys = map[string]RowKey{
 	"unit":        unique.Make(rowkey("unit")),
 	"type":        unique.Make(rowkey("type")),
 	"description": unique.Make(rowkey("description")),
-
-	// Test fields (for testing)
-	"test":            unique.Make(rowkey("test")),
-	"test.translator": unique.Make(rowkey("test.translator")),
-	"id":              unique.Make(rowkey("id")),
-	"age":             unique.Make(rowkey("age")),
-	"city":            unique.Make(rowkey("city")),
-	"key":             unique.Make(rowkey("key")),
-	"tag":             unique.Make(rowkey("tag")),
-	"batch":           unique.Make(rowkey("batch")),
-	"final":           unique.Make(rowkey("final")),
-	"eof":             unique.Make(rowkey("eof")),
-	"good":            unique.Make(rowkey("good")),
-	"bad":             unique.Make(rowkey("bad")),
-	"more":            unique.Make(rowkey("more")),
-	"row":             unique.Make(rowkey("row")),
 }
 
 // NewRowKeyFromBytes creates a RowKey from bytes without string allocation for common keys
@@ -106,27 +90,27 @@ func NewRowKeyFromBytes(keyBytes []byte) RowKey {
 }
 
 var (
-	// _cardinalhq.* keys (sorted alphabetically)
-	RowKeyCCollectorID   = NewRowKey("_cardinalhq.collector_id")
-	RowKeyCCustomerID    = NewRowKey("_cardinalhq.customer_id")
-	RowKeyCFingerprint   = NewRowKey("_cardinalhq.fingerprint")
-	RowKeyCID            = NewRowKey("_cardinalhq.id")
-	RowKeyCMessage       = NewRowKey("_cardinalhq.message")
-	RowKeyCMetricType    = NewRowKey("_cardinalhq.metric_type")
-	RowKeyCName          = NewRowKey("_cardinalhq.name")
-	RowKeyCSpanEvents    = NewRowKey("_cardinalhq.span_events")
-	RowKeyCTelemetryType = NewRowKey("_cardinalhq.telemetry_type")
-	RowKeyCTID           = NewRowKey("_cardinalhq.tid")
-	RowKeyCTimestamp     = NewRowKey("_cardinalhq.timestamp")
-	RowKeyCTsns          = NewRowKey("_cardinalhq.tsns")
-	RowKeyCValue         = NewRowKey("_cardinalhq.value") // Deprecated
+	// _cardinalhq_* keys (sorted alphabetically)
+	RowKeyCCollectorID   = NewRowKey("_cardinalhq_collector_id")
+	RowKeyCCustomerID    = NewRowKey("_cardinalhq_customer_id")
+	RowKeyCFingerprint   = NewRowKey("_cardinalhq_fingerprint")
+	RowKeyCID            = NewRowKey("_cardinalhq_id")
+	RowKeyCMessage       = NewRowKey("_cardinalhq_message")
+	RowKeyCMetricType    = NewRowKey("_cardinalhq_metric_type")
+	RowKeyCName          = NewRowKey("_cardinalhq_name")
+	RowKeyCSpanEvents    = NewRowKey("_cardinalhq_span_events")
+	RowKeyCTelemetryType = NewRowKey("_cardinalhq_telemetry_type")
+	RowKeyCTID           = NewRowKey("_cardinalhq_tid")
+	RowKeyCTimestamp     = NewRowKey("_cardinalhq_timestamp")
+	RowKeyCTsns          = NewRowKey("_cardinalhq_tsns")
+	RowKeyCValue         = NewRowKey("_cardinalhq_value") // Deprecated
 
 	// histogram handling (TODO: just make histograms)
-	RowKeyCBucketBounds   = NewRowKey("_cardinalhq.bucket_bounds")
-	RowKeyCNegativeCounts = NewRowKey("_cardinalhq.negative_counts")
-	RowKeyCPositiveCounts = NewRowKey("_cardinalhq.positive_counts")
-	RowKeyCCounts         = NewRowKey("_cardinalhq.counts")    // Deprecated
-	RowKeyCSumValue       = NewRowKey("_cardinalhq.sum_value") // Deprecated
+	RowKeyCBucketBounds   = NewRowKey("_cardinalhq_bucket_bounds")
+	RowKeyCNegativeCounts = NewRowKey("_cardinalhq_negative_counts")
+	RowKeyCPositiveCounts = NewRowKey("_cardinalhq_positive_counts")
+	RowKeyCCounts         = NewRowKey("_cardinalhq_counts")    // Deprecated
+	RowKeyCSumValue       = NewRowKey("_cardinalhq_sum_value") // Deprecated
 
 	// rollup_* keys (sorted alphabetically)
 	RowKeyRollupAvg   = NewRowKey("rollup_avg")

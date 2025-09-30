@@ -70,25 +70,25 @@ func (t *MetricTranslator) TranslateRow(_ context.Context, row *filereader.Row) 
 
 var (
 	keepkeys = map[string]bool{
-		"resource.app":                  true,
-		"resource.container.image.name": true,
-		"resource.container.image.tag":  true,
-		"resource.k8s.cluster.name":     true,
-		"resource.k8s.daemonset.name":   true,
-		"resource.k8s.deployment.name":  true,
-		"resource.k8s.namespace.name":   true,
-		"resource.k8s.pod.ip":           true,
-		"resource.k8s.pod.name":         true,
-		"resource.k8s.statefulset.name": true,
-		"resource.service.name":         true,
-		"resource.service.version":      true,
+		"resource_app":                  true,
+		"resource_container_image_name": true,
+		"resource_container_image_tag":  true,
+		"resource_k8s_cluster_name":     true,
+		"resource_k8s_daemonset_name":   true,
+		"resource_k8s_deployment_name":  true,
+		"resource_k8s_namespace_name":   true,
+		"resource_k8s_pod_ip":           true,
+		"resource_k8s_pod_name":         true,
+		"resource_k8s_statefulset_name": true,
+		"resource_service_name":         true,
+		"resource_service_version":      true,
 	}
 )
 
 func filterKeys(row *filereader.Row) {
 	for k := range *row {
 		name := wkk.RowKeyValue(k)
-		if !strings.HasPrefix(name, "resource.") {
+		if !strings.HasPrefix(name, "resource_") {
 			continue
 		}
 

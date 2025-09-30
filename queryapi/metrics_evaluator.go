@@ -393,7 +393,7 @@ func (q *QuerierService) metricsPushDown(
 	worker Worker,
 	request PushDownRequest,
 ) (<-chan promql.SketchInput, error) {
-	return PushDownStream[promql.SketchInput](ctx, worker, request,
+	return PushDownStream(ctx, worker, request,
 		func(typ string, data json.RawMessage) (promql.SketchInput, bool, error) {
 			var zero promql.SketchInput
 			if typ != "result" {
@@ -455,7 +455,7 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 
 	var allSegments []SegmentInfo
 
-	fingerprint := computeFingerprint("_cardinalhq.name", be.Metric)
+	fingerprint := computeFingerprint("_cardinalhq_name", be.Metric)
 
 	rows, err := q.mdb.ListMetricSegmentsForQuery(ctx, lrdb.ListMetricSegmentsForQueryParams{
 		Int8range:      startTs,

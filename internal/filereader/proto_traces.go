@@ -207,23 +207,23 @@ func (r *ProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Resource
 	})
 
 	// Basic span fields - raw data only
-	ret["_cardinalhq.span_trace_id"] = span.TraceID().String()
-	ret["_cardinalhq.span_id"] = span.SpanID().String()
-	ret["_cardinalhq.parent_span_id"] = span.ParentSpanID().String()
-	ret["_cardinalhq.name"] = span.Name()
-	ret["_cardinalhq.kind"] = span.Kind().String()
-	ret["_cardinalhq.status_code"] = span.Status().Code().String()
-	ret["_cardinalhq.status_message"] = span.Status().Message()
+	ret["_cardinalhq_span_trace_id"] = span.TraceID().String()
+	ret["_cardinalhq_span_id"] = span.SpanID().String()
+	ret["_cardinalhq_parent_span_id"] = span.ParentSpanID().String()
+	ret["_cardinalhq_name"] = span.Name()
+	ret["_cardinalhq_kind"] = span.Kind().String()
+	ret["_cardinalhq_status_code"] = span.Status().Code().String()
+	ret["_cardinalhq_status_message"] = span.Status().Message()
 
 	// Handle start timestamp with fallback
 	if span.StartTimestamp() != 0 {
-		ret["_cardinalhq.timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
-		ret["_cardinalhq.tsns"] = int64(span.StartTimestamp())
+		ret["_cardinalhq_timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
+		ret["_cardinalhq_tsns"] = int64(span.StartTimestamp())
 	} else {
 		// Fallback to current time when start timestamp is zero
 		currentTime := time.Now()
-		ret["_cardinalhq.timestamp"] = currentTime.UnixMilli()
-		ret["_cardinalhq.tsns"] = currentTime.UnixNano()
+		ret["_cardinalhq_timestamp"] = currentTime.UnixMilli()
+		ret["_cardinalhq_tsns"] = currentTime.UnixNano()
 		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("signal_type", "traces"),
 			attribute.String("reason", "current_fallback"),
@@ -232,27 +232,27 @@ func (r *ProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Resource
 
 	// Handle end timestamp with fallback
 	if span.EndTimestamp() != 0 {
-		ret["_cardinalhq.end_timestamp"] = span.EndTimestamp().AsTime().UnixMilli()
+		ret["_cardinalhq_end_timestamp"] = span.EndTimestamp().AsTime().UnixMilli()
 		// Calculate duration using actual timestamps
 		if span.StartTimestamp() != 0 {
-			ret["_cardinalhq.span_duration"] = span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime()).Milliseconds()
+			ret["_cardinalhq_span_duration"] = span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime()).Milliseconds()
 		} else {
 			// If start timestamp was fallback, use 0 duration
-			ret["_cardinalhq.span_duration"] = int64(0)
+			ret["_cardinalhq_span_duration"] = int64(0)
 		}
 	} else {
 		// Fallback to current time for end timestamp
 		currentTime := time.Now()
-		ret["_cardinalhq.end_timestamp"] = currentTime.UnixMilli()
+		ret["_cardinalhq_end_timestamp"] = currentTime.UnixMilli()
 		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("signal_type", "traces"),
 			attribute.String("reason", "current_fallback"),
 		))
 		// Calculate duration if we have a valid start timestamp
 		if span.StartTimestamp() != 0 {
-			ret["_cardinalhq.span_duration"] = currentTime.Sub(span.StartTimestamp().AsTime()).Milliseconds()
+			ret["_cardinalhq_span_duration"] = currentTime.Sub(span.StartTimestamp().AsTime()).Milliseconds()
 		} else {
-			ret["_cardinalhq.span_duration"] = int64(0)
+			ret["_cardinalhq_span_duration"] = int64(0)
 		}
 	}
 

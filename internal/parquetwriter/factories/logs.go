@@ -58,7 +58,7 @@ type LogsStatsAccumulator struct {
 
 func (a *LogsStatsAccumulator) Add(row map[string]any) {
 	// Track timestamp range
-	if ts, ok := row["_cardinalhq.timestamp"].(int64); ok {
+	if ts, ok := row["_cardinalhq_timestamp"].(int64); ok {
 		if !a.first {
 			a.firstTS = ts
 			a.lastTS = ts
@@ -97,8 +97,8 @@ type LogsFileStats struct {
 
 // ValidateLogsRow checks that a row has the required fields for logs processing.
 func ValidateLogsRow(row map[string]any) error {
-	if _, ok := row["_cardinalhq.timestamp"]; !ok {
-		return fmt.Errorf("missing required field: _cardinalhq.timestamp")
+	if _, ok := row["_cardinalhq_timestamp"]; !ok {
+		return fmt.Errorf("missing required field: _cardinalhq_timestamp")
 	}
 	return nil
 }

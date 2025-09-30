@@ -165,7 +165,7 @@ func lineFiltersUpTo(all []logql.LineFilter, upto int) []logql.LineFilter {
 func createdByParser(p logql.ParserStage) []string {
 	switch strings.ToLower(p.Type) {
 	case "line_format", "line-format", "lineformat":
-		return []string{"_cardinalhq.message"}
+		return []string{"_cardinalhq_message"}
 	case "regexp":
 		pat := p.Params["pattern"]
 		names := captureNamesFromRegexp(pat)

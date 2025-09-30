@@ -26,7 +26,7 @@ import (
 func createTestRowsForSorting(numRows int) []Row {
 	rows := make([]Row, numRows)
 
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		rows[i] = Row{
 			wkk.RowKeyCName:                          fmt.Sprintf("metric_%d", i%10), // 10 different metric names
 			wkk.RowKeyCTID:                           int64(100 + i%5),               // 5 different TIDs per metric
@@ -35,9 +35,9 @@ func createTestRowsForSorting(numRows int) []Row {
 			wkk.RowKeyRollupCount:                    float64(1),
 			wkk.RowKeyRollupSum:                      float64(50.0 + float64(i)),
 			wkk.RowKeySketch:                         []byte{byte(i % 256)},
-			wkk.NewRowKey("_cardinalhq.description"): fmt.Sprintf("Test metric %d", i),
-			wkk.NewRowKey("_cardinalhq.unit"):        "percent",
-			wkk.NewRowKey("service.name"):            fmt.Sprintf("service_%d", i%3),
+			wkk.NewRowKey("_cardinalhq_description"): fmt.Sprintf("Test metric %d", i),
+			wkk.NewRowKey("_cardinalhq_unit"):        "percent",
+			wkk.NewRowKey("service_name"):            fmt.Sprintf("service_%d", i%3),
 			wkk.NewRowKey("host"):                    fmt.Sprintf("host_%d", i%5),
 		}
 	}

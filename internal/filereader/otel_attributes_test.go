@@ -39,19 +39,19 @@ func TestPrefixAttribute(t *testing.T) {
 			name:     "normal name returns prefixed",
 			input:    "bar",
 			prefix:   "foo",
-			expected: "foo.bar",
+			expected: "foo_bar",
 		},
 		{
 			name:     "empty prefix",
 			input:    "bar",
 			prefix:   "",
-			expected: ".bar",
+			expected: "_bar",
 		},
 		{
 			name:     "underscore not at start",
 			input:    "foo_bar",
 			prefix:   "baz",
-			expected: "baz.foo_bar",
+			expected: "baz_foo_bar",
 		},
 	}
 

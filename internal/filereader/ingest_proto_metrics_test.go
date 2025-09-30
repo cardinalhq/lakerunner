@@ -474,13 +474,13 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 		}
 
 		// All rows should have resource attributes
-		assert.Equal(t, "synthetic-metrics-service", row[wkk.NewRowKey("resource.service.name")])
-		assert.Equal(t, "1.0.0", row[wkk.NewRowKey("resource.service.version")])
-		assert.Equal(t, "test-host-01", row[wkk.NewRowKey("resource.host.name")])
-		assert.Equal(t, "testing", row[wkk.NewRowKey("resource.environment")])
+		assert.Equal(t, "synthetic-metrics-service", row[wkk.NewRowKey("resource_service_name")])
+		assert.Equal(t, "1.0.0", row[wkk.NewRowKey("resource_service_version")])
+		assert.Equal(t, "test-host-01", row[wkk.NewRowKey("resource_host_name")])
+		assert.Equal(t, "testing", row[wkk.NewRowKey("resource_environment")])
 
 		// All rows should have scope attributes
-		assert.Equal(t, "synthetic", row[wkk.NewRowKey("scope.meter.library")])
+		assert.Equal(t, "synthetic", row[wkk.NewRowKey("scope_meter_library")])
 	}
 
 	// Verify metric type distribution
@@ -537,7 +537,7 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	require.Equal(t, 1, batch.Len(), "Should read exactly 1 row in first batch")
 	_, hasName := batch.Get(0)[wkk.RowKeyCName]
 	assert.True(t, hasName)
-	_, hasResourceServiceName := batch.Get(0)[wkk.NewRowKey("resource.service.name")]
+	_, hasResourceServiceName := batch.Get(0)[wkk.NewRowKey("resource_service_name")]
 	assert.True(t, hasResourceServiceName)
 
 	// Test data exhaustion - continue reading until EOF
@@ -677,7 +677,7 @@ func TestIngestProtoMetrics_SyntheticMultiResourceMetrics(t *testing.T) {
 	webServiceCount := 0
 	dbServiceCount := 0
 	for _, row := range allRows {
-		serviceName := row[wkk.NewRowKey("resource.service.name")].(string)
+		serviceName := row[wkk.NewRowKey("resource_service_name")].(string)
 		switch serviceName {
 		case "web-frontend":
 			webServiceCount++
@@ -787,7 +787,7 @@ func TestIngestProtoMetrics_SyntheticEdgeCases(t *testing.T) {
 	for i, row := range allRows {
 		t.Run(fmt.Sprintf("edge_case_%d", i), func(t *testing.T) {
 			// All should have resource attributes
-			assert.Equal(t, "edge-case-service", row[wkk.NewRowKey("resource.service.name")])
+			assert.Equal(t, "edge-case-service", row[wkk.NewRowKey("resource_service_name")])
 
 			metricName := row[wkk.RowKeyCName].(string)
 			switch metricName {
@@ -799,11 +799,11 @@ func TestIngestProtoMetrics_SyntheticEdgeCases(t *testing.T) {
 				// Should handle zero values
 				assert.Equal(t, "gauge", row[wkk.RowKeyCMetricType])
 				assert.Equal(t, 0.0, row[wkk.RowKeyRollupSum])
-				assert.Equal(t, "idle", row[wkk.NewRowKey("metric.measurement")])
+				assert.Equal(t, "idle", row[wkk.NewRowKey("metric_measurement")])
 			case "simple_histogram":
 				// Should handle simple histograms
 				assert.Equal(t, "histogram", row[wkk.RowKeyCMetricType])
-				assert.Equal(t, "test", row[wkk.NewRowKey("metric.operation")])
+				assert.Equal(t, "test", row[wkk.NewRowKey("metric_operation")])
 			}
 		})
 	}
@@ -880,13 +880,13 @@ func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 // This function can be used to test any metrics reader to ensure consistent output format.
 // Contract requirements:
 //  1. All rollup fields must always be set (rollup_avg, rollup_max, rollup_min, rollup_count, rollup_sum, rollup_p25, rollup_p50, rollup_p75, rollup_p90, rollup_p95, rollup_p99)
-//  2. All metric attribute tags must be prefixed with "metric."
-//  3. All resource attribute tags must be prefixed with "resource."
-//  4. All scope attribute tags must be prefixed with "scope."
-//  5. All metrics must have _cardinalhq.name as a string
+//  2. All metric attribute tags must be prefixed with "metric_"
+//  3. All resource attribute tags must be prefixed with "resource_"
+//  4. All scope attribute tags must be prefixed with "scope_"
+//  5. All metrics must have _cardinalhq_name as a string
 //  6. All metrics must have _cardinalhq.metric_type as one of "gauge", "count", "histogram"
-//  7. All metrics must have _cardinalhq.timestamp as int64 (use Timestamp, fallback to StartTimestamp)
-//  8. NO _cardinalhq.value field should be present (removed from all metric types)
+//  7. All metrics must have _cardinalhq_timestamp as int64 (use Timestamp, fallback to StartTimestamp)
+//  8. NO _cardinalhq_value field should be present (removed from all metric types)
 //  9. Summary data points should be silently dropped (not present in output)
 //
 // 10. All metrics must have scope_url, scope_name, description, unit, type fields
@@ -909,8 +909,8 @@ func ValidateMetricsReaderContract(t *testing.T, rows []Row) {
 
 		// 2-4. Validate attribute prefixing
 		// Check that all metric/resource/scope attributes are properly prefixed
-		expectedPrefixes := []string{"metric.", "resource.", "scope."}
-		standardFields := []string{"_cardinalhq.description", "_cardinalhq.unit", "_cardinalhq.scope_url", "_cardinalhq.scope_name", "sketch"}
+		expectedPrefixes := []string{"metric_", "resource_", "scope_"}
+		standardFields := []string{"_cardinalhq_description", "_cardinalhq_unit", "_cardinalhq_scope_url", "_cardinalhq_scope_name", "sketch"}
 
 		for key := range row {
 			// Skip CardinalHQ internal fields and standard literal fields
@@ -938,30 +938,30 @@ func ValidateMetricsReaderContract(t *testing.T, rows []Row) {
 			}
 		}
 
-		// 5. All metrics must have _cardinalhq.name as string
+		// 5. All metrics must have _cardinalhq_name as string
 		name, nameOk := row[wkk.RowKeyCName].(string)
-		assert.True(t, nameOk, "Row %d missing or invalid _cardinalhq.name field", i)
-		assert.NotEmpty(t, name, "Row %d _cardinalhq.name must not be empty", i)
+		assert.True(t, nameOk, "Row %d missing or invalid _cardinalhq_name field", i)
+		assert.NotEmpty(t, name, "Row %d _cardinalhq_name must not be empty", i)
 
 		// 6. All metrics must have _cardinalhq.metric_type as valid type
 		metricType, metricTypeOk := row[wkk.RowKeyCMetricType].(string)
 		assert.True(t, metricTypeOk, "Row %d missing or invalid _cardinalhq.metric_type field", i)
 		assert.Contains(t, []string{"gauge", "count", "histogram"}, metricType, "Row %d invalid _cardinalhq.metric_type: %s", i, metricType)
 
-		// 7. All metrics must have _cardinalhq.timestamp as int64
+		// 7. All metrics must have _cardinalhq_timestamp as int64
 		timestamp, timestampOk := row[wkk.RowKeyCTimestamp].(int64)
-		assert.True(t, timestampOk, "Row %d missing or invalid _cardinalhq.timestamp field", i)
-		assert.Greater(t, timestamp, int64(0), "Row %d _cardinalhq.timestamp must be positive", i)
+		assert.True(t, timestampOk, "Row %d missing or invalid _cardinalhq_timestamp field", i)
+		assert.Greater(t, timestamp, int64(0), "Row %d _cardinalhq_timestamp must be positive", i)
 
-		// 8. NO _cardinalhq.value field should be present
+		// 8. NO _cardinalhq_value field should be present
 		_, valueExists := row[wkk.RowKeyCValue]
-		assert.False(t, valueExists, "Row %d should not contain _cardinalhq.value field", i)
+		assert.False(t, valueExists, "Row %d should not contain _cardinalhq_value field", i)
 
 		// 9. Summary data points should be silently dropped (verified by absence in output)
 		// This is implicitly validated since summaries return errors and are not included
 
 		// 10. All metrics must have required fields
-		requiredFields := []string{"_cardinalhq.scope_url", "_cardinalhq.scope_name", "_cardinalhq.description", "_cardinalhq.unit"}
+		requiredFields := []string{"_cardinalhq_scope_url", "_cardinalhq_scope_name", "_cardinalhq_description", "_cardinalhq_unit"}
 		for _, field := range requiredFields {
 			_, hasRequiredField := row[wkk.NewRowKey(field)]
 			assert.True(t, hasRequiredField, "Row %d missing required field %s", i, field)
