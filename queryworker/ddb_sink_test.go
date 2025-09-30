@@ -22,8 +22,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 )
 
 func TestDDBSink_IngestParquetBatch(t *testing.T) {

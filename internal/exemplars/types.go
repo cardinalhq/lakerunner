@@ -20,8 +20,9 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
+
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
 )
 
 const (

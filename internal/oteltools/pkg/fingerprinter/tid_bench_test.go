@@ -31,7 +31,7 @@ func BenchmarkComputeTID(b *testing.B) {
 		wkk.NewRowKey("metric_http_method"):      "GET",
 		wkk.NewRowKey("metric_http_status"):      "200",
 		wkk.NewRowKey("metric_endpoint"):         "/api/v1/users",
-		wkk.NewRowKey("other_field"):             "ignored", // Should be skipped
+		wkk.NewRowKey("other_field"):             "ignored",  // Should be skipped
 		wkk.NewRowKey("timestamp"):               1234567890, // Non-string, should be skipped
 	}
 

@@ -19,8 +19,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/prometheus/prometheus/promql/parser"
+
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 type promQLValidateRequest struct {

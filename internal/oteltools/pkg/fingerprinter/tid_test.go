@@ -17,8 +17,9 @@ package fingerprinter
 import (
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestComputeTID_NewBehavior(t *testing.T) {

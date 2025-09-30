@@ -26,8 +26,9 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/shirou/gopsutil/v4/process"
+
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 )
 
 func main() {

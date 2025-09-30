@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
+
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"

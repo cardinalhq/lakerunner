@@ -15,13 +15,15 @@
 package fingerprinter
 
 import (
-	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
+	"strings"
+
 	"github.com/cardinalhq/oteltools/hashutils"
 	"github.com/cespare/xxhash/v2"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
-	"strings"
+
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
 )
 
 const (
