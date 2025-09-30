@@ -47,16 +47,18 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// If no exemplar provided, just return valid (syntax check only)
+	if req.Exemplar == nil || len(req.Exemplar) == 0 {
+		_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: true})
+		return
+	}
+
 	me, err := json.Marshal(req.Exemplar)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, InvalidJSON, "invalid exemplar: "+err.Error())
 		return
 	}
 	payload := string(me)
-	if strings.TrimSpace(payload) == "" {
-		_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: true})
-		return
-	}
 
 	vr, err := ValidateLogQLAgainstExemplar(r.Context(), req.Query, payload)
 	if err != nil {
