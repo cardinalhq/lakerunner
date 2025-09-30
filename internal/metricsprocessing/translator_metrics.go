@@ -45,7 +45,7 @@ func (t *MetricTranslator) TranslateRow(_ context.Context, row *filereader.Row) 
 	// Validate required timestamp field - drop row if missing or invalid
 	timestamp, ok := (*row)[wkk.RowKeyCTimestamp].(int64)
 	if !ok {
-		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
+		return fmt.Errorf("_cardinalhq_timestamp field is missing or not int64")
 	}
 
 	// Truncate timestamp to nearest 10-second interval

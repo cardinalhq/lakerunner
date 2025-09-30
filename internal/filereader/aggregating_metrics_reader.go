@@ -109,7 +109,7 @@ func (ar *AggregatingMetricsReader) makeAggregationKey(row Row) (SortKey, error)
 
 	_, tsOk := row[wkk.RowKeyCTimestamp].(int64)
 	if !tsOk {
-		return nil, fmt.Errorf("missing or invalid _cardinalhq.timestamp field")
+		return nil, fmt.Errorf("missing or invalid _cardinalhq_timestamp field")
 	}
 
 	// Use the row directly - timestamp should already be truncated

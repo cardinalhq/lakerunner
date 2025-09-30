@@ -54,7 +54,7 @@ func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row
 	}
 
 	// Handle timestamp: use timestamp, fallback to observed_timestamp
-	// NOTE: _cardinalhq.timestamp should already be validated by ingest_proto_logs.go
+	// NOTE: _cardinalhq_timestamp should already be validated by ingest_proto_logs.go
 	// This is a secondary validation for other readers that may not have done it
 	if _, ok := (*row)[wkk.RowKeyCTimestamp]; !ok {
 		var timestamp int64
