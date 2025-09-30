@@ -15,132 +15,57 @@
 package fingerprinter
 
 import (
-	"encoding/json"
-	"fmt"
 	"hash/fnv"
 	"sort"
-	"strconv"
+	"strings"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-func ComputeTID(tags map[string]any) int64 {
+// Pre-interned keys for TID computation
+var (
+	tidKeyCardinalhqName       = wkk.NewRowKey("_cardinalhq_name")
+	tidKeyCardinalhqMetricType = wkk.NewRowKey("_cardinalhq_metric_type")
+)
+
+// ComputeTID computes the TID (Time-series ID) using wkk.RowKey keys
+// It includes _cardinalhq_name, _cardinalhq_metric_type, resource_*, and metric_* fields
+func ComputeTID(tags map[wkk.RowKey]any) int64 {
+	// Collect key strings directly
 	keys := make([]string, 0, len(tags))
+
 	for k, v := range tags {
 		// Skip nil and empty values
 		if v == nil || v == "" {
 			continue
 		}
 
-		// Collect fields we want to include:
-		// 1. _cardinalhq_name and _cardinalhq_metric_type
-		// 2. resource_* and metric_* fields
-		// Skip all other fields
+		// Fast path for common keys using equality comparison
+		if k == tidKeyCardinalhqName || k == tidKeyCardinalhqMetricType {
+			kStr := wkk.RowKeyValue(k)
+			keys = append(keys, kStr)
+			continue
+		}
 
-		if k == "_cardinalhq_name" || k == "_cardinalhq_metric_type" {
-			keys = append(keys, k)
-		} else if len(k) > 9 && k[:9] == "resource_" {
-			keys = append(keys, k)
-		} else if len(k) > 7 && k[:7] == "metric_" {
-			keys = append(keys, k)
+		// Get string value only for prefix checks
+		kStr := wkk.RowKeyValue(k)
+
+		// Check prefixes
+		if strings.HasPrefix(kStr, "resource_") || strings.HasPrefix(kStr, "metric_") {
+			keys = append(keys, kStr)
 		}
 	}
 
 	sort.Strings(keys)
 	h := fnv.New64a()
 
-	// Only include string values in the hash
-	for _, k := range keys {
+	// Build hash - need to look up values again
+	for _, kStr := range keys {
+		k := wkk.NewRowKey(kStr)
 		if v, ok := tags[k].(string); ok {
-			_, _ = h.Write([]byte(k + "=" + v + "|"))
+			_, _ = h.Write([]byte(kStr + "=" + v + "|"))
 		}
 	}
 
 	return int64(h.Sum64())
-}
-
-func GetFloat64Value(m map[string]any, key string) (float64, bool) {
-	val, ok := m[key]
-	if !ok || val == nil {
-		return 0, false
-	}
-	floatVal, ok := val.(float64)
-	if !ok {
-		return 0, false
-	}
-	return floatVal, true
-}
-
-func GetStringValue(m map[string]any, key string) (string, bool) {
-	val, ok := m[key]
-	if !ok || val == nil {
-		return "", false
-	}
-	strVal, ok := val.(string)
-	if !ok {
-		return "", false
-	}
-	return strVal, true
-}
-
-func GetInt64Value(m map[string]any, key string) (int64, bool) {
-	val, ok := m[key]
-	if !ok || val == nil {
-		return 0, false
-	}
-	intVal, ok := val.(int64)
-	if !ok {
-		return 0, false
-	}
-	return intVal, true
-}
-
-// GetTIDValue extracts _cardinalhq.tid from a map, handling both int64 and string types
-func GetTIDValue(m map[string]any, key string) (int64, bool) {
-	val, ok := m[key]
-	if !ok || val == nil {
-		return 0, false
-	}
-
-	// Try int64 first (expected type)
-	if intVal, ok := val.(int64); ok {
-		return intVal, true
-	}
-
-	// Fall back to string conversion for backwards compatibility
-	if strVal, ok := val.(string); ok {
-		if parsed, err := strconv.ParseInt(strVal, 10, 64); err == nil {
-			return parsed, true
-		}
-	}
-
-	return 0, false
-}
-
-func MakeTags(rec map[string]any) map[string]any {
-	tags := make(map[string]any)
-	for k, v := range rec {
-		if v == nil || k == "" || fmt.Sprintf("%v", v) == "" {
-			continue
-		}
-		if k[0] == '_' {
-			continue
-		}
-		tags[k] = v
-	}
-	return tags
-}
-
-func GetFloat64SliceJSON(m map[string]any, key string) ([]float64, bool) {
-	val, ok := m[key]
-	if !ok || val == nil {
-		return nil, false
-	}
-	sliceString, ok := val.(string)
-	if !ok {
-		return nil, false
-	}
-	var floatSlice []float64
-	if err := json.Unmarshal([]byte(sliceString), &floatSlice); err != nil {
-		return nil, false
-	}
-	return floatSlice, true
 }

@@ -632,7 +632,7 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 		tenant := t.ExemplarProcessor.GetTenant(ctx, t.OrgID)
 		if tenant != nil {
 			trieClusterManager := tenant.GetTrieClusterManager()
-			fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
+			fingerprint, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
 			if err == nil {
 				(*row)[wkk.RowKeyCFingerprint] = fingerprint
 			}

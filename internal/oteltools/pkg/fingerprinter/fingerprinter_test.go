@@ -50,7 +50,7 @@ func TestFingerprinter(t *testing.T) {
 		input     string
 		want      string
 		wantLevel string
-		wantJSON  map[string]any
+		wantJSON  []string
 	}{
 		{
 			"empty",
@@ -247,15 +247,7 @@ func TestFingerprinter(t *testing.T) {
 			`2024-06-16T18:37:46.053Z	info	chqs3exporter@v0.31.0/exporter.go:142	Wrote buffer	{"kind": "exporter", "data_type": "traces", "name": "chqs3/chqside", "telemetryType": "traces", "timebox": 1718562910000, "prefix": "traces_1718562910000", "rows": 398}`,
 			"<ISO8601> <Loglevel> <ModuleName> wrote buffer",
 			"info",
-			map[string]any{
-				"kind":          "exporter",
-				"data_type":     "traces",
-				"name":          "chqs3/chqside",
-				"telemetryType": "traces",
-				"timebox":       float64(1718562910000),
-				"prefix":        "traces_1718562910000",
-				"rows":          float64(398),
-			},
+			[]string{"data_type", "kind", "name", "prefix", "rows", "telemetryType", "timebox"},
 		},
 		{
 			"big json",
@@ -292,36 +284,15 @@ func TestFingerprinter(t *testing.T) {
 }`,
 			"inforeceived license validation request for movieid <Identifier>",
 			"info",
-			map[string]any{
-				"level":    "INFO",
-				"time":     "2024-06-16T18:41:32.309Z",
-				"pid":      float64(1),
-				"hostname": "license-service-67665d5cbc-kxjwm",
-				"req": map[string]any{
-					"id":     float64(10498845),
-					"method": "GET",
-					"url":    "/license/validate/SLWHPA",
-					"query":  map[string]any{},
-					"params": map[string]any{},
-					"headers": map[string]any{
-						"host":                        "license-service.movies-demo.svc.cluster.local:3000",
-						"connection":                  "keep-alive",
-						"x-datadog-trace-id":          "7967234482582441354",
-						"x-datadog-parent-id":         "7099643630873179430",
-						"x-datadog-sampling-priority": "1",
-						"x-datadog-tags":              "_dd.p.dm=-1,_dd.p.tid=666f31dc00000000",
-						"traceparent":                 "00-666f31dc000000006e914d8cb891cd8a-628700444a0f7526-01",
-						"tracestate":                  "dd=s:1;p:628700444a0f7526;t.dm:-1;t.tid:666f31dc00000000",
-						"accept":                      "*/*",
-						"accept-language":             "*",
-						"sec-fetch-mode":              "cors",
-						"user-agent":                  "node",
-						"accept-encoding":             "gzip, deflate",
-					},
-					"remoteAddress": "::ffff:10.0.7.2",
-					"remotePort":    float64(45536),
-				},
-				"msg": "Received license validation request for movieId=SLWHPA",
+			[]string{
+				"hostname", "level", "msg", "pid",
+				"req.headers.accept", "req.headers.accept-encoding", "req.headers.accept-language",
+				"req.headers.connection", "req.headers.host", "req.headers.sec-fetch-mode",
+				"req.headers.traceparent", "req.headers.tracestate", "req.headers.user-agent",
+				"req.headers.x-datadog-parent-id", "req.headers.x-datadog-sampling-priority",
+				"req.headers.x-datadog-tags", "req.headers.x-datadog-trace-id",
+				"req.id", "req.method", "req.remoteAddress", "req.remotePort", "req.url",
+				"time",
 			},
 		},
 		{
@@ -336,11 +307,11 @@ func TestFingerprinter(t *testing.T) {
 	for _, tt := range tests {
 		fp := NewFingerprinter()
 		t.Run(tt.name, func(t *testing.T) {
-			tokenMap, level, js, err := fp.testTokenizeInput(tt.input)
+			tokenMap, level, jsonKeys, err := fp.testTokenizeInput(tt.input)
 			assert.NoError(t, err, "input: %s", tt.input)
 			assert.Equal(t, tt.want, strings.Join(tokenMap.items, " "), "input: %s", tt.input)
 			assert.Equal(t, tt.wantLevel, level, "input: %s", tt.input)
-			assert.Equal(t, tt.wantJSON, js, "input: %s", tt.input)
+			assert.Equal(t, tt.wantJSON, jsonKeys, "input: %s", tt.input)
 		})
 	}
 }
@@ -365,9 +336,9 @@ func TestFingerprinterWithLineLimit(t *testing.T) {
 	for _, tt := range tests {
 		fp := NewFingerprinter(WithMaxTokens(5))
 		t.Run(tt.name, func(t *testing.T) {
-			tokenMap, _, js, err := fp.testTokenizeInput(tt.input)
+			tokenMap, _, jsonKeys, err := fp.testTokenizeInput(tt.input)
 			assert.NoError(t, err)
-			assert.Nil(t, js)
+			assert.Nil(t, jsonKeys)
 			assert.Equal(t, tt.want, strings.Join(tokenMap.items, " "))
 		})
 	}
@@ -379,7 +350,7 @@ func BenchmarkFingerprinter1(b *testing.B) {
 	fp := NewFingerprinter()
 	log.Printf("Running loop for %d times", b.N)
 	for b.Loop() {
-		_, _, _, err := fp.Fingerprint(input, clusterManager)
+		_, _, err := fp.Fingerprint(input, clusterManager)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -604,11 +575,10 @@ func BenchmarkIsWord(b *testing.B) {
 func TestTokenMapConstruction(t *testing.T) {
 	clusterManager := NewTrieClusterManager(0.5)
 	fp := NewFingerprinter()
-	fingerprint, s, js, err := fp.Fingerprint("INFO Received request for /api/v1/endpoint from userId=12345", clusterManager)
+	fingerprint, level, err := fp.Fingerprint("INFO Received request for /api/v1/endpoint from userId=12345", clusterManager)
 	assert.NoError(t, err)
 	assert.NotEqual(t, 0, fingerprint)
-	assert.Equal(t, s, "info")
-	assert.Empty(t, js)
+	assert.Equal(t, level, "info")
 }
 
 func TestJSONBodyFingerprint(t *testing.T) {
@@ -622,10 +592,9 @@ func TestJSONBodyFingerprint(t *testing.T) {
 	msg := lr.Body().AsString()
 	clusterManager := NewTrieClusterManager(0.5)
 	fp := NewFingerprinter()
-	fingerprint, _, js, err := fp.Fingerprint(msg, clusterManager)
+	fingerprint, _, err := fp.Fingerprint(msg, clusterManager)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(-2925397474039508433), fingerprint)
-	assert.NotEmpty(t, js)
 }
 
 func TestFingerprintIdenticality(t *testing.T) {
@@ -747,18 +716,13 @@ func TestFingerprintIdenticality(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fingerprint1, _, js, err := fp.Fingerprint(tt.inputs[0], clusterManager)
+			fingerprint1, _, err := fp.Fingerprint(tt.inputs[0], clusterManager)
 			require.NoError(t, err)
-			if tt.expectJSON {
-				require.NotNil(t, js)
-			}
+			// Note: We no longer check for JSON since it's not returned
 			for i := 1; i < len(tt.inputs); i++ {
-				fingerprint2, _, js, err := fp.Fingerprint(tt.inputs[i], clusterManager)
+				fingerprint2, _, err := fp.Fingerprint(tt.inputs[i], clusterManager)
 				require.NoError(t, err)
 				require.Equal(t, fingerprint1, fingerprint2)
-				if tt.expectJSON {
-					require.NotNil(t, js)
-				}
 			}
 		})
 	}
@@ -791,10 +755,10 @@ func TestFingerprintJSON(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			clusterManager := NewTrieClusterManager(0.5)
 			fp := NewFingerprinter()
-			fingerprint, _, js, err := fp.Fingerprint(tt.input, clusterManager)
+			fingerprint, _, err := fp.Fingerprint(tt.input, clusterManager)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedFingerprint, fingerprint, "input: %s", tt.input)
-			assert.NotNil(t, js, "input: %s", tt.input)
+			// Note: We no longer check for JSON since it's not returned
 		})
 	}
 }

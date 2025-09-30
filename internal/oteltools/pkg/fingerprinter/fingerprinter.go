@@ -41,7 +41,7 @@ const (
 
 type Fingerprinter interface {
 	IsWord(word string) bool
-	Fingerprint(input string, clusterManager *TrieClusterManager) (fingerprint int64, level string, js map[string]any, err error)
+	Fingerprint(input string, clusterManager *TrieClusterManager) (fingerprint int64, level string, err error)
 }
 
 type fingerprinterImpl struct {
@@ -175,18 +175,20 @@ func (fp *fingerprinterImpl) tokenizeJSONContent(prefix string, data map[string]
 	return s, level, nil
 }
 
-func (fp *fingerprinterImpl) Fingerprint(input string, clusterManager *TrieClusterManager) (fingerprint int64, level string, js map[string]any, err error) {
-	t, level, js, err := fp.tokenizeInput(input)
+func (fp *fingerprinterImpl) Fingerprint(input string, clusterManager *TrieClusterManager) (fingerprint int64, level string, err error) {
+	t, level, jsonKeys, err := fp.tokenizeInput(input)
 	if err != nil {
-		return 0, "", nil, err
+		return 0, "", err
 	}
 	defer putTokenSeq(t) // Return to pool when done
 
-	t.jsonKeys = maputils.DeepKeys(js)
+	// Set JSON keys if we parsed JSON
+	t.jsonKeys = jsonKeys
+
 	if len(t.jsonKeys) > 0 {
-		return fp.fingerprintItemsAndJSONKeys(t), level, js, nil
+		return fp.fingerprintItemsAndJSONKeys(t), level, nil
 	}
-	return clusterManager.cluster(t), level, js, nil
+	return clusterManager.cluster(t), level, nil
 }
 
 func (fp *fingerprinterImpl) fingerprintItemsAndJSONKeys(t *tokenSeq) int64 {
@@ -204,7 +206,7 @@ func (fp *fingerprinterImpl) fingerprintItemsAndJSONKeys(t *tokenSeq) int64 {
 	return int64(h.Sum64())
 }
 
-func (fp *fingerprinterImpl) tokenizeInput(input string) (*tokenSeq, string, map[string]any, error) {
+func (fp *fingerprinterImpl) tokenizeInput(input string) (*tokenSeq, string, []string, error) {
 	// Do some light pre-processing here to make it easier on the ragel code.
 	input = strings.TrimSpace(input)
 	input = stringutils.RemoveANSICodes(input)
@@ -213,7 +215,7 @@ func (fp *fingerprinterImpl) tokenizeInput(input string) (*tokenSeq, string, map
 	if jsonContent != "" {
 		// Get pooled map for JSON parsing
 		data := getJSONMap()
-		defer putJSONMap(data)
+		defer putJSONMap(data) // Always return to pool when done
 
 		// Try to parse JSON
 		err := json.Unmarshal([]byte(jsonContent), &data)
@@ -227,13 +229,11 @@ func (fp *fingerprinterImpl) tokenizeInput(input string) (*tokenSeq, string, map
 			if err != nil {
 				return newTokenSeq(), "", nil, err
 			}
-			// Return a copy of data to avoid issues with pooled map
-			result := make(map[string]any, len(data))
-			for k, v := range data {
-				result[k] = v
-			}
-			return tokenized, level, result, nil
+			// Extract keys before returning map to pool
+			jsonKeys := maputils.DeepKeys(data)
+			return tokenized, level, jsonKeys, nil
 		}
+		// JSON parsing failed, map will be returned to pool via defer
 	}
 
 	// Truncate the string to the first newline or CR character
@@ -252,7 +252,7 @@ func (fp *fingerprinterImpl) testTokenizeString(input string) (*tokenSeq, string
 	return fp.tokenizeString(input)
 }
 
-func (fp *fingerprinterImpl) testTokenizeInput(input string) (*tokenSeq, string, map[string]any, error) {
+func (fp *fingerprinterImpl) testTokenizeInput(input string) (*tokenSeq, string, []string, error) {
 	return fp.tokenizeInput(input)
 }
 

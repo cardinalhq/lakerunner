@@ -34,7 +34,7 @@ func TestSimpleClustering(t *testing.T) {
 
 	fps := make([]int64, len(messages))
 	for i, msg := range messages {
-		fp, _, _, err := fpr.Fingerprint(msg, clusterManager)
+		fp, _, err := fpr.Fingerprint(msg, clusterManager)
 		assert.NoError(t, err)
 		fps[i] = fp
 	}
@@ -62,7 +62,7 @@ func TestEnvoyAccessLogClustering(t *testing.T) {
 	// Fingerprint the messages, and ensure they all have the same fingerprint.
 	fps := make([]int64, 0)
 	for _, msg := range []string{message1, message2, message3, message4, message5, message6, message7} {
-		fp, _, _, err := fpr.Fingerprint(msg, clusterManager)
+		fp, _, err := fpr.Fingerprint(msg, clusterManager)
 		assert.NoError(t, err)
 		fps = append(fps, fp)
 	}
@@ -85,7 +85,7 @@ func TestClusteringOnReadingGlob(t *testing.T) {
 	// Fingerprint the messages, and ensure they all have the same fingerprint.
 	fps := make([]int64, 0)
 	for _, msg := range []string{message1, message2} {
-		fp, _, _, err := fpr.Fingerprint(msg, clusterManager)
+		fp, _, err := fpr.Fingerprint(msg, clusterManager)
 		assert.NoError(t, err)
 		fps = append(fps, fp)
 	}
@@ -106,7 +106,7 @@ func TestClusteringOnLorenIpsum(t *testing.T) {
 	// Fingerprint the messages, and ensure they all have the same fingerprint.
 	fps := make([]int64, 0)
 	for _, msg := range []string{message1, message2, message3, message4, message5} {
-		fp, _, _, err := fpr.Fingerprint(msg, clusterManager)
+		fp, _, err := fpr.Fingerprint(msg, clusterManager)
 		assert.NoError(t, err)
 		fps = append(fps, fp)
 	}
@@ -120,8 +120,8 @@ func TestClusteringOnLorenIpsum(t *testing.T) {
 func TestPartialPrefixDivergence(t *testing.T) {
 	cm := NewTrieClusterManager(0.8)
 	fpr := NewFingerprinter(WithMaxTokens(50))
-	fp1, _, _, _ := fpr.Fingerprint("foo bar baz qux", cm)
-	fp2, _, _, _ := fpr.Fingerprint("foo bar baz quux", cm)
+	fp1, _, _ := fpr.Fingerprint("foo bar baz qux", cm)
+	fp2, _, _ := fpr.Fingerprint("foo bar baz quux", cm)
 	// share prefix “foo bar baz”
 	assert.NotEqual(t, fp1, fp2, "should be distinct clusters under the same subtrie")
 }

@@ -188,7 +188,7 @@ func (r *IngestProtoLogsReader) buildLogRow(ctx context.Context, rl plog.Resourc
 	if r.exemplarProcessor != nil {
 		tenant := r.exemplarProcessor.GetTenant(ctx, r.orgId)
 		trieClusterManager := tenant.GetTrieClusterManager()
-		fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
+		fingerprint, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
 		if err == nil {
 			ret["_cardinalhq_fingerprint"] = fingerprint
 		}

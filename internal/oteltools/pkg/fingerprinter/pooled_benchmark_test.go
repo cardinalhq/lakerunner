@@ -35,7 +35,7 @@ func BenchmarkFingerprintingWithPools(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		input := testInputs[i%len(testInputs)]
-		_, _, _, _ = fp.Fingerprint(input, clusterManager)
+		_, _, _ = fp.Fingerprint(input, clusterManager)
 	}
 }
 

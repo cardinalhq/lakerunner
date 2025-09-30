@@ -16,6 +16,6 @@ package fingerprinter
 
 var fpr = NewFingerprinter()
 
-func Fingerprint(input string, clusterManager *TrieClusterManager) (fingerprint int64, level string, js map[string]any, err error) {
+func Fingerprint(input string, clusterManager *TrieClusterManager) (fingerprint int64, level string, err error) {
 	return fpr.Fingerprint(input, clusterManager)
 }

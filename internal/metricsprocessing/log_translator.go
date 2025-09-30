@@ -93,7 +93,7 @@ func (t *LogTranslator) setFingerprint(ctx context.Context, row *filereader.Row)
 
 	tenant := t.exemplarProcessor.GetTenant(ctx, t.orgID)
 	trieClusterManager := tenant.GetTrieClusterManager()
-	fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
+	fingerprint, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
 	if err == nil {
 		(*row)[wkk.RowKeyCFingerprint] = fingerprint
 	}

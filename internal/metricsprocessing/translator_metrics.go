@@ -21,7 +21,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -61,8 +60,8 @@ func (t *MetricTranslator) TranslateRow(_ context.Context, row *filereader.Row) 
 
 	filterKeys(row)
 
-	rowMap := pipeline.ToStringMap(*row)
-	tid := fingerprinter.ComputeTID(rowMap)
+	// Compute TID directly from wkk.RowKey map without conversion
+	tid := fingerprinter.ComputeTID(*row)
 	(*row)[wkk.RowKeyCTID] = tid
 
 	return nil
