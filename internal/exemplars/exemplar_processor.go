@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"

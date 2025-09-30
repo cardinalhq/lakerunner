@@ -147,9 +147,9 @@ projects/test/sub,123,2025-09-20T19:39:45.000Z,"{""event"":""test"",""value"":42
 		assert.Equal(t, "projects/test/sub", row[wkk.NewRowKey("log_subscription_name")])
 		assert.Equal(t, int64(123), row[wkk.NewRowKey("log_message_id")])
 		// Resource fields
-		assert.Equal(t, "test-bucket", row[wkk.NewRowKey("resource_bucket_name")])
-		assert.Equal(t, "./logs.csv", row[wkk.NewRowKey("resource_file_name")])
-		assert.Equal(t, "logs", row[wkk.NewRowKey("resource_file_type")]) // GetFileType returns filename without extension
+		assert.Equal(t, "test-bucket", row[wkk.RowKeyResourceBucketName])
+		assert.Equal(t, "./logs.csv", row[wkk.RowKeyResourceFileName])
+		assert.Equal(t, "logs", row[wkk.RowKeyResourceFileType]) // GetFileType returns filename without extension
 	})
 }
 

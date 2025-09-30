@@ -1,0 +1,361 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "k8s.namespace.name",
+            "value": {
+              "stringValue": "default"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {},
+          "logRecords": [
+            {
+              "body": {
+                "kvlistValue": {
+                  "values": [
+                    {
+                      "key": "type",
+                      "value": {
+                        "stringValue": "MODIFIED"
+                      }
+                    },
+                    {
+                      "key": "object",
+                      "value": {
+                        "kvlistValue": {
+                          "values": [
+                            {
+                              "key": "kind",
+                              "value": {
+                                "stringValue": "Event"
+                              }
+                            },
+                            {
+                              "key": "apiVersion",
+                              "value": {
+                                "stringValue": "v1"
+                              }
+                            },
+                            {
+                              "key": "metadata",
+                              "value": {
+                                "kvlistValue": {
+                                  "values": [
+                                    {
+                                      "key": "namespace",
+                                      "value": {
+                                        "stringValue": "default"
+                                      }
+                                    },
+                                    {
+                                      "key": "uid",
+                                      "value": {
+                                        "stringValue": "4c007afc-7c91-4434-b541-ca96a93ceed5"
+                                      }
+                                    },
+                                    {
+                                      "key": "resourceVersion",
+                                      "value": {
+                                        "stringValue": "58264795"
+                                      }
+                                    },
+                                    {
+                                      "key": "creationTimestamp",
+                                      "value": {
+                                        "stringValue": "2025-01-04T06:48:07Z"
+                                      }
+                                    },
+                                    {
+                                      "key": "managedFields",
+                                      "value": {
+                                        "arrayValue": {
+                                          "values": [
+                                            {
+                                              "kvlistValue": {
+                                                "values": [
+                                                  {
+                                                    "key": "manager",
+                                                    "value": {
+                                                      "stringValue": "karpenter"
+                                                    }
+                                                  },
+                                                  {
+                                                    "key": "operation",
+                                                    "value": {
+                                                      "stringValue": "Update"
+                                                    }
+                                                  },
+                                                  {
+                                                    "key": "apiVersion",
+                                                    "value": {
+                                                      "stringValue": "v1"
+                                                    }
+                                                  },
+                                                  {
+                                                    "key": "time",
+                                                    "value": {
+                                                      "stringValue": "2025-01-10T03:08:10Z"
+                                                    }
+                                                  },
+                                                  {
+                                                    "key": "fieldsType",
+                                                    "value": {
+                                                      "stringValue": "FieldsV1"
+                                                    }
+                                                  },
+                                                  {
+                                                    "key": "fieldsV1",
+                                                    "value": {
+                                                      "kvlistValue": {
+                                                        "values": [
+                                                          {
+                                                            "key": "f:count",
+                                                            "value": {
+                                                              "kvlistValue": {}
+                                                            }
+                                                          },
+                                                          {
+                                                            "key": "f:source",
+                                                            "value": {
+                                                              "kvlistValue": {
+                                                                "values": [
+                                                                  {
+                                                                    "key": "f:component",
+                                                                    "value": {
+                                                                      "kvlistValue": {}
+                                                                    }
+                                                                  }
+                                                                ]
+                                                              }
+                                                            }
+                                                          },
+                                                          {
+                                                            "key": "f:type",
+                                                            "value": {
+                                                              "kvlistValue": {}
+                                                            }
+                                                          },
+                                                          {
+                                                            "key": "f:firstTimestamp",
+                                                            "value": {
+                                                              "kvlistValue": {}
+                                                            }
+                                                          },
+                                                          {
+                                                            "key": "f:involvedObject",
+                                                            "value": {
+                                                              "kvlistValue": {}
+                                                            }
+                                                          },
+                                                          {
+                                                            "key": "f:lastTimestamp",
+                                                            "value": {
+                                                              "kvlistValue": {}
+                                                            }
+                                                          },
+                                                          {
+                                                            "key": "f:message",
+                                                            "value": {
+                                                              "kvlistValue": {}
+                                                            }
+                                                          },
+                                                          {
+                                                            "key": "f:reason",
+                                                            "value": {
+                                                              "kvlistValue": {}
+                                                            }
+                                                          },
+                                                          {
+                                                            "key": "f:reportingComponent",
+                                                            "value": {
+                                                              "kvlistValue": {}
+                                                            }
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "key": "name",
+                                      "value": {
+                                        "stringValue": "ip-10-181-4-148.us-east-2.compute.internal.18176a81cb04af99"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            {
+                              "key": "firstTimestamp",
+                              "value": {
+                                "stringValue": "2025-01-04T06:48:07Z"
+                              }
+                            },
+                            {
+                              "key": "lastTimestamp",
+                              "value": {
+                                "stringValue": "2025-01-10T03:08:10Z"
+                              }
+                            },
+                            {
+                              "key": "count",
+                              "value": {
+                                "intValue": "4202"
+                              }
+                            },
+                            {
+                              "key": "involvedObject",
+                              "value": {
+                                "kvlistValue": {
+                                  "values": [
+                                    {
+                                      "key": "resourceVersion",
+                                      "value": {
+                                        "stringValue": "55836990"
+                                      }
+                                    },
+                                    {
+                                      "key": "kind",
+                                      "value": {
+                                        "stringValue": "Node"
+                                      }
+                                    },
+                                    {
+                                      "key": "name",
+                                      "value": {
+                                        "stringValue": "ip-10-181-4-148.us-east-2.compute.internal"
+                                      }
+                                    },
+                                    {
+                                      "key": "uid",
+                                      "value": {
+                                        "stringValue": "a2e6adab-5efa-4153-9375-515d6f9bb453"
+                                      }
+                                    },
+                                    {
+                                      "key": "apiVersion",
+                                      "value": {
+                                        "stringValue": "v1"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            {
+                              "key": "message",
+                              "value": {
+                                "stringValue": "Cannot disrupt Node: state node doesn't contain both a node and a nodeclaim"
+                              }
+                            },
+                            {
+                              "key": "reason",
+                              "value": {
+                                "stringValue": "DisruptionBlocked"
+                              }
+                            },
+                            {
+                              "key": "eventTime",
+                              "value": {}
+                            },
+                            {
+                              "key": "reportingInstance",
+                              "value": {
+                                "stringValue": ""
+                              }
+                            },
+                            {
+                              "key": "source",
+                              "value": {
+                                "kvlistValue": {
+                                  "values": [
+                                    {
+                                      "key": "component",
+                                      "value": {
+                                        "stringValue": "karpenter"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            {
+                              "key": "type",
+                              "value": {
+                                "stringValue": "Normal"
+                              }
+                            },
+                            {
+                              "key": "reportingComponent",
+                              "value": {
+                                "stringValue": "karpenter"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "spanId": "",
+              "traceId": "",
+              "attributes": [
+                {
+                  "key": "k8s.resource.name",
+                  "value": {
+                    "stringValue": "events"
+                  }
+                },
+                {
+                  "key": "event.domain",
+                  "value": {
+                    "stringValue": "k8s"
+                  }
+                },
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "ip-10-181-4-148.us-east-2.compute.internal.18176a81cb04af99"
+                  }
+                },
+                {
+                  "key": "_cardinalhq.tokens",
+                  "value": {
+                    "arrayValue": {}
+                  }
+                },
+                {
+                  "key": "_cardinalhq.fingerprint",
+                  "value": {
+                    "intValue": "-1205034819632174695"
+                  }
+                },
+                {
+                  "key": "_cardinalhq.level",
+                  "value": {
+                    "stringValue": ""
+                  }
+                }
+              ],
+              "observedTimeUnixNano": "1736478490594608281"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

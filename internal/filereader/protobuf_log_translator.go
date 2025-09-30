@@ -101,7 +101,8 @@ func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row
 
 	// Handle message: use body if _cardinalhq.message not set
 	if _, ok := (*row)[wkk.RowKeyCMessage]; !ok {
-		if body, exists := (*row)[wkk.NewRowKey("body")]; exists {
+		bodyKey := wkk.NewRowKey("body")
+		if body, exists := (*row)[bodyKey]; exists {
 			if message, isString := body.(string); isString && message != "" {
 				(*row)[wkk.RowKeyCMessage] = message
 			}
@@ -109,9 +110,9 @@ func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row
 	}
 
 	// Add resource fields (only for logs signal)
-	(*row)[wkk.NewRowKey("resource_bucket_name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource_file_name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource_file_type")] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.RowKeyResourceBucketName] = t.bucket
+	(*row)[wkk.RowKeyResourceFileName] = "./" + t.objectID
+	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.objectID)
 
 	return nil
 }

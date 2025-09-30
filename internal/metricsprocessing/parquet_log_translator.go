@@ -22,13 +22,141 @@ import (
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
-	"github.com/cardinalhq/oteltools/pkg/translate"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+)
+
+// Pre-defined well-known keys for field detection
+var (
+	// timestampNsKey: "timestamp_ns" (nanoseconds)
+	timestampNsKey = wkk.NewRowKey("timestamp_ns")
+
+	// timestampNanosKey: "timestamp_nanos" (nanoseconds)
+	timestampNanosKey = wkk.NewRowKey("timestamp_nanos")
+
+	// timestampNanoKey: "timestamp_nano" (nanoseconds)
+	timestampNanoKey = wkk.NewRowKey("timestamp_nano")
+
+	// tsnsKey: "tsns" (nanoseconds)
+	tsnsKey = wkk.NewRowKey("tsns")
+
+	// timestampUsKey: "timestamp_us" (microseconds)
+	timestampUsKey = wkk.NewRowKey("timestamp_us")
+
+	// timestampMicrosKey: "timestamp_micros" (microseconds)
+	timestampMicrosKey = wkk.NewRowKey("timestamp_micros")
+
+	// timestampMicroKey: "timestamp_micro" (microseconds)
+	timestampMicroKey = wkk.NewRowKey("timestamp_micro")
+
+	// timestampKey: "timestamp" (milliseconds)
+	timestampKey = wkk.NewRowKey("timestamp")
+
+	// atTimestampKey: "@timestamp" (Elastic-style)
+	atTimestampKey = wkk.NewRowKey("@timestamp")
+
+	// timeKey: "time"
+	timeKey = wkk.NewRowKey("time")
+
+	// tsKey: "ts"
+	tsKey = wkk.NewRowKey("ts")
+
+	// datetimeKey: "datetime"
+	datetimeKey = wkk.NewRowKey("datetime")
+
+	// dateTimeKey: "date_time"
+	dateTimeKey = wkk.NewRowKey("date_time")
+
+	// eventTimeKey: "event_time"
+	eventTimeKey = wkk.NewRowKey("event_time")
+
+	// eventDotTimeKey: "event.time"
+	eventDotTimeKey = wkk.NewRowKey("event.time")
+
+	// logTimestampKey: "log_timestamp"
+	logTimestampKey = wkk.NewRowKey("log_timestamp")
+
+	// logDotTimestampKey: "log.timestamp"
+	logDotTimestampKey = wkk.NewRowKey("log.timestamp")
+
+	// timestampMsKey: "timestamp_ms" (milliseconds)
+	timestampMsKey = wkk.NewRowKey("timestamp_ms")
+
+	// timestampMillisKey: "timestamp_millis" (milliseconds)
+	timestampMillisKey = wkk.NewRowKey("timestamp_millis")
+
+	// messageKey: "message"
+	messageKey = wkk.NewRowKey("message")
+
+	// msgKey: "msg"
+	msgKey = wkk.NewRowKey("msg")
+
+	// bodyKey: "body"
+	bodyKey = wkk.NewRowKey("body")
+
+	// logKey: "log"
+	logKey = wkk.NewRowKey("log")
+
+	// logMessageKey: "log_message"
+	logMessageKey = wkk.NewRowKey("log_message")
+
+	// logDotMessageKey: "log.message"
+	logDotMessageKey = wkk.NewRowKey("log.message")
+
+	// textKey: "text"
+	textKey = wkk.NewRowKey("text")
+
+	// contentKey: "content"
+	contentKey = wkk.NewRowKey("content")
+
+	// eventKey: "event"
+	eventKey = wkk.NewRowKey("event")
+
+	// eventDotMessageKey: "event.message"
+	eventDotMessageKey = wkk.NewRowKey("event.message")
+
+	// rawKey: "raw"
+	rawKey = wkk.NewRowKey("raw")
+
+	// rawMessageKey: "raw_message"
+	rawMessageKey = wkk.NewRowKey("raw_message")
+
+	// severityTextKey: "severity_text"
+	severityTextKey = wkk.NewRowKey("severity_text")
+
+	// severityTextAltKey: "severityText" (camelCase)
+	severityTextAltKey = wkk.NewRowKey("severityText")
+
+	// severityDotTextKey: "severity.text"
+	severityDotTextKey = wkk.NewRowKey("severity.text")
+
+	// levelKey: "level"
+	levelKey = wkk.NewRowKey("level")
+
+	// logLevelKey: "log_level"
+	logLevelKey = wkk.NewRowKey("log_level")
+
+	// logDotLevelKey: "log.level"
+	logDotLevelKey = wkk.NewRowKey("log.level")
+
+	// loglevelKey: "loglevel"
+	loglevelKey = wkk.NewRowKey("loglevel")
+
+	// logLevelCamelKey: "logLevel" (camelCase)
+	logLevelCamelKey = wkk.NewRowKey("logLevel")
+
+	// severityKey: "severity"
+	severityKey = wkk.NewRowKey("severity")
+
+	// sevKey: "sev"
+	sevKey = wkk.NewRowKey("sev")
+
+	// lvlKey: "lvl"
+	lvlKey = wkk.NewRowKey("lvl")
 )
 
 // ParquetLogTranslator handles Parquet-specific log translation with timestamp detection and fingerprinting
@@ -89,16 +217,15 @@ type timestampResult struct {
 // Returns both millisecond and nanosecond precision if available, plus the field name that was used
 func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (timestampResult, string) {
 	// Check for nanosecond precision fields first
-	nanosecondFields := []string{
-		"timestamp_ns",
-		"timestamp_nanos",
-		"timestamp_nano",
-		"tsns",
-		"_cardinalhq.tsns",
+	nanosecondFields := []wkk.RowKey{
+		timestampNsKey,
+		timestampNanosKey,
+		timestampNanoKey,
+		tsnsKey,
+		wkk.RowKeyCTsns,
 	}
 
-	for _, field := range nanosecondFields {
-		key := wkk.NewRowKey(field)
+	for _, key := range nanosecondFields {
 		if val, exists := (*row)[key]; exists {
 			switch v := val.(type) {
 			case int64:
@@ -107,27 +234,26 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (timest
 					ms:    v / 1000000, // Convert ns to ms
 					ns:    v,
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			case float64:
 				ns := int64(v)
 				return timestampResult{
 					ms:    ns / 1000000,
 					ns:    ns,
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			}
 		}
 	}
 
 	// Check for microsecond precision fields
-	microsecondFields := []string{
-		"timestamp_us",
-		"timestamp_micros",
-		"timestamp_micro",
+	microsecondFields := []wkk.RowKey{
+		timestampUsKey,
+		timestampMicrosKey,
+		timestampMicroKey,
 	}
 
-	for _, field := range microsecondFields {
-		key := wkk.NewRowKey(field)
+	for _, key := range microsecondFields {
 		if val, exists := (*row)[key]; exists {
 			switch v := val.(type) {
 			case int64:
@@ -136,36 +262,35 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (timest
 					ms:    v / 1000, // Convert us to ms
 					ns:    v * 1000, // Convert us to ns
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			case float64:
 				us := int64(v)
 				return timestampResult{
 					ms:    us / 1000,
 					ns:    us * 1000,
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			}
 		}
 	}
 
 	// Common millisecond/general timestamp field names
-	timestampFields := []string{
-		"timestamp",
-		"@timestamp",
-		"time",
-		"ts",
-		"datetime",
-		"date_time",
-		"event_time",
-		"event.time",
-		"log_timestamp",
-		"log.timestamp",
-		"timestamp_ms",
-		"timestamp_millis",
+	timestampFields := []wkk.RowKey{
+		timestampKey,
+		atTimestampKey,
+		timeKey,
+		tsKey,
+		datetimeKey,
+		dateTimeKey,
+		eventTimeKey,
+		eventDotTimeKey,
+		logTimestampKey,
+		logDotTimestampKey,
+		timestampMsKey,
+		timestampMillisKey,
 	}
 
-	for _, field := range timestampFields {
-		key := wkk.NewRowKey(field)
+	for _, key := range timestampFields {
 		if val, exists := (*row)[key]; exists {
 			// Try to convert to int64 (assume milliseconds unless it's time.Time)
 			switch v := val.(type) {
@@ -175,49 +300,49 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (timest
 					ms:    v,
 					ns:    v * 1000000, // Convert ms to ns
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			case int32:
 				ms := int64(v)
 				return timestampResult{
 					ms:    ms,
 					ns:    ms * 1000000,
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			case float64:
 				ms := int64(v)
 				return timestampResult{
 					ms:    ms,
 					ns:    ms * 1000000,
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			case float32:
 				ms := int64(v)
 				return timestampResult{
 					ms:    ms,
 					ns:    ms * 1000000,
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			case int:
 				ms := int64(v)
 				return timestampResult{
 					ms:    ms,
 					ns:    ms * 1000000,
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			case time.Time:
 				// Handle time.Time objects with full precision
 				return timestampResult{
 					ms:    v.UnixMilli(),
 					ns:    v.UnixNano(),
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			case arrow.Timestamp:
 				// Handle Arrow timestamps - value is already in milliseconds
 				return timestampResult{
 					ms:    int64(v),
 					ns:    int64(v) * 1000000, // Convert ms to ns
 					found: true,
-				}, field
+				}, wkk.RowKeyValue(key)
 			default:
 				// Try to extract int64 value from other types (like arrow types)
 				if tsValue, ok := extractInt64(v); ok {
@@ -225,7 +350,7 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (timest
 						ms:    tsValue,
 						ns:    tsValue * 1000000, // Convert ms to ns
 						found: true,
-					}, field
+					}, wkk.RowKeyValue(key)
 				}
 			case *time.Time:
 				if v != nil {
@@ -233,7 +358,7 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (timest
 						ms:    v.UnixMilli(),
 						ns:    v.UnixNano(),
 						found: true,
-					}, field
+					}, wkk.RowKeyValue(key)
 				}
 			}
 		}
@@ -256,7 +381,7 @@ func (t *ParquetLogTranslator) detectTimestampField(row *filereader.Row) (timest
 // extractInt64 attempts to extract int64 value from numeric types only
 // Does NOT attempt to parse string representations to avoid parsing
 // human-readable timestamps like "2025-09-13 18:09:15" as "2025"
-func extractInt64(val interface{}) (int64, bool) {
+func extractInt64(val any) (int64, bool) {
 	switch v := val.(type) {
 	case int64:
 		return v, true
@@ -280,23 +405,30 @@ func extractInt64(val interface{}) (int64, bool) {
 // Returns the level string (uppercase), a boolean indicating if found, and the field name used
 func (t *ParquetLogTranslator) detectLevelField(row *filereader.Row) (string, bool, string) {
 	// Check common level/severity field names
-	levelFields := []string{
-		"severity_text", "severityText", "severity.text",
-		"level", "log_level", "log.level", "loglevel", "logLevel",
-		"severity", "sev", "lvl",
+	levelFields := []wkk.RowKey{
+		severityTextKey,
+		severityTextAltKey,
+		severityDotTextKey,
+		levelKey,
+		logLevelKey,
+		logDotLevelKey,
+		loglevelKey,
+		logLevelCamelKey,
+		severityKey,
+		sevKey,
+		lvlKey,
 	}
 
-	for _, field := range levelFields {
-		key := wkk.NewRowKey(field)
+	for _, key := range levelFields {
 		if val, exists := (*row)[key]; exists {
 			switch v := val.(type) {
 			case string:
 				if v != "" {
-					return strings.ToUpper(v), true, field
+					return strings.ToUpper(v), true, wkk.RowKeyValue(key)
 				}
 			case []byte:
 				if len(v) > 0 {
-					return strings.ToUpper(string(v)), true, field
+					return strings.ToUpper(string(v)), true, wkk.RowKeyValue(key)
 				}
 			}
 		}
@@ -309,41 +441,39 @@ func (t *ParquetLogTranslator) detectLevelField(row *filereader.Row) (string, bo
 // Returns the message string, a boolean indicating if found, and the field name used
 func (t *ParquetLogTranslator) detectMessageField(row *filereader.Row) (string, bool, string) {
 	// Common message field names to check (in priority order)
-	messageFields := []string{
-		"message",
-		"msg",
-		"body",
-		"log",
-		"log_message",
-		"log.message",
-		"text",
-		"content",
-		"event",
-		"event.message",
-		"raw",
-		"raw_message",
+	messageFields := []wkk.RowKey{
+		messageKey,
+		msgKey,
+		bodyKey,
+		logKey,
+		logMessageKey,
+		logDotMessageKey,
+		textKey,
+		contentKey,
+		eventKey,
+		eventDotMessageKey,
+		rawKey,
+		rawMessageKey,
 	}
 
-	for _, field := range messageFields {
-		key := wkk.NewRowKey(field)
+	for _, key := range messageFields {
 		if val, exists := (*row)[key]; exists {
 			// Try to convert to string
 			switch v := val.(type) {
 			case string:
 				if v != "" {
-					return v, true, field
+					return v, true, wkk.RowKeyValue(key)
 				}
 			case []byte:
 				if len(v) > 0 {
-					return string(v), true, field
+					return string(v), true, wkk.RowKeyValue(key)
 				}
 			}
 		}
 	}
 
 	// Also check for _cardinalhq.message in case it's already present
-	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
-	if val, exists := (*row)[messageKey]; exists {
+	if val, exists := (*row)[wkk.RowKeyCMessage]; exists {
 		if msg, ok := val.(string); ok && msg != "" {
 			return msg, true, "_cardinalhq.message"
 		}
@@ -375,15 +505,15 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 	}
 
 	// Mark timestamp fields as special to avoid duplicating as attributes
-	timestampFieldNames := []string{
-		"timestamp", "@timestamp", "time", "ts", "datetime", "date_time",
-		"event_time", "event.time", "log_timestamp", "log.timestamp",
-		"timestamp_ms", "timestamp_millis", "timestamp_ns", "timestamp_nanos",
-		"timestamp_nano", "tsns", "timestamp_us", "timestamp_micros", "timestamp_micro",
-		"_cardinalhq.tsns",
+	timestampFieldKeys := []wkk.RowKey{
+		timestampKey, atTimestampKey, timeKey, tsKey, datetimeKey, dateTimeKey,
+		eventTimeKey, eventDotTimeKey, logTimestampKey, logDotTimestampKey,
+		timestampMsKey, timestampMillisKey, timestampNsKey, timestampNanosKey,
+		timestampNanoKey, tsnsKey, timestampUsKey, timestampMicrosKey, timestampMicroKey,
+		wkk.RowKeyCTsns,
 	}
-	for _, field := range timestampFieldNames {
-		specialFields[wkk.NewRowKey(field)] = true
+	for _, key := range timestampFieldKeys {
+		specialFields[key] = true
 	}
 
 	// Detect message
@@ -393,12 +523,12 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 	}
 
 	// Mark message fields as special to avoid duplicating as attributes
-	messageFieldNames := []string{
-		"message", "msg", "body", "log", "log_message", "log.message",
-		"text", "content", "event", "event.message", "raw", "raw_message",
+	messageFieldKeys := []wkk.RowKey{
+		messageKey, msgKey, bodyKey, logKey, logMessageKey, logDotMessageKey,
+		textKey, contentKey, eventKey, eventDotMessageKey, rawKey, rawMessageKey,
 	}
-	for _, field := range messageFieldNames {
-		specialFields[wkk.NewRowKey(field)] = true
+	for _, key := range messageFieldKeys {
+		specialFields[key] = true
 	}
 
 	// Detect level/severity
@@ -409,13 +539,14 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 	}
 
 	// Mark level/severity fields as special to avoid duplicating as attributes
-	levelFieldNames := []string{
-		"severity_text", "severityText", "severity.text",
-		"level", "log_level", "log.level", "loglevel", "logLevel",
-		"severity", "sev", "lvl",
+	levelFieldKeys := []wkk.RowKey{
+		severityTextKey, severityTextAltKey, severityDotTextKey,
+		levelKey, logLevelKey, logDotLevelKey,
+		loglevelKey, logLevelCamelKey, severityKey,
+		sevKey, lvlKey,
 	}
-	for _, field := range levelFieldNames {
-		specialFields[wkk.NewRowKey(field)] = true
+	for _, key := range levelFieldKeys {
+		specialFields[key] = true
 	}
 
 	// Process all other fields as attributes (matching OTLP collector behavior)
@@ -475,10 +606,10 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 	}
 
 	// Add standard resource fields
-	(*row)[wkk.NewRowKey("resource_bucket_name")] = t.Bucket
-	(*row)[wkk.NewRowKey("resource_file_name")] = "./" + t.ObjectID
-	(*row)[wkk.NewRowKey("resource_file")] = getResourceFile(t.ObjectID)
-	(*row)[wkk.NewRowKey("resource_file_type")] = helpers.GetFileType(t.ObjectID)
+	(*row)[wkk.RowKeyResourceBucketName] = t.Bucket
+	(*row)[wkk.RowKeyResourceFileName] = "./" + t.ObjectID
+	(*row)[wkk.RowKeyResourceFile] = getResourceFile(t.ObjectID)
+	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.ObjectID)
 
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"
@@ -488,14 +619,13 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 	// Set timestamp fields with proper precision
 	(*row)[wkk.RowKeyCTimestamp] = timestampMs
 	// Set nanosecond timestamp with preserved precision
-	(*row)[wkk.NewRowKey("_cardinalhq_tsns")] = timestampNs
+	(*row)[wkk.RowKeyCTsns] = timestampNs
 
 	// Set message field
-	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
-	(*row)[messageKey] = message
+	(*row)[wkk.RowKeyCMessage] = message
 
 	// Set level field
-	(*row)[wkk.NewRowKey("_cardinalhq_level")] = level
+	(*row)[wkk.RowKeyCLevel] = level
 
 	// Fingerprint the message if we have one and an exemplar processor
 	if message != "" && t.ExemplarProcessor != nil {
@@ -504,7 +634,7 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *filereader
 			trieClusterManager := tenant.GetTrieClusterManager()
 			fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
 			if err == nil {
-				(*row)[wkk.NewRowKey(translate.CardinalFieldFingerprint)] = fingerprint
+				(*row)[wkk.RowKeyCFingerprint] = fingerprint
 			}
 		}
 	}

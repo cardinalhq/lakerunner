@@ -90,41 +90,87 @@ func NewRowKeyFromBytes(keyBytes []byte) RowKey {
 }
 
 var (
-	// _cardinalhq_* keys (sorted alphabetically)
-	RowKeyCCollectorID   = NewRowKey("_cardinalhq_collector_id")
-	RowKeyCCustomerID    = NewRowKey("_cardinalhq_customer_id")
-	RowKeyCFingerprint   = NewRowKey("_cardinalhq_fingerprint")
-	RowKeyCID            = NewRowKey("_cardinalhq_id")
-	RowKeyCMessage       = NewRowKey("_cardinalhq_message")
-	RowKeyCMetricType    = NewRowKey("_cardinalhq_metric_type")
-	RowKeyCName          = NewRowKey("_cardinalhq_name")
-	RowKeyCSpanEvents    = NewRowKey("_cardinalhq_span_events")
+	// RowKeyCCollectorID: "_cardinalhq_collector_id"
+	RowKeyCCollectorID = NewRowKey("_cardinalhq_collector_id")
+
+	// RowKeyCCustomerID: "_cardinalhq_customer_id"
+	RowKeyCCustomerID = NewRowKey("_cardinalhq_customer_id")
+
+	// RowKeyCFingerprint: "_cardinalhq_fingerprint"
+	RowKeyCFingerprint = NewRowKey("_cardinalhq_fingerprint")
+
+	// RowKeyCLevel: "_cardinalhq_level"
+	RowKeyCLevel = NewRowKey("_cardinalhq_level")
+
+	// RowKeyCMessage: "_cardinalhq_message"
+	RowKeyCMessage = NewRowKey("_cardinalhq_message")
+
+	// RowKeyCMetricType: "_cardinalhq_metric_type"
+	RowKeyCMetricType = NewRowKey("_cardinalhq_metric_type")
+
+	// RowKeyCName: "_cardinalhq_name"
+	RowKeyCName = NewRowKey("_cardinalhq_name")
+
+	// RowKeyCTelemetryType: "_cardinalhq_telemetry_type"
 	RowKeyCTelemetryType = NewRowKey("_cardinalhq_telemetry_type")
-	RowKeyCTID           = NewRowKey("_cardinalhq_tid")
-	RowKeyCTimestamp     = NewRowKey("_cardinalhq_timestamp")
-	RowKeyCTsns          = NewRowKey("_cardinalhq_tsns")
-	RowKeyCValue         = NewRowKey("_cardinalhq_value") // Deprecated
 
-	// histogram handling (TODO: just make histograms)
-	RowKeyCBucketBounds   = NewRowKey("_cardinalhq_bucket_bounds")
-	RowKeyCNegativeCounts = NewRowKey("_cardinalhq_negative_counts")
-	RowKeyCPositiveCounts = NewRowKey("_cardinalhq_positive_counts")
-	RowKeyCCounts         = NewRowKey("_cardinalhq_counts")    // Deprecated
-	RowKeyCSumValue       = NewRowKey("_cardinalhq_sum_value") // Deprecated
+	// RowKeyCTID: "_cardinalhq_tid"
+	RowKeyCTID = NewRowKey("_cardinalhq_tid")
 
-	// rollup_* keys (sorted alphabetically)
-	RowKeyRollupAvg   = NewRowKey("rollup_avg")
+	// RowKeyCTimestamp: "_cardinalhq_timestamp"
+	RowKeyCTimestamp = NewRowKey("_cardinalhq_timestamp")
+
+	// RowKeyCTsns: "_cardinalhq_tsns" (nanoseconds)
+	RowKeyCTsns = NewRowKey("_cardinalhq_tsns")
+
+	// RowKeyCValue: "_cardinalhq_value" (DEPRECATED)
+	RowKeyCValue = NewRowKey("_cardinalhq_value") // Deprecated
+
+	// RowKeyRollupAvg: "rollup_avg"
+	RowKeyRollupAvg = NewRowKey("rollup_avg")
+
+	// RowKeyRollupCount: "rollup_count"
 	RowKeyRollupCount = NewRowKey("rollup_count")
-	RowKeyRollupMax   = NewRowKey("rollup_max")
-	RowKeyRollupMin   = NewRowKey("rollup_min")
-	RowKeyRollupP25   = NewRowKey("rollup_p25")
-	RowKeyRollupP50   = NewRowKey("rollup_p50")
-	RowKeyRollupP75   = NewRowKey("rollup_p75")
-	RowKeyRollupP90   = NewRowKey("rollup_p90")
-	RowKeyRollupP95   = NewRowKey("rollup_p95")
-	RowKeyRollupP99   = NewRowKey("rollup_p99")
-	RowKeyRollupSum   = NewRowKey("rollup_sum")
 
-	// sketch key
+	// RowKeyRollupMax: "rollup_max"
+	RowKeyRollupMax = NewRowKey("rollup_max")
+
+	// RowKeyRollupMin: "rollup_min"
+	RowKeyRollupMin = NewRowKey("rollup_min")
+
+	// RowKeyRollupP25: "rollup_p25" (25th percentile)
+	RowKeyRollupP25 = NewRowKey("rollup_p25")
+
+	// RowKeyRollupP50: "rollup_p50" (50th percentile/median)
+	RowKeyRollupP50 = NewRowKey("rollup_p50")
+
+	// RowKeyRollupP75: "rollup_p75" (75th percentile)
+	RowKeyRollupP75 = NewRowKey("rollup_p75")
+
+	// RowKeyRollupP90: "rollup_p90" (90th percentile)
+	RowKeyRollupP90 = NewRowKey("rollup_p90")
+
+	// RowKeyRollupP95: "rollup_p95" (95th percentile)
+	RowKeyRollupP95 = NewRowKey("rollup_p95")
+
+	// RowKeyRollupP99: "rollup_p99" (99th percentile)
+	RowKeyRollupP99 = NewRowKey("rollup_p99")
+
+	// RowKeyRollupSum: "rollup_sum"
+	RowKeyRollupSum = NewRowKey("rollup_sum")
+
+	// RowKeySketch: "sketch"
 	RowKeySketch = NewRowKey("sketch")
+
+	// RowKeyResourceBucketName: "resource_bucket_name"
+	RowKeyResourceBucketName = NewRowKey("resource_bucket_name")
+
+	// RowKeyResourceFileName: "resource_file_name"
+	RowKeyResourceFileName = NewRowKey("resource_file_name")
+
+	// RowKeyResourceFile: "resource_file"
+	RowKeyResourceFile = NewRowKey("resource_file")
+
+	// RowKeyResourceFileType: "resource_file_type"
+	RowKeyResourceFileType = NewRowKey("resource_file_type")
 )

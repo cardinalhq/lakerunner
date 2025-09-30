@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -56,13 +56,13 @@ func (t *MetricTranslator) TranslateRow(_ context.Context, row *filereader.Row) 
 
 	// Compute and add TID field
 	if _, nameOk := (*row)[wkk.RowKeyCName].(string); !nameOk {
-		return fmt.Errorf("missing or invalid _cardinalhq.name field for TID computation")
+		return fmt.Errorf("missing or invalid _cardinalhq_name field for TID computation")
 	}
 
 	filterKeys(row)
 
 	rowMap := pipeline.ToStringMap(*row)
-	tid := helpers.ComputeTID(rowMap)
+	tid := fingerprinter.ComputeTID(rowMap)
 	(*row)[wkk.RowKeyCTID] = tid
 
 	return nil

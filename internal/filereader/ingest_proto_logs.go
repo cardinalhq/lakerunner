@@ -22,8 +22,8 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
-	"github.com/cardinalhq/oteltools/pkg/translate"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"

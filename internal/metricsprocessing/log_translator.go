@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -52,10 +52,10 @@ func (t *LogTranslator) TranslateRow(ctx context.Context, row *filereader.Row) e
 	}
 
 	// Only set the specific required fields - assume all other fields are properly set
-	(*row)[wkk.NewRowKey("resource_bucket_name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource_file_name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource_file")] = getResourceFile(t.objectID)
-	(*row)[wkk.NewRowKey("resource_file_type")] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.RowKeyResourceBucketName] = t.bucket
+	(*row)[wkk.RowKeyResourceFileName] = "./" + t.objectID
+	(*row)[wkk.RowKeyResourceFile] = getResourceFile(t.objectID)
+	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.objectID)
 
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"

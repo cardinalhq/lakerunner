@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/oteltools/pkg/translate"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -467,15 +467,15 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 	assert.Equal(t, "log_events", name)
 
 	// Check resource fields
-	bucketName, exists := row[wkk.NewRowKey("resource_bucket_name")]
+	bucketName, exists := row[wkk.RowKeyResourceBucketName]
 	assert.True(t, exists, "Should have resource_bucket_name")
 	assert.Equal(t, "test-bucket", bucketName)
 
-	fileName, exists := row[wkk.NewRowKey("resource_file_name")]
+	fileName, exists := row[wkk.RowKeyResourceFileName]
 	assert.True(t, exists, "Should have resource_file_name")
 	assert.Equal(t, "./logs/2024/01/data.parquet", fileName)
 
-	fileType, exists := row[wkk.NewRowKey("resource_file_type")]
+	fileType, exists := row[wkk.RowKeyResourceFileType]
 	assert.True(t, exists, "Should have resource_file_type")
 	assert.Equal(t, "data", fileType) // GetFileType returns filename without extension, not the extension itself
 }

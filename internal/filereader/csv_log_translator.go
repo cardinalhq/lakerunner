@@ -194,9 +194,9 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	*row = newFields
 
 	// Add resource fields (standard for all log readers) - using underscore format
-	(*row)[wkk.NewRowKey("resource_bucket_name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource_file_name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource_file_type")] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.RowKeyResourceBucketName] = t.bucket
+	(*row)[wkk.RowKeyResourceFileName] = "./" + t.objectID
+	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.objectID)
 	(*row)[wkk.NewRowKey("resource_service_name")] = "csv-import"
 
 	// Add organization ID if available

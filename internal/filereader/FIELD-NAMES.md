@@ -13,19 +13,19 @@ dimensional attributes. The TID is a 64-bit hash computed from specific fields i
 
 #### Fields included in TID calculation
 
-- `_cardinalhq.name` - The metric name (always included)
-- `_cardinalhq.metric_type` - The metric type: gauge, counter, histogram (always included if present)
-- `resource.*` - Resource attributes (string values only)
-- `metric.*` - Metric-specific attributes/labels (string values only)
+- `_cardinalhq_name` - The metric name (always included)
+- `_cardinalhq_metric_type` - The metric type: gauge, counter, histogram (always included if present)
+- `resource_*` - Resource attributes (string values only)
+- `metric_*` - Metric-specific attributes/labels (string values only)
 
 #### Fields explicitly excluded from TID calculation
 
 - `scope.*` - Scope attributes are NOT included in the TID
-- All other `_cardinalhq.*` fields (except name and metric_type)
+- All other `_cardinalhq_*` fields (except name and metric_type)
 - All underscore-prefixed fields (except the two special _cardinalhq fields above)
 - Any arbitrary fields that don't match the above prefixes
 - Empty string values (filtered out regardless of field name)
-- Non-string values in `resource.*` and `metric.*` fields
+- Non-string values in `resource_*` and `metric_*` fields
 
 The TID calculation is deterministic - the same set of attributes will always produce the same TID.
 Fields are sorted alphabetically before hashing to ensure consistent results regardless of field order.
@@ -34,19 +34,19 @@ Fields are sorted alphabetically before hashing to ensure consistent results reg
 
 #### Core identification fields
 
-- `_cardinalhq.name` - The metric name (required)
-- `_cardinalhq.metric_type` - The metric type: gauge, counter, histogram
-- `_cardinalhq.tid` - The computed timeseries ID (added during processing)
-- `_cardinalhq.timestamp` - The metric datapoint's timestamp in Unix milliseconds
+- `_cardinalhq_name` - The metric name (required)
+- `_cardinalhq_metric_type` - The metric type: gauge, counter, histogram
+- `_cardinalhq_tid` - The computed timeseries ID (added during processing)
+- `_cardinalhq_timestamp` - The metric datapoint's timestamp in Unix milliseconds
 
 #### Metadata fields
 
-- `_cardinalhq.description` - Human-readable description of the metric
-- `_cardinalhq.unit` - The unit of measurement as per Otel spec
-- `_cardinalhq.scope_url` - Instrumentation scope URL/version
-- `_cardinalhq.scope_name` - Instrumentation scope name
-- `_cardinalhq.customer_id` - Customer/organization identifier
-- `_cardinalhq.telemetry_type` - Type of telemetry data (set to "metrics")
+- `_cardinalhq_description` - Human-readable description of the metric
+- `_cardinalhq_unit` - The unit of measurement as per Otel spec
+- `_cardinalhq_scope_url` - Instrumentation scope URL/version
+- `_cardinalhq_scope_name` - Instrumentation scope name
+- `_cardinalhq_customer_id` - Customer/organization identifier
+- `_cardinalhq_telemetry_type` - Type of telemetry data (set to "metrics")
 
 #### Statistical aggregation fields (rollup_*)
 
@@ -68,6 +68,6 @@ Fields are sorted alphabetically before hashing to ensure consistent results reg
 
 #### Dimensional attributes
 
-- `resource.*` - Resource attributes (e.g., `resource.host`, `resource.service.name`)
-- `metric.*` - Metric-specific labels/attributes (e.g., `metric.http.status_code`)
-- `scope.*` - Instrumentation scope attributes
+- `resource_*` - Resource attributes (e.g., `resource_host`, `resource_service.name`)
+- `metric_*` - Metric-specific labels/attributes (e.g., `metric_http.status_code`)
+- `scope_*` - Instrumentation scope attributes

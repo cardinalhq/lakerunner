@@ -22,8 +22,9 @@ require (
 	github.com/aws/smithy-go v1.23.0
 	github.com/axiomhq/hyperloglog v0.2.5
 	github.com/cardinalhq/kafka-sync v0.1.0
-	github.com/cardinalhq/oteltools v0.31.3
+	github.com/cardinalhq/oteltools v0.31.4
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/db47h/ragel/v2 v2.2.4
 	github.com/deckarep/golang-set/v2 v2.8.0
 	github.com/fxamacker/cbor/v2 v2.8.0
 	github.com/gogo/protobuf v1.3.2
@@ -222,7 +223,6 @@ require (
 	github.com/dave/dst v0.27.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/davidmz/go-pageant v1.0.2 // indirect
-	github.com/db47h/ragel/v2 v2.2.4 // indirect
 	github.com/denis-tingaikin/go-header v0.5.0 // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
 	github.com/dghubble/go-twitter v0.0.0-20211115160449-93a8679adecb // indirect
@@ -621,7 +621,6 @@ require (
 	go.mongodb.org/mongo-driver v1.17.4 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
-	go.opentelemetry.io/collector/client v1.34.0 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.36.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.62.0 // indirect
