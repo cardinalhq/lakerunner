@@ -30,9 +30,9 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-// ProtoTracesReader reads rows from OpenTelemetry protobuf traces format.
+// IngestProtoTracesReader reads rows from OpenTelemetry protobuf traces format.
 // Returns raw OTEL trace data without signal-specific transformations.
-type ProtoTracesReader struct {
+type IngestProtoTracesReader struct {
 	closed    bool
 	rowCount  int64
 	batchSize int
@@ -48,12 +48,12 @@ type ProtoTracesReader struct {
 
 // NewProtoTracesReader creates a new ProtoTracesReader for the given io.Reader.
 // The caller is responsible for closing the underlying reader.
-func NewProtoTracesReader(reader io.Reader, batchSize int) (*ProtoTracesReader, error) {
+func NewProtoTracesReader(reader io.Reader, batchSize int) (*IngestProtoTracesReader, error) {
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
 
-	protoReader := &ProtoTracesReader{
+	protoReader := &IngestProtoTracesReader{
 		batchSize: batchSize,
 	}
 
@@ -67,13 +67,13 @@ func NewProtoTracesReader(reader io.Reader, batchSize int) (*ProtoTracesReader, 
 }
 
 // NewIngestProtoTracesReader creates a new ProtoTracesReader for ingestion with exemplar processing.
-func NewIngestProtoTracesReader(reader io.Reader, opts ReaderOptions) (*ProtoTracesReader, error) {
+func NewIngestProtoTracesReader(reader io.Reader, opts ReaderOptions) (*IngestProtoTracesReader, error) {
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
 
-	protoReader := &ProtoTracesReader{
+	protoReader := &IngestProtoTracesReader{
 		batchSize:         batchSize,
 		exemplarProcessor: opts.ExemplarProcessor,
 		orgId:             opts.OrgID,
@@ -89,7 +89,7 @@ func NewIngestProtoTracesReader(reader io.Reader, opts ReaderOptions) (*ProtoTra
 }
 
 // Next returns the next batch of rows from the OTEL traces.
-func (r *ProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
+func (r *IngestProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
@@ -137,7 +137,7 @@ func (r *ProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 }
 
 // getTraceRow handles reading the next trace row.
-func (r *ProtoTracesReader) getTraceRow(ctx context.Context) (Row, error) {
+func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context) (Row, error) {
 	if r.traces == nil {
 		return nil, io.EOF
 	}
@@ -182,7 +182,7 @@ func (r *ProtoTracesReader) getTraceRow(ctx context.Context) (Row, error) {
 }
 
 // buildSpanRow creates a row from a single span and its context.
-func (r *ProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) map[string]any {
+func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) map[string]any {
 	ret := map[string]any{}
 
 	// Add resource attributes with prefix
@@ -260,7 +260,7 @@ func (r *ProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Resource
 }
 
 // processRow applies any processing to a row.
-func (r *ProtoTracesReader) processRow(row map[string]any) (Row, error) {
+func (r *IngestProtoTracesReader) processRow(row map[string]any) (Row, error) {
 	result := make(Row)
 	for k, v := range row {
 		result[wkk.NewRowKey(k)] = v
@@ -269,7 +269,7 @@ func (r *ProtoTracesReader) processRow(row map[string]any) (Row, error) {
 }
 
 // Close closes the reader and releases resources.
-func (r *ProtoTracesReader) Close() error {
+func (r *IngestProtoTracesReader) Close() error {
 	if r.closed {
 		return nil
 	}
@@ -282,7 +282,7 @@ func (r *ProtoTracesReader) Close() error {
 }
 
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
-func (r *ProtoTracesReader) TotalRowsReturned() int64 {
+func (r *IngestProtoTracesReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 
