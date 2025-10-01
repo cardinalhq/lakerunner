@@ -25,11 +25,12 @@ import (
 	"time"
 
 	"github.com/DataDog/sketches-go/ddsketch"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricmath"
@@ -158,7 +159,7 @@ func (r *IngestProtoMetricsReader) getMetricRow(ctx context.Context, row pipelin
 					r.datapointIndex++
 					if r.exemplarProcessor != nil {
 						// Use the new Row-based method with underscore field names
-						_ = r.exemplarProcessor.ProcessMetricsFromRow(ctx, r.orgId, row, rm, sm, metric)
+						_ = r.exemplarProcessor.ProcessMetricsFromRow(ctx, r.orgId, row)
 						// Skip exemplar errors - don't fail the whole row
 					}
 

@@ -17,19 +17,16 @@ package exemplars
 import (
 	"context"
 	"log/slog"
-	"strconv"
 	"sync"
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
-	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
-
-	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 // TelemetryType represents the type of telemetry being processed
@@ -37,7 +34,7 @@ type TelemetryType string
 
 // Tenant holds the caches for each telemetry type for a specific organization
 type Tenant struct {
-	metricCache *LRUCache[pmetric.Metrics]
+	metricCache *LRUCache[map[wkk.RowKey]any]
 	logCache    *LRUCache[plog.Logs]
 	traceCache  *LRUCache[ptrace.Traces]
 
@@ -117,6 +114,7 @@ func NewProcessor(config Config) *Processor {
 	}
 }
 
+// GetTenant retrieves or creates a tenant for the given organization ID
 func (p *Processor) GetTenant(ctx context.Context, organizationID string) *Tenant {
 	ll := logctx.FromContext(ctx)
 	if existing, ok := p.tenants.Load(organizationID); ok {
@@ -157,45 +155,7 @@ func (p *Processor) GetTenant(ctx context.Context, organizationID string) *Tenan
 	return tenant
 }
 
-// createLogsCallback creates a callback function for logs exemplars for a specific organization
-func (p *Processor) createLogsCallback(ctx context.Context, organizationID string) func([]*Entry[plog.Logs]) {
-	return func(entries []*Entry[plog.Logs]) {
-		ll := logctx.FromContext(ctx)
-		ll.Info("Processing logs exemplars",
-			slog.String("organization_id", organizationID),
-			slog.Int("count", len(entries)))
-
-		exemplarData := make([]*ExemplarData, 0, len(entries))
-		for _, entry := range entries {
-			data, err := p.marshalLogs(entry.value)
-			if err != nil {
-				ll.Error("Failed to marshal logs data", slog.Any("error", err))
-				continue
-			}
-
-			resourceAttributes := entry.value.ResourceLogs().At(0).Resource().Attributes()
-			attributes := p.toAttributes(resourceAttributes)
-			attributes["fingerprint"] = strconv.FormatInt(getLogFingerprint(entry.value.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)), 10)
-
-			exemplarData = append(exemplarData, &ExemplarData{
-				Attributes:  attributes,
-				PartitionId: 0,
-				Payload:     data,
-			})
-		}
-
-		if len(exemplarData) == 0 {
-			return
-		}
-
-		if p.sendLogsExemplars != nil {
-			if err := p.sendLogsExemplars(context.Background(), organizationID, exemplarData); err != nil {
-				ll.Error("Failed to send logs exemplars to database", slog.Any("error", err))
-			}
-		}
-	}
-}
-
+// toAttributes extracts standard attributes from OTEL resource attributes
 func (p *Processor) toAttributes(resourceAttributes pcommon.Map) map[string]string {
 	attributes := make(map[string]string)
 	attributes[serviceNameKey] = getFromResource(resourceAttributes, serviceNameKey)
@@ -204,225 +164,13 @@ func (p *Processor) toAttributes(resourceAttributes pcommon.Map) map[string]stri
 	return attributes
 }
 
-// createMetricsCallback creates a callback function for metrics exemplars for a specific organization
-func (p *Processor) createMetricsCallback(ctx context.Context, organizationID string) func([]*Entry[pmetric.Metrics]) {
-	return func(entries []*Entry[pmetric.Metrics]) {
-		ll := logctx.FromContext(ctx)
-		ll.Info("Processing metrics exemplars",
-			slog.String("organization_id", organizationID),
-			slog.Int("count", len(entries)))
-
-		exemplarData := make([]*ExemplarData, 0, len(entries))
-		for _, entry := range entries {
-			data, err := p.marshalMetrics(entry.value)
-			if err != nil {
-				ll.Error("Failed to marshal metrics data", slog.Any("error", err))
-				continue
-			}
-
-			attributes := p.toAttributes(entry.value.ResourceMetrics().At(0).Resource().Attributes())
-			at := entry.value.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0)
-			attributes["metric.name"] = at.Name()
-			attributes["metric.type"] = at.Type().String()
-
-			exemplarData = append(exemplarData, &ExemplarData{
-				Attributes:  attributes,
-				PartitionId: 0,
-				Payload:     data,
-			})
-		}
-
-		if len(exemplarData) == 0 {
-			return
-		}
-
-		if p.sendMetricsExemplars != nil {
-			if err := p.sendMetricsExemplars(context.Background(), organizationID, exemplarData); err != nil {
-				ll.Error("Failed to send exemplars to database", slog.Any("error", err))
-			}
-		}
-	}
-}
-
-// createTracesCallback creates a callback function for traces exemplars for a specific organization
-func (p *Processor) createTracesCallback(ctx context.Context, organizationID string) func([]*Entry[ptrace.Traces]) {
-	return func(entries []*Entry[ptrace.Traces]) {
-		ll := logctx.FromContext(ctx)
-		ll.Info("Processing traces exemplars",
-			slog.String("organization_id", organizationID),
-			slog.Int("count", len(entries)))
-
-		exemplarData := make([]*ExemplarData, 0, len(entries))
-		for _, entry := range entries {
-			data, err := p.marshalTraces(entry.value)
-			if err != nil {
-				ll.Error("Failed to marshal traces data", slog.Any("error", err))
-				continue
-			}
-
-			resourceAttributes := entry.value.ResourceSpans().At(0).Resource().Attributes()
-			attributes := p.toAttributes(resourceAttributes)
-			attributes["fingerprint"] = strconv.FormatInt(getTraceFingerprint(entry.value.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)), 10)
-			attributes["span.name"] = entry.value.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Name()
-			attributes["span.kind"] = entry.value.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Kind().String()
-
-			exemplarData = append(exemplarData, &ExemplarData{
-				Attributes:  attributes,
-				PartitionId: 0,
-				Payload:     data,
-			})
-		}
-
-		if len(exemplarData) == 0 {
-			return
-		}
-
-		if p.sendTracesExemplars != nil {
-			if err := p.sendTracesExemplars(context.Background(), organizationID, exemplarData); err != nil {
-				ll.Error("Failed to send traces exemplars to database", slog.Any("error", err))
-			}
-		}
-	}
-}
-
-// pmetric.Metrics -> JSON string
-// plog.Logs -> JSON string
-func (p *Processor) marshalLogs(ld plog.Logs) (string, error) {
-	marshaller := &plog.JSONMarshaler{}
-	bytes, err := marshaller.MarshalLogs(ld)
-	if err != nil {
-		return "", err
-	}
-	return string(bytes), nil
-}
-
-// pmetric.Metrics -> JSON string
-func (p *Processor) marshalMetrics(md pmetric.Metrics) (string, error) {
-	marshaller := &pmetric.JSONMarshaler{}
-	bytes, err := marshaller.MarshalMetrics(md)
-	if err != nil {
-		return "", err
-	}
-	return string(bytes), nil
-}
-
-// ptrace.Traces -> JSON string
-func (p *Processor) marshalTraces(td ptrace.Traces) (string, error) {
-	marshaller := &ptrace.JSONMarshaler{}
-	bytes, err := marshaller.MarshalTraces(td)
-	if err != nil {
-		return "", err
-	}
-	return string(bytes), nil
-}
-
-// ProcessLogs processes logs and generates exemplars for a specific organization
-func (p *Processor) ProcessLogs(ctx context.Context, organizationID string, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) error {
-	if !p.config.Logs.Enabled {
-		return nil
-	}
-
-	tenant := p.GetTenant(ctx, organizationID)
-	if tenant.logCache == nil {
-		return nil
-	}
-
-	p.addLogExemplar(tenant, rl, sl, lr)
-	return nil
-}
-
-// ProcessLogsFromRow processes logs from a Row and generates exemplars
-// This method uses the already-processed Row data with underscore field names
-func (p *Processor) ProcessLogsFromRow(ctx context.Context, organizationID string, row map[wkk.RowKey]any, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) error {
-	if !p.config.Logs.Enabled {
-		return nil
-	}
-
-	tenant := p.GetTenant(ctx, organizationID)
-	if tenant.logCache == nil {
-		return nil
-	}
-
-	// Extract key fields from the Row using underscore names
-	clusterName := p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_cluster_name"))
-	namespaceName := p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_namespace_name"))
-	serviceName := p.getStringFromRow(row, wkk.NewRowKey("resource_service_name"))
-
-	// Get fingerprint from the Row if available
-	var fingerprint int64
-	if val, ok := row[wkk.NewRowKey("_cardinalhq_fingerprint")]; ok {
-		switch v := val.(type) {
-		case int64:
-			fingerprint = v
-		case int:
-			fingerprint = int64(v)
-		default:
-			// Fall back to getting it from the log record
-			fingerprint = getLogFingerprint(lr)
-		}
-	} else {
-		fingerprint = getLogFingerprint(lr)
-	}
-
-	// Build cache key using underscore field names from Row
-	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + strconv.FormatInt(fingerprint, 10)
-
-	if tenant.logCache.Contains(key) {
-		return nil
-	}
-
-	// Still use OTEL format for the actual exemplar data
-	exemplarRecord := toLogExemplar(rl, sl, lr)
-	tenant.logCache.Put(key, exemplarRecord)
-	return nil
-}
-
-// ProcessMetrics processes metrics and generates exemplars for a specific organization
-func (p *Processor) ProcessMetrics(ctx context.Context, organizationID string, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, m pmetric.Metric) error {
-	if !p.config.Metrics.Enabled {
-		return nil
-	}
-
-	tenant := p.GetTenant(ctx, organizationID)
-	if tenant.metricCache == nil {
-		return nil
-	}
-
-	p.addMetricsExemplar(tenant, rm, sm, m, m.Name(), m.Type())
-	return nil
-}
-
-// ProcessMetricsFromRow processes metrics from a Row and generates exemplars
-// This method uses the already-processed Row data with underscore field names
-func (p *Processor) ProcessMetricsFromRow(ctx context.Context, organizationID string, row map[wkk.RowKey]any, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, m pmetric.Metric) error {
-	if !p.config.Metrics.Enabled {
-		return nil
-	}
-
-	tenant := p.GetTenant(ctx, organizationID)
-	if tenant.metricCache == nil {
-		return nil
-	}
-
-	// Extract key fields from the Row using underscore names
-	clusterName := p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_cluster_name"))
-	namespaceName := p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_namespace_name"))
-	serviceName := p.getStringFromRow(row, wkk.NewRowKey("resource_service_name"))
-
-	metricName := p.getStringFromRow(row, wkk.RowKeyCName)
-	metricType := p.getStringFromRow(row, wkk.RowKeyCMetricType)
-
-	// Build cache key using underscore field names from Row
-	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + metricName + "|" + metricType
-
-	if tenant.metricCache.Contains(key) {
-		return nil
-	}
-
-	// Still use OTEL format for the actual exemplar data
-	exemplarRecord := toMetricExemplar(rm, sm, m, m.Type())
-	tenant.metricCache.Put(key, exemplarRecord)
-	return nil
+// toAttributesFromRow extracts attributes from a Row
+func (p *Processor) toAttributesFromRow(row map[wkk.RowKey]any) map[string]string {
+	attributes := make(map[string]string)
+	attributes[serviceNameKey] = p.getStringFromRow(row, wkk.NewRowKey("resource_service_name"))
+	attributes[namespaceNameKey] = p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_namespace_name"))
+	attributes[clusterNameKey] = p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_cluster_name"))
+	return attributes
 }
 
 // getStringFromRow safely extracts a string value from a Row
@@ -435,87 +183,19 @@ func (p *Processor) getStringFromRow(row map[wkk.RowKey]any, key wkk.RowKey) str
 	return "unknown"
 }
 
-// ProcessTraces processes traces and generates exemplars for a specific organization
-func (p *Processor) ProcessTraces(ctx context.Context, organizationID string, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) error {
-	if !p.config.Traces.Enabled {
-		return nil
-	}
-
-	tenant := p.GetTenant(ctx, organizationID)
-	if tenant.traceCache == nil {
-		return nil
-	}
-
-	p.addTraceExemplar(tenant, rs, ss, span)
-	return nil
-}
-
-// add a logs exemplar to the organization's cache
-func (p *Processor) addLogExemplar(tenant *Tenant, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) {
-
-	// Get old fingerprint from attributes (if exists from collector)
-	fingerprint := getLogFingerprint(lr)
-	resource := rl.Resource()
-	clusterName := getFromResource(resource.Attributes(), clusterNameKey)
-	namespaceName := getFromResource(resource.Attributes(), namespaceNameKey)
-	serviceName := getFromResource(resource.Attributes(), serviceNameKey)
-	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + strconv.FormatInt(fingerprint, 10)
-	if tenant.logCache.Contains(key) {
-		return
-	}
-
-	exemplarRecord := toLogExemplar(rl, sl, lr)
-	tenant.logCache.Put(key, exemplarRecord)
-}
-
-// add a metrics exemplar to the organization's cache
-func (p *Processor) addMetricsExemplar(tenant *Tenant, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, mm pmetric.Metric, metricName string, metricType pmetric.MetricType) {
-	resource := rm.Resource()
-	clusterName := getFromResource(resource.Attributes(), clusterNameKey)
-	namespaceName := getFromResource(resource.Attributes(), namespaceNameKey)
-	serviceName := getFromResource(resource.Attributes(), serviceNameKey)
-	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + metricName + "|" + metricType.String()
-
-	if tenant.metricCache.Contains(key) {
-		return
-	}
-
-	exemplarRecord := toMetricExemplar(rm, sm, mm, metricType)
-	tenant.metricCache.Put(key, exemplarRecord)
-}
-
-// add a traces exemplar to the organization's cache
-func (p *Processor) addTraceExemplar(tenant *Tenant, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) {
-	// Get fingerprint from span attributes (if exists from collector)
-	fingerprint := getTraceFingerprint(span)
-	resource := rs.Resource()
-	clusterName := getFromResource(resource.Attributes(), clusterNameKey)
-	namespaceName := getFromResource(resource.Attributes(), namespaceNameKey)
-	serviceName := getFromResource(resource.Attributes(), serviceNameKey)
-	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + strconv.FormatInt(fingerprint, 10)
-	if tenant.traceCache.Contains(key) {
-		return
-	}
-
-	exemplarRecord := toTraceExemplar(rs, ss, span)
-	tenant.traceCache.Put(key, exemplarRecord)
-}
-
+// Close flushes all pending exemplars and closes all caches
 func (p *Processor) Close() error {
 	p.tenants.Range(func(key, value interface{}) bool {
 		if tenant, ok := value.(*Tenant); ok {
 			if tenant.metricCache != nil {
-				// Force flush all pending exemplars before closing
 				tenant.metricCache.FlushPending()
 				tenant.metricCache.Close()
 			}
 			if tenant.logCache != nil {
-				// Force flush all pending exemplars before closing
 				tenant.logCache.FlushPending()
 				tenant.logCache.Close()
 			}
 			if tenant.traceCache != nil {
-				// Force flush all pending exemplars before closing
 				tenant.traceCache.FlushPending()
 				tenant.traceCache.Close()
 			}
@@ -523,19 +203,4 @@ func (p *Processor) Close() error {
 		return true
 	})
 	return nil
-}
-
-// SetMetricsCallback updates the sendMetricsExemplars callback function
-func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
-	p.sendMetricsExemplars = callback
-}
-
-// SetLogsCallback updates the sendLogsExemplars callback function
-func (p *Processor) SetLogsCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
-	p.sendLogsExemplars = callback
-}
-
-// SetTracesCallback updates the sendTracesExemplars callback function
-func (p *Processor) SetTracesCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
-	p.sendTracesExemplars = callback
 }
