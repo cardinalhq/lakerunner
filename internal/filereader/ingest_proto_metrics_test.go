@@ -1071,7 +1071,7 @@ func TestIngestProtoMetrics_SummarySupport(t *testing.T) {
 
 	// Check first data point (with quantiles)
 	row1 := batch.Get(0)
-	assert.Equal(t, "http.request.duration", row1[wkk.RowKeyCName])
+	assert.Equal(t, "http_request_duration", row1[wkk.RowKeyCName])
 	assert.Equal(t, "histogram", row1[wkk.RowKeyCMetricType]) // Summaries are treated as histograms
 
 	// Debug: print all keys to see what attributes exist
@@ -1116,7 +1116,7 @@ func TestIngestProtoMetrics_SummarySupport(t *testing.T) {
 
 	// Check second data point (without quantiles, using fallback)
 	row2 := batch.Get(1)
-	assert.Equal(t, "http.request.duration", row2[wkk.RowKeyCName])
+	assert.Equal(t, "http_request_duration", row2[wkk.RowKeyCName])
 
 	// Check attributes exist
 	foundMethod2 := false
