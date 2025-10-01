@@ -48,7 +48,7 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 	}
 
 	// If no exemplar provided, just return valid (syntax check only)
-	if req.Exemplar == nil || len(req.Exemplar) == 0 {
+	if len(req.Exemplar) == 0 {
 		_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: true})
 		return
 	}

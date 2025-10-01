@@ -130,7 +130,6 @@ type LrdbExemplarLog struct {
 	UpdatedAt           time.Time      `json:"updated_at"`
 	OrganizationID      uuid.UUID      `json:"organization_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
-	Attributes          map[string]any `json:"attributes"`
 	Exemplar            map[string]any `json:"exemplar"`
 	Fingerprint         int64          `json:"fingerprint"`
 	RelatedFingerprints []int64        `json:"related_fingerprints"`
@@ -141,7 +140,6 @@ type LrdbExemplarMetric struct {
 	UpdatedAt           time.Time      `json:"updated_at"`
 	OrganizationID      uuid.UUID      `json:"organization_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
-	Attributes          map[string]any `json:"attributes"`
 	Exemplar            map[string]any `json:"exemplar"`
 	MetricName          string         `json:"metric_name"`
 	MetricType          string         `json:"metric_type"`
@@ -152,7 +150,6 @@ type LrdbExemplarTrace struct {
 	UpdatedAt           time.Time      `json:"updated_at"`
 	OrganizationID      uuid.UUID      `json:"organization_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
-	Attributes          map[string]any `json:"attributes"`
 	Exemplar            map[string]any `json:"exemplar"`
 	Fingerprint         int64          `json:"fingerprint"`
 	SpanName            string         `json:"span_name"`

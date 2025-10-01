@@ -147,8 +147,8 @@ func createMetricsTable(t *testing.T, db *sql.DB, withPod bool) {
 	t.Helper()
 	mustDropTable(db, "metrics")
 	stmt := `CREATE TABLE metrics(
-		"_cardinalhq.timestamp" BIGINT,
-		"_cardinalhq.name"     TEXT,
+		"_cardinalhq_timestamp" BIGINT,
+		"_cardinalhq_name"     TEXT,
 		rollup_sum    DOUBLE,
 		rollup_count  BIGINT,
 		rollup_min    DOUBLE,
@@ -190,7 +190,7 @@ func TestBuildStepAgg_Sum_NoGroup_GappySeries(t *testing.T) {
 		t.Fatal("empty SQL from ToWorkerSQL")
 	}
 	// Sanity: metric WHERE + sentinel present
-	if !strings.Contains(sql, `"_cardinalhq.name" = 'm'`) || !strings.Contains(sql, "AND true") {
+	if !strings.Contains(sql, `"_cardinalhq_name" = 'm'`) || !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected metric filter + AND true, got:\n%s", sql)
 	}
 	sql = replaceStartEnd(replaceTableMetrics(sql), 0, 50000)
@@ -355,7 +355,7 @@ func TestBuildStepAgg_RespectsMetricFilter_IgnoresOtherMetrics(t *testing.T) {
 		Range:    "20s",
 	}
 	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 20000)
-	if !strings.Contains(sql, `"_cardinalhq.name" = 'm'`) {
+	if !strings.Contains(sql, `"_cardinalhq_name" = 'm'`) {
 		t.Fatalf("missing metric WHERE in SQL:\n%s", sql)
 	}
 	rows := queryAll(t, db, sql)
@@ -419,8 +419,8 @@ func TestToWorkerSQLForTagValues_WithMatchers(t *testing.T) {
 	// Create a custom table with both pod and region columns
 	mustDropTable(db, "metrics")
 	mustExec(t, db, `CREATE TABLE metrics(
-		"_cardinalhq.timestamp" BIGINT,
-		"_cardinalhq.name"     TEXT,
+		"_cardinalhq_timestamp" BIGINT,
+		"_cardinalhq_name"     TEXT,
 		rollup_sum    DOUBLE,
 		rollup_count  BIGINT,
 		rollup_min    DOUBLE,

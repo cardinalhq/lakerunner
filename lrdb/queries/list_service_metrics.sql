@@ -2,7 +2,7 @@
 SELECT DISTINCT em.metric_name
 FROM lrdb_exemplar_metrics em
 WHERE em.organization_id = @organization_id
-  AND em.attributes->>'service.name' = @service_name::text
+  AND em.attributes->>'service_name' = @service_name::text
   AND (
     (
       em.updated_at IS NOT NULL

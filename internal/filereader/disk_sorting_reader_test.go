@@ -30,7 +30,7 @@ import (
 
 func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	// Create test data with unsorted metric names, TIDs, and timestamps
-	testRows := []Row{
+	testRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:        "metric_z",
 			wkk.RowKeyCTID:         int64(200),
@@ -57,7 +57,7 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	defer func() { _ = sortingReader.Close() }()
 
 	// Read all rows
-	var allRows []Row
+	var allRows []pipeline.Row
 	for {
 		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {
@@ -87,7 +87,7 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 
 func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	// Test various types that need to be preserved through CBOR
-	testRow := Row{
+	testRow := pipeline.Row{
 		wkk.RowKeyCName:                "test_metric",
 		wkk.RowKeyCTID:                 int64(12345),
 		wkk.RowKeyCTimestamp:           int64(1640995200000),
@@ -99,7 +99,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 		wkk.NewRowKey("nil_field"):     nil,
 	}
 
-	mockReader := NewMockReader([]Row{testRow})
+	mockReader := NewMockReader([]pipeline.Row{testRow})
 	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
@@ -124,7 +124,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 }
 
 func TestDiskSortingReader_EmptyInput(t *testing.T) {
-	mockReader := NewMockReader([]Row{})
+	mockReader := NewMockReader([]pipeline.Row{})
 	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
@@ -136,7 +136,7 @@ func TestDiskSortingReader_EmptyInput(t *testing.T) {
 
 func TestDiskSortingReader_MissingFields(t *testing.T) {
 	// Test row missing some sort fields - should be handled gracefully by sort function
-	testRows := []Row{
+	testRows := []pipeline.Row{
 		{
 			wkk.RowKeyCName:        "metric_b",
 			wkk.RowKeyCTID:         int64(100),
@@ -162,7 +162,7 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 2, batch.Len())
 
-	// Row with missing fields should be sorted to the end by MetricNameTidTimestampSort
+	// pipeline.Row with missing fields should be sorted to the end by MetricNameTidTimestampSort
 	assert.Equal(t, "metric_a", batch.Get(0)[wkk.RowKeyCName]) // Missing fields sort first
 	assert.Equal(t, "metric_b", batch.Get(1)[wkk.RowKeyCName]) // Complete row sorts later
 }
@@ -170,7 +170,7 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 func TestDiskSortingReader_CleanupOnError(t *testing.T) {
 	// Create reader that will fail during reading
 	mockReader := &MockReader{
-		rows:      []Row{{wkk.NewRowKey("test"): "value"}},
+		rows:      []pipeline.Row{{wkk.NewRowKey("test"): "value"}},
 		readError: fmt.Errorf("simulated read error"),
 	}
 
@@ -194,13 +194,13 @@ func TestDiskSortingReader_CleanupOnError(t *testing.T) {
 
 // MockReader for testing
 type MockReader struct {
-	rows       []Row
+	rows       []pipeline.Row
 	currentIdx int
 	readError  error
 	closed     bool
 }
 
-func NewMockReader(rows []Row) *MockReader {
+func NewMockReader(rows []pipeline.Row) *MockReader {
 	return &MockReader{rows: rows}
 }
 
@@ -246,9 +246,9 @@ func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
 	const batchSize = 1000
 
 	// Create test data with 1234 rows
-	testRows := make([]Row, totalRows)
+	testRows := make([]pipeline.Row, totalRows)
 	for i := 0; i < totalRows; i++ {
-		testRows[i] = Row{
+		testRows[i] = pipeline.Row{
 			wkk.RowKeyCName:        fmt.Sprintf("metric_%04d", i%10), // 10 different metric names
 			wkk.RowKeyCTID:         int64(i % 100),                   // 100 different TIDs
 			wkk.RowKeyCTimestamp:   int64(1000 + i),                  // Sequential timestamps

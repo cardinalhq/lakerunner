@@ -231,14 +231,14 @@ func TestArrowRawReader_NestedStringCopying(t *testing.T) {
 	listBuilder := b.Field(0).(*array.ListBuilder)
 	valueBuilder := listBuilder.ValueBuilder().(*array.StringBuilder)
 
-	// Row 1: ["tag1", "tag2", "tag3"]
+	// pipeline.Row 1: ["tag1", "tag2", "tag3"]
 	listBuilder.Append(true)
 	valueBuilder.Append("tag1")
 	valueBuilder.Append("tag2")
 	valueBuilder.Append("tag3")
 	b.Field(1).(*array.Int64Builder).Append(1)
 
-	// Row 2: ["alpha", "beta"]
+	// pipeline.Row 2: ["alpha", "beta"]
 	listBuilder.Append(true)
 	valueBuilder.Append("alpha")
 	valueBuilder.Append("beta")

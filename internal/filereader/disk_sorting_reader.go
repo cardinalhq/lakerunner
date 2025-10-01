@@ -158,7 +158,7 @@ func (r *DiskSortingReader) writeAndIndexAllRows(ctx context.Context) error {
 }
 
 // writeAndIndexRow encodes a row to the temp file and adds an index entry.
-func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
+func (r *DiskSortingReader) writeAndIndexRow(row pipeline.Row) error {
 	// Get current file position
 	offset, err := r.tempFile.Seek(0, io.SeekCurrent)
 	if err != nil {

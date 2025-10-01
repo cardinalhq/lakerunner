@@ -26,14 +26,14 @@ import (
 
 // mockReader is a test implementation of Reader
 type mockReader struct {
-	rows     []Row
+	rows     []pipeline.Row
 	index    int
 	closed   bool
 	name     string
 	rowCount int64
 }
 
-func newMockReader(name string, rows []Row) *mockReader {
+func newMockReader(name string, rows []pipeline.Row) *mockReader {
 	return &mockReader{
 		rows: rows,
 		name: name,

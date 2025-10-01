@@ -19,8 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -34,7 +33,7 @@ type MetricTranslator struct {
 
 // TranslateRow adds resource fields to each row
 // Assumes all other metric fields (including sketches) are properly set by the proto reader
-func (t *MetricTranslator) TranslateRow(_ context.Context, row *filereader.Row) error {
+func (t *MetricTranslator) TranslateRow(_ context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
@@ -46,7 +45,7 @@ func (t *MetricTranslator) TranslateRow(_ context.Context, row *filereader.Row) 
 	// Validate required timestamp field - drop row if missing or invalid
 	timestamp, ok := (*row)[wkk.RowKeyCTimestamp].(int64)
 	if !ok {
-		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
+		return fmt.Errorf("_cardinalhq_timestamp field is missing or not int64")
 	}
 
 	// Truncate timestamp to nearest 10-second interval
@@ -56,13 +55,13 @@ func (t *MetricTranslator) TranslateRow(_ context.Context, row *filereader.Row) 
 
 	// Compute and add TID field
 	if _, nameOk := (*row)[wkk.RowKeyCName].(string); !nameOk {
-		return fmt.Errorf("missing or invalid _cardinalhq.name field for TID computation")
+		return fmt.Errorf("missing or invalid _cardinalhq_name field for TID computation")
 	}
 
 	filterKeys(row)
 
-	rowMap := pipeline.ToStringMap(*row)
-	tid := helpers.ComputeTID(rowMap)
+	// Compute TID directly from wkk.RowKey map without conversion
+	tid := fingerprinter.ComputeTID(*row)
 	(*row)[wkk.RowKeyCTID] = tid
 
 	return nil
@@ -70,25 +69,25 @@ func (t *MetricTranslator) TranslateRow(_ context.Context, row *filereader.Row) 
 
 var (
 	keepkeys = map[string]bool{
-		"resource.app":                  true,
-		"resource.container.image.name": true,
-		"resource.container.image.tag":  true,
-		"resource.k8s.cluster.name":     true,
-		"resource.k8s.daemonset.name":   true,
-		"resource.k8s.deployment.name":  true,
-		"resource.k8s.namespace.name":   true,
-		"resource.k8s.pod.ip":           true,
-		"resource.k8s.pod.name":         true,
-		"resource.k8s.statefulset.name": true,
-		"resource.service.name":         true,
-		"resource.service.version":      true,
+		"resource_app":                  true,
+		"resource_container_image_name": true,
+		"resource_container_image_tag":  true,
+		"resource_k8s_cluster_name":     true,
+		"resource_k8s_daemonset_name":   true,
+		"resource_k8s_deployment_name":  true,
+		"resource_k8s_namespace_name":   true,
+		"resource_k8s_pod_ip":           true,
+		"resource_k8s_pod_name":         true,
+		"resource_k8s_statefulset_name": true,
+		"resource_service_name":         true,
+		"resource_service_version":      true,
 	}
 )
 
-func filterKeys(row *filereader.Row) {
+func filterKeys(row *pipeline.Row) {
 	for k := range *row {
 		name := wkk.RowKeyValue(k)
-		if !strings.HasPrefix(name, "resource.") {
+		if !strings.HasPrefix(name, "resource_") {
 			continue
 		}
 

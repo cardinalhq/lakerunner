@@ -162,10 +162,9 @@ func BenchmarkBatchProcessing(b *testing.B) {
 
 				// Create reader with specific batch size
 				options := filereader.ReaderOptions{
-					SignalType:        filereader.SignalTypeLogs,
-					BatchSize:         batchSize,
-					ExemplarProcessor: exemplars.NewProcessor(exemplars.DefaultConfig()),
-					OrgID:             orgID.String(),
+					SignalType: filereader.SignalTypeLogs,
+					BatchSize:  batchSize,
+					OrgID:      orgID.String(),
 				}
 
 				reader, err := filereader.ReaderForFileWithOptions(testFile, options)
@@ -415,10 +414,9 @@ func (m *benchMockStorageClient) DeleteObjects(ctx context.Context, bucket strin
 // createLogReader is a helper that matches the one from cmd/debug
 func createLogReader(filename, orgID string, exemplarProcessor *exemplars.Processor) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
-		SignalType:        filereader.SignalTypeLogs,
-		BatchSize:         1000,
-		ExemplarProcessor: exemplarProcessor,
-		OrgID:             orgID,
+		SignalType: filereader.SignalTypeLogs,
+		BatchSize:  1000,
+		OrgID:      orgID,
 	}
 
 	return filereader.ReaderForFileWithOptions(filename, options)

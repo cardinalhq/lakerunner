@@ -23,8 +23,8 @@ import (
 
 func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string {
 	const baseRel = "{table}"
-	const bodyCol = "\"_cardinalhq.message\""
-	const tsCol = "\"_cardinalhq.timestamp\""
+	const bodyCol = "\"_cardinalhq_message\""
+	const tsCol = "\"_cardinalhq_timestamp\""
 
 	// 1) Prepare sets: group keys, parser-created, feature flags
 	groupKeys := dedupeStrings(be.OutBy)
@@ -57,7 +57,7 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 
 	// s0+: normalize fingerprint type to string once up-front so downstream filters/clients are stable
 	pb.push([]string{
-		pb.top() + `.* REPLACE(CAST("_cardinalhq.fingerprint" AS VARCHAR) AS "_cardinalhq.fingerprint")`,
+		pb.top() + `.* REPLACE(CAST("_cardinalhq_fingerprint" AS VARCHAR) AS "_cardinalhq_fingerprint")`,
 	}, pb.top(), nil)
 
 	// s1: time window sentinel so segment filters can be spliced
@@ -191,7 +191,7 @@ func analyzeParsers(be *LogLeaf) (parserCreated map[string]struct{}, hasJSON, ha
 func collectTemplateDeps(tmpl string) []string {
 	deps := map[string]struct{}{}
 	_, _ = buildLabelFormatExprTemplate(tmpl, func(name string) string {
-		name = normalizeLabelName(name)
+		// Don't convert dots here - preserve original names for JSON paths
 		deps[name] = struct{}{}
 		return "0"
 	})
@@ -318,7 +318,7 @@ func emitParsersWithPostLineFilters(
 	}
 
 	// base cols
-	addPresent("_cardinalhq.message", "_cardinalhq.timestamp", "_cardinalhq.id", "_cardinalhq.level", "_cardinalhq.fingerprint")
+	addPresent("_cardinalhq_message", "_cardinalhq_timestamp", "_cardinalhq_id", "_cardinalhq_level", "_cardinalhq_fingerprint")
 	// matchers
 	for _, m := range be.Matchers {
 		addPresent(m.Label)
@@ -465,7 +465,6 @@ func emitParsersWithPostLineFilters(
 				case "line_format", "line-format", "lineformat":
 					if t := strings.TrimSpace(pj.Params["template"]); t != "" {
 						for _, d := range collectTemplateDeps(t) {
-							d = normalizeLabelName(d)
 							if !isBaseCol(quoteIdent(d)) {
 								needKeys = append(needKeys, d)
 							}
@@ -477,7 +476,6 @@ func emitParsersWithPostLineFilters(
 							continue
 						}
 						for _, d := range collectTemplateDeps(tmpl) {
-							d = normalizeLabelName(d)
 							if !isBaseCol(quoteIdent(d)) {
 								needKeys = append(needKeys, d)
 							}
@@ -541,19 +539,27 @@ func emitParsersWithPostLineFilters(
 				if _, ok := created[k]; ok {
 					continue
 				}
+				// Don't extract base columns from JSON - they should already exist
+				if strings.HasPrefix(k, "resource_") || strings.HasPrefix(k, "log_") ||
+					strings.HasPrefix(k, "span_") || strings.HasPrefix(k, "metric_") ||
+					strings.HasPrefix(k, "_cardinalhq_") {
+					continue
+				}
 				path := jsonPathForKey(k)
 				if strings.Contains(k, ".") {
 					path = jsonPathFromMapping(k)
 				}
+				// Convert dots to underscores for column name
+				colName := strings.ReplaceAll(k, ".", "_")
 				expr := fmt.Sprintf("json_extract_string(%s, %s) AS %s",
-					bodyCol, sqlQuote(path), quoteIdent(k),
+					bodyCol, sqlQuote(path), quoteIdent(colName),
 				)
-				if _, ok := present[k]; ok {
+				if _, ok := present[colName]; ok {
 					replacePairs = append(replacePairs, expr)
 				} else {
 					addCols = append(addCols, expr)
 				}
-				created[k] = struct{}{}
+				created[colName] = struct{}{}
 			}
 
 			sel := []string{}
@@ -603,7 +609,6 @@ func emitParsersWithPostLineFilters(
 				case "line_format", "line-format", "lineformat":
 					if t := strings.TrimSpace(pj.Params["template"]); t != "" {
 						for _, d := range collectTemplateDeps(t) {
-							d = normalizeLabelName(d)
 							if !isBaseCol(quoteIdent(d)) {
 								needKeys = append(needKeys, d)
 							}
@@ -615,7 +620,6 @@ func emitParsersWithPostLineFilters(
 							continue
 						}
 						for _, d := range collectTemplateDeps(tmpl) {
-							d = normalizeLabelName(d)
 							if !isBaseCol(quoteIdent(d)) {
 								needKeys = append(needKeys, d)
 							}
@@ -716,7 +720,11 @@ func emitParsersWithPostLineFilters(
 			} else {
 				keys := sortedKeys(p.Params)
 				for _, out := range keys {
-					exprSQL, err := buildLabelFormatExprTemplate(p.Params[out], func(s string) string { return quoteIdent(s) })
+					exprSQL, err := buildLabelFormatExprTemplate(p.Params[out], func(s string) string {
+						// Convert dots to underscores for field names
+						normalized := strings.ReplaceAll(s, ".", "_")
+						return quoteIdent(normalized)
+					})
 					if err != nil {
 						exprSQL = "''"
 					}
@@ -773,7 +781,11 @@ func emitParsersWithPostLineFilters(
 
 			expr, err := buildLabelFormatExprTemplate(
 				tmpl,
-				func(col string) string { return quoteIdent(normalizeLabelName(col)) },
+				func(col string) string {
+					// Convert dots to underscores for field names
+					normalized := strings.ReplaceAll(col, ".", "_")
+					return quoteIdent(normalized)
+				},
 			)
 			if err != nil {
 				expr = "''"
@@ -781,13 +793,13 @@ func emitParsersWithPostLineFilters(
 
 			// Replace the message column with the formatted result.
 			sel := []string{
-				pb.top() + `.* EXCLUDE "` + `_cardinalhq.message` + `"`,
-				"(" + expr + `) AS "` + `_cardinalhq.message` + `"`,
+				pb.top() + `.* EXCLUDE "` + `_cardinalhq_message` + `"`,
+				"(" + expr + `) AS "` + `_cardinalhq_message` + `"`,
 			}
 			pb.push(sel, pb.top(), nil)
 
 			// message still present
-			addPresent("_cardinalhq.message")
+			addPresent("_cardinalhq_message")
 
 			// line_format doesn't create new labels; any stage label filters are carried
 			if len(p.Filters) > 0 {
@@ -903,8 +915,8 @@ func jsonPathFromMapping(s string) string {
 }
 
 func isBaseCol(q string) bool {
-	// quoted, so prefixes look like: "\"resource.", "\"log.", "\"_cardinalhq"
-	if strings.HasPrefix(q, "\"resource.") || strings.HasPrefix(q, "\"log.") || strings.HasPrefix(q, "\"_cardinalhq") {
+	// quoted, so prefixes look like: "\"resource_", "\"log_", "\"_cardinalhq_"
+	if strings.HasPrefix(q, "\"resource_") || strings.HasPrefix(q, "\"log_") || strings.HasPrefix(q, "\"_cardinalhq_") {
 		return true
 	}
 	return false

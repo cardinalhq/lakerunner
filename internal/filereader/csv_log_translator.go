@@ -26,6 +26,7 @@ import (
 	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -61,7 +62,7 @@ func NewCSVLogTranslator(opts ReaderOptions) *CSVLogTranslator {
 }
 
 // TranslateRow handles CSV-specific field translation for logs
-func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
+func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
@@ -76,7 +77,7 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 		return wkk.RowKeyValue(keys[i]) < wkk.RowKeyValue(keys[j])
 	})
 
-	normalizedRow := make(Row)
+	normalizedRow := make(pipeline.Row)
 	usedNames := make(map[string]int) // Track how many times each lowercased name has been used
 
 	for _, key := range keys {
@@ -185,7 +186,7 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 				usedSanitizedNames[sanitized] = 1
 			}
 
-			newKey := wkk.NewRowKey("log." + finalSanitized)
+			newKey := wkk.NewRowKey("log_" + finalSanitized)
 			newFields[newKey] = value
 		}
 	}
@@ -193,15 +194,15 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
 	// Replace row content with new fields
 	*row = newFields
 
-	// Add resource fields (standard for all log readers)
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
-	(*row)[wkk.NewRowKey("resource.service.name")] = "csv-import"
+	// Add resource fields (standard for all log readers) - using underscore format
+	(*row)[wkk.RowKeyResourceBucketName] = t.bucket
+	(*row)[wkk.RowKeyResourceFileName] = "./" + t.objectID
+	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.NewRowKey("resource_service_name")] = "csv-import"
 
 	// Add organization ID if available
 	if t.orgID != "" {
-		(*row)[wkk.NewRowKey("_cardinalhq.organization_id")] = t.orgID
+		(*row)[wkk.NewRowKey("_cardinalhq_organization_id")] = t.orgID
 	}
 
 	return nil

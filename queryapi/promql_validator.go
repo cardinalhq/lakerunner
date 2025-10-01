@@ -19,8 +19,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/prometheus/prometheus/promql/parser"
+
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 type promQLValidateRequest struct {
@@ -256,7 +257,7 @@ func extractFieldsFromExemplar(exemplar map[string]any) map[string]struct{} {
 				for _, a := range attrs {
 					if am, ok := a.(map[string]any); ok {
 						if k := str(am["key"]); k != "" {
-							fields["resource."+k] = struct{}{}
+							fields["resource_"+k] = struct{}{}
 						}
 					}
 				}

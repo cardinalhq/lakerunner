@@ -47,23 +47,23 @@ var commonKeys = map[string]RowKey{
 	"body":               unique.Make(rowkey("body")),
 
 	// Resource fields
-	"resource.service.name":    unique.Make(rowkey("resource.service.name")),
-	"resource.service.version": unique.Make(rowkey("resource.service.version")),
-	"resource.deployment.env":  unique.Make(rowkey("resource.deployment.env")),
-	"resource.bucket.name":     unique.Make(rowkey("resource.bucket.name")),
-	"resource.file.name":       unique.Make(rowkey("resource.file.name")),
-	"resource.file.type":       unique.Make(rowkey("resource.file.type")),
+	"resource_service_name":    unique.Make(rowkey("resource_service_name")),
+	"resource_service_version": unique.Make(rowkey("resource_service_version")),
+	"resource_deployment_env":  unique.Make(rowkey("resource_deployment_env")),
+	"resource_bucket_name":     unique.Make(rowkey("resource_bucket_name")),
+	"resource_file_name":       unique.Make(rowkey("resource_file_name")),
+	"resource_file_type":       unique.Make(rowkey("resource_file_type")),
 
 	// Scope fields
-	"scope.scope.type": unique.Make(rowkey("scope.scope.type")),
+	"scope_scope_type": unique.Make(rowkey("scope_scope_type")),
 
 	// Span attributes
-	"span.http.method":      unique.Make(rowkey("span.http.method")),
-	"span.http.status_code": unique.Make(rowkey("span.http.status_code")),
-	"span.db.system":        unique.Make(rowkey("span.db.system")),
-	"span.db.operation":     unique.Make(rowkey("span.db.operation")),
-	"span.component":        unique.Make(rowkey("span.component")),
-	"span.record.count":     unique.Make(rowkey("span.record.count")),
+	"span_http_method":      unique.Make(rowkey("span_http_method")),
+	"span_http_status_code": unique.Make(rowkey("span_http_status_code")),
+	"span_db_system":        unique.Make(rowkey("span_db_system")),
+	"span_db_operation":     unique.Make(rowkey("span_db_operation")),
+	"span_component":        unique.Make(rowkey("span_component")),
+	"span_record_count":     unique.Make(rowkey("span_record_count")),
 
 	// Common metric/log fields
 	"metric":      unique.Make(rowkey("metric")),
@@ -75,22 +75,6 @@ var commonKeys = map[string]RowKey{
 	"unit":        unique.Make(rowkey("unit")),
 	"type":        unique.Make(rowkey("type")),
 	"description": unique.Make(rowkey("description")),
-
-	// Test fields (for testing)
-	"test":            unique.Make(rowkey("test")),
-	"test.translator": unique.Make(rowkey("test.translator")),
-	"id":              unique.Make(rowkey("id")),
-	"age":             unique.Make(rowkey("age")),
-	"city":            unique.Make(rowkey("city")),
-	"key":             unique.Make(rowkey("key")),
-	"tag":             unique.Make(rowkey("tag")),
-	"batch":           unique.Make(rowkey("batch")),
-	"final":           unique.Make(rowkey("final")),
-	"eof":             unique.Make(rowkey("eof")),
-	"good":            unique.Make(rowkey("good")),
-	"bad":             unique.Make(rowkey("bad")),
-	"more":            unique.Make(rowkey("more")),
-	"row":             unique.Make(rowkey("row")),
 }
 
 // NewRowKeyFromBytes creates a RowKey from bytes without string allocation for common keys
@@ -106,41 +90,87 @@ func NewRowKeyFromBytes(keyBytes []byte) RowKey {
 }
 
 var (
-	// _cardinalhq.* keys (sorted alphabetically)
-	RowKeyCCollectorID   = NewRowKey("_cardinalhq.collector_id")
-	RowKeyCCustomerID    = NewRowKey("_cardinalhq.customer_id")
-	RowKeyCFingerprint   = NewRowKey("_cardinalhq.fingerprint")
-	RowKeyCID            = NewRowKey("_cardinalhq.id")
-	RowKeyCMessage       = NewRowKey("_cardinalhq.message")
-	RowKeyCMetricType    = NewRowKey("_cardinalhq.metric_type")
-	RowKeyCName          = NewRowKey("_cardinalhq.name")
-	RowKeyCSpanEvents    = NewRowKey("_cardinalhq.span_events")
-	RowKeyCTelemetryType = NewRowKey("_cardinalhq.telemetry_type")
-	RowKeyCTID           = NewRowKey("_cardinalhq.tid")
-	RowKeyCTimestamp     = NewRowKey("_cardinalhq.timestamp")
-	RowKeyCTsns          = NewRowKey("_cardinalhq.tsns")
-	RowKeyCValue         = NewRowKey("_cardinalhq.value") // Deprecated
+	// RowKeyCCollectorID: "_cardinalhq_collector_id"
+	RowKeyCCollectorID = NewRowKey("_cardinalhq_collector_id")
 
-	// histogram handling (TODO: just make histograms)
-	RowKeyCBucketBounds   = NewRowKey("_cardinalhq.bucket_bounds")
-	RowKeyCNegativeCounts = NewRowKey("_cardinalhq.negative_counts")
-	RowKeyCPositiveCounts = NewRowKey("_cardinalhq.positive_counts")
-	RowKeyCCounts         = NewRowKey("_cardinalhq.counts")    // Deprecated
-	RowKeyCSumValue       = NewRowKey("_cardinalhq.sum_value") // Deprecated
+	// RowKeyCCustomerID: "_cardinalhq_customer_id"
+	RowKeyCCustomerID = NewRowKey("_cardinalhq_customer_id")
 
-	// rollup_* keys (sorted alphabetically)
-	RowKeyRollupAvg   = NewRowKey("rollup_avg")
+	// RowKeyCFingerprint: "_cardinalhq_fingerprint"
+	RowKeyCFingerprint = NewRowKey("_cardinalhq_fingerprint")
+
+	// RowKeyCLevel: "_cardinalhq_level"
+	RowKeyCLevel = NewRowKey("_cardinalhq_level")
+
+	// RowKeyCMessage: "_cardinalhq_message"
+	RowKeyCMessage = NewRowKey("_cardinalhq_message")
+
+	// RowKeyCMetricType: "_cardinalhq_metric_type"
+	RowKeyCMetricType = NewRowKey("_cardinalhq_metric_type")
+
+	// RowKeyCName: "_cardinalhq_name"
+	RowKeyCName = NewRowKey("_cardinalhq_name")
+
+	// RowKeyCTelemetryType: "_cardinalhq_telemetry_type"
+	RowKeyCTelemetryType = NewRowKey("_cardinalhq_telemetry_type")
+
+	// RowKeyCTID: "_cardinalhq_tid"
+	RowKeyCTID = NewRowKey("_cardinalhq_tid")
+
+	// RowKeyCTimestamp: "_cardinalhq_timestamp"
+	RowKeyCTimestamp = NewRowKey("_cardinalhq_timestamp")
+
+	// RowKeyCTsns: "_cardinalhq_tsns" (nanoseconds)
+	RowKeyCTsns = NewRowKey("_cardinalhq_tsns")
+
+	// RowKeyCValue: "_cardinalhq_value" (DEPRECATED)
+	RowKeyCValue = NewRowKey("_cardinalhq_value") // Deprecated
+
+	// RowKeyRollupAvg: "rollup_avg"
+	RowKeyRollupAvg = NewRowKey("rollup_avg")
+
+	// RowKeyRollupCount: "rollup_count"
 	RowKeyRollupCount = NewRowKey("rollup_count")
-	RowKeyRollupMax   = NewRowKey("rollup_max")
-	RowKeyRollupMin   = NewRowKey("rollup_min")
-	RowKeyRollupP25   = NewRowKey("rollup_p25")
-	RowKeyRollupP50   = NewRowKey("rollup_p50")
-	RowKeyRollupP75   = NewRowKey("rollup_p75")
-	RowKeyRollupP90   = NewRowKey("rollup_p90")
-	RowKeyRollupP95   = NewRowKey("rollup_p95")
-	RowKeyRollupP99   = NewRowKey("rollup_p99")
-	RowKeyRollupSum   = NewRowKey("rollup_sum")
 
-	// sketch key
+	// RowKeyRollupMax: "rollup_max"
+	RowKeyRollupMax = NewRowKey("rollup_max")
+
+	// RowKeyRollupMin: "rollup_min"
+	RowKeyRollupMin = NewRowKey("rollup_min")
+
+	// RowKeyRollupP25: "rollup_p25" (25th percentile)
+	RowKeyRollupP25 = NewRowKey("rollup_p25")
+
+	// RowKeyRollupP50: "rollup_p50" (50th percentile/median)
+	RowKeyRollupP50 = NewRowKey("rollup_p50")
+
+	// RowKeyRollupP75: "rollup_p75" (75th percentile)
+	RowKeyRollupP75 = NewRowKey("rollup_p75")
+
+	// RowKeyRollupP90: "rollup_p90" (90th percentile)
+	RowKeyRollupP90 = NewRowKey("rollup_p90")
+
+	// RowKeyRollupP95: "rollup_p95" (95th percentile)
+	RowKeyRollupP95 = NewRowKey("rollup_p95")
+
+	// RowKeyRollupP99: "rollup_p99" (99th percentile)
+	RowKeyRollupP99 = NewRowKey("rollup_p99")
+
+	// RowKeyRollupSum: "rollup_sum"
+	RowKeyRollupSum = NewRowKey("rollup_sum")
+
+	// RowKeySketch: "sketch"
 	RowKeySketch = NewRowKey("sketch")
+
+	// RowKeyResourceBucketName: "resource_bucket_name"
+	RowKeyResourceBucketName = NewRowKey("resource_bucket_name")
+
+	// RowKeyResourceFileName: "resource_file_name"
+	RowKeyResourceFileName = NewRowKey("resource_file_name")
+
+	// RowKeyResourceFile: "resource_file"
+	RowKeyResourceFile = NewRowKey("resource_file")
+
+	// RowKeyResourceFileType: "resource_file_type"
+	RowKeyResourceFileType = NewRowKey("resource_file_type")
 )

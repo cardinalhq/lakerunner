@@ -21,7 +21,7 @@ import (
 )
 
 // Row represents a single data row as a map of RowKey to any value.
-type Row = map[wkk.RowKey]any
+type Row map[wkk.RowKey]any
 
 // CopyRow creates a deep copy of a row.
 func CopyRow(in Row) Row {

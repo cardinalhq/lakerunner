@@ -58,7 +58,7 @@ type TracesStatsAccumulator struct {
 
 func (a *TracesStatsAccumulator) Add(row map[string]any) {
 	// Track timestamp range
-	if startTime, ok := row["_cardinalhq.timestamp"].(int64); ok {
+	if startTime, ok := row["_cardinalhq_timestamp"].(int64); ok {
 		if !a.first {
 			a.firstTS = startTime
 			a.lastTS = startTime

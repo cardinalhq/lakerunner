@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"text/template"
@@ -30,9 +31,9 @@ func (be *LogLeaf) ToWorkerSQLWithLimit(limit int, order string, fields []string
 }
 
 func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
-	const baseRel = "{table}"                 // replace upstream
-	const bodyCol = "\"_cardinalhq.message\"" // quoted column for message text
-	const tsCol = "\"_cardinalhq.timestamp\"" // quoted column for event timestamp
+	const baseRel = "{table}"               // replace upstream
+	const bodyCol = `"_cardinalhq_message"` // quoted column for message text
+	const tsCol = `"_cardinalhq_timestamp"` // quoted column for event timestamp
 
 	// Check if the tagName is created by any parser
 	tagCreatedByParser := false
@@ -41,11 +42,8 @@ func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
 		case "regexp":
 			pat := p.Params["pattern"]
 			names := regexCaptureNames(pat)
-			for _, name := range names {
-				if name == tagName {
-					tagCreatedByParser = true
-					break
-				}
+			if slices.Contains(names, tagName) {
+				tagCreatedByParser = true
 			}
 		case "json":
 			// For JSON, we need to check if the tagName matches any JSON path
@@ -116,8 +114,8 @@ func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
 // buildTagValuesQueryWithParsers builds a complex query when the tag is extracted by parsers
 func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
 	const baseRel = "{table}"                 // replace upstream
-	const bodyCol = "\"_cardinalhq.message\"" // quoted column for message text
-	const tsCol = "\"_cardinalhq.timestamp\"" // quoted column for event timestamp
+	const bodyCol = "\"_cardinalhq_message\"" // quoted column for message text
+	const tsCol = "\"_cardinalhq_timestamp\"" // quoted column for event timestamp
 
 	type layer struct {
 		name string
@@ -147,8 +145,8 @@ func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
 	need := map[string]struct{}{
 		bodyCol:                 {},
 		tsCol:                   {},
-		"\"_cardinalhq.id\"":    {},
-		"\"_cardinalhq.level\"": {},
+		"\"_cardinalhq_id\"":    {},
+		"\"_cardinalhq_level\"": {},
 	}
 	for _, m := range be.Matchers {
 		need[quoteIdent(m.Label)] = struct{}{}

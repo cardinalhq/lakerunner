@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -34,7 +35,7 @@ func newTestNoopTranslator() *testNoopTranslator {
 	return &testNoopTranslator{}
 }
 
-func (nt *testNoopTranslator) TranslateRow(_ context.Context, row *Row) error {
+func (nt *testNoopTranslator) TranslateRow(_ context.Context, row *pipeline.Row) error {
 	// No-op - row is unchanged
 	return nil
 }
@@ -45,7 +46,7 @@ type mockTranslator struct {
 	prefix      string
 }
 
-func (mt *mockTranslator) TranslateRow(_ context.Context, row *Row) error {
+func (mt *mockTranslator) TranslateRow(_ context.Context, row *pipeline.Row) error {
 	if mt.shouldError {
 		return errors.New("mock translation error")
 	}
@@ -68,7 +69,7 @@ func (mt *mockTranslator) TranslateRow(_ context.Context, row *Row) error {
 }
 
 func TestNewTranslatingReader(t *testing.T) {
-	mockReader := newMockReader("test", []Row{
+	mockReader := newMockReader("test", []pipeline.Row{
 		{wkk.NewRowKey("test"): "data"},
 	})
 	translator := newTestNoopTranslator()
@@ -93,7 +94,7 @@ func TestNewTranslatingReader_NilReader(t *testing.T) {
 }
 
 func TestNewTranslatingReader_NilTranslator(t *testing.T) {
-	mockReader := newMockReader("test", []Row{{wkk.NewRowKey("test"): "data"}})
+	mockReader := newMockReader("test", []pipeline.Row{{wkk.NewRowKey("test"): "data"}})
 
 	_, err := NewTranslatingReader(mockReader, nil, 1000)
 	assert.Error(t, err)
@@ -101,7 +102,7 @@ func TestNewTranslatingReader_NilTranslator(t *testing.T) {
 }
 
 func TestTranslatingReader_NoopTranslator(t *testing.T) {
-	testData := []Row{
+	testData := []pipeline.Row{
 		{wkk.NewRowKey("name"): "Alice", wkk.NewRowKey("age"): 30, wkk.NewRowKey("city"): "New York"},
 		{wkk.NewRowKey("name"): "Bob", wkk.NewRowKey("age"): 25, wkk.NewRowKey("city"): "San Francisco"},
 		{wkk.NewRowKey("name"): "Charlie", wkk.NewRowKey("age"): 35, wkk.NewRowKey("city"): "Chicago"},
@@ -128,7 +129,7 @@ func TestTranslatingReader_NoopTranslator(t *testing.T) {
 }
 
 func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
-	testData := []Row{
+	testData := []pipeline.Row{
 		{wkk.NewRowKey("key"): "value1"},
 		{wkk.NewRowKey("key"): "value2"},
 	}
@@ -188,7 +189,7 @@ func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 }
 
 func TestTranslatingReader_TagsTranslator(t *testing.T) {
-	testData := []Row{
+	testData := []pipeline.Row{
 		{wkk.NewRowKey("metric"): "cpu_usage", wkk.NewRowKey("value"): 75.5},
 		{wkk.NewRowKey("metric"): "memory_usage", wkk.NewRowKey("value"): 60.2},
 	}
@@ -225,7 +226,7 @@ func TestTranslatingReader_TagsTranslator(t *testing.T) {
 }
 
 func TestTranslatingReader_ChainTranslator(t *testing.T) {
-	testData := []Row{
+	testData := []pipeline.Row{
 		{wkk.NewRowKey("metric"): "cpu", wkk.NewRowKey("value"): 75},
 		{wkk.NewRowKey("metric"): "memory", wkk.NewRowKey("value"): 60},
 	}
@@ -263,7 +264,7 @@ func TestTranslatingReader_ChainTranslator(t *testing.T) {
 }
 
 func TestTranslatingReader_TranslationError(t *testing.T) {
-	testData := []Row{
+	testData := []pipeline.Row{
 		{wkk.NewRowKey("good"): "data"},
 		{wkk.NewRowKey("bad"): "data"},
 		{wkk.NewRowKey("more"): "data"},
@@ -284,7 +285,7 @@ func TestTranslatingReader_TranslationError(t *testing.T) {
 }
 
 func TestTranslatingReader_PartialTranslationError(t *testing.T) {
-	testData := []Row{
+	testData := []pipeline.Row{
 		{wkk.NewRowKey("row"): 1},
 		{wkk.NewRowKey("row"): 2},
 		{wkk.NewRowKey("row"): 3},
@@ -305,14 +306,14 @@ func TestTranslatingReader_PartialTranslationError(t *testing.T) {
 	assert.Equal(t, 1, batch.Len(), "Should have 1 successful translation (only row 0 succeeds)")
 
 	// Verify the successful row was translated
-	// Row 0 (value=1) translates successfully -> "translated_1"
-	// Row 1 (value=2) fails translation -> dropped
-	// Row 2 (value=3) also fails translation -> dropped (translator state issue)
+	// pipeline.Row 0 (value=1) translates successfully -> "translated_1"
+	// pipeline.Row 1 (value=2) fails translation -> dropped
+	// pipeline.Row 2 (value=3) also fails translation -> dropped (translator state issue)
 	assert.Equal(t, "translated_1", batch.Get(0)[wkk.NewRowKey("row")])
 }
 
 func TestTranslatingReader_EmptySlice(t *testing.T) {
-	testData := []Row{{wkk.NewRowKey("test"): "data"}}
+	testData := []pipeline.Row{{wkk.NewRowKey("test"): "data"}}
 
 	mockReader := newMockReader("test", testData)
 	translator := newTestNoopTranslator()
@@ -329,7 +330,7 @@ func TestTranslatingReader_EmptySlice(t *testing.T) {
 }
 
 func TestTranslatingReader_ReadBatched(t *testing.T) {
-	testData := []Row{
+	testData := []pipeline.Row{
 		{wkk.NewRowKey("id"): 1, wkk.NewRowKey("value"): "a"},
 		{wkk.NewRowKey("id"): 2, wkk.NewRowKey("value"): "b"},
 		{wkk.NewRowKey("id"): 3, wkk.NewRowKey("value"): "c"},
@@ -376,7 +377,7 @@ func TestTranslatingReader_ReadBatched(t *testing.T) {
 }
 
 func TestTranslatingReader_TotalRowsReturned(t *testing.T) {
-	testData := []Row{
+	testData := []pipeline.Row{
 		{wkk.NewRowKey("id"): 1, wkk.NewRowKey("value"): "a"},
 		{wkk.NewRowKey("id"): 2, wkk.NewRowKey("value"): "b"},
 		{wkk.NewRowKey("id"): 3, wkk.NewRowKey("value"): "c"},
@@ -409,7 +410,7 @@ func TestTranslatingReader_TotalRowsReturned(t *testing.T) {
 }
 
 func TestTranslatingReader_Close(t *testing.T) {
-	testData := []Row{{wkk.NewRowKey("test"): "data"}}
+	testData := []pipeline.Row{{wkk.NewRowKey("test"): "data"}}
 
 	mockReader := newMockReader("test", testData)
 	translator := newTestNoopTranslator()
@@ -454,7 +455,7 @@ func TestTranslatingReader_UnderlyingReaderError(t *testing.T) {
 }
 
 func TestTranslatingReader_EOF(t *testing.T) {
-	testData := []Row{
+	testData := []pipeline.Row{
 		{wkk.NewRowKey("final"): "row"},
 	}
 
@@ -485,7 +486,7 @@ type conditionalErrorTranslator struct {
 	rowCount  int
 }
 
-func (cet *conditionalErrorTranslator) TranslateRow(ctx context.Context, row *Row) error {
+func (cet *conditionalErrorTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	if cet.rowCount == cet.failOnRow {
 		return errors.New("conditional translation error")
 	}

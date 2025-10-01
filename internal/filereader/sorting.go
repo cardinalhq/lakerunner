@@ -14,6 +14,8 @@
 
 package filereader
 
+import "github.com/cardinalhq/lakerunner/internal/pipeline"
+
 // SortKey represents a key that can be compared for sorting
 type SortKey interface {
 	// Compare returns:
@@ -29,5 +31,5 @@ type SortKey interface {
 // SortKeyProvider creates sort keys from rows
 type SortKeyProvider interface {
 	// MakeKey creates a sort key from a row
-	MakeKey(row Row) SortKey
+	MakeKey(row pipeline.Row) SortKey
 }

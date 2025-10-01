@@ -23,6 +23,8 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/cardinalhq/lakerunner/config"
@@ -71,8 +73,8 @@ func newMetricIngestProcessor(
 	cfg *config.Config,
 	store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
 	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
-		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, store)
+	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row) error {
+		return processMetricsExemplarsDirect(ctx, organizationID, rows, store)
 	})
 
 	return &MetricIngestProcessor{
@@ -378,8 +380,7 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{
-		ExemplarProcessor: p.exemplarProcessor,
-		OrgID:             orgID,
+		OrgID: orgID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proto reader: %w", err)
@@ -480,6 +481,11 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 				if err != nil {
 					ll.Error("Failed to get/create time bin", slog.Int64("fileGroupStartTs", fileGroupStartTs), slog.Any("error", err))
 					continue
+				}
+
+				// Process exemplar before taking the row
+				if p.exemplarProcessor != nil {
+					_ = p.exemplarProcessor.ProcessMetricsFromRow(ctx, storageProfile.OrganizationID, row)
 				}
 
 				takenRow := batch.TakeRow(i)

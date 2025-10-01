@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -286,7 +287,7 @@ type testTranslator struct {
 	addValue string
 }
 
-func (t *testTranslator) TranslateRow(ctx context.Context, row *Row) error {
+func (t *testTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}

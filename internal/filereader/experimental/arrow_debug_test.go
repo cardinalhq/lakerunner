@@ -62,8 +62,8 @@ func TestArrowReaderNullFieldHandling(t *testing.T) {
 
 	// Check what values the missing fields have in ParquetRaw and DuckDB
 	missingInArrow := []string{
-		"metric.transport", "metric.context", "metric.metricName", "metric.metricType",
-		"metric.resolver", "metric.version", "metric.organization_id", "metric.data_type",
+		"metric_transport", "metric_context", "metric_metricName", "metric_metricType",
+		"metric_resolver", "metric_version", "metric_organization_id", "metric_data_type",
 	}
 
 	t.Logf("\n=== Analysis of missing fields ===")

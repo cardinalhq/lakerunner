@@ -110,10 +110,8 @@ func BenchmarkWriteFromMetricReader(b *testing.B) {
 		ctx := context.Background()
 
 		// Create reader
-		exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
 		reader, err := createMetricProtoReader(testFile, filereader.ReaderOptions{
-			ExemplarProcessor: exemplarProcessor,
-			OrgID:             orgID.String(),
+			OrgID: orgID.String(),
 		})
 		require.NoError(b, err)
 		defer func() { _ = reader.Close() }()
@@ -163,10 +161,9 @@ func BenchmarkMetricBatchProcessing(b *testing.B) {
 
 				// Create reader with specific batch size
 				options := filereader.ReaderOptions{
-					SignalType:        filereader.SignalTypeMetrics,
-					BatchSize:         batchSize,
-					ExemplarProcessor: exemplars.NewProcessor(exemplars.DefaultConfig()),
-					OrgID:             orgID.String(),
+					SignalType: filereader.SignalTypeMetrics,
+					BatchSize:  batchSize,
+					OrgID:      orgID.String(),
 				}
 
 				reader, err := filereader.ReaderForFileWithOptions(testFile, options)
@@ -214,10 +211,8 @@ func BenchmarkMetricMemoryLeaks(b *testing.B) {
 		ctx := context.Background()
 
 		// Create reader
-		exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
 		reader, err := createMetricProtoReader(testFile, filereader.ReaderOptions{
-			ExemplarProcessor: exemplarProcessor,
-			OrgID:             orgID.String(),
+			OrgID: orgID.String(),
 		})
 		require.NoError(b, err)
 
@@ -296,10 +291,8 @@ func BenchmarkMetricDetailedMemoryProfile(b *testing.B) {
 		memStats := []runtime.MemStats{}
 
 		// Stage 1: Create reader
-		exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
 		reader, err := createMetricProtoReader(testFile, filereader.ReaderOptions{
-			ExemplarProcessor: exemplarProcessor,
-			OrgID:             orgID.String(),
+			OrgID: orgID.String(),
 		})
 		require.NoError(b, err)
 		defer func() { _ = reader.Close() }()
@@ -414,10 +407,8 @@ func BenchmarkMetricAggregation(b *testing.B) {
 				ctx := context.Background()
 
 				// Create base reader
-				exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
 				reader, err := createMetricProtoReader(testFile, filereader.ReaderOptions{
-					ExemplarProcessor: exemplarProcessor,
-					OrgID:             orgID.String(),
+					OrgID: orgID.String(),
 				})
 				require.NoError(b, err)
 				defer func() { _ = reader.Close() }()

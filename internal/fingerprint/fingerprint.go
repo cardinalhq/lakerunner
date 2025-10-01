@@ -28,18 +28,18 @@ const (
 
 var (
 	InfraDimensions = []string{
-		"resource.k8s.namespace.name",
-		"resource.service.name",
-		"resource.file",
+		"resource_k8s_namespace_name",
+		"resource_service_name",
+		"resource_file",
 	}
 	DimensionsToIndex = append([]string{
-		"_cardinalhq.telemetry_type",
-		"_cardinalhq.name",
-		"_cardinalhq.level",
-		//"_cardinalhq.message",
-		"_cardinalhq.span_trace_id",
+		"_cardinalhq_telemetry_type",
+		"_cardinalhq_name",
+		"_cardinalhq_level",
+		//"_cardinalhq_message",
+		"_cardinalhq_span_trace_id",
 	}, InfraDimensions...)
-	IndexFullValueDimensions = []string{"_cardinalhq.name", "resource.file"}
+	IndexFullValueDimensions = []string{"_cardinalhq_name", "resource_file"}
 )
 
 // ToFingerprints converts a map of tagName → slice of tagValues into a set of fingerprints.

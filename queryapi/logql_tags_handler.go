@@ -91,13 +91,6 @@ func (q *QuerierService) handleListLogQLTags(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	strTags := make([]string, 0, len(tags))
-	for _, t := range tags {
-		if s, ok := t.(string); ok {
-			strTags = append(strTags, s)
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(tagsResponse{Tags: strTags})
+	_ = json.NewEncoder(w).Encode(tagsResponse{Tags: tags})
 }

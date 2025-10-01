@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -81,14 +82,14 @@ func TestCSVReader_Next(t *testing.T) {
 		name          string
 		input         string
 		batchSize     int
-		expectedBatch []map[string]interface{}
+		expectedBatch []map[string]any
 		expectEOF     bool
 	}{
 		{
 			name:      "Single row",
 			input:     "name,age,city\nAlice,30,NYC",
 			batchSize: 10,
-			expectedBatch: []map[string]interface{}{
+			expectedBatch: []map[string]any{
 				{"name": "Alice", "age": int64(30), "city": "NYC"},
 			},
 			expectEOF: true,
@@ -97,7 +98,7 @@ func TestCSVReader_Next(t *testing.T) {
 			name:      "Multiple rows",
 			input:     "name,age,city\nAlice,30,NYC\nBob,25,LA",
 			batchSize: 10,
-			expectedBatch: []map[string]interface{}{
+			expectedBatch: []map[string]any{
 				{"name": "Alice", "age": int64(30), "city": "NYC"},
 				{"name": "Bob", "age": int64(25), "city": "LA"},
 			},
@@ -107,7 +108,7 @@ func TestCSVReader_Next(t *testing.T) {
 			name:      "Numeric parsing",
 			input:     "id,value,rate\n1,100.5,0.25",
 			batchSize: 10,
-			expectedBatch: []map[string]interface{}{
+			expectedBatch: []map[string]any{
 				{"id": int64(1), "value": 100.5, "rate": 0.25},
 			},
 			expectEOF: true,
@@ -116,7 +117,7 @@ func TestCSVReader_Next(t *testing.T) {
 			name:      "Mixed types",
 			input:     "name,score,active\nTest,95.5,true",
 			batchSize: 10,
-			expectedBatch: []map[string]interface{}{
+			expectedBatch: []map[string]any{
 				{"name": "Test", "score": 95.5, "active": "true"},
 			},
 			expectEOF: true,
@@ -125,7 +126,7 @@ func TestCSVReader_Next(t *testing.T) {
 			name:      "Batch size limit",
 			input:     "id\n1\n2\n3\n4\n5",
 			batchSize: 2,
-			expectedBatch: []map[string]interface{}{
+			expectedBatch: []map[string]any{
 				{"id": int64(1)},
 				{"id": int64(2)},
 			},
@@ -281,176 +282,176 @@ func TestCSVReader_TotalRowsReturned(t *testing.T) {
 func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    Row
-		expected map[string]interface{}
+		input    pipeline.Row
+		expected map[string]any
 	}{
 		{
 			name: "Data field as message",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "This is a log message",
 				wkk.NewRowKey("timestamp"): int64(1758397185000),
 				wkk.NewRowKey("level"):     "INFO",
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "This is a log message",
-				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.level":             "INFO",
+			expected: map[string]any{
+				"_cardinalhq_message":   "This is a log message",
+				"_cardinalhq_timestamp": int64(1758397185000),
+				"log_level":             "INFO",
 			},
 		},
 		{
 			name: "Timestamp normalization from nanoseconds",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "Test message",
 				wkk.NewRowKey("timestamp"): int64(1758397185000000000),
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Test message",
-				"_cardinalhq.timestamp": int64(1758397185000),
+			expected: map[string]any{
+				"_cardinalhq_message":   "Test message",
+				"_cardinalhq_timestamp": int64(1758397185000),
 			},
 		},
 		{
 			name: "Timestamp normalization from seconds",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "Test message",
 				wkk.NewRowKey("timestamp"): int64(1758397185),
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Test message",
-				"_cardinalhq.timestamp": int64(1758397185000),
+			expected: map[string]any{
+				"_cardinalhq_message":   "Test message",
+				"_cardinalhq_timestamp": int64(1758397185000),
 			},
 		},
 		{
 			name: "Field name sanitization",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):         "Message",
 				wkk.NewRowKey("user-name"):    "alice",
 				wkk.NewRowKey("request.type"): "GET",
 				wkk.NewRowKey("status code"):  int64(200),
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message": "Message",
-				"log.user_name":       "alice",
-				"log.request.type":    "GET",
-				"log.status_code":     int64(200),
+			expected: map[string]any{
+				"_cardinalhq_message": "Message",
+				"log_user_name":       "alice",
+				"log_request.type":    "GET",
+				"log_status_code":     int64(200),
 			},
 		},
 		{
 			name: "Alternative timestamp fields",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):       "Message",
 				wkk.NewRowKey("event_time"): int64(1758397185000),
 				wkk.NewRowKey("user"):       "bob",
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Message",
-				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.user":              "bob",
+			expected: map[string]any{
+				"_cardinalhq_message":   "Message",
+				"_cardinalhq_timestamp": int64(1758397185000),
+				"log_user":              "bob",
 			},
 		},
 		{
 			name: "Normalized field names - Timestamp",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "Message",
 				wkk.NewRowKey("Timestamp"): int64(1758397185000),
 				wkk.NewRowKey("User"):      "alice",
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Message",
-				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.user":              "alice",
+			expected: map[string]any{
+				"_cardinalhq_message":   "Message",
+				"_cardinalhq_timestamp": int64(1758397185000),
+				"log_user":              "alice",
 			},
 		},
 		{
 			name: "Normalized field names - Publish_Time",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):         "Message",
 				wkk.NewRowKey("Publish_Time"): int64(1758397185000),
 				wkk.NewRowKey("User"):         "bob",
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Message",
-				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.user":              "bob",
+			expected: map[string]any{
+				"_cardinalhq_message":   "Message",
+				"_cardinalhq_timestamp": int64(1758397185000),
+				"log_user":              "bob",
 			},
 		},
 		{
 			name: "Normalized field names - EVENT_TIMESTAMP",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):            "Message",
 				wkk.NewRowKey("EVENT_TIMESTAMP"): int64(1758397185000),
 				wkk.NewRowKey("User"):            "charlie",
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Message",
-				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.user":              "charlie",
+			expected: map[string]any{
+				"_cardinalhq_message":   "Message",
+				"_cardinalhq_timestamp": int64(1758397185000),
+				"log_user":              "charlie",
 			},
 		},
 		{
 			name: "Normalized field names - EventTime",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "Message",
 				wkk.NewRowKey("EventTime"): int64(1758397185000),
 				wkk.NewRowKey("User"):      "david",
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Message",
-				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.user":              "david",
+			expected: map[string]any{
+				"_cardinalhq_message":   "Message",
+				"_cardinalhq_timestamp": int64(1758397185000),
+				"log_user":              "david",
 			},
 		},
 		{
 			name: "Duplicate field names with different cases",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):  "Message",
 				wkk.NewRowKey("alice"): "lowercase",
 				wkk.NewRowKey("Alice"): "titlecase",
 				wkk.NewRowKey("time"):  int64(1758397185000),
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Message",
-				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.alice":             "titlecase", // "Alice" comes first alphabetically
-				"log.alice_2":           "lowercase", // "alice" comes second alphabetically
+			expected: map[string]any{
+				"_cardinalhq_message":   "Message",
+				"_cardinalhq_timestamp": int64(1758397185000),
+				"log_alice":             "titlecase", // "Alice" comes first alphabetically
+				"log_alice_2":           "lowercase", // "alice" comes second alphabetically
 			},
 		},
 		{
 			name: "Multiple duplicate field names",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):  "Message",
 				wkk.NewRowKey("field"): "first",
 				wkk.NewRowKey("Field"): "second",
 				wkk.NewRowKey("FIELD"): "third",
 				wkk.NewRowKey("time"):  int64(1758397185000),
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Message",
-				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.field":             "third",  // "FIELD" comes first alphabetically
-				"log.field_2":           "second", // "Field" comes second alphabetically
-				"log.field_3":           "first",  // "field" comes third alphabetically
+			expected: map[string]any{
+				"_cardinalhq_message":   "Message",
+				"_cardinalhq_timestamp": int64(1758397185000),
+				"log_field":             "third",  // "FIELD" comes first alphabetically
+				"log_field_2":           "second", // "Field" comes second alphabetically
+				"log_field_3":           "first",  // "field" comes third alphabetically
 			},
 		},
 		{
 			name: "Sanitization collision - different special chars",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):    "Message",
 				wkk.NewRowKey("foo-bar"): "dash",
 				wkk.NewRowKey("foo bar"): "space",
 				wkk.NewRowKey("foo@bar"): "at",
 				wkk.NewRowKey("time"):    int64(1758397185000),
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Message",
-				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.foo_bar":           "space", // "foo bar" comes first alphabetically
-				"log.foo_bar_2":         "dash",  // "foo-bar" comes second alphabetically
-				"log.foo_bar_3":         "at",    // "foo@bar" comes third alphabetically
+			expected: map[string]any{
+				"_cardinalhq_message":   "Message",
+				"_cardinalhq_timestamp": int64(1758397185000),
+				"log_foo_bar":           "space", // "foo bar" comes first alphabetically
+				"log_foo_bar_2":         "dash",  // "foo-bar" comes second alphabetically
+				"log_foo_bar_3":         "at",    // "foo@bar" comes third alphabetically
 			},
 		},
 		{
 			name: "Complex sanitization collision",
-			input: Row{
+			input: pipeline.Row{
 				wkk.NewRowKey("data"):      "Message",
 				wkk.NewRowKey("user-name"): "dash",
 				wkk.NewRowKey("user name"): "space",
@@ -458,13 +459,13 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("user@name"): "at",
 				wkk.NewRowKey("time"):      int64(1758397185000),
 			},
-			expected: map[string]interface{}{
-				"_cardinalhq.message":   "Message",
-				"_cardinalhq.timestamp": int64(1758397185000),
-				"log.user_name":         "space",      // "user name" comes first alphabetically
-				"log.user_name_2":       "dash",       // "user-name" comes second alphabetically
-				"log.user_name_3":       "at",         // "user@name" comes third alphabetically
-				"log.user_name_4":       "underscore", // "user_name" comes fourth alphabetically
+			expected: map[string]any{
+				"_cardinalhq_message":   "Message",
+				"_cardinalhq_timestamp": int64(1758397185000),
+				"log_user_name":         "space",      // "user name" comes first alphabetically
+				"log_user_name_2":       "dash",       // "user-name" comes second alphabetically
+				"log_user_name_3":       "at",         // "user@name" comes third alphabetically
+				"log_user_name_4":       "underscore", // "user_name" comes fourth alphabetically
 			},
 		},
 	}
@@ -488,7 +489,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				rowKey := wkk.NewRowKey(key)
 				actualValue, exists := row[rowKey]
 				assert.True(t, exists, "Expected field %s not found", key)
-				if key == "_cardinalhq.timestamp" {
+				if key == "_cardinalhq_timestamp" {
 					// For timestamp, allow some tolerance if it's using current time
 					if expectedValue == nil {
 						assert.NotNil(t, actualValue)
@@ -501,10 +502,10 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			}
 
 			// Check resource fields were added
-			assert.Equal(t, "test-bucket", row[wkk.NewRowKey("resource.bucket.name")])
-			assert.Equal(t, "./test.csv", row[wkk.NewRowKey("resource.file.name")])
-			assert.Equal(t, "test", row[wkk.NewRowKey("resource.file.type")]) // GetFileType returns filename without extension
-			assert.Equal(t, "csv-import", row[wkk.NewRowKey("resource.service.name")])
+			assert.Equal(t, "test-bucket", row[wkk.RowKeyResourceBucketName])
+			assert.Equal(t, "./test.csv", row[wkk.RowKeyResourceFileName])
+			assert.Equal(t, "test", row[wkk.RowKeyResourceFileType]) // GetFileType returns filename without extension
+			assert.Equal(t, "csv-import", row[wkk.NewRowKey("resource_service_name")])
 		})
 	}
 }
@@ -514,7 +515,7 @@ func TestCSVLogTranslator_ParseTimestamp(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected int64
 	}{
 		// Numeric inputs

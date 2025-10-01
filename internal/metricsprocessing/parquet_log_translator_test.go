@@ -22,9 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/oteltools/pkg/translate"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
 
-	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -43,14 +43,14 @@ func TestParquetLogTranslator_TranslateRow_NilRow(t *testing.T) {
 func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 	tests := []struct {
 		name           string
-		inputRow       filereader.Row
+		inputRow       pipeline.Row
 		expectedMs     int64
 		expectedNs     int64
 		shouldFindTime bool
 	}{
 		{
 			name: "nanosecond precision timestamp",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp_ns"): int64(1234567890123456789),
 				wkk.NewRowKey("message"):      "test message",
 			},
@@ -60,7 +60,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "microsecond precision timestamp",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp_us"): int64(1234567890123456),
 				wkk.NewRowKey("message"):      "test message",
 			},
@@ -70,7 +70,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "millisecond precision timestamp",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 			},
@@ -80,7 +80,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "time.Time object",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): time.Unix(1234567890, 123456789),
 				wkk.NewRowKey("message"):   "test message",
 			},
@@ -90,7 +90,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "@timestamp field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("@timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):    "test message",
 			},
@@ -100,7 +100,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "no timestamp field - should use current time",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("message"): "test message",
 			},
 			expectedMs:     0, // Will check that it's close to current time
@@ -109,7 +109,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "timestamp_millis field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp_millis"): int64(1234567890123),
 				wkk.NewRowKey("message"):          "test message",
 			},
@@ -119,7 +119,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "float64 timestamp",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): float64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 			},
@@ -129,7 +129,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 		},
 		{
 			name: "int32 timestamp",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int32(1234567890),
 				wkk.NewRowKey("message"):   "test message",
 			},
@@ -148,7 +148,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 			}
 
 			// Create a copy of the row to avoid mutation
-			row := make(filereader.Row)
+			row := make(pipeline.Row)
 			for k, v := range tt.inputRow {
 				row[k] = v
 			}
@@ -160,10 +160,10 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 
 			// Check that timestamp was set correctly
 			tsMs, exists := row[wkk.RowKeyCTimestamp]
-			assert.True(t, exists, "Should have _cardinalhq.timestamp")
+			assert.True(t, exists, "Should have _cardinalhq_timestamp")
 
-			tsNs, exists := row[wkk.NewRowKey("_cardinalhq.tsns")]
-			assert.True(t, exists, "Should have _cardinalhq.tsns")
+			tsNs, exists := row[wkk.NewRowKey("_cardinalhq_tsns")]
+			assert.True(t, exists, "Should have _cardinalhq_tsns")
 
 			if tt.shouldFindTime {
 				assert.Equal(t, tt.expectedMs, tsMs, "Millisecond timestamp mismatch")
@@ -190,12 +190,12 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 	tests := []struct {
 		name            string
-		inputRow        filereader.Row
+		inputRow        pipeline.Row
 		expectedMessage string
 	}{
 		{
 			name: "message field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 			},
@@ -203,7 +203,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "msg field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("msg"):       "test msg",
 			},
@@ -211,7 +211,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "body field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("body"):      "test body",
 			},
@@ -219,7 +219,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "log field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("log"):       "test log",
 			},
@@ -227,7 +227,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "byte slice message",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   []byte("byte message"),
 			},
@@ -235,7 +235,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "no message field",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("level"):     "info",
 			},
@@ -243,7 +243,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 		},
 		{
 			name: "empty message",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "",
 			},
@@ -260,7 +260,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 			}
 
 			// Create a copy of the row
-			row := make(filereader.Row)
+			row := make(pipeline.Row)
 			for k, v := range tt.inputRow {
 				row[k] = v
 			}
@@ -271,7 +271,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 			// Check message was set correctly
 			messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
 			msg, exists := row[messageKey]
-			assert.True(t, exists, "Should have _cardinalhq.message")
+			assert.True(t, exists, "Should have _cardinalhq_message")
 			assert.Equal(t, tt.expectedMessage, msg)
 		})
 	}
@@ -280,12 +280,12 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.T) {
 	tests := []struct {
 		name     string
-		inputRow filereader.Row
+		inputRow pipeline.Row
 		expected map[string]any
 	}{
 		{
 			name: "nested map structure",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 				wkk.NewRowKey("metadata"): map[string]any{
@@ -297,27 +297,27 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 				},
 			},
 			expected: map[string]any{
-				"resource.metadata.user":         "john",
-				"resource.metadata.details.age":  30,
-				"resource.metadata.details.city": "NYC",
+				"resource_metadata_user":         "john",
+				"resource_metadata_details_age":  30,
+				"resource_metadata_details_city": "NYC",
 			},
 		},
 		{
 			name: "array structure",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 				wkk.NewRowKey("tags"):      []any{"tag1", "tag2", "tag3"},
 			},
 			expected: map[string]any{
-				"resource.tags[0]": "tag1",
-				"resource.tags[1]": "tag2",
-				"resource.tags[2]": "tag3",
+				"resource_tags[0]": "tag1",
+				"resource_tags[1]": "tag2",
+				"resource_tags[2]": "tag3",
 			},
 		},
 		{
 			name: "complex nested structure",
-			inputRow: filereader.Row{
+			inputRow: pipeline.Row{
 				wkk.NewRowKey("timestamp"): int64(1234567890123),
 				wkk.NewRowKey("message"):   "test message",
 				wkk.NewRowKey("data"): map[string]any{ // Changed from "event" to avoid message field detection
@@ -331,10 +331,10 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 				},
 			},
 			expected: map[string]any{
-				"resource.data.type":                        "click",
-				"resource.data.properties.button":           "submit",
-				"resource.data.properties.coordinates[0].x": 100,
-				"resource.data.properties.coordinates[0].y": 200,
+				"resource_data_type":                        "click",
+				"resource_data_properties_button":           "submit",
+				"resource_data_properties_coordinates[0]_x": 100,
+				"resource_data_properties_coordinates[0]_y": 200,
 			},
 		},
 	}
@@ -348,7 +348,7 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 			}
 
 			// Create a copy of the row
-			row := make(filereader.Row)
+			row := make(pipeline.Row)
 			for k, v := range tt.inputRow {
 				row[k] = v
 			}
@@ -388,7 +388,7 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 		ObjectID: "test.parquet",
 	}
 
-	row := filereader.Row{
+	row := pipeline.Row{
 		// These should be detected and not duplicated as attributes
 		wkk.NewRowKey("timestamp"):  int64(1234567890123),
 		wkk.NewRowKey("message"):    "test message",
@@ -403,10 +403,10 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 		wkk.NewRowKey("_internal"): "skip me",
 
 		// _cardinalhq fields should be skipped
-		wkk.NewRowKey("_cardinalhq.test"): "skip me too",
+		wkk.NewRowKey("_cardinalhq_test"): "skip me too",
 
 		// resource fields should be kept as-is
-		wkk.NewRowKey("resource.old"): "keep",
+		wkk.NewRowKey("resource_old"): "keep",
 	}
 
 	err := translator.TranslateRow(context.Background(), &row)
@@ -424,20 +424,20 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 	assert.False(t, hasInternal, "_internal should be skipped")
 
 	// Check that existing resource field was kept
-	oldResource, hasOldResource := row[wkk.NewRowKey("resource.old")]
-	assert.True(t, hasOldResource, "resource.old should be kept")
+	oldResource, hasOldResource := row[wkk.NewRowKey("resource_old")]
+	assert.True(t, hasOldResource, "resource_old should be kept")
 	assert.Equal(t, "keep", oldResource)
 
 	// Check that level was used for detection and not promoted to resource.level
-	_, hasLevel := row[wkk.NewRowKey("resource.level")]
+	_, hasLevel := row[wkk.NewRowKey("resource_level")]
 	assert.False(t, hasLevel, "Level field used for detection should not be promoted to resource.level")
 
-	// Check that level was correctly set in _cardinalhq.level
-	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("_cardinalhq.level")]
-	assert.True(t, hasCardinalLevel, "Should have _cardinalhq.level")
+	// Check that level was correctly set in _cardinalhq_level
+	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("_cardinalhq_level")]
+	assert.True(t, hasCardinalLevel, "Should have _cardinalhq_level")
 	assert.Equal(t, "INFO", cardinalLevel, "Should have level as uppercase")
 
-	service, hasService := row[wkk.NewRowKey("resource.service")]
+	service, hasService := row[wkk.NewRowKey("resource_service")]
 	assert.True(t, hasService, "Should have resource.service attribute")
 	assert.Equal(t, "api", service)
 }
@@ -449,7 +449,7 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 		ObjectID: "logs/2024/01/data.parquet",
 	}
 
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"): int64(1234567890123),
 		wkk.NewRowKey("message"):   "test message",
 	}
@@ -459,24 +459,24 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 
 	// Check required CardinalhQ fields
 	telemetryType, exists := row[wkk.RowKeyCTelemetryType]
-	assert.True(t, exists, "Should have _cardinalhq.telemetry_type")
+	assert.True(t, exists, "Should have _cardinalhq_telemetry_type")
 	assert.Equal(t, "logs", telemetryType)
 
 	name, exists := row[wkk.RowKeyCName]
-	assert.True(t, exists, "Should have _cardinalhq.name")
-	assert.Equal(t, "log.events", name)
+	assert.True(t, exists, "Should have _cardinalhq_name")
+	assert.Equal(t, "log_events", name)
 
 	// Check resource fields
-	bucketName, exists := row[wkk.NewRowKey("resource.bucket.name")]
-	assert.True(t, exists, "Should have resource.bucket.name")
+	bucketName, exists := row[wkk.RowKeyResourceBucketName]
+	assert.True(t, exists, "Should have resource_bucket_name")
 	assert.Equal(t, "test-bucket", bucketName)
 
-	fileName, exists := row[wkk.NewRowKey("resource.file.name")]
-	assert.True(t, exists, "Should have resource.file.name")
+	fileName, exists := row[wkk.RowKeyResourceFileName]
+	assert.True(t, exists, "Should have resource_file_name")
 	assert.Equal(t, "./logs/2024/01/data.parquet", fileName)
 
-	fileType, exists := row[wkk.NewRowKey("resource.file.type")]
-	assert.True(t, exists, "Should have resource.file.type")
+	fileType, exists := row[wkk.RowKeyResourceFileType]
+	assert.True(t, exists, "Should have resource_file_type")
 	assert.Equal(t, "data", fileType) // GetFileType returns filename without extension, not the extension itself
 }
 
@@ -488,7 +488,7 @@ func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
 	}
 
 	// Create a row with an empty key (edge case)
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"): int64(1234567890123),
 		wkk.NewRowKey("message"):   "test message",
 		wkk.NewRowKey(""):          "value with empty key", // This should be skipped
@@ -514,37 +514,37 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 		ObjectID: "test.parquet",
 	}
 
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"):    int64(1234567890123),
 		wkk.NewRowKey("message"):      "test message",
 		wkk.NewRowKey("level"):        "error",
-		wkk.NewRowKey("service.name"): "auth-service",
-		wkk.NewRowKey("trace.id"):     "abc123",
-		wkk.NewRowKey("span.id"):      "def456",
-		wkk.NewRowKey("http.method"):  "POST",
-		wkk.NewRowKey("http.status"):  int64(500),
-		wkk.NewRowKey("duration.ms"):  float64(123.45),
+		wkk.NewRowKey("service_name"): "auth-service",
+		wkk.NewRowKey("trace_id"):     "abc123",
+		wkk.NewRowKey("span_id"):      "def456",
+		wkk.NewRowKey("http_method"):  "POST",
+		wkk.NewRowKey("http_status"):  int64(500),
+		wkk.NewRowKey("duration_ms"):  float64(123.45),
 	}
 
 	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 
 	// Check that level was used for detection and not promoted to resource.level
-	_, hasResourceLevel := row[wkk.NewRowKey("resource.level")]
+	_, hasResourceLevel := row[wkk.NewRowKey("resource_level")]
 	assert.False(t, hasResourceLevel, "Level field used for detection should not be promoted to resource.level")
 
-	// Check that level was correctly set in _cardinalhq.level
-	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("_cardinalhq.level")]
-	assert.True(t, hasCardinalLevel, "Should have _cardinalhq.level")
+	// Check that level was correctly set in _cardinalhq_level
+	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("_cardinalhq_level")]
+	assert.True(t, hasCardinalLevel, "Should have _cardinalhq_level")
 	assert.Equal(t, "ERROR", cardinalLevel, "Should have level as uppercase")
 
-	// Check that all other non-special fields are preserved with resource. prefix
-	assert.Equal(t, "auth-service", row[wkk.NewRowKey("resource.service.name")])
-	assert.Equal(t, "abc123", row[wkk.NewRowKey("resource.trace.id")])
-	assert.Equal(t, "def456", row[wkk.NewRowKey("resource.span.id")])
-	assert.Equal(t, "POST", row[wkk.NewRowKey("resource.http.method")])
-	assert.Equal(t, int64(500), row[wkk.NewRowKey("resource.http.status")])
-	assert.Equal(t, float64(123.45), row[wkk.NewRowKey("resource.duration.ms")])
+	// Check that all other non-special fields are preserved with resource_ prefix
+	assert.Equal(t, "auth-service", row[wkk.NewRowKey("resource_service_name")])
+	assert.Equal(t, "abc123", row[wkk.NewRowKey("resource_trace_id")])
+	assert.Equal(t, "def456", row[wkk.NewRowKey("resource_span_id")])
+	assert.Equal(t, "POST", row[wkk.NewRowKey("resource_http_method")])
+	assert.Equal(t, int64(500), row[wkk.NewRowKey("resource_http_status")])
+	assert.Equal(t, float64(123.45), row[wkk.NewRowKey("resource_duration_ms")])
 }
 
 func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.T) {
@@ -555,7 +555,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 	}
 
 	// Test case matching the user's example (sanitized)
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"):         int64(1757812155208), // Original timestamp from syslog.parquet
 		wkk.NewRowKey("application"):       "agent[1234]",
 		wkk.NewRowKey("controller_ip"):     "10.0.0.1",
@@ -569,19 +569,19 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 
-	// Verify that the timestamp was correctly used for _cardinalhq.timestamp
+	// Verify that the timestamp was correctly used for _cardinalhq_timestamp
 	cardinalTimestamp, exists := row[wkk.RowKeyCTimestamp]
-	assert.True(t, exists, "Should have _cardinalhq.timestamp")
+	assert.True(t, exists, "Should have _cardinalhq_timestamp")
 	assert.Equal(t, int64(1757812155208), cardinalTimestamp, "Should preserve original timestamp, not use current time")
 
 	// Verify that the timestamp field was NOT promoted to resource.timestamp
-	_, hasResourceTimestamp := row[wkk.NewRowKey("resource.timestamp")]
+	_, hasResourceTimestamp := row[wkk.NewRowKey("resource_timestamp")]
 	assert.False(t, hasResourceTimestamp, "Timestamp field used for detection should not be promoted to resource.timestamp")
 
 	// Verify other fields are promoted correctly
-	assert.Equal(t, "agent[1234]", row[wkk.NewRowKey("resource.application")])
-	assert.Equal(t, "10.0.0.1", row[wkk.NewRowKey("resource.controller_ip")])
-	assert.Equal(t, "192.168.1.100", row[wkk.NewRowKey("resource.source")])
+	assert.Equal(t, "agent[1234]", row[wkk.NewRowKey("resource_application")])
+	assert.Equal(t, "10.0.0.1", row[wkk.NewRowKey("resource_controller_ip")])
+	assert.Equal(t, "192.168.1.100", row[wkk.NewRowKey("resource_source")])
 
 	// Verify message was extracted correctly
 	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
@@ -591,16 +591,16 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 	assert.Equal(t, expectedMessage, message)
 
 	// Verify that the message field was NOT promoted to resource.message (it was used for extraction)
-	_, hasResourceMessage := row[wkk.NewRowKey("resource.message")]
+	_, hasResourceMessage := row[wkk.NewRowKey("resource_message")]
 	assert.False(t, hasResourceMessage, "Message field used for detection should not be promoted to resource.message")
 
 	// Verify that the level field was NOT promoted to resource.level (it was used for detection)
-	_, hasResourceLevel := row[wkk.NewRowKey("resource.level")]
+	_, hasResourceLevel := row[wkk.NewRowKey("resource_level")]
 	assert.False(t, hasResourceLevel, "Level field used for detection should not be promoted to resource.level")
 
 	// Verify that the level was correctly set
-	cardinalLevel, hasLevel := row[wkk.NewRowKey("_cardinalhq.level")]
-	assert.True(t, hasLevel, "Should have _cardinalhq.level")
+	cardinalLevel, hasLevel := row[wkk.NewRowKey("_cardinalhq_level")]
+	assert.True(t, hasLevel, "Should have _cardinalhq_level")
 	assert.Equal(t, "INFO", cardinalLevel, "Should preserve original level")
 }
 
@@ -618,7 +618,7 @@ func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testin
 		ObjectID: "test.parquet",
 	}
 
-	row := filereader.Row{
+	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"):   mockStringTimestamp{value: "2025-09-13 18:09:15"},
 		wkk.NewRowKey("application"): "test-app",
 		wkk.NewRowKey("message"):     "test message",
@@ -629,7 +629,7 @@ func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testin
 
 	// Verify that the mock string timestamp was NOT used and we fell back to current time
 	cardinalTimestamp, exists := row[wkk.RowKeyCTimestamp]
-	assert.True(t, exists, "Should have _cardinalhq.timestamp")
+	assert.True(t, exists, "Should have _cardinalhq_timestamp")
 
 	// The timestamp should be recent (current time), not 2025 milliseconds since epoch
 	timestamp := cardinalTimestamp.(int64)
@@ -638,7 +638,7 @@ func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testin
 	assert.Less(t, timestamp-now, int64(5000), "Should be within 5 seconds of current time")
 
 	// Verify that the mock timestamp was promoted to resource attribute since it wasn't used
-	mockTimestampValue, hasMockTimestamp := row[wkk.NewRowKey("resource.timestamp")]
+	mockTimestampValue, hasMockTimestamp := row[wkk.NewRowKey("resource_timestamp")]
 	assert.True(t, hasMockTimestamp, "Mock timestamp should be promoted to resource attribute")
 	assert.Equal(t, mockStringTimestamp{value: "2025-09-13 18:09:15"}, mockTimestampValue)
 }

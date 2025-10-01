@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -117,7 +118,7 @@ func putMetricSortKey(key *MetricSortKey) {
 type MetricSortKeyProvider struct{}
 
 // MakeKey implements SortKeyProvider interface for metrics
-func (p *MetricSortKeyProvider) MakeKey(row Row) SortKey {
+func (p *MetricSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
 	key := getMetricSortKey()
 	key.Name, key.NameOk = row[wkk.RowKeyCName].(string)
 	key.Tid, key.TidOk = row[wkk.RowKeyCTID].(int64)
@@ -126,7 +127,7 @@ func (p *MetricSortKeyProvider) MakeKey(row Row) SortKey {
 }
 
 // MakeMetricSortKey creates a pooled MetricSortKey from a row
-func MakeMetricSortKey(row Row) *MetricSortKey {
+func MakeMetricSortKey(row pipeline.Row) *MetricSortKey {
 	key := getMetricSortKey()
 	key.Name, key.NameOk = row[wkk.RowKeyCName].(string)
 	key.Tid, key.TidOk = row[wkk.RowKeyCTID].(int64)
@@ -213,7 +214,7 @@ func (k *NonPooledMetricSortKey) Release() {
 type NonPooledMetricSortKeyProvider struct{}
 
 // MakeKey implements SortKeyProvider interface for metrics without using pools
-func (p *NonPooledMetricSortKeyProvider) MakeKey(row Row) SortKey {
+func (p *NonPooledMetricSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
 	key := &NonPooledMetricSortKey{}
 	key.Name, key.NameOk = row[wkk.RowKeyCName].(string)
 	key.Tid, key.TidOk = row[wkk.RowKeyCTID].(int64)

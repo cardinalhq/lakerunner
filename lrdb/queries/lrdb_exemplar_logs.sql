@@ -1,15 +1,14 @@
 -- name: BatchUpsertExemplarLogs :batchone
--- This will upsert a new log exemplar. Attributes, exemplar, and updated_at are always updated
+-- This will upsert a new log exemplar. Exemplar and updated_at are always updated
 -- to the provided values. If old_fingerprint is not 0, it is added to the list of related
 -- fingerprints. This means the "old" fingerprint should be fingerprint, so it always updates
 -- an existing record, not changing it to the new one.
 -- The return value is a boolean indicating if the record is new.
 INSERT INTO lrdb_exemplar_logs
-            ( organization_id,  service_identifier_id,  fingerprint,  attributes,  exemplar)
-VALUES      (@organization_id, @service_identifier_id, @fingerprint, @attributes, @exemplar)
+            ( organization_id,  service_identifier_id,  fingerprint,  exemplar)
+VALUES      (@organization_id, @service_identifier_id, @fingerprint, @exemplar)
 ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
 DO UPDATE SET
-  attributes = EXCLUDED.attributes,
   exemplar   = EXCLUDED.exemplar,
   updated_at = now(),
   related_fingerprints = CASE

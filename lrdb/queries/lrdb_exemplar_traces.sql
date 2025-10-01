@@ -3,7 +3,6 @@ INSERT INTO lrdb_exemplar_traces
 ( organization_id
 , service_identifier_id
 , fingerprint
-, attributes
 , exemplar
 , span_name
 , span_kind
@@ -11,7 +10,6 @@ INSERT INTO lrdb_exemplar_traces
 VALUES      ( @organization_id
             , @service_identifier_id
             , @fingerprint
-            , @attributes
             , @exemplar
             , @span_name
             , @span_kind
@@ -21,7 +19,6 @@ VALUES      ( @organization_id
             , fingerprint
             )
 DO UPDATE SET
-           attributes        = EXCLUDED.attributes,
            exemplar          = EXCLUDED.exemplar,
            span_name         = EXCLUDED.span_name,
            span_kind         = EXCLUDED.span_kind,

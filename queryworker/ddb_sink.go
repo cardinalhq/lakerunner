@@ -124,8 +124,11 @@ func (s *DDBSink) IngestParquetBatch(ctx context.Context, parquetPaths []string,
 		return fmt.Errorf("probe batch schema: %w", err)
 	}
 	// Require the anchor column to exist in the files.
-	if _, ok := unionAll["_cardinalhq.timestamp"]; !ok {
-		return fmt.Errorf("batch missing required column _cardinalhq.timestamp")
+	// Accept both old (dots) and new (underscores) naming conventions for backward compatibility
+	_, hasUnderscore := unionAll["_cardinalhq_timestamp"]
+	_, hasDots := unionAll["_cardinalhq.timestamp"]
+	if !hasUnderscore && !hasDots {
+		return fmt.Errorf("batch missing required column _cardinalhq_timestamp")
 	}
 
 	// 2) Determine missing columns and add them in one txn.
@@ -166,8 +169,11 @@ func (s *DDBSink) IngestParquetBatch(ctx context.Context, parquetPaths []string,
 		if err != nil {
 			return fmt.Errorf("probe chunk schema [%d:%d]: %w", start, end, err)
 		}
-		if _, ok := unionChunk["_cardinalhq.timestamp"]; !ok {
-			return fmt.Errorf("chunk [%d:%d] missing required column _cardinalhq.timestamp", start, end)
+		// Accept both old (dots) and new (underscores) naming conventions for backward compatibility
+		_, hasUnderscore := unionChunk["_cardinalhq_timestamp"]
+		_, hasDots := unionChunk["_cardinalhq.timestamp"]
+		if !hasUnderscore && !hasDots {
+			return fmt.Errorf("chunk [%d:%d] missing required column _cardinalhq_timestamp", start, end)
 		}
 
 		// 3b) VALUES mapping from absolute file path → segment_id

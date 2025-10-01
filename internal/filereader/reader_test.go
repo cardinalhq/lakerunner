@@ -17,23 +17,24 @@ package filereader
 import (
 	"testing"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestExtractTimestamp(t *testing.T) {
 	tests := []struct {
-		row      Row
+		row      pipeline.Row
 		field    string
 		expected int64
 	}{
-		{Row{wkk.NewRowKey("ts"): int64(123)}, "ts", 123},
-		{Row{wkk.NewRowKey("ts"): int32(456)}, "ts", 456},
-		{Row{wkk.NewRowKey("ts"): int(789)}, "ts", 789},
-		{Row{wkk.NewRowKey("ts"): float64(111.5)}, "ts", 111},
-		{Row{wkk.NewRowKey("ts"): float32(222.7)}, "ts", 222},
-		{Row{wkk.NewRowKey("ts"): "invalid"}, "ts", 0},
-		{Row{wkk.NewRowKey("other"): 123}, "ts", 0},
-		{Row{}, "ts", 0},
+		{pipeline.Row{wkk.NewRowKey("ts"): int64(123)}, "ts", 123},
+		{pipeline.Row{wkk.NewRowKey("ts"): int32(456)}, "ts", 456},
+		{pipeline.Row{wkk.NewRowKey("ts"): int(789)}, "ts", 789},
+		{pipeline.Row{wkk.NewRowKey("ts"): float64(111.5)}, "ts", 111},
+		{pipeline.Row{wkk.NewRowKey("ts"): float32(222.7)}, "ts", 222},
+		{pipeline.Row{wkk.NewRowKey("ts"): "invalid"}, "ts", 0},
+		{pipeline.Row{wkk.NewRowKey("other"): 123}, "ts", 0},
+		{pipeline.Row{}, "ts", 0},
 	}
 
 	for i, test := range tests {

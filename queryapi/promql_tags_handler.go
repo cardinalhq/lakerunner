@@ -129,7 +129,7 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	tagKeys, err := q.mdb.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
+	tags, err := q.mdb.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
 		OrganizationID: orgUUID,
 		MetricName:     metric,
 	})
@@ -137,15 +137,6 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		slog.Error("ListPromMetricTags failed", slog.Any("error", err))
 		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	tags := make([]string, len(tagKeys))
-	for i, tag := range tagKeys {
-		if s, ok := tag.(string); ok {
-			tags[i] = s
-		} else {
-			tags[i] = ""
-		}
 	}
 
 	resp := promTagsForMetricResp{

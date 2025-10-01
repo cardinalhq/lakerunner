@@ -20,11 +20,6 @@ import (
 	"io"
 	"maps"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
-
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
-	"github.com/cardinalhq/oteltools/pkg/translate"
-
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/otel/attribute"
@@ -43,12 +38,11 @@ type IngestProtoLogsReader struct {
 	batchSize int
 
 	// Streaming iterator state for logs
-	logs              *plog.Logs
-	resourceIndex     int
-	scopeIndex        int
-	logIndex          int
-	exemplarProcessor *exemplars.Processor
-	orgId             string
+	logs          *plog.Logs
+	resourceIndex int
+	scopeIndex    int
+	logIndex      int
+	orgId         string
 }
 
 var _ Reader = (*IngestProtoLogsReader)(nil)
@@ -62,9 +56,8 @@ func NewIngestProtoLogsReader(reader io.Reader, opts ReaderOptions) (*IngestProt
 	}
 
 	protoReader := &IngestProtoLogsReader{
-		batchSize:         batchSize,
-		exemplarProcessor: opts.ExemplarProcessor,
-		orgId:             opts.OrgID,
+		batchSize: batchSize,
+		orgId:     opts.OrgID,
 	}
 
 	logs, err := parseProtoToOtelLogs(reader)
@@ -119,7 +112,7 @@ func (r *IngestProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 }
 
 // getLogRow handles reading the next log row.
-func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (Row, error) {
+func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (pipeline.Row, error) {
 	if r.logs == nil {
 		return nil, io.EOF
 	}
@@ -133,15 +126,13 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (Row, error) {
 
 			if r.logIndex < sl.LogRecords().Len() {
 				logRecord := sl.LogRecords().At(r.logIndex)
-				row := r.buildLogRow(ctx, rl, sl, logRecord)
-				if r.exemplarProcessor != nil {
-					err := r.exemplarProcessor.ProcessLogs(ctx, r.orgId, rl, sl, logRecord)
-					if err != nil {
-						continue // Skip exemplar errors
-					}
-				}
+				row := r.buildLogRow(rl, sl, logRecord)
 				r.logIndex++
-				return r.processRow(row)
+				processedRow, err := r.processRow(row)
+				if err != nil {
+					return nil, err
+				}
+				return processedRow, nil
 			}
 
 			r.scopeIndex++
@@ -157,7 +148,7 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (Row, error) {
 }
 
 // buildLogRow creates a row from a single log record and its context.
-func (r *IngestProtoLogsReader) buildLogRow(ctx context.Context, rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord) map[string]any {
+func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord) map[string]any {
 	ret := map[string]any{}
 
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
@@ -179,26 +170,17 @@ func (r *IngestProtoLogsReader) buildLogRow(ctx context.Context, rl plog.Resourc
 	})
 
 	message := logRecord.Body().AsString()
-	ret[translate.CardinalFieldMessage] = message
-	ret[translate.CardinalFieldTimestamp] = logRecord.Timestamp().AsTime().UnixMilli()
-	ret["_cardinalhq.tsns"] = int64(logRecord.Timestamp())
+	ret["_cardinalhq_message"] = message
+	ret["_cardinalhq_timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
+	ret["_cardinalhq_tsns"] = int64(logRecord.Timestamp())
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
-	ret["_cardinalhq.level"] = logRecord.SeverityText()
+	ret["_cardinalhq_level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
-	if r.exemplarProcessor != nil {
-		tenant := r.exemplarProcessor.GetTenant(ctx, r.orgId)
-		trieClusterManager := tenant.GetTrieClusterManager()
-		fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
-		if err == nil {
-			ret[translate.CardinalFieldFingerprint] = fingerprint
-		}
-		logRecord.Attributes().PutInt(translate.CardinalFieldFingerprint, fingerprint)
-	}
 	return ret
 }
 
-func (r *IngestProtoLogsReader) processRow(row map[string]any) (Row, error) {
-	result := make(Row)
+func (r *IngestProtoLogsReader) processRow(row map[string]any) (pipeline.Row, error) {
+	result := make(pipeline.Row)
 	for k, v := range row {
 		result[wkk.NewRowKey(k)] = v
 	}

@@ -74,9 +74,9 @@ func TestParse_CountOverTime_RegexLineFilter(t *testing.T) {
 		t.Fatalf("no pipeline returned by FirstPipeline()")
 	}
 
-	// Matcher: resource_service_name="kafka" (note: parser normalizes to "resource.service.name")
+	// Matcher: resource_service_name="kafka" (note: parser normalizes to "resource_service.name")
 	if !(hasMatcher(sel.Matchers, "resource_service_name", "kafka") ||
-		hasMatcher(sel.Matchers, "resource.service.name", "kafka")) {
+		hasMatcher(sel.Matchers, "resource_service.name", "kafka")) {
 		t.Fatalf(`missing matcher resource_service_name="kafka": %#v`, sel.Matchers)
 	}
 
@@ -373,7 +373,7 @@ func TestVectorAggregation_Grouping_NormalizesLabelNames_By(t *testing.T) {
 	if ast.Kind != KindVectorAgg || ast.VectorAgg == nil {
 		t.Fatalf("expected VectorAgg, got: %#v", ast)
 	}
-	want := []string{"resource.cluster", "_cardinalhq.foo", "log.level"}
+	want := []string{"resource_cluster", "_cardinalhq_foo", "log_level"}
 
 	if len(ast.VectorAgg.By) != len(want) {
 		t.Fatalf("By len = %d, want %d; By = %#v", len(ast.VectorAgg.By), len(want), ast.VectorAgg.By)
@@ -394,7 +394,7 @@ func TestVectorAggregation_Grouping_NormalizesLabelNames_Without(t *testing.T) {
 	if ast.Kind != KindVectorAgg || ast.VectorAgg == nil {
 		t.Fatalf("expected VectorAgg, got: %#v", ast)
 	}
-	want := []string{"resource.cluster", "_cardinalhq.foo", "log.level"}
+	want := []string{"resource_cluster", "_cardinalhq_foo", "log_level"}
 
 	if len(ast.VectorAgg.Without) != len(want) {
 		t.Fatalf("Without len = %d, want %d; Without = %#v", len(ast.VectorAgg.Without), len(want), ast.VectorAgg.Without)
@@ -608,9 +608,9 @@ func TestParse_JSON_Map_Unwrap_NestedField_SumOffset(t *testing.T) {
 		t.Fatalf("no pipeline returned by FirstPipeline()")
 	}
 
-	// Matcher normalized: resource_service_name -> resource.service.name
-	if !hasMatcher(sel.Matchers, "resource.service.name", "segment") {
-		t.Fatalf(`missing/unnormalized matcher resource.service.name="segment": %#v`, sel.Matchers)
+	// Matcher normalized: resource_service_name
+	if !hasMatcher(sel.Matchers, "resource_service_name", "segment") {
+		t.Fatalf(`missing/unnormalized matcher resource_service_name="segment": %#v`, sel.Matchers)
 	}
 
 	// Stages: json (with mapping), then unwrap(revenue).
@@ -667,15 +667,9 @@ func TestRangeAgg_AvgOverTime_RegexpUnwrapBytes(t *testing.T) {
 		t.Fatalf("left.range = %q, want %q", ast.RangeAgg.Left.Range, "5m")
 	}
 
-	// Matcher label is normalized by normalizeLabelName: resource_service_name -> resource.service.name
-	if !hasMatcher(ast.RangeAgg.Left.Selector.Matchers, "resource.service.name", "kafka") {
-		t.Fatalf(`missing normalized matcher resource.service.name="kafka"; got: %#v`, ast.RangeAgg.Left.Selector.Matchers)
-	}
-	// Ensure the non-normalized label didn't slip through.
-	for _, m := range ast.RangeAgg.Left.Selector.Matchers {
-		if m.Label == "resource_service_name" {
-			t.Fatalf("unexpected non-normalized label in selector: %#v", m)
-		}
+	// Matcher label should be resource_service_name (with underscores)
+	if !hasMatcher(ast.RangeAgg.Left.Selector.Matchers, "resource_service_name", "kafka") {
+		t.Fatalf(`missing matcher resource_service_name="kafka"; got: %#v`, ast.RangeAgg.Left.Selector.Matchers)
 	}
 
 	// Inspect pipeline: expect a regexp parser and an unwrap(bytes) stage.
@@ -788,7 +782,7 @@ and
 			t.Fatalf("offset=%q, want %q", ra.Left.Offset, wantOffset)
 		}
 		// matcher normalization: resource_service_name → resource.service.name
-		if !hasMatcher(ra.Left.Selector.Matchers, "resource.service.name", "license-service") &&
+		if !hasMatcher(ra.Left.Selector.Matchers, "resource_service.name", "license-service") &&
 			!hasMatcher(ra.Left.Selector.Matchers, "resource_service_name", "license-service") {
 			t.Fatalf("missing matcher resource.service.name=\"license-service\": %#v", ra.Left.Selector.Matchers)
 		}

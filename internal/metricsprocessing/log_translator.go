@@ -19,47 +19,47 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // LogTranslator adds resource metadata to log rows
 type LogTranslator struct {
-	orgID             string
-	bucket            string
-	objectID          string
-	exemplarProcessor *exemplars.Processor
+	orgID                    string
+	bucket                   string
+	objectID                 string
+	fingerprintTenantManager *fingerprint.TenantManager
 }
 
 // NewLogTranslator creates a new LogTranslator with the specified metadata
-func NewLogTranslator(orgID, bucket, objectID string, exemplarProcessor *exemplars.Processor) *LogTranslator {
+func NewLogTranslator(orgID, bucket, objectID string, fingerprintTenantManager *fingerprint.TenantManager) *LogTranslator {
 	return &LogTranslator{
-		orgID:             orgID,
-		bucket:            bucket,
-		objectID:          objectID,
-		exemplarProcessor: exemplarProcessor,
+		orgID:                    orgID,
+		bucket:                   bucket,
+		objectID:                 objectID,
+		fingerprintTenantManager: fingerprintTenantManager,
 	}
 }
 
 // TranslateRow adds resource fields to each row
-func (t *LogTranslator) TranslateRow(ctx context.Context, row *filereader.Row) error {
+func (t *LogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
 
 	// Only set the specific required fields - assume all other fields are properly set
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file")] = getResourceFile(t.objectID)
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.RowKeyResourceBucketName] = t.bucket
+	(*row)[wkk.RowKeyResourceFileName] = "./" + t.objectID
+	(*row)[wkk.RowKeyResourceFile] = getResourceFile(t.objectID)
+	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.objectID)
 
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"
-	(*row)[wkk.RowKeyCName] = "log.events"
+	(*row)[wkk.RowKeyCName] = "log_events"
 	(*row)[wkk.RowKeyCValue] = float64(1.0)
 
 	t.setFingerprint(ctx, row)
@@ -77,8 +77,8 @@ func getResourceFile(objectid string) string {
 	return "unknown"
 }
 
-func (t *LogTranslator) setFingerprint(ctx context.Context, row *filereader.Row) {
-	if t.exemplarProcessor == nil {
+func (t *LogTranslator) setFingerprint(ctx context.Context, row *pipeline.Row) {
+	if t.fingerprintTenantManager == nil {
 		return
 	}
 
@@ -91,10 +91,10 @@ func (t *LogTranslator) setFingerprint(ctx context.Context, row *filereader.Row)
 		return // No message to fingerprint
 	}
 
-	tenant := t.exemplarProcessor.GetTenant(ctx, t.orgID)
+	tenant := t.fingerprintTenantManager.GetTenant(t.orgID)
 	trieClusterManager := tenant.GetTrieClusterManager()
-	fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
+	fp, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
 	if err == nil {
-		(*row)[wkk.RowKeyCFingerprint] = fingerprint
+		(*row)[wkk.RowKeyCFingerprint] = fp
 	}
 }

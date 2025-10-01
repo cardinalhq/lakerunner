@@ -25,35 +25,33 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-// ProtoTracesReader reads rows from OpenTelemetry protobuf traces format.
+// IngestProtoTracesReader reads rows from OpenTelemetry protobuf traces format.
 // Returns raw OTEL trace data without signal-specific transformations.
-type ProtoTracesReader struct {
+type IngestProtoTracesReader struct {
 	closed    bool
 	rowCount  int64
 	batchSize int
 
 	// Streaming iterator state for traces
-	traces            *ptrace.Traces
-	resourceIndex     int
-	scopeIndex        int
-	spanIndex         int
-	exemplarProcessor *exemplars.Processor
-	orgId             string
+	traces        *ptrace.Traces
+	resourceIndex int
+	scopeIndex    int
+	spanIndex     int
+	orgId         string
 }
 
 // NewProtoTracesReader creates a new ProtoTracesReader for the given io.Reader.
 // The caller is responsible for closing the underlying reader.
-func NewProtoTracesReader(reader io.Reader, batchSize int) (*ProtoTracesReader, error) {
+func NewProtoTracesReader(reader io.Reader, batchSize int) (*IngestProtoTracesReader, error) {
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
 
-	protoReader := &ProtoTracesReader{
+	protoReader := &IngestProtoTracesReader{
 		batchSize: batchSize,
 	}
 
@@ -67,16 +65,15 @@ func NewProtoTracesReader(reader io.Reader, batchSize int) (*ProtoTracesReader, 
 }
 
 // NewIngestProtoTracesReader creates a new ProtoTracesReader for ingestion with exemplar processing.
-func NewIngestProtoTracesReader(reader io.Reader, opts ReaderOptions) (*ProtoTracesReader, error) {
+func NewIngestProtoTracesReader(reader io.Reader, opts ReaderOptions) (*IngestProtoTracesReader, error) {
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
 
-	protoReader := &ProtoTracesReader{
-		batchSize:         batchSize,
-		exemplarProcessor: opts.ExemplarProcessor,
-		orgId:             opts.OrgID,
+	protoReader := &IngestProtoTracesReader{
+		batchSize: batchSize,
+		orgId:     opts.OrgID,
 	}
 
 	traces, err := parseProtoToOtelTraces(reader)
@@ -89,7 +86,7 @@ func NewIngestProtoTracesReader(reader io.Reader, opts ReaderOptions) (*ProtoTra
 }
 
 // Next returns the next batch of rows from the OTEL traces.
-func (r *ProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
+func (r *IngestProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
@@ -137,7 +134,7 @@ func (r *ProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 }
 
 // getTraceRow handles reading the next trace row.
-func (r *ProtoTracesReader) getTraceRow(ctx context.Context) (Row, error) {
+func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context) (pipeline.Row, error) {
 	if r.traces == nil {
 		return nil, io.EOF
 	}
@@ -154,12 +151,6 @@ func (r *ProtoTracesReader) getTraceRow(ctx context.Context) (Row, error) {
 
 				// Build row for this span
 				row := r.buildSpanRow(ctx, rs, ss, span)
-
-				// Process exemplars if processor is available
-				if r.exemplarProcessor != nil {
-					_ = r.exemplarProcessor.ProcessTraces(ctx, r.orgId, rs, ss, span)
-					// Skip exemplar errors but continue processing
-				}
 
 				// Advance to next span
 				r.spanIndex++
@@ -182,7 +173,7 @@ func (r *ProtoTracesReader) getTraceRow(ctx context.Context) (Row, error) {
 }
 
 // buildSpanRow creates a row from a single span and its context.
-func (r *ProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) map[string]any {
+func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) map[string]any {
 	ret := map[string]any{}
 
 	// Add resource attributes with prefix
@@ -207,23 +198,23 @@ func (r *ProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Resource
 	})
 
 	// Basic span fields - raw data only
-	ret["_cardinalhq.span_trace_id"] = span.TraceID().String()
-	ret["_cardinalhq.span_id"] = span.SpanID().String()
-	ret["_cardinalhq.parent_span_id"] = span.ParentSpanID().String()
-	ret["_cardinalhq.name"] = span.Name()
-	ret["_cardinalhq.kind"] = span.Kind().String()
-	ret["_cardinalhq.status_code"] = span.Status().Code().String()
-	ret["_cardinalhq.status_message"] = span.Status().Message()
+	ret["_cardinalhq_span_trace_id"] = span.TraceID().String()
+	ret["_cardinalhq_span_id"] = span.SpanID().String()
+	ret["_cardinalhq_parent_span_id"] = span.ParentSpanID().String()
+	ret["_cardinalhq_name"] = span.Name()
+	ret["_cardinalhq_kind"] = span.Kind().String()
+	ret["_cardinalhq_status_code"] = span.Status().Code().String()
+	ret["_cardinalhq_status_message"] = span.Status().Message()
 
 	// Handle start timestamp with fallback
 	if span.StartTimestamp() != 0 {
-		ret["_cardinalhq.timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
-		ret["_cardinalhq.tsns"] = int64(span.StartTimestamp())
+		ret["_cardinalhq_timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
+		ret["_cardinalhq_tsns"] = int64(span.StartTimestamp())
 	} else {
 		// Fallback to current time when start timestamp is zero
 		currentTime := time.Now()
-		ret["_cardinalhq.timestamp"] = currentTime.UnixMilli()
-		ret["_cardinalhq.tsns"] = currentTime.UnixNano()
+		ret["_cardinalhq_timestamp"] = currentTime.UnixMilli()
+		ret["_cardinalhq_tsns"] = currentTime.UnixNano()
 		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("signal_type", "traces"),
 			attribute.String("reason", "current_fallback"),
@@ -232,27 +223,27 @@ func (r *ProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Resource
 
 	// Handle end timestamp with fallback
 	if span.EndTimestamp() != 0 {
-		ret["_cardinalhq.end_timestamp"] = span.EndTimestamp().AsTime().UnixMilli()
+		ret["_cardinalhq_end_timestamp"] = span.EndTimestamp().AsTime().UnixMilli()
 		// Calculate duration using actual timestamps
 		if span.StartTimestamp() != 0 {
-			ret["_cardinalhq.span_duration"] = span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime()).Milliseconds()
+			ret["_cardinalhq_span_duration"] = span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime()).Milliseconds()
 		} else {
 			// If start timestamp was fallback, use 0 duration
-			ret["_cardinalhq.span_duration"] = int64(0)
+			ret["_cardinalhq_span_duration"] = int64(0)
 		}
 	} else {
 		// Fallback to current time for end timestamp
 		currentTime := time.Now()
-		ret["_cardinalhq.end_timestamp"] = currentTime.UnixMilli()
+		ret["_cardinalhq_end_timestamp"] = currentTime.UnixMilli()
 		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("signal_type", "traces"),
 			attribute.String("reason", "current_fallback"),
 		))
 		// Calculate duration if we have a valid start timestamp
 		if span.StartTimestamp() != 0 {
-			ret["_cardinalhq.span_duration"] = currentTime.Sub(span.StartTimestamp().AsTime()).Milliseconds()
+			ret["_cardinalhq_span_duration"] = currentTime.Sub(span.StartTimestamp().AsTime()).Milliseconds()
 		} else {
-			ret["_cardinalhq.span_duration"] = int64(0)
+			ret["_cardinalhq_span_duration"] = int64(0)
 		}
 	}
 
@@ -260,8 +251,8 @@ func (r *ProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Resource
 }
 
 // processRow applies any processing to a row.
-func (r *ProtoTracesReader) processRow(row map[string]any) (Row, error) {
-	result := make(Row)
+func (r *IngestProtoTracesReader) processRow(row map[string]any) (pipeline.Row, error) {
+	result := make(pipeline.Row)
 	for k, v := range row {
 		result[wkk.NewRowKey(k)] = v
 	}
@@ -269,7 +260,7 @@ func (r *ProtoTracesReader) processRow(row map[string]any) (Row, error) {
 }
 
 // Close closes the reader and releases resources.
-func (r *ProtoTracesReader) Close() error {
+func (r *IngestProtoTracesReader) Close() error {
 	if r.closed {
 		return nil
 	}
@@ -282,7 +273,7 @@ func (r *ProtoTracesReader) Close() error {
 }
 
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
-func (r *ProtoTracesReader) TotalRowsReturned() int64 {
+func (r *IngestProtoTracesReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 

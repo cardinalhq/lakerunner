@@ -16,8 +16,6 @@ package metricsprocessing
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -26,65 +24,89 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-func processLogsExemplarsDirect(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData, store LogIngestStore) error {
-	orgID, err := uuid.Parse(organizationID)
-	if err != nil {
-		return fmt.Errorf("invalid organization ID: %w", err)
-	}
-
+func processLogsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row, store LogIngestStore) error {
+	var err error
 	slog.Info("Processing logs exemplars",
-		"num_exemplars", len(exemplars),
-		"organization_id", organizationID)
+		"num_exemplars", len(rows),
+		"organization_id", organizationID.String())
 
-	// Sort exemplars deterministically to prevent deadlocks
-	sort.Slice(exemplars, func(i, j int) bool {
-		if exemplars[i].Attributes["service.name"] != exemplars[j].Attributes["service.name"] {
-			return exemplars[i].Attributes["service.name"] < exemplars[j].Attributes["service.name"]
+	// Sort rows deterministically to prevent deadlocks
+	sort.Slice(rows, func(i, j int) bool {
+		iService := getRowString(rows[i], exemplars.RowKeyResourceServiceName)
+		jService := getRowString(rows[j], exemplars.RowKeyResourceServiceName)
+		if iService != jService {
+			return iService < jService
 		}
-		if exemplars[i].Attributes["k8s.cluster.name"] != exemplars[j].Attributes["k8s.cluster.name"] {
-			return exemplars[i].Attributes["k8s.cluster.name"] < exemplars[j].Attributes["k8s.cluster.name"]
+		iCluster := getRowString(rows[i], exemplars.RowKeyResourceK8sClusterName)
+		jCluster := getRowString(rows[j], exemplars.RowKeyResourceK8sClusterName)
+		if iCluster != jCluster {
+			return iCluster < jCluster
 		}
-		if exemplars[i].Attributes["k8s.namespace.name"] != exemplars[j].Attributes["k8s.namespace.name"] {
-			return exemplars[i].Attributes["k8s.namespace.name"] < exemplars[j].Attributes["k8s.namespace.name"]
+		iNamespace := getRowString(rows[i], exemplars.RowKeyResourceK8sNamespaceName)
+		jNamespace := getRowString(rows[j], exemplars.RowKeyResourceK8sNamespaceName)
+		if iNamespace != jNamespace {
+			return iNamespace < jNamespace
 		}
-		return exemplars[i].Attributes["fingerprint"] < exemplars[j].Attributes["fingerprint"]
+		iFingerprint := getRowString(rows[i], wkk.RowKeyCFingerprint)
+		jFingerprint := getRowString(rows[j], wkk.RowKeyCFingerprint)
+		return iFingerprint < jFingerprint
 	})
 
-	records := make([]lrdb.BatchUpsertExemplarLogsParams, 0, len(exemplars))
+	records := make([]lrdb.BatchUpsertExemplarLogsParams, 0, len(rows))
 
-	for _, exemplar := range exemplars {
-		serviceName := exemplar.Attributes["service.name"]
-		clusterName := exemplar.Attributes["k8s.cluster.name"]
-		namespaceName := exemplar.Attributes["k8s.namespace.name"]
-		fingerprintStr := exemplar.Attributes["fingerprint"]
-		oldFingerprintStr := exemplar.Attributes["old_fingerprint"]
+	for _, row := range rows {
+		serviceName := getRowString(row, exemplars.RowKeyResourceServiceName)
+		clusterName := getRowString(row, exemplars.RowKeyResourceK8sClusterName)
+		namespaceName := getRowString(row, exemplars.RowKeyResourceK8sNamespaceName)
 
-		if fingerprintStr == "" {
-			slog.Warn("Missing fingerprint", "fingerprint", fingerprintStr)
+		// Get fingerprint from Row
+		var fingerprint int64
+		if val, ok := row[wkk.RowKeyCFingerprint]; ok {
+			switch v := val.(type) {
+			case int64:
+				fingerprint = v
+			case int:
+				fingerprint = int64(v)
+			case float64:
+				fingerprint = int64(v)
+			case string:
+				fingerprint, err = strconv.ParseInt(v, 10, 64)
+				if err != nil {
+					slog.Error("Failed to parse fingerprint", "error", err, "fingerprint", v)
+					continue
+				}
+			}
+		}
+
+		if fingerprint == 0 {
+			slog.Warn("Missing fingerprint")
 			continue
 		}
 
-		fingerprint, err := strconv.ParseInt(fingerprintStr, 10, 64)
-		if err != nil {
-			slog.Error("Failed to parse fingerprint", "error", err, "fingerprint", fingerprintStr)
-			continue
-		}
-
-		// Parse old fingerprint (0 if not present or invalid)
+		// Get old fingerprint from Row (0 if not present)
 		var oldFingerprint int64
-		if oldFingerprintStr != "" && oldFingerprintStr != "0" {
-			oldFingerprint, err = strconv.ParseInt(oldFingerprintStr, 10, 64)
-			if err != nil {
-				slog.Debug("Failed to parse old fingerprint, using 0", "error", err, "old_fingerprint", oldFingerprintStr)
-				oldFingerprint = 0
+		if val, ok := row[exemplars.RowKeyCardinalhqOldFingerprint]; ok {
+			switch v := val.(type) {
+			case int64:
+				oldFingerprint = v
+			case int:
+				oldFingerprint = int64(v)
+			case float64:
+				oldFingerprint = int64(v)
+			case string:
+				if v != "" && v != "0" {
+					oldFingerprint, _ = strconv.ParseInt(v, 10, 64)
+				}
 			}
 		}
 
 		params := lrdb.UpsertServiceIdentifierParams{
-			OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
 			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
 			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
 			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
@@ -97,23 +119,18 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, exem
 		}
 		serviceIdentifierID := result.ID
 
-		attributesAny := make(map[string]any)
-		for k, v := range exemplar.Attributes {
-			attributesAny[k] = v
-		}
-
-		var exemplarMap map[string]any
-		if err := json.Unmarshal([]byte(exemplar.Payload), &exemplarMap); err != nil {
-			slog.Error("Failed to parse exemplar payload", "error", err)
-			continue
+		// Convert Row to map for storage
+		exemplarMap := make(map[string]any)
+		for k, v := range row {
+			key := wkk.RowKeyValue(k)
+			exemplarMap[key] = v
 		}
 
 		record := lrdb.BatchUpsertExemplarLogsParams{
-			OrganizationID:      orgID,
+			OrganizationID:      organizationID,
 			ServiceIdentifierID: serviceIdentifierID,
 			Fingerprint:         fingerprint,
 			OldFingerprint:      oldFingerprint,
-			Attributes:          attributesAny,
 			Exemplar:            exemplarMap,
 		}
 		records = append(records, record)
@@ -134,41 +151,56 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, exem
 	return nil
 }
 
-func processMetricsExemplarsDirect(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData, store MetricIngestStore) error {
-	orgID, err := uuid.Parse(organizationID)
-	if err != nil {
-		return fmt.Errorf("invalid organization ID: %w", err)
+// getRowString safely extracts a string value from a Row
+func getRowString(row pipeline.Row, key wkk.RowKey) string {
+	if val, ok := row[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
 	}
+	return ""
+}
 
+func processMetricsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row, store MetricIngestStore) error {
 	slog.Info("Processing metrics exemplars",
-		"num_exemplars", len(exemplars),
-		"organization_id", organizationID)
+		"num_exemplars", len(rows),
+		"organization_id", organizationID.String())
 
-	// Sort exemplars deterministically to prevent deadlocks
-	sort.Slice(exemplars, func(i, j int) bool {
-		if exemplars[i].Attributes["service.name"] != exemplars[j].Attributes["service.name"] {
-			return exemplars[i].Attributes["service.name"] < exemplars[j].Attributes["service.name"]
+	// Sort rows deterministically to prevent deadlocks
+	sort.Slice(rows, func(i, j int) bool {
+		iService := getRowString(rows[i], exemplars.RowKeyResourceServiceName)
+		jService := getRowString(rows[j], exemplars.RowKeyResourceServiceName)
+		if iService != jService {
+			return iService < jService
 		}
-		if exemplars[i].Attributes["k8s.cluster.name"] != exemplars[j].Attributes["k8s.cluster.name"] {
-			return exemplars[i].Attributes["k8s.cluster.name"] < exemplars[j].Attributes["k8s.cluster.name"]
+		iCluster := getRowString(rows[i], exemplars.RowKeyResourceK8sClusterName)
+		jCluster := getRowString(rows[j], exemplars.RowKeyResourceK8sClusterName)
+		if iCluster != jCluster {
+			return iCluster < jCluster
 		}
-		if exemplars[i].Attributes["k8s.namespace.name"] != exemplars[j].Attributes["k8s.namespace.name"] {
-			return exemplars[i].Attributes["k8s.namespace.name"] < exemplars[j].Attributes["k8s.namespace.name"]
+		iNamespace := getRowString(rows[i], exemplars.RowKeyResourceK8sNamespaceName)
+		jNamespace := getRowString(rows[j], exemplars.RowKeyResourceK8sNamespaceName)
+		if iNamespace != jNamespace {
+			return iNamespace < jNamespace
 		}
-		if exemplars[i].Attributes["metric.name"] != exemplars[j].Attributes["metric.name"] {
-			return exemplars[i].Attributes["metric.name"] < exemplars[j].Attributes["metric.name"]
+		iMetricName := getRowString(rows[i], wkk.RowKeyCName)
+		jMetricName := getRowString(rows[j], wkk.RowKeyCName)
+		if iMetricName != jMetricName {
+			return iMetricName < jMetricName
 		}
-		return exemplars[i].Attributes["metric.type"] < exemplars[j].Attributes["metric.type"]
+		iMetricType := getRowString(rows[i], wkk.RowKeyCMetricType)
+		jMetricType := getRowString(rows[j], wkk.RowKeyCMetricType)
+		return iMetricType < jMetricType
 	})
 
-	records := make([]lrdb.BatchUpsertExemplarMetricsParams, 0, len(exemplars))
+	records := make([]lrdb.BatchUpsertExemplarMetricsParams, 0, len(rows))
 
-	for _, exemplar := range exemplars {
-		serviceName := exemplar.Attributes["service.name"]
-		clusterName := exemplar.Attributes["k8s.cluster.name"]
-		namespaceName := exemplar.Attributes["k8s.namespace.name"]
-		metricName := exemplar.Attributes["metric.name"]
-		metricType := exemplar.Attributes["metric.type"]
+	for _, row := range rows {
+		serviceName := getRowString(row, exemplars.RowKeyResourceServiceName)
+		clusterName := getRowString(row, exemplars.RowKeyResourceK8sClusterName)
+		namespaceName := getRowString(row, exemplars.RowKeyResourceK8sNamespaceName)
+		metricName := getRowString(row, wkk.RowKeyCName)
+		metricType := getRowString(row, wkk.RowKeyCMetricType)
 
 		if metricName == "" || metricType == "" {
 			slog.Warn("Missing metric name or type", "metric_name", metricName, "metric_type", metricType)
@@ -176,7 +208,7 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, e
 		}
 
 		params := lrdb.UpsertServiceIdentifierParams{
-			OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
 			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
 			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
 			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
@@ -189,23 +221,18 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, e
 		}
 		serviceIdentifierID := result.ID
 
-		attributesAny := make(map[string]any)
-		for k, v := range exemplar.Attributes {
-			attributesAny[k] = v
-		}
-
-		var exemplarMap map[string]any
-		if err := json.Unmarshal([]byte(exemplar.Payload), &exemplarMap); err != nil {
-			slog.Error("Failed to parse exemplar payload", "error", err)
-			continue
+		// Convert Row to map for storage
+		exemplarMap := make(map[string]any)
+		for k, v := range row {
+			key := wkk.RowKeyValue(k)
+			exemplarMap[key] = v
 		}
 
 		record := lrdb.BatchUpsertExemplarMetricsParams{
-			OrganizationID:      orgID,
+			OrganizationID:      organizationID,
 			ServiceIdentifierID: serviceIdentifierID,
 			MetricName:          metricName,
 			MetricType:          metricType,
-			Attributes:          attributesAny,
 			Exemplar:            exemplarMap,
 		}
 		records = append(records, record)
@@ -226,53 +253,69 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, e
 	return nil
 }
 
-func processTracesExemplarsDirect(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData, store TraceIngestStore) error {
-	orgID, err := uuid.Parse(organizationID)
-	if err != nil {
-		return fmt.Errorf("invalid organization ID: %w", err)
-	}
-
+func processTracesExemplarsDirect(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row, store TraceIngestStore) error {
+	var err error
 	slog.Info("Processing traces exemplars",
-		"num_exemplars", len(exemplars),
-		"organization_id", organizationID)
+		"num_exemplars", len(rows),
+		"organization_id", organizationID.String())
 
-	// Sort exemplars deterministically to prevent deadlocks
-	sort.Slice(exemplars, func(i, j int) bool {
-		if exemplars[i].Attributes["service.name"] != exemplars[j].Attributes["service.name"] {
-			return exemplars[i].Attributes["service.name"] < exemplars[j].Attributes["service.name"]
+	// Sort rows deterministically to prevent deadlocks
+	sort.Slice(rows, func(i, j int) bool {
+		iService := getRowString(rows[i], exemplars.RowKeyResourceServiceName)
+		jService := getRowString(rows[j], exemplars.RowKeyResourceServiceName)
+		if iService != jService {
+			return iService < jService
 		}
-		if exemplars[i].Attributes["k8s.cluster.name"] != exemplars[j].Attributes["k8s.cluster.name"] {
-			return exemplars[i].Attributes["k8s.cluster.name"] < exemplars[j].Attributes["k8s.cluster.name"]
+		iCluster := getRowString(rows[i], exemplars.RowKeyResourceK8sClusterName)
+		jCluster := getRowString(rows[j], exemplars.RowKeyResourceK8sClusterName)
+		if iCluster != jCluster {
+			return iCluster < jCluster
 		}
-		if exemplars[i].Attributes["k8s.namespace.name"] != exemplars[j].Attributes["k8s.namespace.name"] {
-			return exemplars[i].Attributes["k8s.namespace.name"] < exemplars[j].Attributes["k8s.namespace.name"]
+		iNamespace := getRowString(rows[i], exemplars.RowKeyResourceK8sNamespaceName)
+		jNamespace := getRowString(rows[j], exemplars.RowKeyResourceK8sNamespaceName)
+		if iNamespace != jNamespace {
+			return iNamespace < jNamespace
 		}
-		return exemplars[i].Attributes["fingerprint"] < exemplars[j].Attributes["fingerprint"]
+		iFingerprint := getRowString(rows[i], wkk.RowKeyCFingerprint)
+		jFingerprint := getRowString(rows[j], wkk.RowKeyCFingerprint)
+		return iFingerprint < jFingerprint
 	})
 
-	records := make([]lrdb.BatchUpsertExemplarTracesParams, 0, len(exemplars))
+	records := make([]lrdb.BatchUpsertExemplarTracesParams, 0, len(rows))
 
-	for _, exemplar := range exemplars {
-		serviceName := exemplar.Attributes["service.name"]
-		clusterName := exemplar.Attributes["k8s.cluster.name"]
-		namespaceName := exemplar.Attributes["k8s.namespace.name"]
-		fingerprintStr := exemplar.Attributes["fingerprint"]
-		spanName := exemplar.Attributes["span.name"]
-		spanKind := exemplar.Attributes["span.kind"]
+	for _, row := range rows {
+		serviceName := getRowString(row, exemplars.RowKeyResourceServiceName)
+		clusterName := getRowString(row, exemplars.RowKeyResourceK8sClusterName)
+		namespaceName := getRowString(row, exemplars.RowKeyResourceK8sNamespaceName)
+		spanName := getRowString(row, exemplars.RowKeySpanName)
+		spanKind := getRowString(row, exemplars.RowKeySpanKind)
 
-		if fingerprintStr == "" {
-			slog.Warn("Missing fingerprint", "fingerprint", fingerprintStr)
-			continue
+		// Get fingerprint from Row
+		var fingerprint int64
+		if val, ok := row[wkk.RowKeyCFingerprint]; ok {
+			switch v := val.(type) {
+			case int64:
+				fingerprint = v
+			case int:
+				fingerprint = int64(v)
+			case float64:
+				fingerprint = int64(v)
+			case string:
+				fingerprint, err = strconv.ParseInt(v, 10, 64)
+				if err != nil {
+					slog.Error("Failed to parse fingerprint", "error", err, "fingerprint", v)
+					continue
+				}
+			}
 		}
 
-		fingerprint, err := strconv.ParseInt(fingerprintStr, 10, 64)
-		if err != nil {
-			slog.Error("Failed to parse fingerprint", "error", err, "fingerprint", fingerprintStr)
+		if fingerprint == 0 {
+			slog.Warn("Missing fingerprint")
 			continue
 		}
 
 		params := lrdb.UpsertServiceIdentifierParams{
-			OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
 			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
 			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
 			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
@@ -285,22 +328,17 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID string, ex
 		}
 		serviceIdentifierID := result.ID
 
-		attributesAny := make(map[string]any)
-		for k, v := range exemplar.Attributes {
-			attributesAny[k] = v
-		}
-
-		var exemplarMap map[string]any
-		if err := json.Unmarshal([]byte(exemplar.Payload), &exemplarMap); err != nil {
-			slog.Error("Failed to parse exemplar payload", "error", err)
-			continue
+		// Convert Row to map for storage
+		exemplarMap := make(map[string]any)
+		for k, v := range row {
+			key := wkk.RowKeyValue(k)
+			exemplarMap[key] = v
 		}
 
 		record := lrdb.BatchUpsertExemplarTracesParams{
-			OrganizationID:      orgID,
+			OrganizationID:      organizationID,
 			ServiceIdentifierID: serviceIdentifierID,
 			Fingerprint:         fingerprint,
-			Attributes:          attributesAny,
 			Exemplar:            exemplarMap,
 			SpanName:            spanName,
 			SpanKind:            convertSpanKindToInt32(spanKind),

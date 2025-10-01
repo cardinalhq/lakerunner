@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
@@ -139,7 +141,7 @@ func putTraceIDTimestampSortKey(key *TraceIDTimestampSortKey) {
 type TraceIDTimestampSortKeyProvider struct{}
 
 // MakeKey implements filereader.SortKeyProvider interface for trace ID + timestamp sorting
-func (p *TraceIDTimestampSortKeyProvider) MakeKey(row filereader.Row) filereader.SortKey {
+func (p *TraceIDTimestampSortKeyProvider) MakeKey(row pipeline.Row) filereader.SortKey {
 	key := getTraceIDTimestampSortKey()
 
 	// Get trace_id from the common keys
@@ -186,8 +188,8 @@ func newTraceIngestProcessor(
 	cfg *config.Config,
 	store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
 	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetTracesCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
-		return processTracesExemplarsDirect(ctx, organizationID, exemplars, store)
+	exemplarProcessor.SetTracesCallback(func(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row) error {
+		return processTracesExemplarsDirect(ctx, organizationID, rows, store)
 	})
 
 	return &TraceIngestProcessor{
@@ -464,10 +466,9 @@ func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket
 
 func (p *TraceIngestProcessor) createTraceReader(filename, orgID string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
-		SignalType:        filereader.SignalTypeTraces,
-		BatchSize:         1000,
-		OrgID:             orgID,
-		ExemplarProcessor: p.exemplarProcessor,
+		SignalType: filereader.SignalTypeTraces,
+		BatchSize:  1000,
+		OrgID:      orgID,
 	}
 	return filereader.ReaderForFileWithOptions(filename, options)
 }
@@ -534,6 +535,11 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 				if err != nil {
 					ll.Error("Failed to get/create dateint bin", slog.Int("dateint", int(dateint)), slog.Any("error", err))
 					continue
+				}
+
+				// Process exemplar before taking the row
+				if p.exemplarProcessor != nil {
+					_ = p.exemplarProcessor.ProcessTracesFromRow(ctx, storageProfile.OrganizationID, row)
 				}
 
 				// Now take the row to avoid copying
@@ -714,7 +720,7 @@ func NewTraceTranslator(orgID, bucket, objectID string) *TraceTranslator {
 }
 
 // TranslateRow adds resource fields to each row
-func (t *TraceTranslator) TranslateRow(_ context.Context, row *filereader.Row) error {
+func (t *TraceTranslator) TranslateRow(_ context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}

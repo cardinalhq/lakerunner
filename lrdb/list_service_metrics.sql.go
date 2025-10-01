@@ -15,7 +15,7 @@ const listServiceMetrics = `-- name: ListServiceMetrics :many
 SELECT DISTINCT em.metric_name
 FROM lrdb_exemplar_metrics em
 WHERE em.organization_id = $1
-  AND em.attributes->>'service.name' = $2::text
+  AND em.attributes->>'service_name' = $2::text
   AND (
     (
       em.updated_at IS NOT NULL

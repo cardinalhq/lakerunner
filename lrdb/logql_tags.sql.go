@@ -12,73 +12,25 @@ import (
 )
 
 const listLogQLTags = `-- name: ListLogQLTags :many
-WITH src AS (
-  SELECT exemplar::jsonb AS exemplar
-  FROM lrdb_exemplar_logs
-  WHERE organization_id = $1
-),
-res_keys AS (
-  SELECT DISTINCT (
-    CASE
-      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
-      ELSE 'resource.' || (attr->>'key')
-    END
-  ) AS k
-  FROM src
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(exemplar->'resourceLogs','[]'::jsonb)) rl
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rl->'resource'->'attributes','[]'::jsonb)) attr
-),
-log_attr_keys AS (
-  SELECT DISTINCT (
-    CASE
-      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
-      ELSE 'log.' || (attr->>'key')
-    END
-  ) AS k
-  FROM src
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(exemplar->'resourceLogs','[]'::jsonb)) rl
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rl->'scopeLogs','[]'::jsonb)) sl
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sl->'logRecords','[]'::jsonb)) rec
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rec->'attributes','[]'::jsonb)) attr
-),
-body_key AS (
-  SELECT DISTINCT '_cardinalhq.message'::text AS k
-  FROM src
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(exemplar->'resourceLogs','[]'::jsonb)) rl
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rl->'scopeLogs','[]'::jsonb)) sl
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sl->'logRecords','[]'::jsonb)) rec
-  WHERE rec ? 'body'                               
-    AND jsonb_typeof(rec->'body') IN ('object')   
-    AND (
-      (rec->'body'->>'stringValue') IS NOT NULL OR
-      (rec->'body'->>'intValue')    IS NOT NULL OR
-      (rec->'body'->>'doubleValue') IS NOT NULL OR
-      (rec->'body'->>'boolValue')   IS NOT NULL OR
-      (rec->'body'->'bytesValue')   IS NOT NULL OR
-      (rec->'body'->'kvlistValue')  IS NOT NULL OR
-      (rec->'body'->'arrayValue')   IS NOT NULL
-    )
-)
-SELECT k AS tag_key
-FROM (
-  SELECT k FROM res_keys
-  UNION
-  SELECT k FROM log_attr_keys
-  UNION
-  SELECT k FROM body_key
-) all_keys
-ORDER BY k
+SELECT DISTINCT key::text AS tag_key
+FROM lrdb_exemplar_logs,
+     LATERAL jsonb_object_keys(exemplar) AS key
+WHERE organization_id = $1
+  AND key ~ '^(_cardinalhq_|resource_|scope_|log_)'
+ORDER BY tag_key
 `
 
-func (q *Queries) ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error) {
+// Extract tag keys from flat exemplar format
+// Only return keys that start with _cardinalhq_, resource_, scope_, or log_
+func (q *Queries) ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error) {
 	rows, err := q.db.Query(ctx, listLogQLTags, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []interface{}
+	var items []string
 	for rows.Next() {
-		var tag_key interface{}
+		var tag_key string
 		if err := rows.Scan(&tag_key); err != nil {
 			return nil, err
 		}

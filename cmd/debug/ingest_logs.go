@@ -24,7 +24,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
@@ -91,8 +90,7 @@ func runIngestLogs(filename, orgID, bucket, outputDir string) error {
 	objectID := filepath.Base(filename)
 
 	// Create log reader stack using the same logic as the production system
-	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	reader, err := createLogReaderStack(filename, orgID, bucket, objectID, exemplarProcessor)
+	reader, err := createLogReaderStack(filename, orgID, bucket, objectID)
 	if err != nil {
 		return fmt.Errorf("failed to create log reader stack: %w", err)
 	}
@@ -152,9 +150,9 @@ func runIngestLogs(filename, orgID, bucket, outputDir string) error {
 }
 
 // createLogReaderStack creates a reader stack using the same logic as LogIngestProcessor.createLogReaderStack
-func createLogReaderStack(filename, orgID, bucket, objectID string, exemplarProcessor *exemplars.Processor) (filereader.Reader, error) {
+func createLogReaderStack(filename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Create base log reader
-	reader, err := createLogReader(filename, orgID, exemplarProcessor)
+	reader, err := createLogReader(filename, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log reader: %w", err)
 	}
@@ -163,7 +161,7 @@ func createLogReaderStack(filename, orgID, bucket, objectID string, exemplarProc
 	var translator filereader.RowTranslator
 	if strings.HasSuffix(filename, ".parquet") {
 		// Use specialized Parquet translator for .parquet files
-		translator = metricsprocessing.NewParquetLogTranslator(orgID, bucket, objectID, exemplarProcessor)
+		translator = metricsprocessing.NewParquetLogTranslator(orgID, bucket, objectID)
 	} else {
 		// Use standard translator for CSV, JSON, and other formats
 		translator = metricsprocessing.NewLogTranslator(orgID, bucket, objectID, nil)
@@ -180,12 +178,11 @@ func createLogReaderStack(filename, orgID, bucket, objectID string, exemplarProc
 }
 
 // createLogReader creates a log reader using the same logic as LogIngestProcessor.createLogReader
-func createLogReader(filename, orgID string, exemplarProcessor *exemplars.Processor) (filereader.Reader, error) {
+func createLogReader(filename, orgID string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
-		SignalType:        filereader.SignalTypeLogs,
-		BatchSize:         1000,
-		ExemplarProcessor: exemplarProcessor,
-		OrgID:             orgID,
+		SignalType: filereader.SignalTypeLogs,
+		BatchSize:  1000,
+		OrgID:      orgID,
 	}
 
 	return filereader.ReaderForFileWithOptions(filename, options)

@@ -67,7 +67,7 @@ func TestReaderForFileWithOptions_CSV(t *testing.T) {
 		row := batch.Get(0)
 		assert.Equal(t, "Test message 1", row[wkk.RowKeyCMessage])
 		assert.Equal(t, int64(1758397185000), row[wkk.RowKeyCTimestamp])
-		assert.Equal(t, "INFO", row[wkk.NewRowKey("log.level")])
+		assert.Equal(t, "INFO", row[wkk.NewRowKey("log_level")])
 	})
 
 	// Test gzipped CSV
@@ -144,12 +144,12 @@ projects/test/sub,123,2025-09-20T19:39:45.000Z,"{""event"":""test"",""value"":42
 		// data field should become message
 		assert.Equal(t, `{"event":"test","value":42}`, row[wkk.RowKeyCMessage])
 		// Fields should be mapped to log.* namespace
-		assert.Equal(t, "projects/test/sub", row[wkk.NewRowKey("log.subscription_name")])
-		assert.Equal(t, int64(123), row[wkk.NewRowKey("log.message_id")])
+		assert.Equal(t, "projects/test/sub", row[wkk.NewRowKey("log_subscription_name")])
+		assert.Equal(t, int64(123), row[wkk.NewRowKey("log_message_id")])
 		// Resource fields
-		assert.Equal(t, "test-bucket", row[wkk.NewRowKey("resource.bucket.name")])
-		assert.Equal(t, "./logs.csv", row[wkk.NewRowKey("resource.file.name")])
-		assert.Equal(t, "logs", row[wkk.NewRowKey("resource.file.type")]) // GetFileType returns filename without extension
+		assert.Equal(t, "test-bucket", row[wkk.RowKeyResourceBucketName])
+		assert.Equal(t, "./logs.csv", row[wkk.RowKeyResourceFileName])
+		assert.Equal(t, "logs", row[wkk.RowKeyResourceFileType]) // GetFileType returns filename without extension
 	})
 }
 

@@ -23,6 +23,7 @@ import (
 	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -43,18 +44,18 @@ func NewProtoBinLogTranslator(opts ReaderOptions) *ProtoBinLogTranslator {
 }
 
 // TranslateRow handles protobuf-specific field translation
-func (t *ProtoBinLogTranslator) TranslateRow(ctx context.Context, row *Row) error {
+func (t *ProtoBinLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
 	return t.translateRowWithContext(ctx, row)
 }
 
 // translateRowWithContext handles protobuf-specific field translation with context
-func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row *Row) error {
+func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row *pipeline.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
 
 	// Handle timestamp: use timestamp, fallback to observed_timestamp
-	// NOTE: _cardinalhq.timestamp should already be validated by ingest_proto_logs.go
+	// NOTE: _cardinalhq_timestamp should already be validated by ingest_proto_logs.go
 	// This is a secondary validation for other readers that may not have done it
 	if _, ok := (*row)[wkk.RowKeyCTimestamp]; !ok {
 		var timestamp int64
@@ -90,40 +91,29 @@ func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row
 		}
 	}
 
-	// Handle level: use severity_text if _cardinalhq.level not set
-	if _, ok := (*row)[wkk.NewRowKey("_cardinalhq.level")]; !ok {
+	// Handle level: use severity_text if _cardinalhq_level not set
+	if _, ok := (*row)[wkk.NewRowKey("_cardinalhq_level")]; !ok {
 		if severityText, exists := (*row)[wkk.NewRowKey("severity_text")]; exists {
 			if level, isString := severityText.(string); isString && level != "" {
-				(*row)[wkk.NewRowKey("_cardinalhq.level")] = level
+				(*row)[wkk.NewRowKey("_cardinalhq_level")] = level
 			}
 		}
 	}
 
 	// Handle message: use body if _cardinalhq.message not set
 	if _, ok := (*row)[wkk.RowKeyCMessage]; !ok {
-		if body, exists := (*row)[wkk.NewRowKey("body")]; exists {
+		bodyKey := wkk.NewRowKey("body")
+		if body, exists := (*row)[bodyKey]; exists {
 			if message, isString := body.(string); isString && message != "" {
 				(*row)[wkk.RowKeyCMessage] = message
 			}
 		}
 	}
 
-	// Calculate fingerprint from message
-	//fingerprint, err := t.calculateFingerprint(*row)
-	//if err != nil {
-	//	return fmt.Errorf("failed to calculate fingerprint: %w", err)
-	//}
-
-	//if fingerprint != 0 {
-	//	(*row)[wkk.RowKeyCFingerprint] = fingerprint
-	//} else {
-	//	delete(*row, wkk.RowKeyCFingerprint)
-	//}
-
 	// Add resource fields (only for logs signal)
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
+	(*row)[wkk.RowKeyResourceBucketName] = t.bucket
+	(*row)[wkk.RowKeyResourceFileName] = "./" + t.objectID
+	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.objectID)
 
 	return nil
 }

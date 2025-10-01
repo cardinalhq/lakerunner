@@ -17,6 +17,7 @@ package filereader
 import (
 	"sync"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -79,14 +80,14 @@ func putTimestampSortKey(key *TimestampSortKey) {
 type TimestampSortKeyProvider struct{}
 
 // MakeKey implements SortKeyProvider interface for timestamps
-func (p *TimestampSortKeyProvider) MakeKey(row Row) SortKey {
+func (p *TimestampSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
 	key := getTimestampSortKey()
 	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
 	return key
 }
 
 // MakeTimestampSortKey creates a pooled TimestampSortKey from a row
-func MakeTimestampSortKey(row Row) *TimestampSortKey {
+func MakeTimestampSortKey(row pipeline.Row) *TimestampSortKey {
 	key := getTimestampSortKey()
 	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
 	return key

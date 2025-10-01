@@ -23,6 +23,18 @@ import (
 	"github.com/prometheus/common/model"
 )
 
+// normalizeFieldName converts field names from dotted format to underscore format
+// e.g., "resource.k8s.namespace.name" -> "resource_k8s_namespace_name"
+// This matches the actual column names in Parquet files
+func normalizeFieldName(field string) string {
+	// Special case: _cardinalhq fields already use underscores
+	if strings.HasPrefix(field, "_cardinalhq") {
+		return field
+	}
+	// Convert dots to underscores for other fields
+	return strings.ReplaceAll(field, ".", "_")
+}
+
 var supportedFuncs = map[string]bool{
 	"sum_over_time":      true,
 	"avg_over_time":      true,
@@ -89,8 +101,8 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 
 func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
-	tsCol := "\"_cardinalhq.timestamp\""
-	bodyCol := "\"_cardinalhq.message\""
+	tsCol := "\"_cardinalhq_timestamp\""
+	bodyCol := "\"_cardinalhq_message\""
 
 	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, "", nil))
 
@@ -103,7 +115,9 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	if len(be.GroupBy) > 0 {
 		qbys := make([]string, 0, len(be.GroupBy))
 		for _, g := range be.GroupBy {
-			qbys = append(qbys, fmt.Sprintf("\"%s\"", g))
+			// Normalize field name from dots to underscores
+			fieldName := normalizeFieldName(g)
+			qbys = append(qbys, fmt.Sprintf("\"%s\"", fieldName))
 		}
 		// keep as one joined fragment so downstream code that expects a single element still works
 		cols = append(cols, strings.Join(qbys, ", "))
@@ -112,7 +126,9 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	gb := []string{"bucket_ts"}
 	if len(be.GroupBy) > 0 {
 		for _, g := range be.GroupBy {
-			gb = append(gb, fmt.Sprintf("\"%s\"", g))
+			// Normalize field name from dots to underscores
+			fieldName := normalizeFieldName(g)
+			gb = append(gb, fmt.Sprintf("\"%s\"", fieldName))
 		}
 	}
 
@@ -192,7 +208,7 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 	where := withTime(whereFor(be))
 
 	bucketExpr := fmt.Sprintf(
-		"(CAST(\"_cardinalhq.timestamp\" AS BIGINT) - (CAST(\"_cardinalhq.timestamp\" AS BIGINT) %% %d))",
+		"(CAST(\"_cardinalhq_timestamp\" AS BIGINT) - (CAST(\"_cardinalhq_timestamp\" AS BIGINT) %% %d))",
 		stepMs,
 	)
 
@@ -201,7 +217,9 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 	if len(be.GroupBy) > 0 {
 		gbq = make([]string, 0, len(be.GroupBy))
 		for _, f := range be.GroupBy {
-			gbq = append(gbq, fmt.Sprintf("\"%s\"", f))
+			// Normalize field name from dots to underscores
+			fieldName := normalizeFieldName(f)
+			gbq = append(gbq, fmt.Sprintf("\"%s\"", fieldName))
 		}
 	}
 
@@ -238,7 +256,7 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 // buildDDS: bucket timestamps, project group-by labels + sketch
 func buildDDS(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
-	bucket := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
+	bucket := fmt.Sprintf("(\"_cardinalhq_timestamp\" - (\"_cardinalhq_timestamp\" %% %d))", stepMs)
 
 	// Use aligned, end-exclusive time like the numeric paths
 	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
@@ -246,7 +264,7 @@ func buildDDS(be *BaseExpr, step time.Duration) string {
 
 	base := whereFor(be)
 	timeWhere := func() string {
-		tc := fmt.Sprintf("\"_cardinalhq.timestamp\" >= %s AND \"_cardinalhq.timestamp\" < %s", alignedStart, alignedEndEx)
+		tc := fmt.Sprintf("\"_cardinalhq_timestamp\" >= %s AND \"_cardinalhq_timestamp\" < %s", alignedStart, alignedEndEx)
 		if base == "" {
 			return " WHERE " + tc
 		}
@@ -255,7 +273,12 @@ func buildDDS(be *BaseExpr, step time.Duration) string {
 
 	cols := []string{bucket + " AS bucket_ts"}
 	if len(be.GroupBy) > 0 {
-		cols = append(cols, strings.Join(be.GroupBy, ", "))
+		// Normalize field names from dots to underscores
+		normalizedGroups := make([]string, len(be.GroupBy))
+		for i, g := range be.GroupBy {
+			normalizedGroups[i] = normalizeFieldName(g)
+		}
+		cols = append(cols, strings.Join(normalizedGroups, ", "))
 	}
 	cols = append(cols, "sketch")
 
@@ -273,12 +296,12 @@ type need struct {
 }
 
 const (
-	timePredicate = "\"_cardinalhq.timestamp\" >= {start} AND \"_cardinalhq.timestamp\" < {end}"
+	timePredicate = "\"_cardinalhq_timestamp\" >= {start} AND \"_cardinalhq_timestamp\" < {end}"
 )
 
 func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	stepMs := step.Milliseconds()
-	bucketExpr := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
+	bucketExpr := fmt.Sprintf("(\"_cardinalhq_timestamp\" - (\"_cardinalhq_timestamp\" %% %d))", stepMs)
 
 	where := withTime(whereFor(be))
 
@@ -299,7 +322,9 @@ func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	quote := func(id string) string { return fmt.Sprintf("\"%s\"", id) }
 	var gbq []string
 	for _, g := range be.GroupBy {
-		gbq = append(gbq, quote(g))
+		// Normalize field name from dots to underscores
+		fieldName := normalizeFieldName(g)
+		gbq = append(gbq, quote(fieldName))
 	}
 
 	// Optional groups/grid CTEs for densification by group keys.
@@ -434,22 +459,24 @@ func whereFor(be *BaseExpr) string {
 
 	// For synthetic log metrics, we do NOT filter by metric name at all.
 	if be.Metric != "" && !be.isSyntheticLogMetric() {
-		parts = append(parts, fmt.Sprintf("\"_cardinalhq.name\" = %s", sqlLit(be.Metric)))
+		parts = append(parts, fmt.Sprintf("\"_cardinalhq_name\" = %s", sqlLit(be.Metric)))
 	}
 
 	for _, m := range be.Matchers {
 		if m.Label == LeafMatcher {
 			continue
 		}
+		// Normalize field name from dots to underscores
+		fieldName := normalizeFieldName(m.Label)
 		switch m.Op {
 		case MatchEq:
-			parts = append(parts, fmt.Sprintf("\"%s\" = %s", m.Label, sqlLit(m.Value)))
+			parts = append(parts, fmt.Sprintf("\"%s\" = %s", fieldName, sqlLit(m.Value)))
 		case MatchNe:
-			parts = append(parts, fmt.Sprintf("\"%s\" <> %s", m.Label, sqlLit(m.Value)))
+			parts = append(parts, fmt.Sprintf("\"%s\" <> %s", fieldName, sqlLit(m.Value)))
 		case MatchRe:
-			parts = append(parts, fmt.Sprintf("\"%s\" ~ %s", m.Label, sqlLit(m.Value)))
+			parts = append(parts, fmt.Sprintf("\"%s\" ~ %s", fieldName, sqlLit(m.Value)))
 		case MatchNre:
-			parts = append(parts, fmt.Sprintf("\"%s\" !~ %s", m.Label, sqlLit(m.Value)))
+			parts = append(parts, fmt.Sprintf("\"%s\" !~ %s", fieldName, sqlLit(m.Value)))
 		}
 	}
 	if len(parts) == 0 {

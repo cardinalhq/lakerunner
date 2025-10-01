@@ -22,9 +22,8 @@ import (
 	"maps"
 	"math"
 	"sort"
+	"strings"
 	"time"
-
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -49,9 +48,8 @@ type IngestProtoMetricsReader struct {
 	batchSize int
 
 	// Store the original OTEL metrics for exemplar processing
-	orgId             string
-	otelMetrics       *pmetric.Metrics
-	exemplarProcessor *exemplars.Processor
+	orgId       string
+	otelMetrics *pmetric.Metrics
 
 	// Streaming iterator state for metrics
 	resourceIndex  int
@@ -86,10 +84,9 @@ func NewIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics, opts Reade
 	}
 
 	return &IngestProtoMetricsReader{
-		otelMetrics:       metrics,
-		orgId:             opts.OrgID,
-		exemplarProcessor: opts.ExemplarProcessor,
-		batchSize:         batchSize,
+		otelMetrics: metrics,
+		orgId:       opts.OrgID,
+		batchSize:   batchSize,
 	}, nil
 }
 
@@ -102,7 +99,7 @@ func (r *IngestProtoMetricsReader) Next(ctx context.Context) (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < r.batchSize {
-		row := make(Row)
+		row := make(pipeline.Row)
 
 		if err := r.getMetricRow(ctx, row); err != nil {
 			if err == io.EOF {
@@ -134,7 +131,7 @@ func (r *IngestProtoMetricsReader) Next(ctx context.Context) (*Batch, error) {
 
 // getMetricRow handles reading the next datapoint row using streaming iteration.
 // The provided row must be initialized as an empty map before calling this method.
-func (r *IngestProtoMetricsReader) getMetricRow(ctx context.Context, row Row) error {
+func (r *IngestProtoMetricsReader) getMetricRow(ctx context.Context, row pipeline.Row) error {
 	if r.otelMetrics == nil {
 		return io.EOF
 	}
@@ -151,18 +148,11 @@ func (r *IngestProtoMetricsReader) getMetricRow(ctx context.Context, row Row) er
 				datapointCount := r.getDatapointCount(metric)
 
 				if r.datapointIndex < datapointCount {
-					// Track datapoints read from proto
 					rowsInCounter.Add(ctx, 1, otelmetric.WithAttributes(
 						attribute.String("reader", "IngestProtoMetricsReader"),
 					))
 					dropped, err := r.buildDatapointRow(ctx, row, rm, sm, metric, r.datapointIndex)
 					r.datapointIndex++
-					if r.exemplarProcessor != nil {
-						err = r.exemplarProcessor.ProcessMetrics(ctx, r.orgId, rm, sm, metric)
-						if err != nil {
-							continue // Skip exemplar errors
-						}
-					}
 
 					if err != nil {
 						slog.Error("Failed to build datapoint row", "error", err)
@@ -213,7 +203,7 @@ func (r *IngestProtoMetricsReader) getDatapointCount(metric pmetric.Metric) int 
 
 // buildDatapointRow populates the provided row with data from a single datapoint and its context.
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
-func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (bool, error) {
+func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pipeline.Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (bool, error) {
 	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
 		row[wkk.NewRowKey(prefixAttribute(name, "resource"))] = value
@@ -226,12 +216,12 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row Ro
 		return true
 	})
 
-	row[wkk.NewRowKey("_cardinalhq.scope_url")] = sm.Scope().Version()
-	row[wkk.NewRowKey("_cardinalhq.scope_name")] = sm.Scope().Name()
+	row[wkk.NewRowKey("_cardinalhq_scope_url")] = sm.Scope().Version()
+	row[wkk.NewRowKey("_cardinalhq_scope_name")] = sm.Scope().Name()
 
-	row[wkk.RowKeyCName] = metric.Name()
-	row[wkk.NewRowKey("_cardinalhq.description")] = metric.Description()
-	row[wkk.NewRowKey("_cardinalhq.unit")] = metric.Unit()
+	row[wkk.RowKeyCName] = strings.ReplaceAll(metric.Name(), ".", "_")
+	row[wkk.NewRowKey("_cardinalhq_description")] = metric.Description()
+	row[wkk.NewRowKey("_cardinalhq_unit")] = metric.Unit()
 
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
@@ -415,7 +405,7 @@ func summaryToDDSketch(dp pmetric.SummaryDataPoint) (*ddsketch.DDSketch, error) 
 
 // addNumberDatapointFields adds fields from a NumberDataPoint to the row.
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
-func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context, ret Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
+func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
 		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
@@ -487,7 +477,7 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context,
 	return false, nil
 }
 
-func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Context, ret Row, dp pmetric.HistogramDataPoint) (bool, error) {
+func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.HistogramDataPoint) (bool, error) {
 	hasCounts := false
 	for i := 0; i < dp.BucketCounts().Len(); i++ {
 		if dp.BucketCounts().At(i) > 0 {
@@ -687,7 +677,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 }
 
 // addExponentialHistogramDatapointFields adds fields from an ExponentialHistogramDataPoint to the row.
-func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx context.Context, ret Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
+func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
 		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
@@ -807,7 +797,7 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 
 // addSummaryDatapointFields adds fields from a SummaryDataPoint to the row.
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
-func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context, ret Row, dp pmetric.SummaryDataPoint) (bool, error) {
+func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.SummaryDataPoint) (bool, error) {
 	// Add attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()

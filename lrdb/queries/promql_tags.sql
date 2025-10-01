@@ -15,49 +15,12 @@ ORDER BY 1
 LIMIT 1;
 
 -- name: ListPromMetricTags :many
-WITH src AS (
-  SELECT exemplar
-  FROM lrdb_exemplar_metrics
-  WHERE organization_id = $1
-    AND metric_name = $2
-),
-res_keys AS (
-  SELECT DISTINCT (
-    CASE
-      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
-      ELSE 'resource.' || (attr->>'key')
-    END
-  ) AS k
-  FROM src
-  CROSS JOIN LATERAL jsonb_array_elements(coalesce(exemplar->'resourceMetrics','[]'::jsonb)) rm
-  CROSS JOIN LATERAL jsonb_array_elements(coalesce(rm->'resource'->'attributes','[]'::jsonb)) attr
-),
-dp_keys AS (
-  SELECT DISTINCT (
-    CASE
-      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
-      ELSE 'metric.' || (attr->>'key')
-    END
-  ) AS k
-  FROM src
-  CROSS JOIN LATERAL jsonb_array_elements(coalesce(exemplar->'resourceMetrics','[]'::jsonb)) rm
-  CROSS JOIN LATERAL jsonb_array_elements(coalesce(rm->'scopeMetrics','[]'::jsonb)) sm
-  CROSS JOIN LATERAL jsonb_array_elements(coalesce(sm->'metrics','[]'::jsonb)) m
-  CROSS JOIN LATERAL jsonb_array_elements(
-    coalesce(
-      m->'gauge'->'dataPoints',
-      m->'sum'->'dataPoints',
-      m->'histogram'->'dataPoints',
-      m->'summary'->'dataPoints',
-      '[]'::jsonb
-    )
-  ) dp
-  CROSS JOIN LATERAL jsonb_array_elements(coalesce(dp->'attributes','[]'::jsonb)) attr
-)
-SELECT k AS tag_key
-FROM (
-  SELECT k FROM res_keys
-  UNION
-  SELECT k FROM dp_keys
-) u
-ORDER BY k;
+-- Extract tag keys from flat exemplar format
+-- Only return keys that start with _cardinalhq_, resource_, scope_, or metric_
+SELECT DISTINCT key::text AS tag_key
+FROM lrdb_exemplar_metrics,
+     LATERAL jsonb_object_keys(exemplar) AS key
+WHERE organization_id = $1
+  AND metric_name = $2
+  AND key ~ '^(_cardinalhq_|resource_|scope_|metric_)'
+ORDER BY tag_key;
