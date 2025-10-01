@@ -17,66 +17,40 @@ package exemplars
 import (
 	"context"
 	"log/slog"
-	"strconv"
-
-	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // createTracesCallback creates a callback function for traces exemplars for a specific organization
-func (p *Processor) createTracesCallback(ctx context.Context, organizationID string) func([]*Entry[ptrace.Traces]) {
-	return func(entries []*Entry[ptrace.Traces]) {
+func (p *Processor) createTracesCallback(ctx context.Context, organizationID string) func([]*Entry) {
+	return func(entries []*Entry) {
 		ll := logctx.FromContext(ctx)
 		ll.Info("Processing traces exemplars",
 			slog.String("organization_id", organizationID),
 			slog.Int("count", len(entries)))
 
-		exemplarData := make([]*ExemplarData, 0, len(entries))
+		rows := make([]pipeline.Row, 0, len(entries))
 		for _, entry := range entries {
-			data, err := p.marshalTraces(entry.value)
-			if err != nil {
-				ll.Error("Failed to marshal traces data", slog.Any("error", err))
-				continue
-			}
-
-			resourceAttributes := entry.value.ResourceSpans().At(0).Resource().Attributes()
-			attributes := p.toAttributes(resourceAttributes)
-			attributes["fingerprint"] = strconv.FormatInt(getTraceFingerprint(entry.value.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)), 10)
-			attributes["span.name"] = entry.value.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Name()
-			attributes["span.kind"] = entry.value.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Kind().String()
-
-			exemplarData = append(exemplarData, &ExemplarData{
-				Attributes:  attributes,
-				PartitionId: 0,
-				Payload:     data,
-			})
+			rows = append(rows, entry.value)
 		}
 
-		if len(exemplarData) == 0 {
+		if len(rows) == 0 {
 			return
 		}
 
 		if p.sendTracesExemplars != nil {
-			if err := p.sendTracesExemplars(context.Background(), organizationID, exemplarData); err != nil {
+			if err := p.sendTracesExemplars(context.Background(), organizationID, rows); err != nil {
 				ll.Error("Failed to send traces exemplars to database", slog.Any("error", err))
 			}
 		}
 	}
 }
 
-// marshalTraces serializes ptrace.Traces to JSON string
-func (p *Processor) marshalTraces(td ptrace.Traces) (string, error) {
-	marshaller := &ptrace.JSONMarshaler{}
-	bytes, err := marshaller.MarshalTraces(td)
-	if err != nil {
-		return "", err
-	}
-	return string(bytes), nil
-}
-
-// ProcessTraces processes traces and generates exemplars for a specific organization
-func (p *Processor) ProcessTraces(ctx context.Context, organizationID string, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) error {
+// ProcessTracesFromRow processes traces from a Row and generates exemplars
+// This method uses the already-processed Row data with underscore field names
+func (p *Processor) ProcessTracesFromRow(ctx context.Context, organizationID string, row pipeline.Row) error {
 	if !p.config.Traces.Enabled {
 		return nil
 	}
@@ -86,28 +60,34 @@ func (p *Processor) ProcessTraces(ctx context.Context, organizationID string, rs
 		return nil
 	}
 
-	p.addTraceExemplar(tenant, rs, ss, span)
+	clusterName := p.getStringFromRow(row, RowKeyResourceK8sClusterName)
+	namespaceName := p.getStringFromRow(row, RowKeyResourceK8sNamespaceName)
+	serviceName := p.getStringFromRow(row, RowKeyResourceServiceName)
+
+	var fingerprint int64
+	if val, ok := row[wkk.RowKeyCFingerprint]; ok {
+		switch v := val.(type) {
+		case int64:
+			fingerprint = v
+		case int:
+			fingerprint = int64(v)
+		case float64:
+			fingerprint = int64(v)
+		}
+	}
+
+	key := computeLogsTracesKey(clusterName, namespaceName, serviceName, fingerprint)
+
+	if tenant.traceCache.Contains(key) {
+		return nil
+	}
+
+	exemplarRow := pipeline.CopyRow(row)
+	tenant.traceCache.Put(key, exemplarRow)
 	return nil
 }
 
-// addTraceExemplar adds a traces exemplar to the organization's cache
-func (p *Processor) addTraceExemplar(tenant *Tenant, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) {
-	// Get fingerprint from span attributes (if exists from collector)
-	fingerprint := getTraceFingerprint(span)
-	resource := rs.Resource()
-	clusterName := getFromResource(resource.Attributes(), clusterNameKey)
-	namespaceName := getFromResource(resource.Attributes(), namespaceNameKey)
-	serviceName := getFromResource(resource.Attributes(), serviceNameKey)
-	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + strconv.FormatInt(fingerprint, 10)
-	if tenant.traceCache.Contains(key) {
-		return
-	}
-
-	exemplarRecord := toTraceExemplar(rs, ss, span)
-	tenant.traceCache.Put(key, exemplarRecord)
-}
-
 // SetTracesCallback updates the sendTracesExemplars callback function
-func (p *Processor) SetTracesCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
+func (p *Processor) SetTracesCallback(callback func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error) {
 	p.sendTracesExemplars = callback
 }

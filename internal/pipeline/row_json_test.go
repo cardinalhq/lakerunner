@@ -15,6 +15,7 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -78,11 +79,11 @@ func TestMarshalRowJSON(t *testing.T) {
 		{
 			name: "row with special characters in keys",
 			row: Row{
-				wkk.NewRowKey("key with spaces"):            "value1",
-				wkk.NewRowKey("key\"with\"quotes"):          "value2",
-				wkk.NewRowKey("key\\with\\slashes"):         "value3",
-				wkk.NewRowKey("key\nwith\nnewlines"):        "value4",
-				wkk.NewRowKey("key\twith\ttabs"):            "value5",
+				wkk.NewRowKey("key with spaces"):     "value1",
+				wkk.NewRowKey("key\"with\"quotes"):   "value2",
+				wkk.NewRowKey("key\\with\\slashes"):  "value3",
+				wkk.NewRowKey("key\nwith\nnewlines"): "value4",
+				wkk.NewRowKey("key\twith\ttabs"):     "value5",
 			},
 			expected: `{"key with spaces":"value1","key\"with\"quotes":"value2","key\\with\\slashes":"value3","key\nwith\nnewlines":"value4","key\twith\ttabs":"value5"}`,
 		},
@@ -101,7 +102,7 @@ func TestMarshalRowJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := MarshalRowJSON(tt.row)
+			data, err := tt.row.Marshal()
 			require.NoError(t, err)
 			assert.JSONEq(t, tt.expected, string(data))
 		})
@@ -158,7 +159,8 @@ func TestUnmarshalRowJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			row, err := UnmarshalRowJSON([]byte(tt.input))
+			var row Row
+			err := row.Unmarshal([]byte(tt.input))
 			require.NoError(t, err)
 			assert.Equal(t, len(tt.expected), len(row))
 			for k, expectedValue := range tt.expected {
@@ -184,11 +186,12 @@ func TestRowJSON_RoundTrip(t *testing.T) {
 	}
 
 	// Marshal
-	data, err := MarshalRowJSON(original)
+	data, err := original.Marshal()
 	require.NoError(t, err)
 
 	// Unmarshal
-	row, err := UnmarshalRowJSON(data)
+	var row Row
+	err = row.Unmarshal(data)
 	require.NoError(t, err)
 
 	// Verify all keys are present (they should be the same unique.Handle instances)
@@ -220,7 +223,8 @@ func TestRowJSON_InvalidJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := UnmarshalRowJSON([]byte(tt.input))
+			var row Row
+			err := row.Unmarshal([]byte(tt.input))
 			assert.Error(t, err)
 		})
 	}
@@ -230,10 +234,12 @@ func TestRowJSON_KeyInterning(t *testing.T) {
 	// Create two rows from the same JSON
 	input := `{"resource_service_name":"test","_cardinalhq_name":"metric"}`
 
-	row1, err := UnmarshalRowJSON([]byte(input))
+	var row1 Row
+	err := row1.Unmarshal([]byte(input))
 	require.NoError(t, err)
 
-	row2, err := UnmarshalRowJSON([]byte(input))
+	var row2 Row
+	err = row2.Unmarshal([]byte(input))
 	require.NoError(t, err)
 
 	// The keys should be the same interned instances
@@ -263,7 +269,7 @@ func BenchmarkMarshalRowJSON(b *testing.B) {
 	}
 
 	for b.Loop() {
-		_, err := MarshalRowJSON(row)
+		_, err := row.Marshal()
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -274,9 +280,53 @@ func BenchmarkUnmarshalRowJSON(b *testing.B) {
 	input := []byte(`{"resource_service_name":"test-service","resource_k8s_cluster_name":"prod-cluster","resource_k8s_namespace_name":"default","_cardinalhq_name":"http_requests_total","_cardinalhq_metric_type":"count","_cardinalhq_timestamp":1234567890,"_cardinalhq_fingerprint":987654321,"metric_http_status_code":"200","metric_method":"GET"}`)
 
 	for b.Loop() {
-		_, err := UnmarshalRowJSON(input)
+		var row Row
+		err := row.Unmarshal(input)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestRow_DirectJSONMarshal(t *testing.T) {
+	// Test that Row works directly with json.Marshal (no helper function needed)
+	row := Row{
+		wkk.NewRowKey("name"):    "test",
+		wkk.NewRowKey("service"): "api",
+	}
+
+	data, err := json.Marshal(row)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"name":"test","service":"api"}`, string(data))
+}
+
+func TestRow_DirectJSONUnmarshal(t *testing.T) {
+	// Test that Row works directly with json.Unmarshal (no helper function needed)
+	input := []byte(`{"name":"test","service":"api"}`)
+	var row Row
+	err := json.Unmarshal(input, &row)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test", row[wkk.NewRowKey("name")])
+	assert.Equal(t, "api", row[wkk.NewRowKey("service")])
+}
+
+func TestRow_MarshalUnmarshalMethods(t *testing.T) {
+	// Test Row.Marshal() and Row.Unmarshal() methods
+	row := Row{
+		wkk.NewRowKey("name"):    "test",
+		wkk.NewRowKey("service"): "api",
+	}
+
+	// Marshal using method
+	data, err := row.Marshal()
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"name":"test","service":"api"}`, string(data))
+
+	// Unmarshal using method
+	var row2 Row
+	err = row2.Unmarshal(data)
+	require.NoError(t, err)
+	assert.Equal(t, "test", row2[wkk.NewRowKey("name")])
+	assert.Equal(t, "api", row2[wkk.NewRowKey("service")])
 }

@@ -20,52 +20,54 @@ import (
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
-type LRUCache[T any] struct {
+type LRUCache struct {
+	sync.RWMutex
 	capacity           int
-	cache              map[string]*list.Element
+	cache              map[uint64]*list.Element
 	list               *list.List
-	mutex              sync.RWMutex
 	expiry             time.Duration
 	reportInterval     time.Duration
 	stopCleanup        chan struct{}
-	publishCallBack    func(toPublish []*Entry[T])
-	pending            []*Entry[T]
+	publishCallBack    func(toPublish []*Entry)
+	pending            []*Entry
 	maxPublishPerSweep int
 	rng                *rand.Rand
 }
 
-type Entry[T any] struct {
-	key             string
-	value           T
+type Entry struct {
+	key             uint64
+	value           pipeline.Row
 	timestamp       time.Time
 	lastPublishTime time.Time
 }
 
-func NewLRUCache[T any](
+func NewLRUCache(
 	capacity int,
 	expiry time.Duration,
 	reportInterval time.Duration,
-	publishCallBack func(expiredItems []*Entry[T]),
-) *LRUCache[T] {
-	lru := &LRUCache[T]{
+	publishCallBack func(expiredItems []*Entry),
+) *LRUCache {
+	lru := &LRUCache{
 		capacity:           capacity,
-		cache:              make(map[string]*list.Element),
+		cache:              make(map[uint64]*list.Element),
 		list:               list.New(),
 		reportInterval:     reportInterval,
 		expiry:             expiry,
 		stopCleanup:        make(chan struct{}),
-		pending:            make([]*Entry[T], 0),
+		pending:            make([]*Entry, 0),
 		publishCallBack:    publishCallBack,
 		maxPublishPerSweep: 100,
-		rng:                rand.New(rand.NewSource(time.Now().UnixNano())), // NEW
+		rng:                rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	go lru.startCleanup()
 	return lru
 }
 
-func (l *LRUCache[T]) startCleanup() {
+func (l *LRUCache) startCleanup() {
 	ticker := time.NewTicker(l.reportInterval)
 	defer ticker.Stop()
 
@@ -79,13 +81,13 @@ func (l *LRUCache[T]) startCleanup() {
 	}
 }
 
-func (l *LRUCache[T]) cleanupExpiredEntries() {
-	l.mutex.Lock()
+func (l *LRUCache) cleanupExpiredEntries() {
+	l.Lock()
 	now := time.Now()
 
 	// Mark entries due for publish this sweep.
 	for e := l.list.Back(); e != nil; e = e.Prev() {
-		entry := e.Value.(*Entry[T])
+		entry := e.Value.(*Entry)
 		if entry.shouldPublish(l.expiry) {
 			l.pending = append(l.pending, entry)
 			entry.lastPublishTime = now
@@ -94,11 +96,12 @@ func (l *LRUCache[T]) cleanupExpiredEntries() {
 
 	// Evict truly expired entries (TTL-based) from the LRU tail.
 	for e := l.list.Back(); e != nil; {
-		entry := e.Value.(*Entry[T])
+		entry := e.Value.(*Entry)
 		if now.Sub(entry.timestamp) > l.expiry {
 			prev := e.Prev()
 			l.list.Remove(e)
 			delete(l.cache, entry.key)
+			pipeline.ReturnPooledRow(entry.value)
 			e = prev
 		} else {
 			e = e.Prev()
@@ -107,8 +110,8 @@ func (l *LRUCache[T]) cleanupExpiredEntries() {
 
 	// Take a copy of pending for sampling, then reset the shared slice.
 	candidates := l.pending
-	l.pending = make([]*Entry[T], 0, 16)
-	l.mutex.Unlock()
+	l.pending = make([]*Entry, 0, 16)
+	l.Unlock()
 
 	// Randomly pick up to N exemplars to publish.
 	if n := len(candidates); n > 0 {
@@ -119,18 +122,18 @@ func (l *LRUCache[T]) cleanupExpiredEntries() {
 }
 
 // reservoirSample picks up to k items uniformly at random without replacement.
-func reservoirSample[T any](in []*T, k int, r *rand.Rand) []*T {
+func reservoirSample(in []*Entry, k int, r *rand.Rand) []*Entry {
 	n := len(in)
 	if k <= 0 || n == 0 {
 		return nil
 	}
 	if n <= k {
 		// Return a shallow copy to avoid aliasing callers' slice capacity.
-		out := make([]*T, n)
+		out := make([]*Entry, n)
 		copy(out, in)
 		return out
 	}
-	out := make([]*T, k)
+	out := make([]*Entry, k)
 	copy(out, in[:k])
 	for i := k; i < n; i++ {
 		j := r.Intn(i + 1)
@@ -142,33 +145,33 @@ func reservoirSample[T any](in []*T, k int, r *rand.Rand) []*T {
 }
 
 // shouldPublish checks if an entry should be published based on expiry
-func (e *Entry[T]) shouldPublish(expiry time.Duration) bool {
+func (e *Entry) shouldPublish(expiry time.Duration) bool {
 	return time.Since(e.lastPublishTime) >= expiry
 }
 
 // Contains checks if a key exists in the cache and is not expired
-func (l *LRUCache[T]) Contains(key string) bool {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
+func (l *LRUCache) Contains(key uint64) bool {
+	l.RLock()
+	defer l.RUnlock()
 
 	elem, found := l.cache[key]
 	if !found {
 		return false
 	}
 
-	entry := elem.Value.(*Entry[T])
+	entry := elem.Value.(*Entry)
 	return time.Since(entry.timestamp) <= l.expiry
 }
 
-func (l *LRUCache[T]) Put(key string, exemplar T) {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
+func (l *LRUCache) Put(key uint64, row pipeline.Row) {
+	l.Lock()
+	defer l.Unlock()
 
 	now := time.Now()
 
 	if elem, found := l.cache[key]; found {
-		entry := elem.Value.(*Entry[T])
-		entry.value = exemplar
+		entry := elem.Value.(*Entry)
+		entry.value = row
 		entry.timestamp = now
 		l.list.MoveToFront(elem)
 		return
@@ -177,39 +180,38 @@ func (l *LRUCache[T]) Put(key string, exemplar T) {
 	if l.list.Len() >= l.capacity {
 		back := l.list.Back()
 		if back != nil {
-			entry := back.Value.(*Entry[T])
+			entry := back.Value.(*Entry)
 			if entry.shouldPublish(l.expiry) {
 				l.pending = append(l.pending, entry)
 				entry.lastPublishTime = now
 			}
 			l.list.Remove(back)
 			delete(l.cache, entry.key)
+			pipeline.ReturnPooledRow(entry.value)
 		}
 	}
 
-	newEntry := &Entry[T]{
+	newEntry := &Entry{
 		key:             key,
-		value:           exemplar,
+		value:           row,
 		timestamp:       now,
 		lastPublishTime: now,
 	}
 	elem := l.list.PushFront(newEntry)
 	l.cache[key] = elem
-
-	// Keep initial behavior: make net-new entries eligible immediately.
 	l.pending = append(l.pending, newEntry)
 }
 
-func (l *LRUCache[T]) Close() {
+func (l *LRUCache) Close() {
 	close(l.stopCleanup)
 }
 
 // FlushPending forces all pending exemplars to be published via the callback
-func (l *LRUCache[T]) FlushPending() {
-	l.mutex.Lock()
+func (l *LRUCache) FlushPending() {
+	l.Lock()
 	candidates := l.pending
-	l.pending = make([]*Entry[T], 0, 16)
-	l.mutex.Unlock()
+	l.pending = make([]*Entry, 0, 16)
+	l.Unlock()
 
 	if len(candidates) > 0 {
 		toPublish := reservoirSample(candidates, l.maxPublishPerSweep, l.rng)

@@ -25,6 +25,8 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -57,12 +59,13 @@ type DateintBinManager struct {
 
 // LogIngestProcessor implements the Processor interface for raw log ingestion
 type LogIngestProcessor struct {
-	store             LogIngestStore
-	storageProvider   storageprofile.StorageProfileProvider
-	cmgr              cloudstorage.ClientProvider
-	kafkaProducer     fly.Producer
-	exemplarProcessor *exemplars.Processor
-	config            *config.Config
+	store                    LogIngestStore
+	storageProvider          storageprofile.StorageProfileProvider
+	cmgr                     cloudstorage.ClientProvider
+	kafkaProducer            fly.Producer
+	exemplarProcessor        *exemplars.Processor
+	fingerprintTenantManager *fingerprint.TenantManager
+	config                   *config.Config
 }
 
 // newLogIngestProcessor creates a new log ingest processor instance
@@ -70,17 +73,20 @@ func newLogIngestProcessor(
 	cfg *config.Config,
 	store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
 	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetLogsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
-		return processLogsExemplarsDirect(ctx, organizationID, exemplars, store)
+	exemplarProcessor.SetLogsCallback(func(ctx context.Context, organizationID string, rows []pipeline.Row) error {
+		return processLogsExemplarsDirect(ctx, organizationID, rows, store)
 	})
 
+	fingerprintTenantManager := fingerprint.NewTenantManager(0.5)
+
 	return &LogIngestProcessor{
-		store:             store,
-		storageProvider:   storageProvider,
-		cmgr:              cmgr,
-		kafkaProducer:     kafkaProducer,
-		exemplarProcessor: exemplarProcessor,
-		config:            cfg,
+		store:                    store,
+		storageProvider:          storageProvider,
+		cmgr:                     cmgr,
+		kafkaProducer:            kafkaProducer,
+		exemplarProcessor:        exemplarProcessor,
+		fingerprintTenantManager: fingerprintTenantManager,
+		config:                   cfg,
 	}
 }
 
@@ -326,9 +332,9 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 
 	var translator filereader.RowTranslator
 	if strings.HasSuffix(tmpFilename, ".parquet") {
-		translator = NewParquetLogTranslator(orgID, bucket, objectID, p.exemplarProcessor)
+		translator = NewParquetLogTranslator(orgID, bucket, objectID)
 	} else {
-		translator = NewLogTranslator(orgID, bucket, objectID, p.exemplarProcessor)
+		translator = NewLogTranslator(orgID, bucket, objectID, p.fingerprintTenantManager)
 	}
 
 	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
@@ -342,10 +348,9 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 
 func (p *LogIngestProcessor) createLogReader(filename, orgId string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
-		SignalType:        filereader.SignalTypeLogs,
-		BatchSize:         1000,
-		ExemplarProcessor: p.exemplarProcessor,
-		OrgID:             orgId,
+		SignalType: filereader.SignalTypeLogs,
+		BatchSize:  1000,
+		OrgID:      orgId,
 	}
 	return filereader.ReaderForFileWithOptions(filename, options)
 }
@@ -413,6 +418,22 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 				if err != nil {
 					ll.Error("Failed to get/create dateint bin", slog.Int("dateint", int(dateint)), slog.Any("error", err))
 					continue
+				}
+
+				// Add fingerprint to row
+				message, ok := row[wkk.RowKeyCMessage].(string)
+				if ok && message != "" {
+					tenant := p.fingerprintTenantManager.GetTenant(storageProfile.OrganizationID.String())
+					trieClusterManager := tenant.GetTrieClusterManager()
+					fp, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
+					if err == nil {
+						row[wkk.RowKeyCFingerprint] = fp
+					}
+				}
+
+				// Process exemplar before taking the row
+				if p.exemplarProcessor != nil {
+					_ = p.exemplarProcessor.ProcessLogsFromRow(ctx, storageProfile.OrganizationID.String(), row)
 				}
 
 				takenRow := batch.TakeRow(i)

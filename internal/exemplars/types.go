@@ -15,133 +15,46 @@
 package exemplars
 
 import (
-	"go.opentelemetry.io/collector/pdata/pcommon"
-	"go.opentelemetry.io/collector/pdata/plog"
-	"go.opentelemetry.io/collector/pdata/pmetric"
-	"go.opentelemetry.io/collector/pdata/ptrace"
+	"strconv"
 
-	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
+	"github.com/cespare/xxhash/v2"
 
-	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-const (
-	serviceNameKey   = string(semconv.ServiceNameKey)
-	clusterNameKey   = string(semconv.K8SClusterNameKey)
-	namespaceNameKey = string(semconv.K8SNamespaceNameKey)
+var (
+	RowKeyResourceServiceName      = wkk.NewRowKey("resource_service_name")
+	RowKeyResourceK8sClusterName   = wkk.NewRowKey("resource_k8s_cluster_name")
+	RowKeyResourceK8sNamespaceName = wkk.NewRowKey("resource_k8s_namespace_name")
+	RowKeyCardinalhqOldFingerprint = wkk.NewRowKey("_cardinalhq_old_fingerprint")
+	RowKeySpanName                 = wkk.NewRowKey("span_name")
+	RowKeySpanKind                 = wkk.NewRowKey("span_kind")
 )
 
-// getFromResource extracts a value from resource attributes with a default fallback
-func getFromResource(attr pcommon.Map, key string) string {
-	val, found := attr.Get(key)
-	if !found {
-		return "unknown"
-	}
-	return val.AsString()
+// computeLogsTracesKey computes a xxhash for logs and traces exemplar deduplication
+func computeLogsTracesKey(clusterName, namespaceName, serviceName string, fingerprint int64) uint64 {
+	h := xxhash.New()
+	_, _ = h.WriteString(clusterName)
+	_, _ = h.WriteString("|")
+	_, _ = h.WriteString(namespaceName)
+	_, _ = h.WriteString("|")
+	_, _ = h.WriteString(serviceName)
+	_, _ = h.WriteString("|")
+	_, _ = h.WriteString(strconv.FormatInt(fingerprint, 10))
+	return h.Sum64()
 }
 
-// toMetricExemplar creates a copy of the metric data with the first data point as an exemplar.
-func toMetricExemplar(rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, mm pmetric.Metric, metricType pmetric.MetricType) pmetric.Metrics {
-	exemplarRecord := pmetric.NewMetrics()
-	copyRm := exemplarRecord.ResourceMetrics().AppendEmpty()
-	rm.Resource().CopyTo(copyRm.Resource())
-	copySm := copyRm.ScopeMetrics().AppendEmpty()
-	sm.Scope().CopyTo(copySm.Scope())
-	copyMm := copySm.Metrics().AppendEmpty()
-	copyMm.SetName(mm.Name())
-	copyMm.SetDescription(mm.Description())
-	copyMm.SetUnit(mm.Unit())
-
-	switch metricType {
-	case pmetric.MetricTypeGauge:
-		if mm.Gauge().DataPoints().Len() > 0 {
-			newGauge := copyMm.SetEmptyGauge()
-			dp := mm.Gauge().DataPoints().At(0)
-			ccd := newGauge.DataPoints().AppendEmpty()
-			dp.CopyTo(ccd)
-		}
-	case pmetric.MetricTypeSum:
-		if mm.Sum().DataPoints().Len() > 0 {
-			newSum := copyMm.SetEmptySum()
-			dp := mm.Sum().DataPoints().At(0)
-			ccd := newSum.DataPoints().AppendEmpty()
-			dp.CopyTo(ccd)
-		}
-	case pmetric.MetricTypeHistogram:
-		if mm.Histogram().DataPoints().Len() > 0 {
-			newHistogram := copyMm.SetEmptyHistogram()
-			dp := mm.Histogram().DataPoints().At(0)
-			ccd := newHistogram.DataPoints().AppendEmpty()
-			dp.CopyTo(ccd)
-		}
-	case pmetric.MetricTypeSummary:
-		if mm.Summary().DataPoints().Len() > 0 {
-			newSummary := copyMm.SetEmptySummary()
-			dp := mm.Summary().DataPoints().At(0)
-			ccd := newSummary.DataPoints().AppendEmpty()
-			dp.CopyTo(ccd)
-		}
-	case pmetric.MetricTypeExponentialHistogram:
-		if mm.ExponentialHistogram().DataPoints().Len() > 0 {
-			newExponentialHistogram := copyMm.SetEmptyExponentialHistogram()
-			dp := mm.ExponentialHistogram().DataPoints().At(0)
-			ccd := newExponentialHistogram.DataPoints().AppendEmpty()
-			dp.CopyTo(ccd)
-		}
-	case pmetric.MetricTypeEmpty:
-		// do nothing
-	default:
-		// do nothing
-	}
-	return exemplarRecord
-}
-
-// getLogFingerprint extracts an existing fingerprint from log record attributes
-// Returns 0 if no fingerprint is found (e.g., logs not processed by collector)
-func getLogFingerprint(lr plog.LogRecord) int64 {
-	if fingerprintField, found := lr.Attributes().Get(translate.CardinalFieldFingerprint); found {
-		return fingerprintField.Int()
-	}
-	return 0
-}
-
-// toLogExemplar creates a log exemplar containing the full log record
-func toLogExemplar(rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) plog.Logs {
-	exemplarRecord := plog.NewLogs()
-	copyRl := exemplarRecord.ResourceLogs().AppendEmpty()
-	rl.Resource().CopyTo(copyRl.Resource())
-	copySl := copyRl.ScopeLogs().AppendEmpty()
-	sl.Scope().CopyTo(copySl.Scope())
-	copyLr := copySl.LogRecords().AppendEmpty()
-	lr.CopyTo(copyLr)
-
-	return exemplarRecord
-}
-
-// getTraceFingerprint extracts an existing fingerprint from span attributes
-// Returns 0 if no fingerprint is found (e.g., traces not processed by collector)
-func getTraceFingerprint(span ptrace.Span) int64 {
-	if fingerprintField, found := span.Attributes().Get(translate.CardinalFieldFingerprint); found {
-		return fingerprintField.Int()
-	}
-	return 0
-}
-
-// toTraceExemplar creates a trace exemplar containing the full span
-func toTraceExemplar(rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) ptrace.Traces {
-	exemplarRecord := ptrace.NewTraces()
-	copyRs := exemplarRecord.ResourceSpans().AppendEmpty()
-	rs.Resource().CopyTo(copyRs.Resource())
-	copySs := copyRs.ScopeSpans().AppendEmpty()
-	ss.Scope().CopyTo(copySs.Scope())
-	copySpan := copySs.Spans().AppendEmpty()
-	span.CopyTo(copySpan)
-
-	return exemplarRecord
-}
-
-type ExemplarData struct {
-	Attributes  map[string]string
-	PartitionId int64
-	Payload     string
+// computeMetricsKey computes a xxhash for metrics exemplar deduplication
+func computeMetricsKey(clusterName, namespaceName, serviceName, metricName, metricType string) uint64 {
+	h := xxhash.New()
+	_, _ = h.WriteString(clusterName)
+	_, _ = h.WriteString("|")
+	_, _ = h.WriteString(namespaceName)
+	_, _ = h.WriteString("|")
+	_, _ = h.WriteString(serviceName)
+	_, _ = h.WriteString("|")
+	_, _ = h.WriteString(metricName)
+	_, _ = h.WriteString("|")
+	_, _ = h.WriteString(metricType)
+	return h.Sum64()
 }

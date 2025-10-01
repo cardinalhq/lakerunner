@@ -186,8 +186,8 @@ func newTraceIngestProcessor(
 	cfg *config.Config,
 	store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
 	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetTracesCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
-		return processTracesExemplarsDirect(ctx, organizationID, exemplars, store)
+	exemplarProcessor.SetTracesCallback(func(ctx context.Context, organizationID string, rows []pipeline.Row) error {
+		return processTracesExemplarsDirect(ctx, organizationID, rows, store)
 	})
 
 	return &TraceIngestProcessor{
@@ -464,10 +464,9 @@ func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket
 
 func (p *TraceIngestProcessor) createTraceReader(filename, orgID string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
-		SignalType:        filereader.SignalTypeTraces,
-		BatchSize:         1000,
-		OrgID:             orgID,
-		ExemplarProcessor: p.exemplarProcessor,
+		SignalType: filereader.SignalTypeTraces,
+		BatchSize:  1000,
+		OrgID:      orgID,
 	}
 	return filereader.ReaderForFileWithOptions(filename, options)
 }
@@ -534,6 +533,11 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 				if err != nil {
 					ll.Error("Failed to get/create dateint bin", slog.Int("dateint", int(dateint)), slog.Any("error", err))
 					continue
+				}
+
+				// Process exemplar before taking the row
+				if p.exemplarProcessor != nil {
+					_ = p.exemplarProcessor.ProcessTracesFromRow(ctx, storageProfile.OrganizationID.String(), row)
 				}
 
 				// Now take the row to avoid copying

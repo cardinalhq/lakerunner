@@ -23,9 +23,6 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow"
 
-	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
-
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -162,19 +159,17 @@ var (
 
 // ParquetLogTranslator handles Parquet-specific log translation with timestamp detection and fingerprinting
 type ParquetLogTranslator struct {
-	OrgID             string
-	Bucket            string
-	ObjectID          string
-	ExemplarProcessor *exemplars.Processor
+	OrgID    string
+	Bucket   string
+	ObjectID string
 }
 
 // NewParquetLogTranslator creates a new ParquetLogTranslator with the specified metadata
-func NewParquetLogTranslator(orgID, bucket, objectID string, exemplarProcessor *exemplars.Processor) *ParquetLogTranslator {
+func NewParquetLogTranslator(orgID, bucket, objectID string) *ParquetLogTranslator {
 	return &ParquetLogTranslator{
-		OrgID:             orgID,
-		Bucket:            bucket,
-		ObjectID:          objectID,
-		ExemplarProcessor: exemplarProcessor,
+		OrgID:    orgID,
+		Bucket:   bucket,
+		ObjectID: objectID,
 	}
 }
 
@@ -627,18 +622,6 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.R
 
 	// Set level field
 	(*row)[wkk.RowKeyCLevel] = level
-
-	// Fingerprint the message if we have one and an exemplar processor
-	if message != "" && t.ExemplarProcessor != nil {
-		tenant := t.ExemplarProcessor.GetTenant(ctx, t.OrgID)
-		if tenant != nil {
-			trieClusterManager := tenant.GetTrieClusterManager()
-			fingerprint, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
-			if err == nil {
-				(*row)[wkk.RowKeyCFingerprint] = fingerprint
-			}
-		}
-	}
 
 	return nil
 }

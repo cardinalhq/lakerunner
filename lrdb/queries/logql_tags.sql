@@ -7,8 +7,8 @@ WITH src AS (
 res_keys AS (
   SELECT DISTINCT (
     CASE
-      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
-      ELSE 'resource.' || (attr->>'key')
+      WHEN (attr->>'key') ~ '^_cardinalhq_' THEN (attr->>'key')
+      ELSE 'resource_' || (attr->>'key')
     END
   ) AS k
   FROM src
@@ -18,7 +18,7 @@ res_keys AS (
 log_attr_keys AS (
   SELECT DISTINCT (
     CASE
-      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
+      WHEN (attr->>'key') ~ '^_cardinalhq_' THEN (attr->>'key')
       ELSE 'log.' || (attr->>'key')
     END
   ) AS k
@@ -29,13 +29,13 @@ log_attr_keys AS (
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rec->'attributes','[]'::jsonb)) attr
 ),
 body_key AS (
-  SELECT DISTINCT '_cardinalhq.message'::text AS k
+  SELECT DISTINCT '_cardinalhq_message'::text AS k
   FROM src
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(exemplar->'resourceLogs','[]'::jsonb)) rl
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rl->'scopeLogs','[]'::jsonb)) sl
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sl->'logRecords','[]'::jsonb)) rec
-  WHERE rec ? 'body'                               
-    AND jsonb_typeof(rec->'body') IN ('object')   
+  WHERE rec ? 'body'
+    AND jsonb_typeof(rec->'body') IN ('object')
     AND (
       (rec->'body'->>'stringValue') IS NOT NULL OR
       (rec->'body'->>'intValue')    IS NOT NULL OR

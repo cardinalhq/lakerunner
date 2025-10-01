@@ -20,12 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"go.opentelemetry.io/collector/pdata/pcommon"
-	"go.opentelemetry.io/collector/pdata/plog"
-	"go.opentelemetry.io/collector/pdata/ptrace"
-
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -34,16 +30,9 @@ type TelemetryType string
 
 // Tenant holds the caches for each telemetry type for a specific organization
 type Tenant struct {
-	metricCache *LRUCache[map[wkk.RowKey]any]
-	logCache    *LRUCache[plog.Logs]
-	traceCache  *LRUCache[ptrace.Traces]
-
-	// TrieClusterManager for fingerprinting (one per organization)
-	trieClusterManager *fingerprinter.TrieClusterManager
-}
-
-func (t *Tenant) GetTrieClusterManager() *fingerprinter.TrieClusterManager {
-	return t.trieClusterManager
+	metricCache *LRUCache
+	logCache    *LRUCache
+	traceCache  *LRUCache
 }
 
 // Processor handles exemplar generation from different telemetry types using tenant-based LRU caches
@@ -51,13 +40,13 @@ type Processor struct {
 	tenants sync.Map // organizationID -> *Tenant
 
 	// Callback for metrics exemplars
-	sendMetricsExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
+	sendMetricsExemplars func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error
 
 	// Callback for logs exemplars
-	sendLogsExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
+	sendLogsExemplars func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error
 
 	// Callback for traces exemplars
-	sendTracesExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
+	sendTracesExemplars func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error
 
 	// Configuration for all telemetry types
 	config Config
@@ -122,11 +111,8 @@ func (p *Processor) GetTenant(ctx context.Context, organizationID string) *Tenan
 	}
 
 	ll.Info("Creating new tenant", slog.String("organization_id", organizationID))
-	tenant := &Tenant{
-		trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
-	}
+	tenant := &Tenant{}
 
-	// Create caches for enabled telemetry types
 	if p.config.Logs.Enabled {
 		tenant.logCache = NewLRUCache(
 			p.config.Logs.CacheSize,
@@ -155,26 +141,8 @@ func (p *Processor) GetTenant(ctx context.Context, organizationID string) *Tenan
 	return tenant
 }
 
-// toAttributes extracts standard attributes from OTEL resource attributes
-func (p *Processor) toAttributes(resourceAttributes pcommon.Map) map[string]string {
-	attributes := make(map[string]string)
-	attributes[serviceNameKey] = getFromResource(resourceAttributes, serviceNameKey)
-	attributes[namespaceNameKey] = getFromResource(resourceAttributes, namespaceNameKey)
-	attributes[clusterNameKey] = getFromResource(resourceAttributes, clusterNameKey)
-	return attributes
-}
-
-// toAttributesFromRow extracts attributes from a Row
-func (p *Processor) toAttributesFromRow(row map[wkk.RowKey]any) map[string]string {
-	attributes := make(map[string]string)
-	attributes[serviceNameKey] = p.getStringFromRow(row, wkk.NewRowKey("resource_service_name"))
-	attributes[namespaceNameKey] = p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_namespace_name"))
-	attributes[clusterNameKey] = p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_cluster_name"))
-	return attributes
-}
-
 // getStringFromRow safely extracts a string value from a Row
-func (p *Processor) getStringFromRow(row map[wkk.RowKey]any, key wkk.RowKey) string {
+func (p *Processor) getStringFromRow(row pipeline.Row, key wkk.RowKey) string {
 	if val, ok := row[key]; ok {
 		if str, ok := val.(string); ok {
 			return str

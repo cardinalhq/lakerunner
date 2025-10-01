@@ -30,8 +30,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
-
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricmath"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -49,9 +47,8 @@ type IngestProtoMetricsReader struct {
 	batchSize int
 
 	// Store the original OTEL metrics for exemplar processing
-	orgId             string
-	otelMetrics       *pmetric.Metrics
-	exemplarProcessor *exemplars.Processor
+	orgId       string
+	otelMetrics *pmetric.Metrics
 
 	// Streaming iterator state for metrics
 	resourceIndex  int
@@ -86,10 +83,9 @@ func NewIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics, opts Reade
 	}
 
 	return &IngestProtoMetricsReader{
-		otelMetrics:       metrics,
-		orgId:             opts.OrgID,
-		exemplarProcessor: opts.ExemplarProcessor,
-		batchSize:         batchSize,
+		otelMetrics: metrics,
+		orgId:       opts.OrgID,
+		batchSize:   batchSize,
 	}, nil
 }
 
@@ -151,17 +147,11 @@ func (r *IngestProtoMetricsReader) getMetricRow(ctx context.Context, row pipelin
 				datapointCount := r.getDatapointCount(metric)
 
 				if r.datapointIndex < datapointCount {
-					// Track datapoints read from proto
 					rowsInCounter.Add(ctx, 1, otelmetric.WithAttributes(
 						attribute.String("reader", "IngestProtoMetricsReader"),
 					))
 					dropped, err := r.buildDatapointRow(ctx, row, rm, sm, metric, r.datapointIndex)
 					r.datapointIndex++
-					if r.exemplarProcessor != nil {
-						// Use the new Row-based method with underscore field names
-						_ = r.exemplarProcessor.ProcessMetricsFromRow(ctx, r.orgId, row)
-						// Skip exemplar errors - don't fail the whole row
-					}
 
 					if err != nil {
 						slog.Error("Failed to build datapoint row", "error", err)

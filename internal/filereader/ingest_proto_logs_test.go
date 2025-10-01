@@ -23,8 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
-
 	"github.com/cardinalhq/oteltools/signalbuilder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,9 +72,8 @@ func TestNewIngestProtoLogsReader_EmptyData(t *testing.T) {
 func TestIngestProtoLogsReader_EmptySlice(t *testing.T) {
 	syntheticData := createSyntheticLogData()
 	opts := ReaderOptions{
-		SignalType:        SignalTypeLogs,
-		BatchSize:         1,
-		ExemplarProcessor: exemplars.NewProcessor(exemplars.Config{}),
+		SignalType: SignalTypeLogs,
+		BatchSize:  1,
 	}
 	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
@@ -94,9 +91,8 @@ func TestIngestProtoLogsReader_EmptySlice(t *testing.T) {
 func TestIngestProtoLogsReader_Close(t *testing.T) {
 	syntheticData := createSyntheticLogData()
 	opts := ReaderOptions{
-		SignalType:        SignalTypeLogs,
-		BatchSize:         1,
-		ExemplarProcessor: exemplars.NewProcessor(exemplars.Config{}),
+		SignalType: SignalTypeLogs,
+		BatchSize:  1,
 	}
 	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
@@ -249,9 +245,8 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 	reader := bytes.NewReader(syntheticData)
 
 	opts := ReaderOptions{
-		SignalType:        SignalTypeLogs,
-		BatchSize:         1000,
-		ExemplarProcessor: exemplars.NewProcessor(exemplars.Config{}),
+		SignalType: SignalTypeLogs,
+		BatchSize:  1000,
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
@@ -385,9 +380,8 @@ func TestIngestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	reader := bytes.NewReader(syntheticData)
 
 	opts := ReaderOptions{
-		SignalType:        SignalTypeLogs,
-		BatchSize:         1000,
-		ExemplarProcessor: exemplars.NewProcessor(exemplars.Config{}),
+		SignalType: SignalTypeLogs,
+		BatchSize:  1000,
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
@@ -528,9 +522,8 @@ func TestIngestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 	// Test IngestProtoLogsReader with this structured data
 	reader := bytes.NewReader(data)
 	opts := ReaderOptions{
-		SignalType:        SignalTypeLogs,
-		BatchSize:         1,
-		ExemplarProcessor: exemplars.NewProcessor(exemplars.Config{}),
+		SignalType: SignalTypeLogs,
+		BatchSize:  1,
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
@@ -691,9 +684,8 @@ func TestIngestProtoLogsReader_MultiResourceSyntheticData(t *testing.T) {
 	reader := bytes.NewReader(data)
 
 	opts := ReaderOptions{
-		SignalType:        SignalTypeLogs,
-		BatchSize:         1,
-		ExemplarProcessor: exemplars.NewProcessor(exemplars.Config{}),
+		SignalType: SignalTypeLogs,
+		BatchSize:  1,
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)

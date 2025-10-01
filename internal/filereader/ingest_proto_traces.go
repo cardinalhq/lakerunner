@@ -25,7 +25,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -38,12 +37,11 @@ type IngestProtoTracesReader struct {
 	batchSize int
 
 	// Streaming iterator state for traces
-	traces            *ptrace.Traces
-	resourceIndex     int
-	scopeIndex        int
-	spanIndex         int
-	exemplarProcessor *exemplars.Processor
-	orgId             string
+	traces        *ptrace.Traces
+	resourceIndex int
+	scopeIndex    int
+	spanIndex     int
+	orgId         string
 }
 
 // NewProtoTracesReader creates a new ProtoTracesReader for the given io.Reader.
@@ -74,9 +72,8 @@ func NewIngestProtoTracesReader(reader io.Reader, opts ReaderOptions) (*IngestPr
 	}
 
 	protoReader := &IngestProtoTracesReader{
-		batchSize:         batchSize,
-		exemplarProcessor: opts.ExemplarProcessor,
-		orgId:             opts.OrgID,
+		batchSize: batchSize,
+		orgId:     opts.OrgID,
 	}
 
 	traces, err := parseProtoToOtelTraces(reader)
@@ -154,12 +151,6 @@ func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context) (pipeline.Row
 
 				// Build row for this span
 				row := r.buildSpanRow(ctx, rs, ss, span)
-
-				// Process exemplars if processor is available
-				if r.exemplarProcessor != nil {
-					_ = r.exemplarProcessor.ProcessTraces(ctx, r.orgId, rs, ss, span)
-					// Skip exemplar errors but continue processing
-				}
 
 				// Advance to next span
 				r.spanIndex++

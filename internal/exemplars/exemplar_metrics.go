@@ -24,58 +24,33 @@ import (
 )
 
 // createMetricsCallback creates a callback function for metrics exemplars for a specific organization
-func (p *Processor) createMetricsCallback(ctx context.Context, organizationID string) func([]*Entry[map[wkk.RowKey]any]) {
-	return func(entries []*Entry[map[wkk.RowKey]any]) {
+func (p *Processor) createMetricsCallback(ctx context.Context, organizationID string) func([]*Entry) {
+	return func(entries []*Entry) {
 		ll := logctx.FromContext(ctx)
 		ll.Info("Processing metrics exemplars",
 			slog.String("organization_id", organizationID),
 			slog.Int("count", len(entries)))
 
-		exemplarData := make([]*ExemplarData, 0, len(entries))
+		rows := make([]pipeline.Row, 0, len(entries))
 		for _, entry := range entries {
-			data, err := p.marshalMetricsFromRow(entry.value)
-			if err != nil {
-				ll.Error("Failed to marshal metrics data from row", slog.Any("error", err))
-				continue
-			}
-
-			attributes := p.toAttributesFromRow(entry.value)
-			metricName := p.getStringFromRow(entry.value, wkk.RowKeyCName)
-			metricType := p.getStringFromRow(entry.value, wkk.RowKeyCMetricType)
-			attributes["metric_name"] = metricName
-			attributes["metric_type"] = metricType
-
-			exemplarData = append(exemplarData, &ExemplarData{
-				Attributes:  attributes,
-				PartitionId: 0,
-				Payload:     data,
-			})
+			rows = append(rows, entry.value)
 		}
 
-		if len(exemplarData) == 0 {
+		if len(rows) == 0 {
 			return
 		}
 
 		if p.sendMetricsExemplars != nil {
-			if err := p.sendMetricsExemplars(context.Background(), organizationID, exemplarData); err != nil {
+			if err := p.sendMetricsExemplars(context.Background(), organizationID, rows); err != nil {
 				ll.Error("Failed to send exemplars to database", slog.Any("error", err))
 			}
 		}
 	}
 }
 
-// marshalMetricsFromRow serializes a Row to JSON for metrics exemplars
-func (p *Processor) marshalMetricsFromRow(row map[wkk.RowKey]any) (string, error) {
-	bytes, err := pipeline.MarshalRowJSON(row)
-	if err != nil {
-		return "", err
-	}
-	return string(bytes), nil
-}
-
 // ProcessMetricsFromRow processes metrics from a Row and generates exemplars
 // This method uses the already-processed Row data with underscore field names
-func (p *Processor) ProcessMetricsFromRow(ctx context.Context, organizationID string, row map[wkk.RowKey]any) error {
+func (p *Processor) ProcessMetricsFromRow(ctx context.Context, organizationID string, row pipeline.Row) error {
 	if !p.config.Metrics.Enabled {
 		return nil
 	}
@@ -85,32 +60,24 @@ func (p *Processor) ProcessMetricsFromRow(ctx context.Context, organizationID st
 		return nil
 	}
 
-	// Extract key fields from the Row using underscore names
-	clusterName := p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_cluster_name"))
-	namespaceName := p.getStringFromRow(row, wkk.NewRowKey("resource_k8s_namespace_name"))
-	serviceName := p.getStringFromRow(row, wkk.NewRowKey("resource_service_name"))
-
+	clusterName := p.getStringFromRow(row, RowKeyResourceK8sClusterName)
+	namespaceName := p.getStringFromRow(row, RowKeyResourceK8sNamespaceName)
+	serviceName := p.getStringFromRow(row, RowKeyResourceServiceName)
 	metricName := p.getStringFromRow(row, wkk.RowKeyCName)
 	metricType := p.getStringFromRow(row, wkk.RowKeyCMetricType)
 
-	// Build cache key using underscore field names from Row
-	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + metricName + "|" + metricType
+	key := computeMetricsKey(clusterName, namespaceName, serviceName, metricName, metricType)
 
 	if tenant.metricCache.Contains(key) {
 		return nil
 	}
 
-	// Create a copy of the row for the exemplar
-	exemplarRow := make(map[wkk.RowKey]any, len(row))
-	for k, v := range row {
-		exemplarRow[k] = v
-	}
-
+	exemplarRow := pipeline.CopyRow(row)
 	tenant.metricCache.Put(key, exemplarRow)
 	return nil
 }
 
 // SetMetricsCallback updates the sendMetricsExemplars callback function
-func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
+func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error) {
 	p.sendMetricsExemplars = callback
 }

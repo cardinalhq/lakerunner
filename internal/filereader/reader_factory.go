@@ -45,10 +45,9 @@ type ReaderOptions struct {
 	SignalType SignalType
 	BatchSize  int // Batch size for readers (default: 1000)
 	// Translation options for protobuf logs and metrics
-	OrgID             string
-	Bucket            string
-	ObjectID          string
-	ExemplarProcessor *exemplars.Processor
+	OrgID    string
+	Bucket   string
+	ObjectID string
 	// Aggregation options for metrics
 	EnableAggregation   bool  // Enable streaming aggregation
 	AggregationPeriodMs int64 // Aggregation period in milliseconds (e.g., 10000 for 10s)
@@ -58,7 +57,6 @@ type ReaderOptions struct {
 // This is a convenience function that uses default options.
 func ReaderForFile(filename string, signalType SignalType, orgId string, exemplarProcessor *exemplars.Processor) (Reader, error) {
 	options := ReaderOptions{SignalType: signalType, BatchSize: 1000}
-	options.ExemplarProcessor = exemplarProcessor
 	options.OrgID = orgId
 	return ReaderForFileWithOptions(filename, options)
 }

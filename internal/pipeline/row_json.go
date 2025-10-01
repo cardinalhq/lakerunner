@@ -20,12 +20,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-// rowJSON is a wrapper type that implements json.Marshaler and json.Unmarshaler
-// for Row, avoiding intermediate map allocations.
-type rowJSON Row
-
-// MarshalJSON implements json.Marshaler for rowJSON
-func (r rowJSON) MarshalJSON() ([]byte, error) {
+// MarshalJSON implements json.Marshaler for Row
+func (r Row) MarshalJSON() ([]byte, error) {
 	buf := make([]byte, 0, 512)
 	buf = append(buf, '{')
 
@@ -95,34 +91,30 @@ func hexDigit(n byte) byte {
 	return 'a' + (n - 10)
 }
 
-// UnmarshalJSON implements json.Unmarshaler for rowJSON
-func (r *rowJSON) UnmarshalJSON(data []byte) error {
+// UnmarshalJSON implements json.Unmarshaler for Row
+func (r *Row) UnmarshalJSON(data []byte) error {
 	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
 
-	*r = make(rowJSON, len(m))
+	*r = make(Row, len(m))
 	for k, v := range m {
 		(*r)[wkk.NewRowKey(k)] = v
 	}
 	return nil
 }
 
-// MarshalRowJSON marshals a Row to JSON bytes.
+// Marshal marshals a Row to JSON bytes.
 // It converts the Row's interned RowKeys to regular strings for JSON serialization,
 // without creating an intermediate map[string]any.
-func MarshalRowJSON(row Row) ([]byte, error) {
-	return json.Marshal(rowJSON(row))
+func (r Row) Marshal() ([]byte, error) {
+	return json.Marshal(r)
 }
 
-// UnmarshalRowJSON unmarshals JSON bytes into a Row.
+// Unmarshal unmarshals JSON bytes into a Row.
 // It automatically interns all string keys from the JSON into RowKeys,
 // enabling efficient key comparison and memory usage.
-func UnmarshalRowJSON(data []byte) (Row, error) {
-	var r rowJSON
-	if err := json.Unmarshal(data, &r); err != nil {
-		return nil, err
-	}
-	return Row(r), nil
+func (r *Row) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, r)
 }

@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -29,19 +29,19 @@ import (
 
 // LogTranslator adds resource metadata to log rows
 type LogTranslator struct {
-	orgID             string
-	bucket            string
-	objectID          string
-	exemplarProcessor *exemplars.Processor
+	orgID                    string
+	bucket                   string
+	objectID                 string
+	fingerprintTenantManager *fingerprint.TenantManager
 }
 
 // NewLogTranslator creates a new LogTranslator with the specified metadata
-func NewLogTranslator(orgID, bucket, objectID string, exemplarProcessor *exemplars.Processor) *LogTranslator {
+func NewLogTranslator(orgID, bucket, objectID string, fingerprintTenantManager *fingerprint.TenantManager) *LogTranslator {
 	return &LogTranslator{
-		orgID:             orgID,
-		bucket:            bucket,
-		objectID:          objectID,
-		exemplarProcessor: exemplarProcessor,
+		orgID:                    orgID,
+		bucket:                   bucket,
+		objectID:                 objectID,
+		fingerprintTenantManager: fingerprintTenantManager,
 	}
 }
 
@@ -78,7 +78,7 @@ func getResourceFile(objectid string) string {
 }
 
 func (t *LogTranslator) setFingerprint(ctx context.Context, row *pipeline.Row) {
-	if t.exemplarProcessor == nil {
+	if t.fingerprintTenantManager == nil {
 		return
 	}
 
@@ -91,10 +91,10 @@ func (t *LogTranslator) setFingerprint(ctx context.Context, row *pipeline.Row) {
 		return // No message to fingerprint
 	}
 
-	tenant := t.exemplarProcessor.GetTenant(ctx, t.orgID)
+	tenant := t.fingerprintTenantManager.GetTenant(t.orgID)
 	trieClusterManager := tenant.GetTrieClusterManager()
-	fingerprint, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
+	fp, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
 	if err == nil {
-		(*row)[wkk.RowKeyCFingerprint] = fingerprint
+		(*row)[wkk.RowKeyCFingerprint] = fp
 	}
 }

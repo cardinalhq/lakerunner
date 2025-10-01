@@ -88,8 +88,7 @@ func TestIngestProtoMetrics_New_InvalidData(t *testing.T) {
 	reader := bytes.NewReader(invalidData)
 
 	opts := ReaderOptions{
-		BatchSize:         1000,
-		ExemplarProcessor: nil,
+		BatchSize: 1000,
 	}
 	_, err := NewIngestProtoMetricsReader(reader, opts)
 	assert.Error(t, err)
@@ -101,8 +100,7 @@ func TestIngestProtoMetrics_New_EmptyData(t *testing.T) {
 	emptyReader := bytes.NewReader([]byte{})
 
 	opts := ReaderOptions{
-		BatchSize:         1000,
-		ExemplarProcessor: nil,
+		BatchSize: 1000,
 	}
 	reader, err := NewIngestProtoMetricsReader(emptyReader, opts)
 	// Empty data may create a valid but empty metrics object
@@ -123,8 +121,7 @@ func TestIngestProtoMetrics_New_EmptyData(t *testing.T) {
 func TestIngestProtoMetrics_EmptySlice(t *testing.T) {
 	syntheticData := createSimpleSyntheticMetrics()
 	opts := ReaderOptions{
-		BatchSize:         1000,
-		ExemplarProcessor: nil,
+		BatchSize: 1000,
 	}
 	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
@@ -140,8 +137,7 @@ func TestIngestProtoMetrics_EmptySlice(t *testing.T) {
 func TestIngestProtoMetrics_Close(t *testing.T) {
 	syntheticData := createSimpleSyntheticMetrics()
 	opts := ReaderOptions{
-		BatchSize:         1000,
-		ExemplarProcessor: nil,
+		BatchSize: 1000,
 	}
 	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
@@ -193,8 +189,7 @@ func TestIngestProtoMetrics_RowReusedAndCleared(t *testing.T) {
 	require.NoError(t, err)
 
 	opts := ReaderOptions{
-		BatchSize:         1,
-		ExemplarProcessor: nil,
+		BatchSize: 1,
 	}
 	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), opts)
 	require.NoError(t, err)
@@ -261,8 +256,7 @@ func TestIngestProtoMetrics_ExponentialHistogram(t *testing.T) {
 	ex.FilteredAttributes().PutStr("foo", "bar")
 
 	opts := ReaderOptions{
-		BatchSize:         1000,
-		ExemplarProcessor: nil,
+		BatchSize: 1000,
 	}
 	reader, err := NewIngestProtoMetricsReaderFromMetrics(&metrics, opts)
 	require.NoError(t, err)
@@ -445,8 +439,7 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 
 	reader := bytes.NewReader(data)
 	opts := ReaderOptions{
-		BatchSize:         1000,
-		ExemplarProcessor: nil,
+		BatchSize: 1000,
 	}
 	protoReader, err := NewIngestProtoMetricsReader(reader, opts)
 	require.NoError(t, err)
@@ -662,8 +655,7 @@ func TestIngestProtoMetrics_SyntheticMultiResourceMetrics(t *testing.T) {
 
 	reader := bytes.NewReader(data)
 	opts := ReaderOptions{
-		BatchSize:         1000,
-		ExemplarProcessor: nil,
+		BatchSize: 1000,
 	}
 	protoReader, err := NewIngestProtoMetricsReader(reader, opts)
 	require.NoError(t, err)
@@ -772,8 +764,7 @@ func TestIngestProtoMetrics_SyntheticEdgeCases(t *testing.T) {
 
 	reader := bytes.NewReader(data)
 	opts := ReaderOptions{
-		BatchSize:         1000,
-		ExemplarProcessor: nil,
+		BatchSize: 1000,
 	}
 	protoReader, err := NewIngestProtoMetricsReader(reader, opts)
 	require.NoError(t, err)
@@ -818,8 +809,7 @@ func TestIngestProtoMetrics_HistogramAlwaysHasSketch(t *testing.T) {
 
 	syntheticData := createSimpleSyntheticMetrics()
 	opts := ReaderOptions{
-		BatchSize:         1000,
-		ExemplarProcessor: nil,
+		BatchSize: 1000,
 	}
 	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
@@ -848,8 +838,7 @@ func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 	// Test that IngestProtoMetricsReader complies with the 11-point contract
 	syntheticData := createSimpleSyntheticMetrics()
 	opts := ReaderOptions{
-		BatchSize:         1000,
-		ExemplarProcessor: nil,
+		BatchSize: 1000,
 	}
 	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)

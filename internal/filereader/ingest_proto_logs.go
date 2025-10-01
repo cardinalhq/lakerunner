@@ -20,11 +20,6 @@ import (
 	"io"
 	"maps"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
-
-	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
-	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
-
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/otel/attribute"
@@ -43,12 +38,11 @@ type IngestProtoLogsReader struct {
 	batchSize int
 
 	// Streaming iterator state for logs
-	logs              *plog.Logs
-	resourceIndex     int
-	scopeIndex        int
-	logIndex          int
-	exemplarProcessor *exemplars.Processor
-	orgId             string
+	logs          *plog.Logs
+	resourceIndex int
+	scopeIndex    int
+	logIndex      int
+	orgId         string
 }
 
 var _ Reader = (*IngestProtoLogsReader)(nil)
@@ -62,9 +56,8 @@ func NewIngestProtoLogsReader(reader io.Reader, opts ReaderOptions) (*IngestProt
 	}
 
 	protoReader := &IngestProtoLogsReader{
-		batchSize:         batchSize,
-		exemplarProcessor: opts.ExemplarProcessor,
-		orgId:             opts.OrgID,
+		batchSize: batchSize,
+		orgId:     opts.OrgID,
 	}
 
 	logs, err := parseProtoToOtelLogs(reader)
@@ -133,16 +126,11 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (pipeline.Row, er
 
 			if r.logIndex < sl.LogRecords().Len() {
 				logRecord := sl.LogRecords().At(r.logIndex)
-				row := r.buildLogRow(ctx, rl, sl, logRecord)
+				row := r.buildLogRow(rl, sl, logRecord)
 				r.logIndex++
 				processedRow, err := r.processRow(row)
 				if err != nil {
 					return nil, err
-				}
-				if r.exemplarProcessor != nil {
-					// Use the new Row-based method with underscore field names
-					_ = r.exemplarProcessor.ProcessLogsFromRow(ctx, r.orgId, processedRow, rl, sl, logRecord)
-					// Skip exemplar errors - don't fail the whole row
 				}
 				return processedRow, nil
 			}
@@ -160,7 +148,7 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (pipeline.Row, er
 }
 
 // buildLogRow creates a row from a single log record and its context.
-func (r *IngestProtoLogsReader) buildLogRow(ctx context.Context, rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord) map[string]any {
+func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord) map[string]any {
 	ret := map[string]any{}
 
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
@@ -188,15 +176,6 @@ func (r *IngestProtoLogsReader) buildLogRow(ctx context.Context, rl plog.Resourc
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
 	ret["_cardinalhq_level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
-	if r.exemplarProcessor != nil {
-		tenant := r.exemplarProcessor.GetTenant(ctx, r.orgId)
-		trieClusterManager := tenant.GetTrieClusterManager()
-		fingerprint, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
-		if err == nil {
-			ret["_cardinalhq_fingerprint"] = fingerprint
-		}
-		logRecord.Attributes().PutInt(translate.CardinalFieldFingerprint, fingerprint)
-	}
 	return ret
 }
 
