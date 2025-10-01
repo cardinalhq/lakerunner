@@ -18,17 +18,19 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // createMetricsCallback creates a callback function for metrics exemplars for a specific organization
-func (p *Processor) createMetricsCallback(ctx context.Context, organizationID string) func([]*Entry) {
+func (p *Processor) createMetricsCallback(ctx context.Context, organizationID uuid.UUID) func([]*Entry) {
 	return func(entries []*Entry) {
 		ll := logctx.FromContext(ctx)
 		ll.Info("Processing metrics exemplars",
-			slog.String("organization_id", organizationID),
+			slog.String("organization_id", organizationID.String()),
 			slog.Int("count", len(entries)))
 
 		rows := make([]pipeline.Row, 0, len(entries))
@@ -50,7 +52,7 @@ func (p *Processor) createMetricsCallback(ctx context.Context, organizationID st
 
 // ProcessMetricsFromRow processes metrics from a Row and generates exemplars
 // This method uses the already-processed Row data with underscore field names
-func (p *Processor) ProcessMetricsFromRow(ctx context.Context, organizationID string, row pipeline.Row) error {
+func (p *Processor) ProcessMetricsFromRow(ctx context.Context, organizationID uuid.UUID, row pipeline.Row) error {
 	if !p.config.Metrics.Enabled {
 		return nil
 	}
@@ -78,6 +80,6 @@ func (p *Processor) ProcessMetricsFromRow(ctx context.Context, organizationID st
 }
 
 // SetMetricsCallback updates the sendMetricsExemplars callback function
-func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error) {
+func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organizationID uuid.UUID, exemplars []pipeline.Row) error) {
 	p.sendMetricsExemplars = callback
 }

@@ -16,7 +16,6 @@ package metricsprocessing
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -30,15 +29,11 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-func processLogsExemplarsDirect(ctx context.Context, organizationID string, rows []pipeline.Row, store LogIngestStore) error {
-	orgID, err := uuid.Parse(organizationID)
-	if err != nil {
-		return fmt.Errorf("invalid organization ID: %w", err)
-	}
-
+func processLogsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row, store LogIngestStore) error {
+	var err error
 	slog.Info("Processing logs exemplars",
 		"num_exemplars", len(rows),
-		"organization_id", organizationID)
+		"organization_id", organizationID.String())
 
 	// Sort rows deterministically to prevent deadlocks
 	sort.Slice(rows, func(i, j int) bool {
@@ -111,7 +106,7 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, rows
 		}
 
 		params := lrdb.UpsertServiceIdentifierParams{
-			OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
 			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
 			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
 			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
@@ -124,21 +119,18 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, rows
 		}
 		serviceIdentifierID := result.ID
 
-		// Convert Row to maps for storage
-		attributesAny := make(map[string]any)
+		// Convert Row to map for storage
 		exemplarMap := make(map[string]any)
 		for k, v := range row {
 			key := wkk.RowKeyValue(k)
-			attributesAny[key] = v
 			exemplarMap[key] = v
 		}
 
 		record := lrdb.BatchUpsertExemplarLogsParams{
-			OrganizationID:      orgID,
+			OrganizationID:      organizationID,
 			ServiceIdentifierID: serviceIdentifierID,
 			Fingerprint:         fingerprint,
 			OldFingerprint:      oldFingerprint,
-			Attributes:          attributesAny,
 			Exemplar:            exemplarMap,
 		}
 		records = append(records, record)
@@ -169,15 +161,10 @@ func getRowString(row pipeline.Row, key wkk.RowKey) string {
 	return ""
 }
 
-func processMetricsExemplarsDirect(ctx context.Context, organizationID string, rows []pipeline.Row, store MetricIngestStore) error {
-	orgID, err := uuid.Parse(organizationID)
-	if err != nil {
-		return fmt.Errorf("invalid organization ID: %w", err)
-	}
-
+func processMetricsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row, store MetricIngestStore) error {
 	slog.Info("Processing metrics exemplars",
 		"num_exemplars", len(rows),
-		"organization_id", organizationID)
+		"organization_id", organizationID.String())
 
 	// Sort rows deterministically to prevent deadlocks
 	sort.Slice(rows, func(i, j int) bool {
@@ -221,7 +208,7 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, r
 		}
 
 		params := lrdb.UpsertServiceIdentifierParams{
-			OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
 			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
 			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
 			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
@@ -234,21 +221,18 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, r
 		}
 		serviceIdentifierID := result.ID
 
-		// Convert Row to maps for storage
-		attributesAny := make(map[string]any)
+		// Convert Row to map for storage
 		exemplarMap := make(map[string]any)
 		for k, v := range row {
 			key := wkk.RowKeyValue(k)
-			attributesAny[key] = v
 			exemplarMap[key] = v
 		}
 
 		record := lrdb.BatchUpsertExemplarMetricsParams{
-			OrganizationID:      orgID,
+			OrganizationID:      organizationID,
 			ServiceIdentifierID: serviceIdentifierID,
 			MetricName:          metricName,
 			MetricType:          metricType,
-			Attributes:          attributesAny,
 			Exemplar:            exemplarMap,
 		}
 		records = append(records, record)
@@ -269,15 +253,11 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, r
 	return nil
 }
 
-func processTracesExemplarsDirect(ctx context.Context, organizationID string, rows []pipeline.Row, store TraceIngestStore) error {
-	orgID, err := uuid.Parse(organizationID)
-	if err != nil {
-		return fmt.Errorf("invalid organization ID: %w", err)
-	}
-
+func processTracesExemplarsDirect(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row, store TraceIngestStore) error {
+	var err error
 	slog.Info("Processing traces exemplars",
 		"num_exemplars", len(rows),
-		"organization_id", organizationID)
+		"organization_id", organizationID.String())
 
 	// Sort rows deterministically to prevent deadlocks
 	sort.Slice(rows, func(i, j int) bool {
@@ -335,7 +315,7 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID string, ro
 		}
 
 		params := lrdb.UpsertServiceIdentifierParams{
-			OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
+			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
 			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
 			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
 			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
@@ -348,20 +328,17 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID string, ro
 		}
 		serviceIdentifierID := result.ID
 
-		// Convert Row to maps for storage
-		attributesAny := make(map[string]any)
+		// Convert Row to map for storage
 		exemplarMap := make(map[string]any)
 		for k, v := range row {
 			key := wkk.RowKeyValue(k)
-			attributesAny[key] = v
 			exemplarMap[key] = v
 		}
 
 		record := lrdb.BatchUpsertExemplarTracesParams{
-			OrganizationID:      orgID,
+			OrganizationID:      organizationID,
 			ServiceIdentifierID: serviceIdentifierID,
 			Fingerprint:         fingerprint,
-			Attributes:          attributesAny,
 			Exemplar:            exemplarMap,
 			SpanName:            spanName,
 			SpanKind:            convertSpanKindToInt32(spanKind),

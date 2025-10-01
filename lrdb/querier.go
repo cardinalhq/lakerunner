@@ -15,7 +15,7 @@ import (
 type Querier interface {
 	BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMetricSegsParams) *BatchDeleteMetricSegsBatchResults
 	BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMarkMetricSegsRolledupParams) *BatchMarkMetricSegsRolledupBatchResults
-	// This will upsert a new log exemplar. Attributes, exemplar, and updated_at are always updated
+	// This will upsert a new log exemplar. Exemplar and updated_at are always updated
 	// to the provided values. If old_fingerprint is not 0, it is added to the list of related
 	// fingerprints. This means the "old" fingerprint should be fingerprint, so it always updates
 	// an existing record, not changing it to the new one.
@@ -43,10 +43,14 @@ type Querier interface {
 	GetTraceSegmentsForDownload(ctx context.Context, arg GetTraceSegmentsForDownloadParams) ([]TraceSeg, error)
 	InsertKafkaOffsets(ctx context.Context, arg InsertKafkaOffsetsParams) error
 	KafkaOffsetsAfter(ctx context.Context, arg KafkaOffsetsAfterParams) ([]int64, error)
-	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error)
+	// Extract tag keys from flat exemplar format
+	// Only return keys that start with _cardinalhq_, resource_, scope_, or log_
+	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
-	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]interface{}, error)
+	// Extract tag keys from flat exemplar format
+	// Only return keys that start with _cardinalhq_, resource_, scope_, or metric_
+	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error)
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
 	ListServiceMetrics(ctx context.Context, arg ListServiceMetricsParams) ([]string, error)
 	ListServiceNames(ctx context.Context, organizationID uuid.UUID) ([]string, error)

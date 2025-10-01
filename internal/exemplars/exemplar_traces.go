@@ -18,17 +18,19 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // createTracesCallback creates a callback function for traces exemplars for a specific organization
-func (p *Processor) createTracesCallback(ctx context.Context, organizationID string) func([]*Entry) {
+func (p *Processor) createTracesCallback(ctx context.Context, organizationID uuid.UUID) func([]*Entry) {
 	return func(entries []*Entry) {
 		ll := logctx.FromContext(ctx)
 		ll.Info("Processing traces exemplars",
-			slog.String("organization_id", organizationID),
+			slog.String("organization_id", organizationID.String()),
 			slog.Int("count", len(entries)))
 
 		rows := make([]pipeline.Row, 0, len(entries))
@@ -50,7 +52,7 @@ func (p *Processor) createTracesCallback(ctx context.Context, organizationID str
 
 // ProcessTracesFromRow processes traces from a Row and generates exemplars
 // This method uses the already-processed Row data with underscore field names
-func (p *Processor) ProcessTracesFromRow(ctx context.Context, organizationID string, row pipeline.Row) error {
+func (p *Processor) ProcessTracesFromRow(ctx context.Context, organizationID uuid.UUID, row pipeline.Row) error {
 	if !p.config.Traces.Enabled {
 		return nil
 	}
@@ -88,6 +90,6 @@ func (p *Processor) ProcessTracesFromRow(ctx context.Context, organizationID str
 }
 
 // SetTracesCallback updates the sendTracesExemplars callback function
-func (p *Processor) SetTracesCallback(callback func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error) {
+func (p *Processor) SetTracesCallback(callback func(ctx context.Context, organizationID uuid.UUID, exemplars []pipeline.Row) error) {
 	p.sendTracesExemplars = callback
 }

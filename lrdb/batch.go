@@ -140,17 +140,16 @@ func (b *BatchMarkMetricSegsRolledupBatchResults) Close() error {
 
 const batchUpsertExemplarLogs = `-- name: BatchUpsertExemplarLogs :batchone
 INSERT INTO lrdb_exemplar_logs
-            ( organization_id,  service_identifier_id,  fingerprint,  attributes,  exemplar)
-VALUES      ($1, $2, $3, $4, $5)
+            ( organization_id,  service_identifier_id,  fingerprint,  exemplar)
+VALUES      ($1, $2, $3, $4)
 ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
 DO UPDATE SET
-  attributes = EXCLUDED.attributes,
   exemplar   = EXCLUDED.exemplar,
   updated_at = now(),
   related_fingerprints = CASE
-    WHEN $6::BIGINT != 0
-      AND $3 != $6
-      THEN add_to_bigint_list(lrdb_exemplar_logs.related_fingerprints, $6, 100)
+    WHEN $5::BIGINT != 0
+      AND $3 != $5
+      THEN add_to_bigint_list(lrdb_exemplar_logs.related_fingerprints, $5, 100)
     ELSE lrdb_exemplar_logs.related_fingerprints
   END
 RETURNING (created_at = updated_at) as is_new
@@ -166,12 +165,11 @@ type BatchUpsertExemplarLogsParams struct {
 	OrganizationID      uuid.UUID      `json:"organization_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
 	Fingerprint         int64          `json:"fingerprint"`
-	Attributes          map[string]any `json:"attributes"`
 	Exemplar            map[string]any `json:"exemplar"`
 	OldFingerprint      int64          `json:"old_fingerprint"`
 }
 
-// This will upsert a new log exemplar. Attributes, exemplar, and updated_at are always updated
+// This will upsert a new log exemplar. Exemplar and updated_at are always updated
 // to the provided values. If old_fingerprint is not 0, it is added to the list of related
 // fingerprints. This means the "old" fingerprint should be fingerprint, so it always updates
 // an existing record, not changing it to the new one.
@@ -183,7 +181,6 @@ func (q *Queries) BatchUpsertExemplarLogs(ctx context.Context, arg []BatchUpsert
 			a.OrganizationID,
 			a.ServiceIdentifierID,
 			a.Fingerprint,
-			a.Attributes,
 			a.Exemplar,
 			a.OldFingerprint,
 		}
@@ -218,11 +215,10 @@ func (b *BatchUpsertExemplarLogsBatchResults) Close() error {
 
 const batchUpsertExemplarMetrics = `-- name: BatchUpsertExemplarMetrics :batchone
 INSERT INTO lrdb_exemplar_metrics
-            ( organization_id,  service_identifier_id,  metric_name,  metric_type,  attributes,  exemplar)
-VALUES      ($1, $2, $3, $4, $5, $6)
+            ( organization_id,  service_identifier_id,  metric_name,  metric_type,  exemplar)
+VALUES      ($1, $2, $3, $4, $5)
 ON CONFLICT ( organization_id,  service_identifier_id,  metric_name,  metric_type)
 DO UPDATE SET
-  attributes = EXCLUDED.attributes,
   exemplar = EXCLUDED.exemplar,
   updated_at = now()
 RETURNING (created_at = updated_at) as is_new
@@ -239,7 +235,6 @@ type BatchUpsertExemplarMetricsParams struct {
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
 	MetricName          string         `json:"metric_name"`
 	MetricType          string         `json:"metric_type"`
-	Attributes          map[string]any `json:"attributes"`
 	Exemplar            map[string]any `json:"exemplar"`
 }
 
@@ -251,7 +246,6 @@ func (q *Queries) BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUps
 			a.ServiceIdentifierID,
 			a.MetricName,
 			a.MetricType,
-			a.Attributes,
 			a.Exemplar,
 		}
 		batch.Queue(batchUpsertExemplarMetrics, vals...)
@@ -288,7 +282,6 @@ INSERT INTO lrdb_exemplar_traces
 ( organization_id
 , service_identifier_id
 , fingerprint
-, attributes
 , exemplar
 , span_name
 , span_kind
@@ -299,14 +292,12 @@ VALUES      ( $1
             , $4
             , $5
             , $6
-            , $7
             )
     ON CONFLICT ( organization_id
             , service_identifier_id
             , fingerprint
             )
 DO UPDATE SET
-           attributes        = EXCLUDED.attributes,
            exemplar          = EXCLUDED.exemplar,
            span_name         = EXCLUDED.span_name,
            span_kind         = EXCLUDED.span_kind,
@@ -324,7 +315,6 @@ type BatchUpsertExemplarTracesParams struct {
 	OrganizationID      uuid.UUID      `json:"organization_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
 	Fingerprint         int64          `json:"fingerprint"`
-	Attributes          map[string]any `json:"attributes"`
 	Exemplar            map[string]any `json:"exemplar"`
 	SpanName            string         `json:"span_name"`
 	SpanKind            int32          `json:"span_kind"`
@@ -337,7 +327,6 @@ func (q *Queries) BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpse
 			a.OrganizationID,
 			a.ServiceIdentifierID,
 			a.Fingerprint,
-			a.Attributes,
 			a.Exemplar,
 			a.SpanName,
 			a.SpanKind,

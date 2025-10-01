@@ -18,17 +18,19 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // createLogsCallback creates a callback function for logs exemplars for a specific organization
-func (p *Processor) createLogsCallback(ctx context.Context, organizationID string) func([]*Entry) {
+func (p *Processor) createLogsCallback(ctx context.Context, organizationID uuid.UUID) func([]*Entry) {
 	return func(entries []*Entry) {
 		ll := logctx.FromContext(ctx)
 		ll.Info("Processing logs exemplars",
-			slog.String("organization_id", organizationID),
+			slog.String("organization_id", organizationID.String()),
 			slog.Int("count", len(entries)))
 
 		rows := make([]pipeline.Row, 0, len(entries))
@@ -50,7 +52,7 @@ func (p *Processor) createLogsCallback(ctx context.Context, organizationID strin
 
 // ProcessLogsFromRow processes logs from a Row and generates exemplars
 // This method uses the already-processed Row data with underscore field names
-func (p *Processor) ProcessLogsFromRow(ctx context.Context, organizationID string, row pipeline.Row) error {
+func (p *Processor) ProcessLogsFromRow(ctx context.Context, organizationID uuid.UUID, row pipeline.Row) error {
 	if !p.config.Logs.Enabled {
 		return nil
 	}
@@ -90,6 +92,6 @@ func (p *Processor) ProcessLogsFromRow(ctx context.Context, organizationID strin
 }
 
 // SetLogsCallback updates the sendLogsExemplars callback function
-func (p *Processor) SetLogsCallback(callback func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error) {
+func (p *Processor) SetLogsCallback(callback func(ctx context.Context, organizationID uuid.UUID, exemplars []pipeline.Row) error) {
 	p.sendLogsExemplars = callback
 }

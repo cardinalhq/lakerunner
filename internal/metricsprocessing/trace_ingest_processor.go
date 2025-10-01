@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
@@ -186,7 +188,7 @@ func newTraceIngestProcessor(
 	cfg *config.Config,
 	store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
 	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetTracesCallback(func(ctx context.Context, organizationID string, rows []pipeline.Row) error {
+	exemplarProcessor.SetTracesCallback(func(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row) error {
 		return processTracesExemplarsDirect(ctx, organizationID, rows, store)
 	})
 
@@ -537,7 +539,7 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 
 				// Process exemplar before taking the row
 				if p.exemplarProcessor != nil {
-					_ = p.exemplarProcessor.ProcessTracesFromRow(ctx, storageProfile.OrganizationID.String(), row)
+					_ = p.exemplarProcessor.ProcessTracesFromRow(ctx, storageProfile.OrganizationID, row)
 				}
 
 				// Now take the row to avoid copying

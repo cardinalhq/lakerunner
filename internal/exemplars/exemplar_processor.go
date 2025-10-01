@@ -20,6 +20,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -40,13 +42,13 @@ type Processor struct {
 	tenants sync.Map // organizationID -> *Tenant
 
 	// Callback for metrics exemplars
-	sendMetricsExemplars func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error
+	sendMetricsExemplars func(ctx context.Context, organizationID uuid.UUID, exemplars []pipeline.Row) error
 
 	// Callback for logs exemplars
-	sendLogsExemplars func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error
+	sendLogsExemplars func(ctx context.Context, organizationID uuid.UUID, exemplars []pipeline.Row) error
 
 	// Callback for traces exemplars
-	sendTracesExemplars func(ctx context.Context, organizationID string, exemplars []pipeline.Row) error
+	sendTracesExemplars func(ctx context.Context, organizationID uuid.UUID, exemplars []pipeline.Row) error
 
 	// Configuration for all telemetry types
 	config Config
@@ -104,13 +106,13 @@ func NewProcessor(config Config) *Processor {
 }
 
 // GetTenant retrieves or creates a tenant for the given organization ID
-func (p *Processor) GetTenant(ctx context.Context, organizationID string) *Tenant {
+func (p *Processor) GetTenant(ctx context.Context, organizationID uuid.UUID) *Tenant {
 	ll := logctx.FromContext(ctx)
 	if existing, ok := p.tenants.Load(organizationID); ok {
 		return existing.(*Tenant)
 	}
 
-	ll.Info("Creating new tenant", slog.String("organization_id", organizationID))
+	ll.Info("Creating new tenant", slog.String("organization_id", organizationID.String()))
 	tenant := &Tenant{}
 
 	if p.config.Logs.Enabled {

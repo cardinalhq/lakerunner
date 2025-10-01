@@ -23,6 +23,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
@@ -73,7 +75,7 @@ func newLogIngestProcessor(
 	cfg *config.Config,
 	store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
 	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetLogsCallback(func(ctx context.Context, organizationID string, rows []pipeline.Row) error {
+	exemplarProcessor.SetLogsCallback(func(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row) error {
 		return processLogsExemplarsDirect(ctx, organizationID, rows, store)
 	})
 
@@ -433,7 +435,7 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 
 				// Process exemplar before taking the row
 				if p.exemplarProcessor != nil {
-					_ = p.exemplarProcessor.ProcessLogsFromRow(ctx, storageProfile.OrganizationID.String(), row)
+					_ = p.exemplarProcessor.ProcessLogsFromRow(ctx, storageProfile.OrganizationID, row)
 				}
 
 				takenRow := batch.TakeRow(i)
