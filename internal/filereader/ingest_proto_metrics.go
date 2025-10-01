@@ -22,6 +22,7 @@ import (
 	"maps"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/DataDog/sketches-go/ddsketch"
@@ -218,7 +219,7 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pi
 	row[wkk.NewRowKey("_cardinalhq_scope_url")] = sm.Scope().Version()
 	row[wkk.NewRowKey("_cardinalhq_scope_name")] = sm.Scope().Name()
 
-	row[wkk.RowKeyCName] = metric.Name()
+	row[wkk.RowKeyCName] = strings.ReplaceAll(metric.Name(), ".", "_")
 	row[wkk.NewRowKey("_cardinalhq_description")] = metric.Description()
 	row[wkk.NewRowKey("_cardinalhq_unit")] = metric.Unit()
 
