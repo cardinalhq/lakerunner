@@ -82,12 +82,11 @@ func (p *Processor) ProcessLogsFromRow(ctx context.Context, organizationID uuid.
 	// Compute cache key hash for deduplication
 	key := computeLogsTracesKey(clusterName, namespaceName, serviceName, fingerprint)
 
-	if tenant.logCache.Contains(key) {
-		return nil
-	}
-
 	exemplarRow := pipeline.CopyRow(row)
-	tenant.logCache.Put(key, exemplarRow)
+	if !tenant.logCache.PutIfAbsent(key, exemplarRow) {
+		// Key already existed, return the copied row to the pool
+		pipeline.ReturnPooledRow(exemplarRow)
+	}
 	return nil
 }
 

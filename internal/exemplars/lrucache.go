@@ -163,6 +163,50 @@ func (l *LRUCache) Contains(key uint64) bool {
 	return time.Since(entry.timestamp) <= l.expiry
 }
 
+// PutIfAbsent adds a new entry only if the key doesn't exist.
+// Returns true if the entry was added, false if it already existed.
+func (l *LRUCache) PutIfAbsent(key uint64, row pipeline.Row) bool {
+	l.Lock()
+	defer l.Unlock()
+
+	// Check if key already exists
+	if elem, found := l.cache[key]; found {
+		entry := elem.Value.(*Entry)
+		// If expired, we'll replace it below
+		if time.Since(entry.timestamp) <= l.expiry {
+			// Still valid, don't replace
+			return false
+		}
+	}
+
+	now := time.Now()
+
+	if l.list.Len() >= l.capacity {
+		back := l.list.Back()
+		if back != nil {
+			entry := back.Value.(*Entry)
+			if entry.shouldPublish(l.expiry) {
+				l.pending = append(l.pending, entry)
+				entry.lastPublishTime = now
+			}
+			l.list.Remove(back)
+			delete(l.cache, entry.key)
+			pipeline.ReturnPooledRow(entry.value)
+		}
+	}
+
+	newEntry := &Entry{
+		key:             key,
+		value:           row,
+		timestamp:       now,
+		lastPublishTime: now,
+	}
+	elem := l.list.PushFront(newEntry)
+	l.cache[key] = elem
+	l.pending = append(l.pending, newEntry)
+	return true
+}
+
 func (l *LRUCache) Put(key uint64, row pipeline.Row) {
 	l.Lock()
 	defer l.Unlock()

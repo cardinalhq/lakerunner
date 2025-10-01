@@ -323,3 +323,85 @@ func TestLRUCache_EntryPublishing(t *testing.T) {
 	defer mu.Unlock()
 	require.NotEmpty(t, publishedKeys, "Expected keys to be published after expiry")
 }
+
+func TestLRUCache_PutIfAbsent(t *testing.T) {
+	cache := NewLRUCache(
+		10,
+		time.Hour,
+		time.Hour,
+		func([]*Entry) {},
+	)
+	defer cache.Close()
+
+	// First insert should succeed
+	added := cache.PutIfAbsent(1, pipeline.Row{})
+	assert.True(t, added, "First PutIfAbsent should succeed")
+	assert.True(t, cache.Contains(1))
+
+	// Second insert with same key should fail
+	added = cache.PutIfAbsent(1, pipeline.Row{})
+	assert.False(t, added, "Second PutIfAbsent with same key should fail")
+
+	// Different key should succeed
+	added = cache.PutIfAbsent(2, pipeline.Row{})
+	assert.True(t, added, "PutIfAbsent with different key should succeed")
+	assert.True(t, cache.Contains(2))
+}
+
+func TestLRUCache_PutIfAbsentExpired(t *testing.T) {
+	cache := NewLRUCache(
+		10,
+		50*time.Millisecond, // Short expiry
+		time.Hour,
+		func([]*Entry) {},
+	)
+	defer cache.Close()
+
+	// First insert
+	added := cache.PutIfAbsent(1, pipeline.Row{})
+	assert.True(t, added)
+	assert.True(t, cache.Contains(1))
+
+	// Wait for expiry
+	time.Sleep(100 * time.Millisecond)
+
+	// After expiry, PutIfAbsent should succeed with same key
+	added = cache.PutIfAbsent(1, pipeline.Row{})
+	assert.True(t, added, "PutIfAbsent should succeed after entry expires")
+	assert.True(t, cache.Contains(1))
+}
+
+func TestLRUCache_PutIfAbsentConcurrent(t *testing.T) {
+	cache := NewLRUCache(
+		100,
+		time.Hour,
+		time.Hour,
+		func([]*Entry) {},
+	)
+	defer cache.Close()
+
+	var wg sync.WaitGroup
+	numGoroutines := 10
+	successCount := make([]int, numGoroutines)
+
+	// Multiple goroutines try to insert the same key
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			if cache.PutIfAbsent(1, pipeline.Row{}) {
+				successCount[idx] = 1
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Only one goroutine should have succeeded
+	totalSuccesses := 0
+	for _, count := range successCount {
+		totalSuccesses += count
+	}
+	assert.Equal(t, 1, totalSuccesses, "Only one PutIfAbsent should succeed with concurrent attempts")
+	assert.True(t, cache.Contains(1))
+}
