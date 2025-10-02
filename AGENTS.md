@@ -213,3 +213,31 @@ Inside the container, memory and CPU limits for Go will match the constraints of
 - Do what has been asked; nothing more, nothing less
 - "make test-integration" should be run via the sub-agent named "integration-test-runner"
 - "make check" should be run via the sub-agent named check-runner.
+
+## Specialized Sub-Agents
+
+### observability-investigator
+
+**Purpose**: Query the CHIP MCP server to investigate observability data (metrics, logs, traces) and answer specific questions about system behavior, errors, and performance.
+
+**Location**: `.claude/agents/observability-investigator.md`
+
+**When to use**:
+- User asks questions about service health, errors, or performance
+- Need to investigate issues in the test/production environment
+- Want to understand patterns in logs, metrics, or traces
+- Need to analyze error rates, latencies, or system behavior
+
+**Key capabilities**:
+- Query metrics (PromQL) and logs (LogQL)
+- Find error patterns and summarize them intelligently
+- Analyze service dependencies and impact
+- Generate Grafana dashboard URLs for exploration
+
+**Important**: This agent provides intelligent summaries, NOT raw log dumps. It groups errors, calculates rates, and provides actionable insights.
+
+# important-instruction-reminders
+Do what has been asked; nothing more, nothing less.
+NEVER create files unless they're absolutely necessary for achieving your goal.
+ALWAYS prefer editing an existing file to creating a new one.
+NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
