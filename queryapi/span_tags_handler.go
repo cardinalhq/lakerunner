@@ -87,13 +87,7 @@ func (q *QuerierService) handleListSpanTags(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	strTags := make([]string, 0, len(tags))
-	for _, t := range tags {
-		if s, ok := t.(string); ok {
-			strTags = append(strTags, s)
-		}
-	}
-
+	// tags is already []string, so no need to cast
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(tagsResponse{Tags: strTags})
+	_ = json.NewEncoder(w).Encode(tagsResponse{Tags: tags})
 }
