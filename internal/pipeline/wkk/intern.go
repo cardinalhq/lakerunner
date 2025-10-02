@@ -90,77 +90,77 @@ func NewRowKeyFromBytes(keyBytes []byte) RowKey {
 }
 
 var (
-	// RowKeyCCollectorID: "_cardinalhq_collector_id"
-	RowKeyCCollectorID = NewRowKey("_cardinalhq_collector_id")
+	// RowKeyCCollectorID: "chq_collector_id"
+	RowKeyCCollectorID = NewRowKey("chq_collector_id")
 
-	// RowKeyCCustomerID: "_cardinalhq_customer_id"
-	RowKeyCCustomerID = NewRowKey("_cardinalhq_customer_id")
+	// RowKeyCCustomerID: "chq_customer_id"
+	RowKeyCCustomerID = NewRowKey("chq_customer_id")
 
-	// RowKeyCFingerprint: "_cardinalhq_fingerprint"
-	RowKeyCFingerprint = NewRowKey("_cardinalhq_fingerprint")
+	// RowKeyCFingerprint: "chq_fingerprint"
+	RowKeyCFingerprint = NewRowKey("chq_fingerprint")
 
-	// RowKeyCLevel: "_cardinalhq_level"
-	RowKeyCLevel = NewRowKey("_cardinalhq_level")
+	// RowKeyCLevel: "chq_level"
+	RowKeyCLevel = NewRowKey("chq_level")
 
-	// RowKeyCMessage: "_cardinalhq_message"
-	RowKeyCMessage = NewRowKey("_cardinalhq_message")
+	// RowKeyCMessage: "chq_message"
+	RowKeyCMessage = NewRowKey("chq_message")
 
-	// RowKeyCMetricType: "_cardinalhq_metric_type"
-	RowKeyCMetricType = NewRowKey("_cardinalhq_metric_type")
+	// RowKeyCMetricType: "chq_metric_type"
+	RowKeyCMetricType = NewRowKey("chq_metric_type")
 
-	// RowKeyCName: "_cardinalhq_name"
-	RowKeyCName = NewRowKey("_cardinalhq_name")
+	// RowKeyCName: "chq_name"
+	RowKeyCName = NewRowKey("chq_name")
 
-	// RowKeyCTelemetryType: "_cardinalhq_telemetry_type"
-	RowKeyCTelemetryType = NewRowKey("_cardinalhq_telemetry_type")
+	// RowKeyCTelemetryType: "chq_telemetry_type"
+	RowKeyCTelemetryType = NewRowKey("chq_telemetry_type")
 
-	// RowKeyCTID: "_cardinalhq_tid"
-	RowKeyCTID = NewRowKey("_cardinalhq_tid")
+	// RowKeyCTID: "chq_tid"
+	RowKeyCTID = NewRowKey("chq_tid")
 
-	// RowKeyCTimestamp: "_cardinalhq_timestamp"
-	RowKeyCTimestamp = NewRowKey("_cardinalhq_timestamp")
+	// RowKeyCTimestamp: "chq_timestamp"
+	RowKeyCTimestamp = NewRowKey("chq_timestamp")
 
-	// RowKeyCTsns: "_cardinalhq_tsns" (nanoseconds)
-	RowKeyCTsns = NewRowKey("_cardinalhq_tsns")
+	// RowKeyCTsns: "chq_tsns" (nanoseconds)
+	RowKeyCTsns = NewRowKey("chq_tsns")
 
-	// RowKeyCValue: "_cardinalhq_value" (DEPRECATED)
-	RowKeyCValue = NewRowKey("_cardinalhq_value") // Deprecated
+	// RowKeyCValue: "chq_value" (DEPRECATED)
+	RowKeyCValue = NewRowKey("chq_value") // Deprecated
 
-	// RowKeyRollupAvg: "rollup_avg"
-	RowKeyRollupAvg = NewRowKey("rollup_avg")
+	// RowKeyRollupAvg: "chq_rollup_avg"
+	RowKeyRollupAvg = NewRowKey("chq_rollup_avg")
 
-	// RowKeyRollupCount: "rollup_count"
-	RowKeyRollupCount = NewRowKey("rollup_count")
+	// RowKeyRollupCount: "chq_rollup_count"
+	RowKeyRollupCount = NewRowKey("chq_rollup_count")
 
-	// RowKeyRollupMax: "rollup_max"
-	RowKeyRollupMax = NewRowKey("rollup_max")
+	// RowKeyRollupMax: "chq_rollup_max"
+	RowKeyRollupMax = NewRowKey("chq_rollup_max")
 
-	// RowKeyRollupMin: "rollup_min"
-	RowKeyRollupMin = NewRowKey("rollup_min")
+	// RowKeyRollupMin: "chq_rollup_min"
+	RowKeyRollupMin = NewRowKey("chq_rollup_min")
 
-	// RowKeyRollupP25: "rollup_p25" (25th percentile)
-	RowKeyRollupP25 = NewRowKey("rollup_p25")
+	// RowKeyRollupP25: "chq_rollup_p25" (25th percentile)
+	RowKeyRollupP25 = NewRowKey("chq_rollup_p25")
 
-	// RowKeyRollupP50: "rollup_p50" (50th percentile/median)
-	RowKeyRollupP50 = NewRowKey("rollup_p50")
+	// RowKeyRollupP50: "chq_rollup_p50" (50th percentile/median)
+	RowKeyRollupP50 = NewRowKey("chq_rollup_p50")
 
-	// RowKeyRollupP75: "rollup_p75" (75th percentile)
-	RowKeyRollupP75 = NewRowKey("rollup_p75")
+	// RowKeyRollupP75: "chq_rollup_p75" (75th percentile)
+	RowKeyRollupP75 = NewRowKey("chq_rollup_p75")
 
-	// RowKeyRollupP90: "rollup_p90" (90th percentile)
-	RowKeyRollupP90 = NewRowKey("rollup_p90")
+	// RowKeyRollupP90: "chq_rollup_p90" (90th percentile)
+	RowKeyRollupP90 = NewRowKey("chq_rollup_p90")
 
-	// RowKeyRollupP95: "rollup_p95" (95th percentile)
-	RowKeyRollupP95 = NewRowKey("rollup_p95")
+	// RowKeyRollupP95: "chq_rollup_p95" (95th percentile)
+	RowKeyRollupP95 = NewRowKey("chq_rollup_p95")
 
-	// RowKeyRollupP99: "rollup_p99" (99th percentile)
-	RowKeyRollupP99 = NewRowKey("rollup_p99")
+	// RowKeyRollupP99: "chq_rollup_p99" (99th percentile)
+	RowKeyRollupP99 = NewRowKey("chq_rollup_p99")
 
-	// RowKeyRollupSum: "rollup_sum"
-	RowKeyRollupSum = NewRowKey("rollup_sum")
+	// RowKeyRollupSum: "chq_rollup_sum"
+	RowKeyRollupSum = NewRowKey("chq_rollup_sum")
 
-	// RowKeySketch: "sketch"
-	RowKeySketch = NewRowKey("sketch")
+	// RowKeySketch: "chq_sketch"
+	RowKeySketch = NewRowKey("chq_sketch")
 
 	// RowKeyResourceBucketName: "resource_bucket_name"
 	RowKeyResourceBucketName = NewRowKey("resource_bucket_name")

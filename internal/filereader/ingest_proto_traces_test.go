@@ -263,11 +263,11 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 			assert.True(t, hasTraceId)
 			_, hasSpanId := row[wkk.NewRowKey("_cardinalhq_span_id")]
 			assert.True(t, hasSpanId)
-			_, hasName := row[wkk.NewRowKey("_cardinalhq_name")]
+			_, hasName := row[wkk.NewRowKey("chq_name")]
 			assert.True(t, hasName)
 			_, hasKind := row[wkk.NewRowKey("_cardinalhq_kind")]
 			assert.True(t, hasKind)
-			_, hasStartTimestamp := row[wkk.NewRowKey("_cardinalhq_timestamp")]
+			_, hasStartTimestamp := row[wkk.NewRowKey("chq_timestamp")]
 			assert.True(t, hasStartTimestamp)
 			_, hasEndTimestamp := row[wkk.NewRowKey("_cardinalhq_end_timestamp")]
 			assert.True(t, hasEndTimestamp)
@@ -298,7 +298,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	// Verify specific spans
 	rootSpan := allRows[0]
 	assert.Equal(t, "1234567890123456", rootSpan[wkk.NewRowKey("_cardinalhq_span_id")])
-	assert.Equal(t, "root-operation", rootSpan[wkk.NewRowKey("_cardinalhq_name")])
+	assert.Equal(t, "root-operation", rootSpan[wkk.NewRowKey("chq_name")])
 	assert.Equal(t, "Client", rootSpan[wkk.NewRowKey("_cardinalhq_kind")])
 	assert.Equal(t, "Ok", rootSpan[wkk.NewRowKey("_cardinalhq_status_code")])
 	_, hasSpanHttpMethod := rootSpan[wkk.NewRowKey("span_http_method")]
@@ -310,7 +310,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 
 	dbSpan := allRows[1]
 	assert.Equal(t, "2345678901234567", dbSpan[wkk.NewRowKey("_cardinalhq_span_id")])
-	assert.Equal(t, "database-query", dbSpan[wkk.NewRowKey("_cardinalhq_name")])
+	assert.Equal(t, "database-query", dbSpan[wkk.NewRowKey("chq_name")])
 	assert.Equal(t, "Producer", dbSpan[wkk.NewRowKey("_cardinalhq_kind")])
 	assert.Equal(t, "Unset", dbSpan[wkk.NewRowKey("_cardinalhq_status_code")])
 	_, hasSpanDbSystem := dbSpan[wkk.NewRowKey("span_db_system")]
@@ -322,7 +322,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 
 	internalSpan := allRows[2]
 	assert.Equal(t, "3456789012345678", internalSpan[wkk.NewRowKey("_cardinalhq_span_id")])
-	assert.Equal(t, "internal-processing", internalSpan[wkk.NewRowKey("_cardinalhq_name")])
+	assert.Equal(t, "internal-processing", internalSpan[wkk.NewRowKey("chq_name")])
 	assert.Equal(t, "Internal", internalSpan[wkk.NewRowKey("_cardinalhq_kind")])
 	assert.Equal(t, "Unset", internalSpan[wkk.NewRowKey("_cardinalhq_status_code")])
 	_, hasSpanComponent := internalSpan[wkk.NewRowKey("span_component")]
@@ -587,9 +587,9 @@ func TestProtoTracesReader_SyntheticEdgeCases(t *testing.T) {
 
 	// First span - empty name, zero timestamp
 	emptySpan := allRows[0]
-	assert.Equal(t, "", emptySpan[wkk.NewRowKey("_cardinalhq_name")])
+	assert.Equal(t, "", emptySpan[wkk.NewRowKey("chq_name")])
 	assert.Equal(t, "Unspecified", emptySpan[wkk.NewRowKey("_cardinalhq_kind")])
-	_, hasStartTimestamp := emptySpan[wkk.NewRowKey("_cardinalhq_timestamp")]
+	_, hasStartTimestamp := emptySpan[wkk.NewRowKey("chq_timestamp")]
 	assert.True(t, hasStartTimestamp)
 	_, hasEndTimestamp := emptySpan[wkk.NewRowKey("_cardinalhq_end_timestamp")]
 	assert.True(t, hasEndTimestamp)
@@ -598,7 +598,7 @@ func TestProtoTracesReader_SyntheticEdgeCases(t *testing.T) {
 
 	// Second span - zero values in attributes
 	zeroSpan := allRows[1]
-	assert.Equal(t, "span-with-zero-values", zeroSpan[wkk.NewRowKey("_cardinalhq_name")])
+	assert.Equal(t, "span-with-zero-values", zeroSpan[wkk.NewRowKey("chq_name")])
 	assert.Equal(t, "Error", zeroSpan[wkk.NewRowKey("_cardinalhq_status_code")])
 	_, hasStatusMessage := zeroSpan[wkk.NewRowKey("_cardinalhq_status_message")]
 	assert.True(t, hasStatusMessage)

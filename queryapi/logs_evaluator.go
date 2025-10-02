@@ -208,7 +208,7 @@ func (q *QuerierService) logsPushDown(
 
 type SegmentLookupFunc func(context.Context, lrdb.ListLogSegmentsForQueryParams) ([]lrdb.ListLogSegmentsForQueryRow, error)
 
-const bodyField = "_cardinalhq_message"
+const bodyField = "chq_message"
 
 type TrigramQuery struct {
 	Op        index.QueryOp

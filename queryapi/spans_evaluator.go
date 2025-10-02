@@ -216,7 +216,7 @@ func (q *QuerierService) spansPushDown(
 
 type TraceSegmentLookupFunc func(context.Context, lrdb.ListTraceSegmentsForQueryParams) ([]lrdb.ListTraceSegmentsForQueryRow, error)
 
-const spansNameField = "_cardinalhq_name"
+const spansNameField = "chq_name"
 
 func (q *QuerierService) lookupSpansSegments(
 	ctx context.Context,

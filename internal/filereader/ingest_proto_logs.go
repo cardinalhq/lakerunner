@@ -170,11 +170,11 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 	})
 
 	message := logRecord.Body().AsString()
-	ret["_cardinalhq_message"] = message
-	ret["_cardinalhq_timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
-	ret["_cardinalhq_tsns"] = int64(logRecord.Timestamp())
+	ret["chq_message"] = message
+	ret["chq_timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
+	ret["chq_tsns"] = int64(logRecord.Timestamp())
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
-	ret["_cardinalhq_level"] = logRecord.SeverityText()
+	ret["chq_level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
 	return ret
 }

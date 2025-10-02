@@ -275,14 +275,14 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 			assert.True(t, hasMessage, "Row should have log body")
 			_, hasTimestamp := row[wkk.RowKeyCTimestamp]
 			assert.True(t, hasTimestamp, "Row should have timestamp")
-			_, hasLevel := row[wkk.NewRowKey("_cardinalhq_level")]
+			_, hasLevel := row[wkk.NewRowKey("chq_level")]
 			assert.True(t, hasLevel, "Row should have severity text")
 			_, hasSeverityNumber := row[wkk.NewRowKey("severity_number")]
 			assert.True(t, hasSeverityNumber, "Row should have severity number")
 
 			// Check specific values
 			assert.Equal(t, expectedBodies[i], row[wkk.RowKeyCMessage], "Log body should match expected value")
-			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("_cardinalhq_level")], "Severity text should match")
+			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("chq_level")], "Severity text should match")
 
 			// Check for resource attributes
 			_, hasResourceServiceName := row[wkk.NewRowKey("resource_service_name")]
@@ -402,7 +402,7 @@ func TestIngestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 				bodyCount++
 			}
 		}
-		if severityText, exists := row[wkk.NewRowKey("_cardinalhq_level")]; exists {
+		if severityText, exists := row[wkk.NewRowKey("chq_level")]; exists {
 			if textStr, ok := severityText.(string); ok {
 				severityTexts[textStr]++
 			}
@@ -549,7 +549,7 @@ func TestIngestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 		t.Run(fmt.Sprintf("structured_log_%d", i), func(t *testing.T) {
 			// Check basic log fields
 			assert.Equal(t, expectedBodies[i], row[wkk.RowKeyCMessage], "Structured log body should match")
-			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("_cardinalhq_level")], "Structured severity should match")
+			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("chq_level")], "Structured severity should match")
 
 			// Check resource attributes from structured data
 			assert.Equal(t, "structured-test-service", row[wkk.NewRowKey("resource_service_name")])

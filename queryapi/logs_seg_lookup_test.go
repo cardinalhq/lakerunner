@@ -46,7 +46,7 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 	}
 
 	// Expected coarse fingerprint for the message field
-	expFP := computeFingerprint("_cardinalhq_message", existsRegex)
+	expFP := computeFingerprint("chq_message", existsRegex)
 
 	// Capture the params we send to the DB lookup.
 	var gotParams lrdb.ListLogSegmentsForQueryParams

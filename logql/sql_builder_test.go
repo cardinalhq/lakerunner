@@ -102,11 +102,11 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 
 	// Full base schema so SELECT * works without synthetic stubs.
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT
 	);`)
 	mustExec(t, db, `INSERT INTO logs VALUES
 		(0, '', '', 'hello', -4446492996171837732),
@@ -130,8 +130,8 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 	// Verify the default columns exist, including fingerprint.
 	for _, r := range rows {
 		_ = getString(r["_cardinalhq_id"])
-		_ = getString(r["_cardinalhq_level"])
-		_ = getString(r["_cardinalhq_fingerprint"]) // must exist even if empty
+		_ = getString(r["chq_level"])
+		_ = getString(r["chq_fingerprint"]) // must exist even if empty
 	}
 }
 
@@ -140,11 +140,11 @@ func TestToWorkerSQL_Fingerprint_AsString(t *testing.T) {
 
 	// Full base schema so SELECT * works and fingerprint can be CAST to VARCHAR.
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT
 	);`)
 	mustExec(t, db, `INSERT INTO logs VALUES
 		(0, '', '', 'hello', -4446492996171837732),
@@ -162,7 +162,7 @@ func TestToWorkerSQL_Fingerprint_AsString(t *testing.T) {
 
 	// Verify that fingerprint is returned as a string (not int64)
 	for i, r := range rows {
-		fingerprint := r["_cardinalhq_fingerprint"]
+		fingerprint := r["chq_fingerprint"]
 		if fingerprint == nil {
 			t.Fatalf("row %d: fingerprint is nil", i)
 		}
@@ -196,10 +196,10 @@ func createLogsTable(t *testing.T, db *sql.DB) {
 	t.Helper()
 	mustDropTable(db, "logs")
 	stmt := `CREATE TABLE logs(
-		"_cardinalhq_timestamp" BIGINT,
+		"chq_timestamp" BIGINT,
 		"_cardinalhq_id"       TEXT,
-		"_cardinalhq_level"    TEXT,
-		"_cardinalhq_message"  TEXT,
+		"chq_level"    TEXT,
+		"chq_message"  TEXT,
 		"level"                TEXT,
 		"service"              TEXT,
 		"pod"                  TEXT,
@@ -213,11 +213,11 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 
 	// Full base schema so SELECT * works and parsers can add columns.
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT
 	);`)
 
 	// rows: INFO/alice, ERROR/bob, ERROR/carol
@@ -267,11 +267,11 @@ func TestToWorkerSQL_Regexp_Kafka_DurationExtract(t *testing.T) {
 
 	// Full base schema + selector column
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		"resource_service_name"   TEXT
 	);`)
 
@@ -338,11 +338,11 @@ func TestToWorkerSQL_Regexp_NumericCompare_EmulateGTZero(t *testing.T) {
 
 	// Full base schema
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT
 	);`)
 
 	mustExec(t, db, `INSERT INTO logs VALUES
@@ -400,11 +400,11 @@ func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT
 	);`)
 
 	mustExec(t, db, `INSERT INTO logs VALUES 
@@ -443,11 +443,11 @@ func TestToWorkerSQL_JSON_WithNOFilters(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT
 	);`)
 
 	mustExec(t, db, `INSERT INTO logs VALUES
@@ -479,11 +479,11 @@ func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT
 	);`)
 
 	// 1) status=200 user=bob      -> should match
@@ -526,15 +526,15 @@ func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		job                       TEXT
 	);`)
 
-	mustExec(t, db, `INSERT INTO logs("_cardinalhq_timestamp", "_cardinalhq_id", "_cardinalhq_level", "_cardinalhq_message", "_cardinalhq_fingerprint", job) VALUES
+	mustExec(t, db, `INSERT INTO logs("chq_timestamp", "_cardinalhq_id", "chq_level", "chq_message", "chq_fingerprint", job) VALUES
 		(1, '', '', 'hello a', -4446492996171837732, 'my-app'),
 		(2, '', '', 'hello b', -4446492996171837732, 'other');`)
 
@@ -569,15 +569,15 @@ func TestToWorkerSQL_MatchersThenJSON_FilterApplied_FromLogQL(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		job                       TEXT
 	);`)
 
-	mustExec(t, db, `INSERT INTO logs("_cardinalhq_timestamp", job, "_cardinalhq_message", "_cardinalhq_id", "_cardinalhq_level", "_cardinalhq_fingerprint") VALUES
+	mustExec(t, db, `INSERT INTO logs("chq_timestamp", job, "chq_message", "_cardinalhq_id", "chq_level", "chq_fingerprint") VALUES
 		(1, 'my-app',  '{"level":"ERROR","user":"bob","msg":"boom"}', '', '', -4446492996171837732),
 		(2, 'my-app',  '{"level":"INFO","user":"alice","msg":"ok"}',  '', '', -4446492996171837732),
 		(3, 'other',   '{"level":"ERROR","user":"carol","msg":"warn"}','', '', -4446492996171837732);`)
@@ -626,15 +626,15 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		job                       TEXT
 	);`)
 
-	mustExec(t, db, `INSERT INTO logs(job, "_cardinalhq_timestamp", "_cardinalhq_message", "_cardinalhq_id", "_cardinalhq_level", "_cardinalhq_fingerprint") VALUES
+	mustExec(t, db, `INSERT INTO logs(job, "chq_timestamp", "chq_message", "_cardinalhq_id", "chq_level", "chq_fingerprint") VALUES
 	('my-app', 1, '{"response":"ErrorBadGateway","msg":"x"}', '', '', -4446492996171837732),
 	('my-app', 2, '{"response":"OK","msg":"y"}',              '', '', -4446492996171837732),
 	('my-app', 3, '{"response":"ErrorOops","msg":"z"}',       '', '', -4446492996171837732);`)
@@ -664,8 +664,8 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 		t.Fatalf("generated SQL missing selector matcher WHERE clause:\n%s", sql)
 	}
 	// Be a bit robust to optional whitespace after the comma.
-	if !(strings.Contains(sql, `json_extract_string("_cardinalhq_message", '$.response') AS response`) ||
-		strings.Contains(sql, `json_extract_string("_cardinalhq_message",'$.response') AS response`)) {
+	if !(strings.Contains(sql, `json_extract_string("chq_message", '$.response') AS response`) ||
+		strings.Contains(sql, `json_extract_string("chq_message",'$.response') AS response`)) {
 		t.Fatalf("generated SQL missing JSON projection for 'response':\n%s", sql)
 	}
 	if !strings.Contains(sql, "CASE WHEN") || !strings.Contains(sql, "starts_with(response, 'Error')") {
@@ -1076,11 +1076,11 @@ func TestToWorkerSQLWithLimit_Fields_Basic(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		"level"                   TEXT,
 		"service"                 TEXT,
 		"pod"                     TEXT,
@@ -1089,8 +1089,8 @@ func TestToWorkerSQLWithLimit_Fields_Basic(t *testing.T) {
 
 	// Insert test data
 	mustExec(t, db, `INSERT INTO logs(
-		"_cardinalhq_timestamp","_cardinalhq_id","_cardinalhq_level","_cardinalhq_message",
-		"_cardinalhq_fingerprint","level","service","pod","user"
+		"chq_timestamp","_cardinalhq_id","chq_level","chq_message",
+		"chq_fingerprint","level","service","pod","user"
 	) VALUES
 	 (1000, 'id1', 'info',  'test message 1', -4446492996171837732, 'info',  'api', 'pod1', 'user1'),
 	 (2000, 'id2', 'error', 'test message 2', -4446492996171837732, 'error', 'web', 'pod2', 'user2'),
@@ -1149,16 +1149,16 @@ func TestToWorkerSQLWithLimit_Fields_WithRegexpParser(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT
 	);`)
 
 	// Choose timestamps so DESC order matches expected (alice, bob, charlie)
 	mustExec(t, db, `INSERT INTO logs(
-		"_cardinalhq_timestamp","_cardinalhq_id","_cardinalhq_level","_cardinalhq_message","_cardinalhq_fingerprint"
+		"chq_timestamp","_cardinalhq_id","chq_level","chq_message","chq_fingerprint"
 	) VALUES 
 	(3000,'','', 'user=alice action=login status=success',  -4446492996171837732),
 	(2000,'','', 'user=bob action=logout status=success',   -4446492996171837732),
@@ -1215,11 +1215,11 @@ func TestToWorkerSQLWithLimit_Fields_EmptyFields(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		"level"                   TEXT,
 		"service"                 TEXT,
 		"pod"                     TEXT,
@@ -1228,8 +1228,8 @@ func TestToWorkerSQLWithLimit_Fields_EmptyFields(t *testing.T) {
 
 	// Insert test data
 	mustExec(t, db, `INSERT INTO logs(
-		"_cardinalhq_timestamp","_cardinalhq_id","_cardinalhq_level","_cardinalhq_message",
-		"_cardinalhq_fingerprint","level","service","pod","user"
+		"chq_timestamp","_cardinalhq_id","chq_level","chq_message",
+		"chq_fingerprint","level","service","pod","user"
 	) VALUES
 	 (1000, 'id1', 'info',  'test message 1', -4446492996171837732, 'info',  'api', 'pod1', 'user1'),
 	 (2000, 'id2', 'error', 'test message 2', -4446492996171837732, 'error', 'web', 'pod2', 'user2')`)
@@ -1251,9 +1251,9 @@ func TestToWorkerSQLWithLimit_Fields_EmptyFields(t *testing.T) {
 
 	// Verify that basic columns are still present
 	for i, row := range rows {
-		message := getString(row["_cardinalhq_message"])
+		message := getString(row["chq_message"])
 		if message == "" {
-			t.Fatalf("row %d missing _cardinalhq_message", i)
+			t.Fatalf("row %d missing chq_message", i)
 		}
 	}
 }
@@ -1264,11 +1264,11 @@ func TestToWorkerSQLWithLimit_Fields_NonExistentFields_NoOp(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		"level"                   TEXT,
 		"service"                 TEXT,
 		"pod"                     TEXT,
@@ -1277,8 +1277,8 @@ func TestToWorkerSQLWithLimit_Fields_NonExistentFields_NoOp(t *testing.T) {
 
 	// Insert test data
 	mustExec(t, db, `INSERT INTO logs(
-		"_cardinalhq_timestamp","_cardinalhq_id","_cardinalhq_level","_cardinalhq_message",
-		"_cardinalhq_fingerprint","level","service","pod","user"
+		"chq_timestamp","_cardinalhq_id","chq_level","chq_message",
+		"chq_fingerprint","level","service","pod","user"
 	) VALUES
 	 (1000, 'id1', 'info', 'test message 1', -4446492996171837732, 'info', 'api', 'pod1', 'user1')`)
 
@@ -1305,8 +1305,8 @@ func TestToWorkerSQLWithLimit_Fields_NonExistentFields_NoOp(t *testing.T) {
 	}
 
 	// Sanity: base column still present.
-	if msg := getString(rows[0]["_cardinalhq_message"]); msg == "" {
-		t.Fatalf("missing _cardinalhq_message")
+	if msg := getString(rows[0]["chq_message"]); msg == "" {
+		t.Fatalf("missing chq_message")
 	}
 }
 
@@ -1315,11 +1315,11 @@ func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
 
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		"level"                   TEXT,
 		"service"                 TEXT,
 		"pod"                     TEXT,
@@ -1328,8 +1328,8 @@ func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
 
 	// Insert test data
 	mustExec(t, db, `INSERT INTO logs(
-		"_cardinalhq_timestamp","_cardinalhq_id","_cardinalhq_level","_cardinalhq_message",
-		"_cardinalhq_fingerprint","level","service","pod","user"
+		"chq_timestamp","_cardinalhq_id","chq_level","chq_message",
+		"chq_fingerprint","level","service","pod","user"
 	) VALUES
 	 (1000, 'id1', 'info',  'test message 1', -4446492996171837732, 'info',  'api', 'pod1', 'user1'),
 	 (2000, 'id2', 'error', 'test message 2', -4446492996171837732, 'error', 'web', 'pod2', 'user2'),
@@ -1378,13 +1378,13 @@ func TestToWorkerSQL_LineFormat_JSONToMessage(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		app                       TEXT,
 		level                     TEXT,
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT
 	);`)
-	mustExec(t, db, `INSERT INTO logs(app, level, "_cardinalhq_timestamp", "_cardinalhq_id", "_cardinalhq_level", "_cardinalhq_message", "_cardinalhq_fingerprint") VALUES
+	mustExec(t, db, `INSERT INTO logs(app, level, "chq_timestamp", "_cardinalhq_id", "chq_level", "chq_message", "chq_fingerprint") VALUES
 		('web',   'ERROR', 1000, '', '', '{"message":"boom","level":"ERROR","x":1}',  -4446492996171837732),
 		('web',   'INFO',  2000, '', '', '{"message":"ok","level":"INFO","x":2}',     -4446492996171837732),
 		('other', 'ERROR', 3000, '', '', '{"message":"nope","level":"ERROR","x":3}', -4446492996171837732)
@@ -1413,23 +1413,23 @@ func TestToWorkerSQL_LineFormat_JSONToMessage(t *testing.T) {
 	if !strings.Contains(sql, "app = 'web'") {
 		t.Fatalf("missing app filter:\n%s", sql)
 	}
-	if !strings.Contains(sql, `json_extract_string("_cardinalhq_message", '$.message') AS msg`) &&
-		!strings.Contains(sql, `json_extract_string("_cardinalhq_message",'$.message') AS msg`) {
+	if !strings.Contains(sql, `json_extract_string("chq_message", '$.message') AS msg`) &&
+		!strings.Contains(sql, `json_extract_string("chq_message",'$.message') AS msg`) {
 		t.Fatalf("missing msg JSON projection:\n%s", sql)
 	}
 	if !strings.Contains(sql, `level = 'ERROR'`) {
 		t.Fatalf("missing level filter:\n%s", sql)
 	}
-	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq_message"`) {
-		t.Fatalf("expected rewrite of _cardinalhq_message:\n%s", sql)
+	if !strings.Contains(strings.ToLower(sql), `as "chq_message"`) {
+		t.Fatalf("expected rewrite of chq_message:\n%s", sql)
 	}
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row (app=web & json.level=ERROR), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
 	}
-	if got := getString(rows[0][`_cardinalhq_message`]); got != "boom" {
-		t.Fatalf(`rewritten _cardinalhq_message mismatch: got %q, want "boom"`, got)
+	if got := getString(rows[0][`chq_message`]); got != "boom" {
+		t.Fatalf(`rewritten chq_message mismatch: got %q, want "boom"`, got)
 	}
 }
 
@@ -1440,11 +1440,11 @@ func TestToWorkerSQL_LineFormat_IndexBaseField(t *testing.T) {
 	// Base table with resource/service, message, and a base field with special chars
 	mustExec(t, db, `CREATE TABLE logs(
 		"resource_service_name"   TEXT,
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		"log_@OrderResult"        TEXT
 	);`)
 
@@ -1480,8 +1480,8 @@ func TestToWorkerSQL_LineFormat_IndexBaseField(t *testing.T) {
 	if !strings.Contains(sql, `"log_@OrderResult"`) {
 		t.Fatalf("expected hoisted base column \"log_@OrderResult\" in SQL:\n%s", sql)
 	}
-	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq_message"`) {
-		t.Fatalf("expected rewrite of _cardinalhq_message via line_format:\n%s", sql)
+	if !strings.Contains(strings.ToLower(sql), `as "chq_message"`) {
+		t.Fatalf("expected rewrite of chq_message via line_format:\n%s", sql)
 	}
 
 	rows := queryAll(t, db, sql)
@@ -1489,9 +1489,9 @@ func TestToWorkerSQL_LineFormat_IndexBaseField(t *testing.T) {
 		t.Fatalf("expected 1 row (service=accounting), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
 	}
 
-	gotMsg := getString(rows[0][`_cardinalhq_message`])
+	gotMsg := getString(rows[0][`chq_message`])
 	if gotMsg != "SUCCESS" {
-		t.Fatalf(`rewritten _cardinalhq_message mismatch: got %q, want "SUCCESS"`, gotMsg)
+		t.Fatalf(`rewritten chq_message mismatch: got %q, want "SUCCESS"`, gotMsg)
 	}
 	if svc := getString(rows[0][`resource_service_name`]); svc != "accounting" {
 		t.Fatalf("wrong row selected: resource_service_name=%q", svc)
@@ -1504,11 +1504,11 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField(t *testing.T) {
 
 	mustExec(t, db, `CREATE TABLE logs(
 		"resource_service_name"   TEXT,
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		"log_@OrderResult"        TEXT
 	);`)
 
@@ -1541,8 +1541,8 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField(t *testing.T) {
 	if !strings.Contains(sql, `"log_@OrderResult"`) {
 		t.Fatalf("expected hoisted base column \"log_@OrderResult\" in SQL:\n%s", sql)
 	}
-	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq_message"`) {
-		t.Fatalf("expected rewrite of _cardinalhq_message via line_format:\n%s", sql)
+	if !strings.Contains(strings.ToLower(sql), `as "chq_message"`) {
+		t.Fatalf("expected rewrite of chq_message via line_format:\n%s", sql)
 	}
 
 	rows := queryAll(t, db, sql)
@@ -1550,9 +1550,9 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField(t *testing.T) {
 		t.Fatalf("expected 1 row (service=accounting), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
 	}
 
-	gotMsg := getString(rows[0][`_cardinalhq_message`])
+	gotMsg := getString(rows[0][`chq_message`])
 	if gotMsg != "SUCCESS" {
-		t.Fatalf(`rewritten _cardinalhq_message mismatch: got %q, want "SUCCESS"`, gotMsg)
+		t.Fatalf(`rewritten chq_message mismatch: got %q, want "SUCCESS"`, gotMsg)
 	}
 	if svc := getString(rows[0][`resource_service_name`]); svc != "accounting" {
 		t.Fatalf("wrong row selected: resource_service_name=%q", svc)
@@ -1565,11 +1565,11 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField_UnderscoreCompat(t *testing
 
 	mustExec(t, db, `CREATE TABLE logs(
 		"resource_service_name"   TEXT,
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		"log_@OrderResult"        TEXT
 	);`)
 
@@ -1600,16 +1600,16 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField_UnderscoreCompat(t *testing
 	if !strings.Contains(sql, `"log_@OrderResult"`) {
 		t.Fatalf("expected hoisted base column \"log_@OrderResult\" in SQL:\n%s", sql)
 	}
-	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq_message"`) {
-		t.Fatalf("expected rewrite of _cardinalhq_message via line_format:\n%s", sql)
+	if !strings.Contains(strings.ToLower(sql), `as "chq_message"`) {
+		t.Fatalf("expected rewrite of chq_message via line_format:\n%s", sql)
 	}
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row (service=accounting), got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
 	}
-	if got := getString(rows[0][`_cardinalhq_message`]); got != "SUCCESS" {
-		t.Fatalf(`rewritten _cardinalhq_message mismatch: got %q, want "SUCCESS"`, got)
+	if got := getString(rows[0][`chq_message`]); got != "SUCCESS" {
+		t.Fatalf(`rewritten chq_message mismatch: got %q, want "SUCCESS"`, got)
 	}
 	if svc := getString(rows[0][`resource_service_name`]); svc != "accounting" {
 		t.Fatalf("wrong row selected: resource_service_name=%q", svc)
@@ -1622,11 +1622,11 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 
 	mustExec(t, db, `CREATE TABLE logs(
 		"resource_service_name"   TEXT,
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		"log_@OrderResult"        TEXT
 	);`)
 
@@ -1662,16 +1662,16 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 	if !strings.Contains(sql, `"log_@OrderResult"`) {
 		t.Fatalf("expected hoisted base column \"log_@OrderResult\" in SQL:\n%s", sql)
 	}
-	if !strings.Contains(strings.ToLower(sql), `as "_cardinalhq_message"`) {
-		t.Fatalf("expected rewrite of _cardinalhq_message via line_format:\n%s", sql)
+	if !strings.Contains(strings.ToLower(sql), `as "chq_message"`) {
+		t.Fatalf("expected rewrite of chq_message via line_format:\n%s", sql)
 	}
 
 	// Look for any of these common JSON projection forms
 	wantJsonBits := []string{
-		`json_extract_string("_cardinalhq_message", '$.orderId')`,
-		`json_extract_string("_cardinalhq_message", '$.shippingCost.currencyCode')`,
-		`json_extract("_cardinalhq_message", '$.shippingCost.units')`,
-		`json_extract("_cardinalhq_message", '$.shippingCost.nanos')`,
+		`json_extract_string("chq_message", '$.orderId')`,
+		`json_extract_string("chq_message", '$.shippingCost.currencyCode')`,
+		`json_extract("chq_message", '$.shippingCost.units')`,
+		`json_extract("chq_message", '$.shippingCost.nanos')`,
 	}
 	foundJsonAny := false
 	for _, bit := range wantJsonBits {
@@ -1690,9 +1690,9 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 	}
 
 	wantMsg := "orderId=O-123 currency=USD units=12 nanos=500000000"
-	gotMsg := getString(rows[0][`_cardinalhq_message`])
+	gotMsg := getString(rows[0][`chq_message`])
 	if gotMsg != wantMsg {
-		t.Fatalf("final _cardinalhq_message mismatch:\n  got:  %q\n  want: %q", gotMsg, wantMsg)
+		t.Fatalf("final chq_message mismatch:\n  got:  %q\n  want: %q", gotMsg, wantMsg)
 	}
 	if svc := getString(rows[0][`resource_service_name`]); svc != "accounting" {
 		t.Fatalf("wrong row selected: resource_service_name=%q", svc)
@@ -1705,11 +1705,11 @@ func TestToWorkerSQL_LineFormat_JSON_LabelFormat_ItemCount_WithFingerprint(t *te
 
 	// Full base table so we don't need replaceTable(..)
 	mustExec(t, db, `CREATE TABLE logs(
-		"_cardinalhq_timestamp"   BIGINT,
+		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"_cardinalhq_level"       TEXT,
-		"_cardinalhq_message"     TEXT,
-		"_cardinalhq_fingerprint" BIGINT,
+		"chq_level"       TEXT,
+		"chq_message"     TEXT,
+		"chq_fingerprint" BIGINT,
 		"resource_service_name"   TEXT,
 		"log_@OrderResult"        TEXT
 	);`)
@@ -1738,11 +1738,11 @@ func TestToWorkerSQL_LineFormat_JSON_LabelFormat_ItemCount_WithFingerprint(t *te
 		(1000, 'id1', 'info',  'orig msg 1', 7754623969787599908, 'accounting', ?),
 		(2000, 'id2', 'debug', 'orig msg 2', 111,                  'billing',    '{"items":[{"x":1}]}')`, orderJSON)
 
-	// {resource_service_name="accounting", _cardinalhq_fingerprint="7754623969787599908"}
+	// {resource_service_name="accounting", chq_fingerprint="7754623969787599908"}
 	// | line_format "{{ index . \"log_@OrderResult\" }}"
 	// | json
 	// | label_format item_count=`{{len .items}}`
-	q := `{resource_service_name="accounting", _cardinalhq_fingerprint="7754623969787599908"} ` +
+	q := `{resource_service_name="accounting", chq_fingerprint="7754623969787599908"} ` +
 		`| line_format "{{ index . \"log_@OrderResult\" }}" ` +
 		`| json ` +
 		`| label_format item_count=` + "`{{len .items}}`"
@@ -1769,7 +1769,7 @@ func TestToWorkerSQL_LineFormat_JSON_LabelFormat_ItemCount_WithFingerprint(t *te
 	if !strings.Contains(sql, `resource_service_name = 'accounting'`) {
 		t.Fatalf("missing selector on resource_service_name:\n%s", sql)
 	}
-	if !strings.Contains(sql, `_cardinalhq_fingerprint = '7754623969787599908'`) {
+	if !strings.Contains(sql, `chq_fingerprint = '7754623969787599908'`) {
 		t.Fatalf("missing fingerprint selector:\n%s", sql)
 	}
 	if !strings.Contains(sql, `"log_@OrderResult"`) {

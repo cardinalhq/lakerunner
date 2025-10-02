@@ -288,8 +288,8 @@ func analyzeParquetFile(ctx context.Context, filePath string) (*FileReport, erro
 
 		for i := 0; i < n; i++ {
 			row := rows[i]
-			// Remove sketch field for metric data - it's not needed for size calculations
-			delete(row, "sketch")
+			// Remove chq_sketch field for metric data - it's not needed for size calculations
+			delete(row, "chq_sketch")
 
 			// Remove all null entries from the map
 			for key, value := range row {

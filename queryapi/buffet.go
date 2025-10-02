@@ -25,10 +25,10 @@ var (
 		"resource_file",
 	}
 	dimensionsToIndex = append([]string{
-		"_cardinalhq_telemetry_type",
-		"_cardinalhq_name",
-		"_cardinalhq_level",
-		//"_cardinalhq_message",
+		"chq_telemetry_type",
+		"chq_name",
+		"chq_level",
+		//"chq_message",
 		"_cardinalhq_span_trace_id",
 	}, infraDimensions...)
 )

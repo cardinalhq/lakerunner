@@ -101,12 +101,12 @@ func TestMergesortReader_BufferLeak(t *testing.T) {
 	initialStats := pipeline.GlobalBatchPoolStats()
 
 	// Create simple JSON readers that don't leak
-	jsonData1 := `{"_cardinalhq_name": "test_metric", "_cardinalhq.tid": 1, "_cardinalhq_timestamp": 1000}
-{"_cardinalhq_name": "test_metric", "_cardinalhq.tid": 2, "_cardinalhq_timestamp": 3000}
-{"_cardinalhq_name": "test_metric", "_cardinalhq.tid": 3, "_cardinalhq_timestamp": 5000}`
+	jsonData1 := `{"chq_name": "test_metric", "_cardinalhq.tid": 1, "chq_timestamp": 1000}
+{"chq_name": "test_metric", "_cardinalhq.tid": 2, "chq_timestamp": 3000}
+{"chq_name": "test_metric", "_cardinalhq.tid": 3, "chq_timestamp": 5000}`
 
-	jsonData2 := `{"_cardinalhq_name": "test_metric", "_cardinalhq.tid": 4, "_cardinalhq_timestamp": 2000}
-{"_cardinalhq_name": "test_metric", "_cardinalhq.tid": 5, "_cardinalhq_timestamp": 4000}`
+	jsonData2 := `{"chq_name": "test_metric", "_cardinalhq.tid": 4, "chq_timestamp": 2000}
+{"chq_name": "test_metric", "_cardinalhq.tid": 5, "chq_timestamp": 4000}`
 
 	reader1, err := NewJSONLinesReader(io.NopCloser(strings.NewReader(jsonData1)), 100)
 	if err != nil {
@@ -123,7 +123,7 @@ func TestMergesortReader_BufferLeak(t *testing.T) {
 	readers := []Reader{reader1, reader2}
 
 	// Create MergesortReader
-	msReader, err := NewMergesortReader(context.TODO(), readers, NewTimeOrderedSortKeyProvider("_cardinalhq_timestamp"), 100)
+	msReader, err := NewMergesortReader(context.TODO(), readers, NewTimeOrderedSortKeyProvider("chq_timestamp"), 100)
 	if err != nil {
 		t.Fatalf("Failed to create MergesortReader: %v", err)
 	}
@@ -176,9 +176,9 @@ func TestJSONLinesReader_BufferLeak(t *testing.T) {
 	initialStats := pipeline.GlobalBatchPoolStats()
 
 	// Create test JSON data
-	jsonData := `{"_cardinalhq_name": "test_metric", "_cardinalhq.tid": 1, "_cardinalhq_timestamp": 1000}
-{"_cardinalhq_name": "test_metric", "_cardinalhq.tid": 2, "_cardinalhq_timestamp": 2000}
-{"_cardinalhq_name": "test_metric", "_cardinalhq.tid": 3, "_cardinalhq_timestamp": 3000}`
+	jsonData := `{"chq_name": "test_metric", "_cardinalhq.tid": 1, "chq_timestamp": 1000}
+{"chq_name": "test_metric", "_cardinalhq.tid": 2, "chq_timestamp": 2000}
+{"chq_name": "test_metric", "_cardinalhq.tid": 3, "chq_timestamp": 3000}`
 
 	reader := io.NopCloser(strings.NewReader(jsonData))
 

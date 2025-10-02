@@ -216,12 +216,12 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pi
 		return true
 	})
 
-	row[wkk.NewRowKey("_cardinalhq_scope_url")] = sm.Scope().Version()
-	row[wkk.NewRowKey("_cardinalhq_scope_name")] = sm.Scope().Name()
+	row[wkk.NewRowKey("chq_scope_url")] = sm.Scope().Version()
+	row[wkk.NewRowKey("chq_scope_name")] = sm.Scope().Name()
 
 	row[wkk.RowKeyCName] = strings.ReplaceAll(metric.Name(), ".", "_")
-	row[wkk.NewRowKey("_cardinalhq_description")] = metric.Description()
-	row[wkk.NewRowKey("_cardinalhq_unit")] = metric.Unit()
+	row[wkk.NewRowKey("chq_description")] = metric.Description()
+	row[wkk.NewRowKey("chq_unit")] = metric.Unit()
 
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:

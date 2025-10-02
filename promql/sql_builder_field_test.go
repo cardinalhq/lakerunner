@@ -43,8 +43,8 @@ func TestFieldNameNormalization(t *testing.T) {
 		},
 		{
 			name:     "_cardinalhq fields unchanged",
-			input:    "_cardinalhq_timestamp",
-			expected: "_cardinalhq_timestamp",
+			input:    "chq_timestamp",
+			expected: "chq_timestamp",
 		},
 		{
 			name:     "_cardinalhq with dots unchanged",
@@ -69,7 +69,7 @@ func TestSQLGenerationWithNormalizedFields(t *testing.T) {
 		Matchers: []LabelMatch{
 			{Label: "resource.k8s.namespace.name", Op: MatchEq, Value: "default"},
 			{Label: "resource.service.name", Op: MatchEq, Value: "api"},
-			{Label: "_cardinalhq_name", Op: MatchEq, Value: "test"},
+			{Label: "chq_name", Op: MatchEq, Value: "test"},
 		},
 		GroupBy: []string{"resource.k8s.pod.name", "metric.http.status"},
 	}
@@ -93,7 +93,7 @@ func TestSQLGenerationWithNormalizedFields(t *testing.T) {
 	}
 
 	// Check that _cardinalhq fields are preserved
-	if !strings.Contains(sql, `"_cardinalhq_name"`) {
+	if !strings.Contains(sql, `"chq_name"`) {
 		t.Errorf("Expected _cardinalhq field to be preserved, got: %s", sql)
 	}
 }

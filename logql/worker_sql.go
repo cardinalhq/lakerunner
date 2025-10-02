@@ -23,8 +23,8 @@ import (
 
 func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string {
 	const baseRel = "{table}"
-	const bodyCol = "\"_cardinalhq_message\""
-	const tsCol = "\"_cardinalhq_timestamp\""
+	const bodyCol = "\"chq_message\""
+	const tsCol = "\"chq_timestamp\""
 
 	// 1) Prepare sets: group keys, parser-created, feature flags
 	groupKeys := dedupeStrings(be.OutBy)
@@ -57,7 +57,7 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 
 	// s0+: normalize fingerprint type to string once up-front so downstream filters/clients are stable
 	pb.push([]string{
-		pb.top() + `.* REPLACE(CAST("_cardinalhq_fingerprint" AS VARCHAR) AS "_cardinalhq_fingerprint")`,
+		pb.top() + `.* REPLACE(CAST("chq_fingerprint" AS VARCHAR) AS "chq_fingerprint")`,
 	}, pb.top(), nil)
 
 	// s1: time window sentinel so segment filters can be spliced
@@ -318,7 +318,7 @@ func emitParsersWithPostLineFilters(
 	}
 
 	// base cols
-	addPresent("_cardinalhq_message", "_cardinalhq_timestamp", "_cardinalhq_id", "_cardinalhq_level", "_cardinalhq_fingerprint")
+	addPresent("chq_message", "chq_timestamp", "_cardinalhq_id", "chq_level", "chq_fingerprint")
 	// matchers
 	for _, m := range be.Matchers {
 		addPresent(m.Label)
@@ -540,9 +540,8 @@ func emitParsersWithPostLineFilters(
 					continue
 				}
 				// Don't extract base columns from JSON - they should already exist
-				if strings.HasPrefix(k, "resource_") || strings.HasPrefix(k, "log_") ||
-					strings.HasPrefix(k, "span_") || strings.HasPrefix(k, "metric_") ||
-					strings.HasPrefix(k, "_cardinalhq_") {
+				if strings.HasPrefix(k, "resource_") || strings.HasPrefix(k, "attr_") ||
+					strings.HasPrefix(k, "scope_") || strings.HasPrefix(k, "chq_") {
 					continue
 				}
 				path := jsonPathForKey(k)
@@ -793,13 +792,13 @@ func emitParsersWithPostLineFilters(
 
 			// Replace the message column with the formatted result.
 			sel := []string{
-				pb.top() + `.* EXCLUDE "` + `_cardinalhq_message` + `"`,
-				"(" + expr + `) AS "` + `_cardinalhq_message` + `"`,
+				pb.top() + `.* EXCLUDE "` + `chq_message` + `"`,
+				"(" + expr + `) AS "` + `chq_message` + `"`,
 			}
 			pb.push(sel, pb.top(), nil)
 
 			// message still present
-			addPresent("_cardinalhq_message")
+			addPresent("chq_message")
 
 			// line_format doesn't create new labels; any stage label filters are carried
 			if len(p.Filters) > 0 {

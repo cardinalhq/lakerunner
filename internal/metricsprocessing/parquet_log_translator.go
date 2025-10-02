@@ -360,14 +360,14 @@ func (t *ParquetLogTranslator) detectTimestampField(row *pipeline.Row) (timestam
 		}
 	}
 
-	// Also check for _cardinalhq_timestamp in case it's already present
+	// Also check for chq_timestamp in case it's already present
 	if val, exists := (*row)[wkk.RowKeyCTimestamp]; exists {
 		if ts, ok := val.(int64); ok {
 			return timestampResult{
 				ms:    ts,
 				ns:    ts * 1000000,
 				found: true,
-			}, "_cardinalhq_timestamp"
+			}, "chq_timestamp"
 		}
 	}
 

@@ -46,14 +46,14 @@ func NewMetricsWriter(tmpdir string, recordsPerFile int64) (parquetwriter.Parque
 // for efficient rollup aggregation.
 func metricsGroupKeyFunc() func(row map[string]any) any {
 	return func(row map[string]any) any {
-		name, nameOk := row["_cardinalhq_name"].(string)
+		name, nameOk := row["chq_name"].(string)
 		if !nameOk {
 			return nil
 		}
 
 		// Handle both string and int64 TID values
 		var tid int64
-		switch v := row["_cardinalhq_tid"].(type) {
+		switch v := row["chq_tid"].(type) {
 		case int64:
 			tid = v
 		case string:
@@ -89,12 +89,12 @@ type MetricsStatsAccumulator struct {
 
 func (a *MetricsStatsAccumulator) Add(row map[string]any) {
 	// Track metric name for fingerprinting
-	if name, ok := row["_cardinalhq_name"].(string); ok && name != "" {
+	if name, ok := row["chq_name"].(string); ok && name != "" {
 		a.metricNames.Add(name)
 	}
 
 	// Track timestamp range
-	if ts, ok := row["_cardinalhq_timestamp"].(int64); ok {
+	if ts, ok := row["chq_timestamp"].(int64); ok {
 		if !a.first {
 			a.firstTS = ts
 			a.lastTS = ts
@@ -109,7 +109,7 @@ func (a *MetricsStatsAccumulator) Add(row map[string]any) {
 		}
 	} else {
 		// Debug: log when timestamp is missing or wrong type
-		if tsVal, exists := row["_cardinalhq_timestamp"]; exists {
+		if tsVal, exists := row["chq_timestamp"]; exists {
 			// Timestamp exists but wrong type - this could be the issue
 			fmt.Printf("DEBUG: timestamp wrong type: %T = %v\n", tsVal, tsVal)
 		} else {
@@ -122,7 +122,7 @@ func (a *MetricsStatsAccumulator) Add(row map[string]any) {
 func (a *MetricsStatsAccumulator) Finalize() any {
 	// Create a map with metric names as a set for fingerprinting
 	tagValuesByName := map[string]mapset.Set[string]{
-		"_cardinalhq_name": a.metricNames,
+		"chq_name": a.metricNames,
 	}
 
 	// Generate fingerprints using the same approach
@@ -146,24 +146,24 @@ type MetricsFileStats struct {
 
 // ValidateMetricsRow checks that a row has the required fields for metrics processing.
 func ValidateMetricsRow(row map[string]any) error {
-	nameVal, ok := row["_cardinalhq_name"]
+	nameVal, ok := row["chq_name"]
 	if !ok {
-		return fmt.Errorf("missing required field: _cardinalhq_name")
+		return fmt.Errorf("missing required field: chq_name")
 	}
 	name, ok := nameVal.(string)
 	if !ok {
-		return fmt.Errorf("field _cardinalhq_name must be a string, got %T", nameVal)
+		return fmt.Errorf("field chq_name must be a string, got %T", nameVal)
 	}
 	if len(name) == 0 {
-		return fmt.Errorf("field _cardinalhq_name cannot be empty")
+		return fmt.Errorf("field chq_name cannot be empty")
 	}
 
-	tidVal, ok := row["_cardinalhq_tid"]
+	tidVal, ok := row["chq_tid"]
 	if !ok {
-		return fmt.Errorf("missing required field: _cardinalhq_tid")
+		return fmt.Errorf("missing required field: chq_tid")
 	}
 	if _, ok := tidVal.(int64); !ok {
-		return fmt.Errorf("field _cardinalhq_tid must be an int64, got %T", tidVal)
+		return fmt.Errorf("field chq_tid must be an int64, got %T", tidVal)
 	}
 	return nil
 }

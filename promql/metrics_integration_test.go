@@ -71,15 +71,15 @@ func s(v any) string {
 func createTempTable(t *testing.T, db *sql.DB) {
 	mustExec(t, db, `
 CREATE TABLE logs(
-  "_cardinalhq_timestamp"   BIGINT,
-  "_cardinalhq_name"        TEXT,
+  "chq_timestamp"   BIGINT,
+  "chq_name"        TEXT,
   "resource_service_name"   TEXT,
   "resource_k8s_pod_name"   TEXT,
   instance                  TEXT,
-  rollup_sum                DOUBLE,
-  rollup_count              BIGINT,
-  rollup_min                DOUBLE,
-  rollup_max                DOUBLE
+  chq_rollup_sum                DOUBLE,
+  chq_rollup_count              BIGINT,
+  chq_rollup_min                DOUBLE,
+  chq_rollup_max                DOUBLE
 );`)
 }
 
@@ -88,7 +88,7 @@ func TestProm_CountPods_Global_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
 (10*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
 (20*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
@@ -101,7 +101,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
 (40*1000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1),
 -- bucket 1
@@ -226,7 +226,7 @@ func TestProm_CountPods_Global_TwoWorkers_SamePod_Dedup_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
 (10*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
 (20*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
@@ -238,7 +238,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
 (15*1000,  'req_total', 'api-gateway', 'api-7f', 'c', 1, 10, 1, 1),
 -- bucket 1
@@ -347,7 +347,7 @@ func TestProm_CountByPod_Rate_FastPath_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 (10*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
 (20*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
 (70*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
@@ -359,7 +359,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 (40*1000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1),
 (100*1000, 'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1);
 `)
@@ -460,7 +460,7 @@ func TestProm_CountPodsPerService_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (api-gateway)
 (10*1000,  'req_total', 'api-gateway', 'api-7f',  'a', 1, 10, 1, 1),
 (20*1000,  'req_total', 'api-gateway', 'api-7f',  'b', 1, 10, 1, 1),
@@ -475,7 +475,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (auth)
 (50*1000,  'req_total', 'auth',        'auth-1a', 'a', 1, 10, 1, 1),
 -- bucket 1 (auth)
@@ -603,7 +603,7 @@ func TestProm_CountPodsPerService_FromSumByPodService_TwoWorkers(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (api-gateway)
 (10*1000,  'req_total', 'api-gateway', 'api-7f',   'a', 1, 10, 1, 1),
 (20*1000,  'req_total', 'api-gateway', 'api-7f',   'b', 1, 10, 1, 1),
@@ -618,7 +618,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (auth)
 (50*1000,  'req_total', 'auth',        'auth-1a',  'a', 1, 10, 1, 1),
 -- bucket 1 (auth)
@@ -711,7 +711,7 @@ func TestProm_Rate_1m_RangeCoverage_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket [0s..30s)
 (10*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
 (20*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
@@ -726,7 +726,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket [30s..60s)
 (40*1000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
 -- bucket [90s..120s)
@@ -840,7 +840,7 @@ func TestProm_SumOfCount_vs_CountOfCount_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
 (10*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
 (20*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
@@ -854,7 +854,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
 (40*1000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1),
 -- bucket 1
@@ -979,7 +979,7 @@ func TestProm_CountByPod_InstantVector(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
 (10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
 (20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
@@ -993,7 +993,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
 (40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
 -- bucket 1
@@ -1090,7 +1090,7 @@ func TestProm_CountOfPods_InstantVector(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
 (10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
 (20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
@@ -1104,7 +1104,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
 (40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
 -- bucket 1
@@ -1204,7 +1204,7 @@ func TestProm_Max_GT_Scalar_Integration(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (all <= 0.9)
 (10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.80, 1, 0.80, 0.80),
 (20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.70, 1, 0.70, 0.70),
@@ -1217,7 +1217,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (still <= 0.9 globally)
 (40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.85, 1, 0.85, 0.85),
 -- bucket 1 (also > 0.9)
@@ -1315,7 +1315,7 @@ func TestProm_Max_GT_Scalar_Filter_Integration(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (all <= 0.9)
 (10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.80, 1, 0.80, 0.80),
 (20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.70, 1, 0.70, 0.70),
@@ -1328,7 +1328,7 @@ INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_na
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("_cardinalhq_timestamp","_cardinalhq_name","resource_service_name","resource_k8s_pod_name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (still <= 0.9 globally)
 (40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.85, 1, 0.85, 0.85),
 -- bucket 1 (also > 0.9)

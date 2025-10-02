@@ -24,12 +24,12 @@ import (
 
 // Pre-interned keys for TID computation
 var (
-	tidKeyCardinalhqName       = wkk.NewRowKey("_cardinalhq_name")
-	tidKeyCardinalhqMetricType = wkk.NewRowKey("_cardinalhq_metric_type")
+	tidKeyCardinalhqName       = wkk.NewRowKey("chq_name")
+	tidKeyCardinalhqMetricType = wkk.NewRowKey("chq_metric_type")
 )
 
 // ComputeTID computes the TID (Time-series ID) using wkk.RowKey keys
-// It includes _cardinalhq_name, _cardinalhq_metric_type, resource_*, and metric_* fields
+// It includes chq_name, chq_metric_type, resource_*, and attr_* fields
 func ComputeTID(tags map[wkk.RowKey]any) int64 {
 	// Collect key strings directly
 	keys := make([]string, 0, len(tags))
@@ -51,7 +51,7 @@ func ComputeTID(tags map[wkk.RowKey]any) int64 {
 		kStr := wkk.RowKeyValue(k)
 
 		// Check prefixes
-		if strings.HasPrefix(kStr, "resource_") || strings.HasPrefix(kStr, "metric_") {
+		if strings.HasPrefix(kStr, "resource_") || strings.HasPrefix(kStr, "attr_") {
 			keys = append(keys, kStr)
 		}
 	}

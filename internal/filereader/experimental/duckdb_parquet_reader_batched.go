@@ -134,7 +134,7 @@ func (r *DuckDBParquetBatchedReader) initSchema(ctx context.Context) error {
 		switch c {
 		case "_cardinalhq.tid":
 			r.idxTID = i
-		case "sketch":
+		case "chq_sketch":
 			r.idxSketch = i
 		default:
 			for j, name := range rollupFieldNames {

@@ -553,18 +553,15 @@ func TestStringConversionForPrefixedFields(t *testing.T) {
 		// Test conversion methods directly
 		assert.True(t, splitter.shouldConvertToString("resource_foo"))
 		assert.True(t, splitter.shouldConvertToString("scope_bar"))
-		assert.True(t, splitter.shouldConvertToString("log_baz"))
-		assert.True(t, splitter.shouldConvertToString("metric_qux"))
-		assert.True(t, splitter.shouldConvertToString("span_trace"))
+		assert.True(t, splitter.shouldConvertToString("attr_baz"))
 		assert.False(t, splitter.shouldConvertToString("other_field"))
 		assert.False(t, splitter.shouldConvertToString("timestamp"))
 
 		// Test conversion of different types
 		assert.Equal(t, "123", splitter.convertToStringIfNeeded("resource_id", int64(123)))
 		assert.Equal(t, "45", splitter.convertToStringIfNeeded("scope_level", int32(45)))
-		assert.Equal(t, "3.14", splitter.convertToStringIfNeeded("metric_value", float64(3.14)))
-		assert.Equal(t, "true", splitter.convertToStringIfNeeded("log_enabled", true))
-		assert.Equal(t, "already_string", splitter.convertToStringIfNeeded("span_name", "already_string"))
+		assert.Equal(t, "3.14", splitter.convertToStringIfNeeded("attr_value", float64(3.14)))
+		assert.Equal(t, "already_string", splitter.convertToStringIfNeeded("attr_name", "already_string"))
 
 		// Fields without matching prefix should not be converted
 		assert.Equal(t, int64(999), splitter.convertToStringIfNeeded("other_value", int64(999)))
@@ -612,14 +609,14 @@ func TestStringConversionForPrefixedFields(t *testing.T) {
 		row1 := batch.AddRow()
 		row1[wkk.NewRowKey("resource_id")] = int64(12345)
 		row1[wkk.NewRowKey("resource_name")] = "service-a"
-		row1[wkk.NewRowKey("metric_value")] = float64(99.5)
+		row1[wkk.NewRowKey("attr_value")] = float64(99.5)
 		row1[wkk.NewRowKey("regular_field")] = int64(777)
 
 		// Second row has resource_id as string (simulating type conflict)
 		row2 := batch.AddRow()
 		row2[wkk.NewRowKey("resource_id")] = "67890"
 		row2[wkk.NewRowKey("resource_name")] = "service-b"
-		row2[wkk.NewRowKey("metric_value")] = int64(100)
+		row2[wkk.NewRowKey("attr_value")] = int64(100)
 		row2[wkk.NewRowKey("regular_field")] = int64(888)
 
 		// Write batch - should not error despite type mismatch
@@ -689,7 +686,7 @@ func TestFileSplitter_FingerprintStringToInt64Conversion(t *testing.T) {
 	// Test 1: Fingerprint as string should be converted to int64
 	batch1 := pipeline.GetBatch()
 	row1 := batch1.AddRow()
-	row1[wkk.NewRowKey("_cardinalhq_fingerprint")] = "7754623969787599908" // String fingerprint
+	row1[wkk.NewRowKey("chq_fingerprint")] = "7754623969787599908" // String fingerprint
 	row1[wkk.NewRowKey("message")] = "test log message"
 	row1[wkk.NewRowKey("resource_service_name")] = "test-service"
 
@@ -699,7 +696,7 @@ func TestFileSplitter_FingerprintStringToInt64Conversion(t *testing.T) {
 	// Test 2: Fingerprint as int64 should remain int64
 	batch2 := pipeline.GetBatch()
 	row2 := batch2.AddRow()
-	row2[wkk.NewRowKey("_cardinalhq_fingerprint")] = int64(7754623969787599908) // int64 fingerprint
+	row2[wkk.NewRowKey("chq_fingerprint")] = int64(7754623969787599908) // int64 fingerprint
 	row2[wkk.NewRowKey("message")] = "another test message"
 	row2[wkk.NewRowKey("resource_service_name")] = "test-service"
 
@@ -732,7 +729,7 @@ func TestFileSplitter_FingerprintConversionErrors(t *testing.T) {
 	// Test invalid string fingerprint
 	batch := pipeline.GetBatch()
 	row := batch.AddRow()
-	row[wkk.NewRowKey("_cardinalhq_fingerprint")] = "not-a-number" // Invalid string
+	row[wkk.NewRowKey("chq_fingerprint")] = "not-a-number" // Invalid string
 	row[wkk.NewRowKey("message")] = "test message"
 
 	err := splitter.WriteBatchRows(ctx, batch)

@@ -26,10 +26,10 @@ import (
 // spans queries so they always have the required columns available.
 func replaceSpansTable(sql string) string {
 	base := `(SELECT *,
-  0::BIGINT   AS "_cardinalhq_timestamp",
+  0::BIGINT   AS "chq_timestamp",
   ''::VARCHAR AS "_cardinalhq_id",
-  -4446492996171837732::BIGINT   AS "_cardinalhq_fingerprint",
-  ''::VARCHAR AS "_cardinalhq_name",
+  -4446492996171837732::BIGINT   AS "chq_fingerprint",
+  ''::VARCHAR AS "chq_name",
   ''::VARCHAR AS "_cardinalhq_kind",
   ''::VARCHAR AS "_cardinalhq_span_id",
   ''::VARCHAR AS "_cardinalhq_span_trace_id",
@@ -68,10 +68,10 @@ func createSpansTable(t *testing.T, db *sql.DB) {
 	t.Cleanup(func() { mustDropSpansTable(db, "spans") })
 
 	mustExecSpans(t, db, `CREATE TABLE spans(
-  "_cardinalhq_timestamp" BIGINT,
+  "chq_timestamp" BIGINT,
   "_cardinalhq_id" VARCHAR,
-  "_cardinalhq_fingerprint" BIGINT,
-  "_cardinalhq_name" VARCHAR,
+  "chq_fingerprint" BIGINT,
+  "chq_name" VARCHAR,
   "_cardinalhq_kind" VARCHAR,
   "_cardinalhq_span_id" VARCHAR,
   "_cardinalhq_span_trace_id" VARCHAR,
@@ -108,8 +108,8 @@ func TestToSpansWorkerSQL_BasicFields(t *testing.T) {
 	// Verify the default columns exist, including spans fields
 	for _, r := range rows {
 		_ = getString(r["_cardinalhq_id"])
-		_ = getString(r["_cardinalhq_fingerprint"])
-		_ = getString(r["_cardinalhq_name"])
+		_ = getString(r["chq_fingerprint"])
+		_ = getString(r["chq_name"])
 		_ = getString(r["_cardinalhq_kind"])
 		_ = getString(r["_cardinalhq_span_id"])
 		_ = getString(r["_cardinalhq_span_trace_id"])
@@ -130,21 +130,21 @@ func TestToSpansWorkerSQL_WithCardinalhqNameMatcher(t *testing.T) {
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
-			{Label: "_cardinalhq_name", Op: MatchEq, Value: "GET /api/users"},
+			{Label: "chq_name", Op: MatchEq, Value: "GET /api/users"},
 		},
 	}
 	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 1 {
-		t.Fatalf("expected 1 row (_cardinalhq_name=GET /api/users), got %d\nsql:\n%s", len(rows), sql)
+		t.Fatalf("expected 1 row (chq_name=GET /api/users), got %d\nsql:\n%s", len(rows), sql)
 	}
 
 	// Verify we get the expected span names
 	for _, row := range rows {
-		spanName := getString(row["_cardinalhq_name"])
+		spanName := getString(row["chq_name"])
 		if spanName != "GET /api/users" {
-			t.Fatalf("expected _cardinalhq_name='GET /api/users', got %q", spanName)
+			t.Fatalf("expected chq_name='GET /api/users', got %q", spanName)
 		}
 	}
 }
@@ -192,7 +192,7 @@ func TestToSpansWorkerSQL_WithMultipleMatchers(t *testing.T) {
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
-			{Label: "_cardinalhq_name", Op: MatchRe, Value: "GET.*"},
+			{Label: "chq_name", Op: MatchRe, Value: "GET.*"},
 			{Label: "_cardinalhq_kind", Op: MatchEq, Value: "server"},
 		},
 	}
@@ -200,15 +200,15 @@ func TestToSpansWorkerSQL_WithMultipleMatchers(t *testing.T) {
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 2 {
-		t.Fatalf("expected 2 rows (_cardinalhq_name matching GET.* AND _cardinalhq_kind=server), got %d\nsql:\n%s", len(rows), sql)
+		t.Fatalf("expected 2 rows (chq_name matching GET.* AND _cardinalhq_kind=server), got %d\nsql:\n%s", len(rows), sql)
 	}
 
 	// Verify we get the expected combinations
 	for _, row := range rows {
-		spanName := getString(row["_cardinalhq_name"])
+		spanName := getString(row["chq_name"])
 		spanKind := getString(row["_cardinalhq_kind"])
 		if !strings.HasPrefix(spanName, "GET") || spanKind != "server" {
-			t.Fatalf("expected _cardinalhq_name starting with 'GET' AND _cardinalhq_kind='server', got _cardinalhq_name=%q _cardinalhq_kind=%q", spanName, spanKind)
+			t.Fatalf("expected chq_name starting with 'GET' AND _cardinalhq_kind='server', got chq_name=%q _cardinalhq_kind=%q", spanName, spanKind)
 		}
 	}
 }
@@ -226,33 +226,33 @@ func TestToSpansWorkerSQL_WithFieldsParameter(t *testing.T) {
 	// Test with fields parameter
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
-			{Label: "_cardinalhq_name", Op: MatchRe, Value: "GET.*"},
+			{Label: "chq_name", Op: MatchRe, Value: "GET.*"},
 		},
 	}
-	fields := []string{"_cardinalhq_name", "_cardinalhq_kind", "service_name"}
+	fields := []string{"chq_name", "_cardinalhq_kind", "service_name"}
 	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
-	// Should return only rows where _cardinalhq_name matches GET.* (2 rows)
+	// Should return only rows where chq_name matches GET.* (2 rows)
 	if len(rows) != 2 {
-		t.Fatalf("expected 2 rows (_cardinalhq_name matching GET.*), got %d\nsql:\n%s", len(rows), sql)
+		t.Fatalf("expected 2 rows (chq_name matching GET.*), got %d\nsql:\n%s", len(rows), sql)
 	}
 
 	// Verify that the specified fields are present in the results
 	for i, row := range rows {
-		spanName := getString(row["_cardinalhq_name"])
+		spanName := getString(row["chq_name"])
 		spanKind := getString(row["_cardinalhq_kind"])
 		serviceName := getString(row["service_name"])
 
 		// Check that fields are not empty (they should have values from our test data)
 		if spanName == "" || spanKind == "" || serviceName == "" {
-			t.Fatalf("row %d missing expected field values: _cardinalhq_name=%q _cardinalhq_kind=%q service_name=%q", i, spanName, spanKind, serviceName)
+			t.Fatalf("row %d missing expected field values: chq_name=%q _cardinalhq_kind=%q service_name=%q", i, spanName, spanKind, serviceName)
 		}
 
 		// Verify we get the expected values (only GET.* rows)
 		if !strings.HasPrefix(spanName, "GET") {
-			t.Fatalf("row %d: expected _cardinalhq_name to start with 'GET', got %q", i, spanName)
+			t.Fatalf("row %d: expected chq_name to start with 'GET', got %q", i, spanName)
 		}
 		if spanKind != "server" {
 			t.Fatalf("row %d: expected _cardinalhq_kind='server', got %q", i, spanKind)
@@ -275,21 +275,21 @@ func TestToSpansWorkerSQL_WithRegexMatcher(t *testing.T) {
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
-			{Label: "_cardinalhq_name", Op: MatchRe, Value: "GET.*"},
+			{Label: "chq_name", Op: MatchRe, Value: "GET.*"},
 		},
 	}
 	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 2 {
-		t.Fatalf("expected 2 rows (_cardinalhq_name matching 'GET.*'), got %d\nsql:\n%s", len(rows), sql)
+		t.Fatalf("expected 2 rows (chq_name matching 'GET.*'), got %d\nsql:\n%s", len(rows), sql)
 	}
 
 	// Verify we get the expected span names
 	for _, row := range rows {
-		spanName := getString(row["_cardinalhq_name"])
+		spanName := getString(row["chq_name"])
 		if !strings.HasPrefix(spanName, "GET") {
-			t.Fatalf("expected _cardinalhq_name to start with 'GET', got %q", spanName)
+			t.Fatalf("expected chq_name to start with 'GET', got %q", spanName)
 		}
 	}
 }

@@ -201,20 +201,20 @@ func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Re
 	ret["_cardinalhq_span_trace_id"] = span.TraceID().String()
 	ret["_cardinalhq_span_id"] = span.SpanID().String()
 	ret["_cardinalhq_parent_span_id"] = span.ParentSpanID().String()
-	ret["_cardinalhq_name"] = span.Name()
+	ret["chq_name"] = span.Name()
 	ret["_cardinalhq_kind"] = span.Kind().String()
 	ret["_cardinalhq_status_code"] = span.Status().Code().String()
 	ret["_cardinalhq_status_message"] = span.Status().Message()
 
 	// Handle start timestamp with fallback
 	if span.StartTimestamp() != 0 {
-		ret["_cardinalhq_timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
-		ret["_cardinalhq_tsns"] = int64(span.StartTimestamp())
+		ret["chq_timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
+		ret["chq_tsns"] = int64(span.StartTimestamp())
 	} else {
 		// Fallback to current time when start timestamp is zero
 		currentTime := time.Now()
-		ret["_cardinalhq_timestamp"] = currentTime.UnixMilli()
-		ret["_cardinalhq_tsns"] = currentTime.UnixNano()
+		ret["chq_timestamp"] = currentTime.UnixMilli()
+		ret["chq_tsns"] = currentTime.UnixNano()
 		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("signal_type", "traces"),
 			attribute.String("reason", "current_fallback"),

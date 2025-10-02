@@ -240,7 +240,7 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 
 	for i, col := range cols {
 		switch col {
-		case "_cardinalhq_timestamp":
+		case "chq_timestamp":
 			exemplar.Timestamp = vals[i].(int64)
 		default:
 			if vals[i] != nil {

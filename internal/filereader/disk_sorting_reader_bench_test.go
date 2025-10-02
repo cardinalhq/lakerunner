@@ -36,8 +36,8 @@ func createTestRowsForSorting(numRows int) []pipeline.Row {
 			wkk.RowKeyRollupCount:                    float64(1),
 			wkk.RowKeyRollupSum:                      float64(50.0 + float64(i)),
 			wkk.RowKeySketch:                         []byte{byte(i % 256)},
-			wkk.NewRowKey("_cardinalhq_description"): fmt.Sprintf("Test metric %d", i),
-			wkk.NewRowKey("_cardinalhq_unit"):        "percent",
+			wkk.NewRowKey("chq_description"): fmt.Sprintf("Test metric %d", i),
+			wkk.NewRowKey("chq_unit"):        "percent",
 			wkk.NewRowKey("service_name"):            fmt.Sprintf("service_%d", i%3),
 			wkk.NewRowKey("host"):                    fmt.Sprintf("host_%d", i%5),
 		}

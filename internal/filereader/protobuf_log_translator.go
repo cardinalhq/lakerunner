@@ -55,7 +55,7 @@ func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row
 	}
 
 	// Handle timestamp: use timestamp, fallback to observed_timestamp
-	// NOTE: _cardinalhq_timestamp should already be validated by ingest_proto_logs.go
+	// NOTE: chq_timestamp should already be validated by ingest_proto_logs.go
 	// This is a secondary validation for other readers that may not have done it
 	if _, ok := (*row)[wkk.RowKeyCTimestamp]; !ok {
 		var timestamp int64
@@ -91,11 +91,11 @@ func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row
 		}
 	}
 
-	// Handle level: use severity_text if _cardinalhq_level not set
-	if _, ok := (*row)[wkk.NewRowKey("_cardinalhq_level")]; !ok {
+	// Handle level: use severity_text if chq_level not set
+	if _, ok := (*row)[wkk.NewRowKey("chq_level")]; !ok {
 		if severityText, exists := (*row)[wkk.NewRowKey("severity_text")]; exists {
 			if level, isString := severityText.(string); isString && level != "" {
-				(*row)[wkk.NewRowKey("_cardinalhq_level")] = level
+				(*row)[wkk.NewRowKey("chq_level")] = level
 			}
 		}
 	}
