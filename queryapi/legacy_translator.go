@@ -78,7 +78,7 @@ func filterToLogQL(clause QueryClause, ctx *TranslationContext) ([]string, []str
 			matchers = append(matchers, fmt.Sprintf(`%s="%s"`, normalized, escapedVal))
 
 		case "in":
-			// LogQL: label=~"val1|val2|val3"
+			// LogQL: label=~"^(val1|val2|val3)$" - anchored for exact match
 			if len(c.V) == 0 {
 				return nil, nil, fmt.Errorf("in operator requires at least one value")
 			}
@@ -87,7 +87,7 @@ func filterToLogQL(clause QueryClause, ctx *TranslationContext) ([]string, []str
 			for i, v := range c.V {
 				escaped[i] = escapeRegexValue(v)
 			}
-			pattern := strings.Join(escaped, "|")
+			pattern := "^(" + strings.Join(escaped, "|") + ")$"
 			matchers = append(matchers, fmt.Sprintf(`%s=~"%s"`, normalized, pattern))
 
 		case "contains":

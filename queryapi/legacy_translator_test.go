@@ -51,7 +51,7 @@ func TestTranslateToLogQL_InOperator(t *testing.T) {
 
 	logql, _, err := TranslateToLogQL(baseExpr)
 	require.NoError(t, err)
-	assert.Equal(t, `{log_level=~"error|warn|fatal"}`, logql)
+	assert.Equal(t, `{log_level=~"^(error|warn|fatal)$"}`, logql)
 }
 
 func TestTranslateToLogQL_ContainsOperator(t *testing.T) {
