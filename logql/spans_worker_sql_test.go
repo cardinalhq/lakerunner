@@ -29,7 +29,7 @@ func replaceSpansTable(sql string) string {
   0::BIGINT   AS "chq_timestamp",
   ''::VARCHAR AS "_cardinalhq_id",
   -4446492996171837732::BIGINT   AS "chq_fingerprint",
-  ''::VARCHAR AS "chq_name",
+  ''::VARCHAR AS "metric_name",
   ''::VARCHAR AS "_cardinalhq_kind",
   ''::VARCHAR AS "_cardinalhq_span_id",
   ''::VARCHAR AS "_cardinalhq_span_trace_id",
@@ -71,7 +71,7 @@ func createSpansTable(t *testing.T, db *sql.DB) {
   "chq_timestamp" BIGINT,
   "_cardinalhq_id" VARCHAR,
   "chq_fingerprint" BIGINT,
-  "chq_name" VARCHAR,
+  "metric_name" VARCHAR,
   "_cardinalhq_kind" VARCHAR,
   "_cardinalhq_span_id" VARCHAR,
   "_cardinalhq_span_trace_id" VARCHAR,
@@ -109,7 +109,7 @@ func TestToSpansWorkerSQL_BasicFields(t *testing.T) {
 	for _, r := range rows {
 		_ = getString(r["_cardinalhq_id"])
 		_ = getString(r["chq_fingerprint"])
-		_ = getString(r["chq_name"])
+		_ = getString(r["metric_name"])
 		_ = getString(r["_cardinalhq_kind"])
 		_ = getString(r["_cardinalhq_span_id"])
 		_ = getString(r["_cardinalhq_span_trace_id"])
@@ -130,7 +130,7 @@ func TestToSpansWorkerSQL_WithCardinalhqNameMatcher(t *testing.T) {
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
-			{Label: "chq_name", Op: MatchEq, Value: "GET /api/users"},
+			{Label: "metric_name", Op: MatchEq, Value: "GET /api/users"},
 		},
 	}
 	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
@@ -142,7 +142,7 @@ func TestToSpansWorkerSQL_WithCardinalhqNameMatcher(t *testing.T) {
 
 	// Verify we get the expected span names
 	for _, row := range rows {
-		spanName := getString(row["chq_name"])
+		spanName := getString(row["metric_name"])
 		if spanName != "GET /api/users" {
 			t.Fatalf("expected chq_name='GET /api/users', got %q", spanName)
 		}
@@ -192,7 +192,7 @@ func TestToSpansWorkerSQL_WithMultipleMatchers(t *testing.T) {
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
-			{Label: "chq_name", Op: MatchRe, Value: "GET.*"},
+			{Label: "metric_name", Op: MatchRe, Value: "GET.*"},
 			{Label: "_cardinalhq_kind", Op: MatchEq, Value: "server"},
 		},
 	}
@@ -205,7 +205,7 @@ func TestToSpansWorkerSQL_WithMultipleMatchers(t *testing.T) {
 
 	// Verify we get the expected combinations
 	for _, row := range rows {
-		spanName := getString(row["chq_name"])
+		spanName := getString(row["metric_name"])
 		spanKind := getString(row["_cardinalhq_kind"])
 		if !strings.HasPrefix(spanName, "GET") || spanKind != "server" {
 			t.Fatalf("expected chq_name starting with 'GET' AND _cardinalhq_kind='server', got chq_name=%q _cardinalhq_kind=%q", spanName, spanKind)
@@ -226,10 +226,10 @@ func TestToSpansWorkerSQL_WithFieldsParameter(t *testing.T) {
 	// Test with fields parameter
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
-			{Label: "chq_name", Op: MatchRe, Value: "GET.*"},
+			{Label: "metric_name", Op: MatchRe, Value: "GET.*"},
 		},
 	}
-	fields := []string{"chq_name", "_cardinalhq_kind", "service_name"}
+	fields := []string{"metric_name", "_cardinalhq_kind", "service_name"}
 	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
 
 	rows := queryAll(t, db, sql)
@@ -241,7 +241,7 @@ func TestToSpansWorkerSQL_WithFieldsParameter(t *testing.T) {
 
 	// Verify that the specified fields are present in the results
 	for i, row := range rows {
-		spanName := getString(row["chq_name"])
+		spanName := getString(row["metric_name"])
 		spanKind := getString(row["_cardinalhq_kind"])
 		serviceName := getString(row["service_name"])
 
@@ -275,7 +275,7 @@ func TestToSpansWorkerSQL_WithRegexMatcher(t *testing.T) {
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
-			{Label: "chq_name", Op: MatchRe, Value: "GET.*"},
+			{Label: "metric_name", Op: MatchRe, Value: "GET.*"},
 		},
 	}
 	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
@@ -287,7 +287,7 @@ func TestToSpansWorkerSQL_WithRegexMatcher(t *testing.T) {
 
 	// Verify we get the expected span names
 	for _, row := range rows {
-		spanName := getString(row["chq_name"])
+		spanName := getString(row["metric_name"])
 		if !strings.HasPrefix(spanName, "GET") {
 			t.Fatalf("expected chq_name to start with 'GET', got %q", spanName)
 		}

@@ -105,9 +105,9 @@ func TestComputeFingerprint(t *testing.T) {
 	}{
 		{
 			name:      "simple case",
-			fieldName: "chq_name",
+			fieldName: "metric_name",
 			trigram:   "foo",
-			expected:  computeHash("chq_name:foo"),
+			expected:  computeHash("metric_name:foo"),
 		},
 		{
 			name:      "exists regex",

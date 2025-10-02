@@ -29,17 +29,17 @@ func createTestRowsForSorting(numRows int) []pipeline.Row {
 
 	for i := range numRows {
 		rows[i] = pipeline.Row{
-			wkk.RowKeyCName:                          fmt.Sprintf("metric_%d", i%10), // 10 different metric names
-			wkk.RowKeyCTID:                           int64(100 + i%5),               // 5 different TIDs per metric
-			wkk.RowKeyCTimestamp:                     int64(1000 + i*1000),           // Sequential timestamps
-			wkk.RowKeyRollupAvg:                      float64(50.0 + float64(i)),
-			wkk.RowKeyRollupCount:                    float64(1),
-			wkk.RowKeyRollupSum:                      float64(50.0 + float64(i)),
-			wkk.RowKeySketch:                         []byte{byte(i % 256)},
+			wkk.RowKeyCName:                  fmt.Sprintf("metric_%d", i%10), // 10 different metric names
+			wkk.RowKeyCTID:                   int64(100 + i%5),               // 5 different TIDs per metric
+			wkk.RowKeyCTimestamp:             int64(1000 + i*1000),           // Sequential timestamps
+			wkk.RowKeyRollupAvg:              float64(50.0 + float64(i)),
+			wkk.RowKeyRollupCount:            float64(1),
+			wkk.RowKeyRollupSum:              float64(50.0 + float64(i)),
+			wkk.RowKeySketch:                 []byte{byte(i % 256)},
 			wkk.NewRowKey("chq_description"): fmt.Sprintf("Test metric %d", i),
 			wkk.NewRowKey("chq_unit"):        "percent",
-			wkk.NewRowKey("service_name"):            fmt.Sprintf("service_%d", i%3),
-			wkk.NewRowKey("host"):                    fmt.Sprintf("host_%d", i%5),
+			wkk.NewRowKey("service_name"):    fmt.Sprintf("service_%d", i%3),
+			wkk.NewRowKey("host"):            fmt.Sprintf("host_%d", i%5),
 		}
 	}
 

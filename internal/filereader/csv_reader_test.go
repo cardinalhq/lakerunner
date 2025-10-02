@@ -295,7 +295,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]any{
 				"chq_message":   "This is a log message",
 				"chq_timestamp": int64(1758397185000),
-				"log_level":             "INFO",
+				"log_level":     "INFO",
 			},
 		},
 		{
@@ -329,10 +329,10 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("status code"):  int64(200),
 			},
 			expected: map[string]any{
-				"chq_message": "Message",
-				"log_user_name":       "alice",
-				"log_request.type":    "GET",
-				"log_status_code":     int64(200),
+				"chq_message":      "Message",
+				"log_user_name":    "alice",
+				"log_request.type": "GET",
+				"log_status_code":  int64(200),
 			},
 		},
 		{
@@ -345,7 +345,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]any{
 				"chq_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
-				"log_user":              "bob",
+				"log_user":      "bob",
 			},
 		},
 		{
@@ -358,7 +358,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]any{
 				"chq_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
-				"log_user":              "alice",
+				"log_user":      "alice",
 			},
 		},
 		{
@@ -371,7 +371,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]any{
 				"chq_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
-				"log_user":              "bob",
+				"log_user":      "bob",
 			},
 		},
 		{
@@ -384,7 +384,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]any{
 				"chq_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
-				"log_user":              "charlie",
+				"log_user":      "charlie",
 			},
 		},
 		{
@@ -397,7 +397,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]any{
 				"chq_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
-				"log_user":              "david",
+				"log_user":      "david",
 			},
 		},
 		{
@@ -411,8 +411,8 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]any{
 				"chq_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
-				"log_alice":             "titlecase", // "Alice" comes first alphabetically
-				"log_alice_2":           "lowercase", // "alice" comes second alphabetically
+				"log_alice":     "titlecase", // "Alice" comes first alphabetically
+				"log_alice_2":   "lowercase", // "alice" comes second alphabetically
 			},
 		},
 		{
@@ -427,9 +427,9 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]any{
 				"chq_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
-				"log_field":             "third",  // "FIELD" comes first alphabetically
-				"log_field_2":           "second", // "Field" comes second alphabetically
-				"log_field_3":           "first",  // "field" comes third alphabetically
+				"log_field":     "third",  // "FIELD" comes first alphabetically
+				"log_field_2":   "second", // "Field" comes second alphabetically
+				"log_field_3":   "first",  // "field" comes third alphabetically
 			},
 		},
 		{
@@ -444,9 +444,9 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 			expected: map[string]any{
 				"chq_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
-				"log_foo_bar":           "space", // "foo bar" comes first alphabetically
-				"log_foo_bar_2":         "dash",  // "foo-bar" comes second alphabetically
-				"log_foo_bar_3":         "at",    // "foo@bar" comes third alphabetically
+				"log_foo_bar":   "space", // "foo bar" comes first alphabetically
+				"log_foo_bar_2": "dash",  // "foo-bar" comes second alphabetically
+				"log_foo_bar_3": "at",    // "foo@bar" comes third alphabetically
 			},
 		},
 		{
@@ -460,12 +460,12 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("time"):      int64(1758397185000),
 			},
 			expected: map[string]any{
-				"chq_message":   "Message",
-				"chq_timestamp": int64(1758397185000),
-				"log_user_name":         "space",      // "user name" comes first alphabetically
-				"log_user_name_2":       "dash",       // "user-name" comes second alphabetically
-				"log_user_name_3":       "at",         // "user@name" comes third alphabetically
-				"log_user_name_4":       "underscore", // "user_name" comes fourth alphabetically
+				"chq_message":     "Message",
+				"chq_timestamp":   int64(1758397185000),
+				"log_user_name":   "space",      // "user name" comes first alphabetically
+				"log_user_name_2": "dash",       // "user-name" comes second alphabetically
+				"log_user_name_3": "at",         // "user@name" comes third alphabetically
+				"log_user_name_4": "underscore", // "user_name" comes fourth alphabetically
 			},
 		},
 	}

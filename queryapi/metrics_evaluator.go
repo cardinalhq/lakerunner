@@ -455,7 +455,7 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 
 	var allSegments []SegmentInfo
 
-	fingerprint := computeFingerprint("chq_name", be.Metric)
+	fingerprint := computeFingerprint("metric_name", be.Metric)
 
 	rows, err := q.mdb.ListMetricSegmentsForQuery(ctx, lrdb.ListMetricSegmentsForQueryParams{
 		Int8range:      startTs,

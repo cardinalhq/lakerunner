@@ -26,7 +26,7 @@ var (
 	}
 	dimensionsToIndex = append([]string{
 		"chq_telemetry_type",
-		"chq_name",
+		"metric_name",
 		"chq_level",
 		//"chq_message",
 		"_cardinalhq_span_trace_id",

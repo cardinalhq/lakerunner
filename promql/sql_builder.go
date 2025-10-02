@@ -459,7 +459,7 @@ func whereFor(be *BaseExpr) string {
 
 	// For synthetic log metrics, we do NOT filter by metric name at all.
 	if be.Metric != "" && !be.isSyntheticLogMetric() {
-		parts = append(parts, fmt.Sprintf("\"chq_name\" = %s", sqlLit(be.Metric)))
+		parts = append(parts, fmt.Sprintf("\"metric_name\" = %s", sqlLit(be.Metric)))
 	}
 
 	for _, m := range be.Matchers {

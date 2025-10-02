@@ -108,8 +108,8 @@ var (
 	// RowKeyCMetricType: "chq_metric_type"
 	RowKeyCMetricType = NewRowKey("chq_metric_type")
 
-	// RowKeyCName: "chq_name"
-	RowKeyCName = NewRowKey("chq_name")
+	// RowKeyCName: "metric_name"
+	RowKeyCName = NewRowKey("metric_name")
 
 	// RowKeyCTelemetryType: "chq_telemetry_type"
 	RowKeyCTelemetryType = NewRowKey("chq_telemetry_type")

@@ -13,10 +13,11 @@ dimensional attributes. The TID is a 64-bit hash computed from specific fields i
 
 #### Fields included in TID calculation
 
-- `chq_name` - The metric name (always included)
+- `metric_name` - The metric name (always included)
 - `chq_metric_type` - The metric type: gauge, counter, histogram (always included if present)
 - `resource_*` - Resource attributes (string values only)
 - `attr_*` - Metric-specific attributes/labels (string values only)
+- `metric_*` - Metric-specific fields (string values only)
 
 #### Fields explicitly excluded from TID calculation
 
@@ -33,7 +34,7 @@ Fields are sorted alphabetically before hashing to ensure consistent results reg
 
 #### Core identification fields
 
-- `chq_name` - The metric name (required)
+- `metric_name` - The metric name (required)
 - `chq_metric_type` - The metric type: gauge, counter, histogram
 - `chq_tid` - The computed timeseries ID (added during processing)
 - `chq_timestamp` - The metric datapoint's timestamp in Unix milliseconds

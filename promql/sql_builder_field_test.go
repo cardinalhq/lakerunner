@@ -69,7 +69,7 @@ func TestSQLGenerationWithNormalizedFields(t *testing.T) {
 		Matchers: []LabelMatch{
 			{Label: "resource.k8s.namespace.name", Op: MatchEq, Value: "default"},
 			{Label: "resource.service.name", Op: MatchEq, Value: "api"},
-			{Label: "chq_name", Op: MatchEq, Value: "test"},
+			{Label: "metric_name", Op: MatchEq, Value: "test"},
 		},
 		GroupBy: []string{"resource.k8s.pod.name", "metric.http.status"},
 	}
@@ -93,7 +93,7 @@ func TestSQLGenerationWithNormalizedFields(t *testing.T) {
 	}
 
 	// Check that _cardinalhq fields are preserved
-	if !strings.Contains(sql, `"chq_name"`) {
+	if !strings.Contains(sql, `"metric_name"`) {
 		t.Errorf("Expected _cardinalhq field to be preserved, got: %s", sql)
 	}
 }

@@ -46,7 +46,7 @@ func NewMetricsWriter(tmpdir string, recordsPerFile int64) (parquetwriter.Parque
 // for efficient rollup aggregation.
 func metricsGroupKeyFunc() func(row map[string]any) any {
 	return func(row map[string]any) any {
-		name, nameOk := row["chq_name"].(string)
+		name, nameOk := row["metric_name"].(string)
 		if !nameOk {
 			return nil
 		}
@@ -89,7 +89,7 @@ type MetricsStatsAccumulator struct {
 
 func (a *MetricsStatsAccumulator) Add(row map[string]any) {
 	// Track metric name for fingerprinting
-	if name, ok := row["chq_name"].(string); ok && name != "" {
+	if name, ok := row["metric_name"].(string); ok && name != "" {
 		a.metricNames.Add(name)
 	}
 
@@ -122,7 +122,7 @@ func (a *MetricsStatsAccumulator) Add(row map[string]any) {
 func (a *MetricsStatsAccumulator) Finalize() any {
 	// Create a map with metric names as a set for fingerprinting
 	tagValuesByName := map[string]mapset.Set[string]{
-		"chq_name": a.metricNames,
+		"metric_name": a.metricNames,
 	}
 
 	// Generate fingerprints using the same approach
@@ -146,7 +146,7 @@ type MetricsFileStats struct {
 
 // ValidateMetricsRow checks that a row has the required fields for metrics processing.
 func ValidateMetricsRow(row map[string]any) error {
-	nameVal, ok := row["chq_name"]
+	nameVal, ok := row["metric_name"]
 	if !ok {
 		return fmt.Errorf("missing required field: chq_name")
 	}

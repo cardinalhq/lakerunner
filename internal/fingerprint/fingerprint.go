@@ -34,12 +34,12 @@ var (
 	}
 	DimensionsToIndex = append([]string{
 		"chq_telemetry_type",
-		"chq_name",
+		"metric_name",
 		"chq_level",
 		//"chq_message",
 		"_cardinalhq_span_trace_id",
 	}, InfraDimensions...)
-	IndexFullValueDimensions = []string{"chq_name", "resource_file"}
+	IndexFullValueDimensions = []string{"metric_name", "resource_file"}
 )
 
 // ToFingerprints converts a map of tagName → slice of tagValues into a set of fingerprints.

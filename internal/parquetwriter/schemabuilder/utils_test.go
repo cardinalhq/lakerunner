@@ -48,10 +48,10 @@ func TestWantDictionary(t *testing.T) {
 		fieldName string
 		expected  bool
 	}{
-		{"chq_message", false}, // Overridden to false
-		{"chq_tid", false},     // Overridden to false
-		{"regular_field", true},        // Default value
-		{"another_field", true},        // Default value
+		{"chq_message", false},  // Overridden to false
+		{"chq_tid", false},      // Overridden to false
+		{"regular_field", true}, // Default value
+		{"another_field", true}, // Default value
 	}
 
 	for _, tt := range tests {

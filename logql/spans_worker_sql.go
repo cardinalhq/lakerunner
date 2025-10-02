@@ -91,15 +91,15 @@ func (be *LogLeaf) ToSpansWorkerSQLWithLimit(limit int, order string, fields []s
 // isSpansBaseCol checks if a column is a base column for spans
 func isSpansBaseCol(col string) bool {
 	spansBaseCols := map[string]struct{}{
-		"\"chq_name\"":          {},
+		"\"chq_name\"":                  {},
 		"\"_cardinalhq_kind\"":          {},
 		"\"_cardinalhq_span_id\"":       {},
 		"\"_cardinalhq_span_trace_id\"": {},
 		"\"_cardinalhq_status_code\"":   {},
 		"\"_cardinalhq_span_duration\"": {},
-		"\"chq_timestamp\"":     {},
+		"\"chq_timestamp\"":             {},
 		"\"_cardinalhq_id\"":            {},
-		"\"chq_fingerprint\"":   {},
+		"\"chq_fingerprint\"":           {},
 	}
 	_, ok := spansBaseCols[col]
 	return ok

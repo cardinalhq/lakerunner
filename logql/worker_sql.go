@@ -541,7 +541,8 @@ func emitParsersWithPostLineFilters(
 				}
 				// Don't extract base columns from JSON - they should already exist
 				if strings.HasPrefix(k, "resource_") || strings.HasPrefix(k, "attr_") ||
-					strings.HasPrefix(k, "scope_") || strings.HasPrefix(k, "chq_") {
+					strings.HasPrefix(k, "scope_") || strings.HasPrefix(k, "chq_") ||
+					strings.HasPrefix(k, "metric_") {
 					continue
 				}
 				path := jsonPathForKey(k)
