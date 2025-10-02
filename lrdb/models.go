@@ -123,6 +123,7 @@ type LogSeg struct {
 	CreatedAt      time.Time                 `json:"created_at"`
 	Compacted      bool                      `json:"compacted"`
 	Published      bool                      `json:"published"`
+	LabelNameMap   []byte                    `json:"label_name_map"`
 }
 
 type LrdbExemplarLog struct {

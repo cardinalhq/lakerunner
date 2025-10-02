@@ -546,7 +546,8 @@ INSERT INTO log_seg (
   created_by,
   fingerprints,
   published,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   $1,
@@ -559,7 +560,8 @@ VALUES (
   $9,
   $10::bigint[],
   $11,
-  $12
+  $12,
+  $13
 )
 `
 
@@ -582,6 +584,7 @@ type batchInsertLogSegsDirectParams struct {
 	Fingerprints   []int64   `json:"fingerprints"`
 	Published      bool      `json:"published"`
 	Compacted      bool      `json:"compacted"`
+	LabelNameMap   []byte    `json:"label_name_map"`
 }
 
 func (q *Queries) batchInsertLogSegsDirect(ctx context.Context, arg []batchInsertLogSegsDirectParams) *batchInsertLogSegsDirectBatchResults {
@@ -600,6 +603,7 @@ func (q *Queries) batchInsertLogSegsDirect(ctx context.Context, arg []batchInser
 			a.Fingerprints,
 			a.Published,
 			a.Compacted,
+			a.LabelNameMap,
 		}
 		batch.Queue(batchInsertLogSegsDirect, vals...)
 	}

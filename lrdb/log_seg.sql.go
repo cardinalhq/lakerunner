@@ -11,8 +11,50 @@ import (
 	"github.com/google/uuid"
 )
 
+const getLabelNameMaps = `-- name: GetLabelNameMaps :many
+SELECT
+    segment_id,
+    label_name_map
+FROM log_seg
+WHERE organization_id = $1
+  AND dateint = $2
+  AND segment_id = ANY($3::BIGINT[])
+  AND label_name_map IS NOT NULL
+`
+
+type GetLabelNameMapsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+type GetLabelNameMapsRow struct {
+	SegmentID    int64  `json:"segment_id"`
+	LabelNameMap []byte `json:"label_name_map"`
+}
+
+func (q *Queries) GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsParams) ([]GetLabelNameMapsRow, error) {
+	rows, err := q.db.Query(ctx, getLabelNameMaps, arg.OrganizationID, arg.Dateint, arg.SegmentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetLabelNameMapsRow
+	for rows.Next() {
+		var i GetLabelNameMapsRow
+		if err := rows.Scan(&i.SegmentID, &i.LabelNameMap); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLogSeg = `-- name: GetLogSeg :one
-SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map
 FROM log_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -49,6 +91,7 @@ func (q *Queries) GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, e
 		&i.CreatedAt,
 		&i.Compacted,
 		&i.Published,
+		&i.LabelNameMap,
 	)
 	return i, err
 }
@@ -147,6 +190,34 @@ func (q *Queries) MarkLogSegsCompactedByKeys(ctx context.Context, arg MarkLogSeg
 	return err
 }
 
+const updateLogSegLabelNameMap = `-- name: UpdateLogSegLabelNameMap :exec
+UPDATE log_seg
+SET label_name_map = $1
+WHERE organization_id = $2
+  AND dateint = $3
+  AND segment_id = $4
+  AND instance_num = $5
+`
+
+type UpdateLogSegLabelNameMapParams struct {
+	LabelNameMap   []byte    `json:"label_name_map"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+}
+
+func (q *Queries) UpdateLogSegLabelNameMap(ctx context.Context, arg UpdateLogSegLabelNameMapParams) error {
+	_, err := q.db.Exec(ctx, updateLogSegLabelNameMap,
+		arg.LabelNameMap,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.SegmentID,
+		arg.InstanceNum,
+	)
+	return err
+}
+
 const insertLogSegmentDirect = `-- name: insertLogSegmentDirect :exec
 INSERT INTO log_seg (
   organization_id,
@@ -159,7 +230,8 @@ INSERT INTO log_seg (
   created_by,
   fingerprints,
   published,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   $1,
@@ -172,7 +244,8 @@ VALUES (
   $9,
   $10::bigint[],
   $11,
-  $12
+  $12,
+  $13
 )
 `
 
@@ -189,6 +262,7 @@ type InsertLogSegmentParams struct {
 	Fingerprints   []int64   `json:"fingerprints"`
 	Published      bool      `json:"published"`
 	Compacted      bool      `json:"compacted"`
+	LabelNameMap   []byte    `json:"label_name_map"`
 }
 
 func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error {
@@ -205,6 +279,7 @@ func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 		arg.Fingerprints,
 		arg.Published,
 		arg.Compacted,
+		arg.LabelNameMap,
 	)
 	return err
 }
