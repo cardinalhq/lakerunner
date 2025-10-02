@@ -674,3 +674,70 @@ func createEmptyBatch(t *testing.T) *pipeline.Batch {
 	t.Helper()
 	return pipeline.GetBatch()
 }
+
+func TestFileSplitter_FingerprintStringToInt64Conversion(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := WriterConfig{
+		TmpDir:         tmpDir,
+		RecordsPerFile: NoRecordLimitPerFile,
+	}
+
+	splitter := NewFileSplitter(config)
+	ctx := context.Background()
+
+	// Test 1: Fingerprint as string should be converted to int64
+	batch1 := pipeline.GetBatch()
+	row1 := batch1.AddRow()
+	row1[wkk.NewRowKey("_cardinalhq_fingerprint")] = "7754623969787599908" // String fingerprint
+	row1[wkk.NewRowKey("message")] = "test log message"
+	row1[wkk.NewRowKey("resource_service_name")] = "test-service"
+
+	err := splitter.WriteBatchRows(ctx, batch1)
+	require.NoError(t, err, "Should handle fingerprint string conversion")
+
+	// Test 2: Fingerprint as int64 should remain int64
+	batch2 := pipeline.GetBatch()
+	row2 := batch2.AddRow()
+	row2[wkk.NewRowKey("_cardinalhq_fingerprint")] = int64(7754623969787599908) // int64 fingerprint
+	row2[wkk.NewRowKey("message")] = "another test message"
+	row2[wkk.NewRowKey("resource_service_name")] = "test-service"
+
+	err = splitter.WriteBatchRows(ctx, batch2)
+	require.NoError(t, err, "Should handle int64 fingerprint directly")
+
+	// Close and verify results
+	results, err := splitter.Close(ctx)
+	require.NoError(t, err)
+	require.Len(t, results, 1, "Should have one output file")
+	require.Equal(t, int64(2), results[0].RecordCount, "Should have 2 records")
+
+	// Clean up
+	for _, result := range results {
+		_ = os.Remove(result.FileName)
+	}
+}
+
+func TestFileSplitter_FingerprintConversionErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := WriterConfig{
+		TmpDir:         tmpDir,
+		RecordsPerFile: NoRecordLimitPerFile,
+	}
+
+	splitter := NewFileSplitter(config)
+	ctx := context.Background()
+
+	// Test invalid string fingerprint
+	batch := pipeline.GetBatch()
+	row := batch.AddRow()
+	row[wkk.NewRowKey("_cardinalhq_fingerprint")] = "not-a-number" // Invalid string
+	row[wkk.NewRowKey("message")] = "test message"
+
+	err := splitter.WriteBatchRows(ctx, batch)
+	require.Error(t, err, "Should error on invalid fingerprint string")
+	require.Contains(t, err.Error(), "failed to parse fingerprint")
+
+	splitter.Abort()
+}

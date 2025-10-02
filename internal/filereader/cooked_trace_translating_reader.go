@@ -17,6 +17,7 @@ package filereader
 import (
 	"context"
 	"io"
+	"strconv"
 
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -110,10 +111,31 @@ func (r *CookedTraceTranslatingReader) shouldDropRow(ctx context.Context, row pi
 
 // transformRow applies trace-specific transformations to a row in place.
 func (r *CookedTraceTranslatingReader) transformRow(row pipeline.Row) {
-	// Ensure fingerprint is bytes if present
+	// Ensure fingerprint is int64 if present
 	if fpValue, exists := row[wkk.RowKeyCFingerprint]; exists {
-		if fpStr, ok := fpValue.(string); ok {
-			row[wkk.RowKeyCFingerprint] = []byte(fpStr)
+		switch v := fpValue.(type) {
+		case string:
+			// Convert string to int64
+			if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
+				row[wkk.RowKeyCFingerprint] = parsed
+			}
+			// If parse fails, leave as-is (will be handled downstream)
+		case []byte:
+			// Convert bytes to int64 via string
+			if parsed, err := strconv.ParseInt(string(v), 10, 64); err == nil {
+				row[wkk.RowKeyCFingerprint] = parsed
+			}
+			// If parse fails, leave as-is (will be handled downstream)
+		case int64:
+			// Already int64, nothing to do
+		case int:
+			row[wkk.RowKeyCFingerprint] = int64(v)
+		case int32:
+			row[wkk.RowKeyCFingerprint] = int64(v)
+		case uint32:
+			row[wkk.RowKeyCFingerprint] = int64(v)
+		case uint64:
+			row[wkk.RowKeyCFingerprint] = int64(v)
 		}
 	}
 

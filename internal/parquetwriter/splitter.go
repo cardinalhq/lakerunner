@@ -133,6 +133,58 @@ func (s *FileSplitter) convertToStringIfNeeded(fieldName string, value any) any 
 	}
 }
 
+// convertFingerprintToInt64 converts _cardinalhq_fingerprint from string to int64 if needed.
+// The fingerprint field must always be int64 in the schema.
+func (s *FileSplitter) convertFingerprintToInt64(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	// If already int64, return as-is
+	if v, ok := value.(int64); ok {
+		return v, nil
+	}
+
+	// Convert string to int64
+	if str, ok := value.(string); ok {
+		val, err := strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse fingerprint string %q as int64: %w", str, err)
+		}
+		return val, nil
+	}
+
+	// For other numeric types, convert to int64
+	switch v := value.(type) {
+	case int:
+		return int64(v), nil
+	case int32:
+		return int64(v), nil
+	case int16:
+		return int64(v), nil
+	case int8:
+		return int64(v), nil
+	case uint64:
+		if v > uint64(9223372036854775807) { // max int64
+			return nil, fmt.Errorf("fingerprint value %d exceeds int64 max", v)
+		}
+		return int64(v), nil
+	case uint32:
+		return int64(v), nil
+	case uint16:
+		return int64(v), nil
+	case uint8:
+		return int64(v), nil
+	case uint:
+		if v > uint(9223372036854775807) {
+			return nil, fmt.Errorf("fingerprint value %d exceeds int64 max", v)
+		}
+		return int64(v), nil
+	default:
+		return nil, fmt.Errorf("unsupported fingerprint type: %T", value)
+	}
+}
+
 // WriteBatchRows efficiently writes multiple rows from a pipeline batch.
 // Rows are buffered to binary files to allow schema evolution across batches.
 func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch) error {
@@ -186,7 +238,18 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		for key, value := range row {
 			fieldName := string(key.Value())
 			// Apply string conversion for fields with configured prefixes
-			stringRow[fieldName] = s.convertToStringIfNeeded(fieldName, value)
+			convertedValue := s.convertToStringIfNeeded(fieldName, value)
+
+			// Special handling for _cardinalhq_fingerprint: must always be int64
+			if fieldName == "_cardinalhq_fingerprint" {
+				var err error
+				convertedValue, err = s.convertFingerprintToInt64(convertedValue)
+				if err != nil {
+					return fmt.Errorf("convert fingerprint for row %d: %w", i, err)
+				}
+			}
+
+			stringRow[fieldName] = convertedValue
 		}
 
 		stringRow["_cardinalhq_id"] = idgen.NextBase32ID()
