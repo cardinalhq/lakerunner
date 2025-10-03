@@ -25,6 +25,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -256,6 +257,11 @@ func (r *IngestProtoTracesReader) processRow(row map[string]any) (pipeline.Row, 
 	for k, v := range row {
 		result[wkk.NewRowKey(k)] = v
 	}
+
+	// Calculate and add the fingerprint
+	fingerprint := fingerprinter.CalculateSpanFingerprintFromRow(result)
+	result[wkk.RowKeyCFingerprint] = fingerprint
+
 	return result, nil
 }
 
