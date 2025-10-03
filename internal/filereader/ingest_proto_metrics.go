@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -99,9 +98,12 @@ func (r *IngestProtoMetricsReader) Next(ctx context.Context) (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < r.batchSize {
-		row := make(pipeline.Row)
+		// Get a row from the pool to populate
+		row := pipeline.GetPooledRow()
 
 		if err := r.getMetricRow(ctx, row); err != nil {
+			// Return unused row to pool
+			pipeline.ReturnPooledRow(row)
 			if err == io.EOF {
 				if batch.Len() == 0 {
 					pipeline.ReturnBatch(batch)
@@ -113,8 +115,8 @@ func (r *IngestProtoMetricsReader) Next(ctx context.Context) (*Batch, error) {
 			return nil, err
 		}
 
-		batchRow := batch.AddRow()
-		maps.Copy(batchRow, row)
+		// Add the populated row to the batch (batch takes ownership)
+		batch.AppendRow(row)
 	}
 
 	if batch.Len() > 0 {
