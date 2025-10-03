@@ -77,10 +77,12 @@ func (r *IngestProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < r.batchSize {
-		// Prepare a temporary row to populate
-		tempRow := make(pipeline.Row)
-		err := r.getLogRow(ctx, tempRow)
+		// Get a row from the pool to populate
+		row := pipeline.GetPooledRow()
+		err := r.getLogRow(ctx, row)
 		if err != nil {
+			// Return unused row to pool
+			pipeline.ReturnPooledRow(row)
 			if err == io.EOF {
 				if batch.Len() == 0 {
 					pipeline.ReturnBatch(batch)
@@ -92,11 +94,8 @@ func (r *IngestProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 			return nil, err
 		}
 
-		// Only add row to batch after successful read
-		row := batch.AddRow()
-		for k, v := range tempRow {
-			row[k] = v
-		}
+		// Add the populated row to the batch (batch takes ownership)
+		batch.AppendRow(row)
 
 		rowsInCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoLogsReader"),
