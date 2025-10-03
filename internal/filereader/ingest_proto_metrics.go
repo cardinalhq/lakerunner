@@ -206,13 +206,13 @@ func (r *IngestProtoMetricsReader) getDatapointCount(metric pmetric.Metric) int 
 func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pipeline.Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (bool, error) {
 	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		row[wkk.NewRowKey(prefixAttribute(name, "resource"))] = value
+		row[prefixAttributeRowKey(name, "resource")] = value
 		return true
 	})
 
 	sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		row[wkk.NewRowKey(prefixAttribute(name, "scope"))] = value
+		row[prefixAttributeRowKey(name, "scope")] = value
 		return true
 	})
 
@@ -408,7 +408,7 @@ func summaryToDDSketch(dp pmetric.SummaryDataPoint) (*ddsketch.DDSketch, error) 
 func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[wkk.NewRowKey(prefixAttribute(name, "attr"))] = value
+		ret[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
 
@@ -495,7 +495,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 	}
 
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret[wkk.NewRowKey(prefixAttribute(name, "attr"))] = v.AsString()
+		ret[prefixAttributeRowKey(name, "attr")] = v.AsString()
 		return true
 	})
 
@@ -680,7 +680,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[wkk.NewRowKey(prefixAttribute(name, "attr"))] = value
+		ret[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
 
@@ -801,7 +801,7 @@ func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context
 	// Add attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[wkk.NewRowKey(prefixAttribute(name, "attr"))] = value
+		ret[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
 

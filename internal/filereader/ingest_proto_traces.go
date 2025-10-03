@@ -173,21 +173,21 @@ func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Re
 	// Add resource attributes with prefix
 	rs.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		row[wkk.NewRowKey(prefixAttribute(name, "resource"))] = value
+		row[prefixAttributeRowKey(name, "resource")] = value
 		return true
 	})
 
 	// Add scope attributes with prefix
 	ss.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		row[wkk.NewRowKey(prefixAttribute(name, "scope"))] = value
+		row[prefixAttributeRowKey(name, "scope")] = value
 		return true
 	})
 
 	// Add span attributes with prefix
 	span.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		row[wkk.NewRowKey(prefixAttribute(name, "attr"))] = value
+		row[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
 
