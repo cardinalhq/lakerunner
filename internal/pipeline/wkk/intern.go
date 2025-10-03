@@ -173,4 +173,73 @@ var (
 
 	// RowKeyResourceFileType: "resource_file_type"
 	RowKeyResourceFileType = NewRowKey("resource_file_type")
+
+	// Span field keys
+	// RowKeySpanTraceID: "span_trace_id"
+	RowKeySpanTraceID = NewRowKey("span_trace_id")
+
+	// RowKeySpanID: "span_id"
+	RowKeySpanID = NewRowKey("span_id")
+
+	// RowKeySpanParentSpanID: "span_parent_span_id"
+	RowKeySpanParentSpanID = NewRowKey("span_parent_span_id")
+
+	// RowKeySpanName: "span_name"
+	RowKeySpanName = NewRowKey("span_name")
+
+	// RowKeySpanKind: "span_kind"
+	RowKeySpanKind = NewRowKey("span_kind")
+
+	// RowKeySpanStatusCode: "span_status_code"
+	RowKeySpanStatusCode = NewRowKey("span_status_code")
+
+	// RowKeySpanStatusMessage: "span_status_message"
+	RowKeySpanStatusMessage = NewRowKey("span_status_message")
+
+	// RowKeySpanEndTimestamp: "span_end_timestamp"
+	RowKeySpanEndTimestamp = NewRowKey("span_end_timestamp")
+
+	// RowKeySpanDuration: "span_duration"
+	RowKeySpanDuration = NewRowKey("span_duration")
+
+	// Resource attribute keys (with k8s prefix as seen in semconv)
+	// RowKeyResourceK8sClusterName: "resource_k8s_cluster_name"
+	RowKeyResourceK8sClusterName = NewRowKey("resource_k8s_cluster_name")
+
+	// RowKeyResourceK8sNamespaceName: "resource_k8s_namespace_name"
+	RowKeyResourceK8sNamespaceName = NewRowKey("resource_k8s_namespace_name")
+
+	// RowKeyResourceServiceName: "resource_service_name"
+	RowKeyResourceServiceName = NewRowKey("resource_service_name")
+
+	// Span attribute keys (with attr_ prefix)
+	// RowKeyAttrDBSystemName: "attr_db_system_name"
+	RowKeyAttrDBSystemName = NewRowKey("attr_db_system_name")
+
+	// RowKeyAttrMessagingSystem: "attr_messaging_system"
+	RowKeyAttrMessagingSystem = NewRowKey("attr_messaging_system")
+
+	// RowKeyAttrHTTPRequestMethod: "attr_http_request_method"
+	RowKeyAttrHTTPRequestMethod = NewRowKey("attr_http_request_method")
+
+	// RowKeyAttrMessagingOperationType: "attr_messaging_operation_type"
+	RowKeyAttrMessagingOperationType = NewRowKey("attr_messaging_operation_type")
+
+	// RowKeyAttrMessagingDestinationName: "attr_messaging_destination_name"
+	RowKeyAttrMessagingDestinationName = NewRowKey("attr_messaging_destination_name")
+
+	// RowKeyAttrDBNamespace: "attr_db_namespace"
+	RowKeyAttrDBNamespace = NewRowKey("attr_db_namespace")
+
+	// RowKeyAttrDBOperationName: "attr_db_operation_name"
+	RowKeyAttrDBOperationName = NewRowKey("attr_db_operation_name")
+
+	// RowKeyAttrServerAddress: "attr_server_address"
+	RowKeyAttrServerAddress = NewRowKey("attr_server_address")
+
+	// RowKeyAttrDBCollectionName: "attr_db_collection_name"
+	RowKeyAttrDBCollectionName = NewRowKey("attr_db_collection_name")
+
+	// RowKeyAttrURLTemplate: "attr_url_template"
+	RowKeyAttrURLTemplate = NewRowKey("attr_url_template")
 )

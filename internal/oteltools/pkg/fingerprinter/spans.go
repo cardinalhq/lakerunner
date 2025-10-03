@@ -33,25 +33,6 @@ const (
 	namespaceNameKey = string(semconv.K8SNamespaceNameKey)
 )
 
-var (
-	// RowKey constants for span fingerprinting
-	rowKeyResourceClusterName   = wkk.NewRowKey("resource_k8s_cluster_name")
-	rowKeyResourceNamespace     = wkk.NewRowKey("resource_k8s_namespace_name")
-	rowKeyResourceServiceName   = wkk.NewRowKey("resource_service_name")
-	rowKeySpanKind              = wkk.NewRowKey("span_kind")
-	rowKeySpanName              = wkk.NewRowKey("span_name")
-	rowKeyAttrDBSystemName      = wkk.NewRowKey("attr_db_system_name")
-	rowKeyAttrMessagingSystem   = wkk.NewRowKey("attr_messaging_system")
-	rowKeyAttrHTTPRequestMethod = wkk.NewRowKey("attr_http_request_method")
-	rowKeyAttrMessagingOpType   = wkk.NewRowKey("attr_messaging_operation_type")
-	rowKeyAttrMessagingDestName = wkk.NewRowKey("attr_messaging_destination_name")
-	rowKeyAttrDBNamespace       = wkk.NewRowKey("attr_db_namespace")
-	rowKeyAttrDBOperationName   = wkk.NewRowKey("attr_db_operation_name")
-	rowKeyAttrServerAddress     = wkk.NewRowKey("attr_server_address")
-	rowKeyAttrDBCollectionName  = wkk.NewRowKey("attr_db_collection_name")
-	rowKeyAttrURLTemplate       = wkk.NewRowKey("attr_url_template")
-)
-
 func ComputeExemplarKey(rl pcommon.Resource, extraKeys []string) ([]string, int64) {
 	keys := []string{
 		clusterNameKey, GetFromResource(rl.Attributes(), clusterNameKey),
@@ -175,56 +156,56 @@ func CalculateSpanFingerprintFromRow(row map[wkk.RowKey]any) int64 {
 	fingerprintAttributes := make([]string, 0)
 
 	// Extract resource-level attributes
-	clusterName := GetStringFromRow(row, rowKeyResourceClusterName)
+	clusterName := GetStringFromRow(row, wkk.RowKeyResourceK8sClusterName)
 	if clusterName == "" {
 		clusterName = "unknown"
 	}
-	namespaceName := GetStringFromRow(row, rowKeyResourceNamespace)
+	namespaceName := GetStringFromRow(row, wkk.RowKeyResourceK8sNamespaceName)
 	if namespaceName == "" {
 		namespaceName = "unknown"
 	}
-	serviceName := GetStringFromRow(row, rowKeyResourceServiceName)
+	serviceName := GetStringFromRow(row, wkk.RowKeyResourceServiceName)
 	if serviceName == "" {
 		serviceName = "unknown"
 	}
 
 	// Extract span kind
-	spanKindStr := GetStringFromRow(row, rowKeySpanKind)
+	spanKindStr := GetStringFromRow(row, wkk.RowKeySpanKind)
 
 	fingerprintAttributes = append(fingerprintAttributes, clusterName, namespaceName, serviceName, spanKindStr)
 
 	// Check messaging system first
-	messagingSystem := GetStringFromRow(row, rowKeyAttrMessagingSystem)
+	messagingSystem := GetStringFromRow(row, wkk.RowKeyAttrMessagingSystem)
 	if messagingSystem != "" {
-		messagingOperationType := GetStringFromRow(row, rowKeyAttrMessagingOpType)
-		messagingDestinationName := GetStringFromRow(row, rowKeyAttrMessagingDestName)
+		messagingOperationType := GetStringFromRow(row, wkk.RowKeyAttrMessagingOperationType)
+		messagingDestinationName := GetStringFromRow(row, wkk.RowKeyAttrMessagingDestinationName)
 		fingerprintAttributes = append(fingerprintAttributes, messagingSystem, messagingOperationType, messagingDestinationName)
 		return toHash(fingerprintAttributes)
 	}
 
 	// Check database system
-	dbSystem := GetStringFromRow(row, rowKeyAttrDBSystemName)
+	dbSystem := GetStringFromRow(row, wkk.RowKeyAttrDBSystemName)
 	if dbSystem != "" {
-		dbNamespace := GetStringFromRow(row, rowKeyAttrDBNamespace)
-		dbOperationName := GetStringFromRow(row, rowKeyAttrDBOperationName)
-		serverAddress := GetStringFromRow(row, rowKeyAttrServerAddress)
-		collectionName := GetStringFromRow(row, rowKeyAttrDBCollectionName)
-		spanName := GetStringFromRow(row, rowKeySpanName)
+		dbNamespace := GetStringFromRow(row, wkk.RowKeyAttrDBNamespace)
+		dbOperationName := GetStringFromRow(row, wkk.RowKeyAttrDBOperationName)
+		serverAddress := GetStringFromRow(row, wkk.RowKeyAttrServerAddress)
+		collectionName := GetStringFromRow(row, wkk.RowKeyAttrDBCollectionName)
+		spanName := GetStringFromRow(row, wkk.RowKeySpanName)
 
 		fingerprintAttributes = append(fingerprintAttributes, spanName, dbSystem, dbNamespace, dbOperationName, serverAddress, collectionName)
 		return toHash(fingerprintAttributes)
 	}
 
 	// Check HTTP request method
-	httpRequestMethod := GetStringFromRow(row, rowKeyAttrHTTPRequestMethod)
+	httpRequestMethod := GetStringFromRow(row, wkk.RowKeyAttrHTTPRequestMethod)
 	if httpRequestMethod != "" {
-		httpUrlTemplate := GetStringFromRow(row, rowKeyAttrURLTemplate)
+		httpUrlTemplate := GetStringFromRow(row, wkk.RowKeyAttrURLTemplate)
 		fingerprintAttributes = append(fingerprintAttributes, httpRequestMethod, httpUrlTemplate)
 		return toHash(fingerprintAttributes)
 	}
 
 	// Default: use span name
-	sanitizedName := GetStringFromRow(row, rowKeySpanName)
+	sanitizedName := GetStringFromRow(row, wkk.RowKeySpanName)
 	fingerprintAttributes = append(fingerprintAttributes, sanitizedName)
 
 	return toHash(fingerprintAttributes)

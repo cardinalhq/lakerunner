@@ -95,7 +95,8 @@ func (r *IngestProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < r.batchSize {
-		sourceRow, err := r.getTraceRow(ctx)
+		row := batch.AddRow()
+		err := r.getTraceRow(ctx, row)
 		if err != nil {
 			if err == io.EOF {
 				if batch.Len() == 0 {
@@ -112,12 +113,6 @@ func (r *IngestProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 		rowsInCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "ProtoTracesReader"),
 		))
-
-		// Copy to batch's reusable Row map
-		row := batch.AddRow()
-		for k, v := range sourceRow {
-			row[k] = v
-		}
 	}
 
 	// Update row count with successfully read rows
@@ -134,10 +129,10 @@ func (r *IngestProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 	return nil, io.EOF
 }
 
-// getTraceRow handles reading the next trace row.
-func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context) (pipeline.Row, error) {
+// getTraceRow handles reading the next trace row, populating the provided row.
+func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context, row pipeline.Row) error {
 	if r.traces == nil {
-		return nil, io.EOF
+		return io.EOF
 	}
 
 	// Iterator pattern: advance through resources -> scopes -> spans
@@ -151,12 +146,12 @@ func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context) (pipeline.Row
 				span := ss.Spans().At(r.spanIndex)
 
 				// Build row for this span
-				row := r.buildSpanRow(ctx, rs, ss, span)
+				r.buildSpanRow(ctx, rs, ss, span, row)
 
 				// Advance to next span
 				r.spanIndex++
 
-				return r.processRow(row)
+				return nil
 			}
 
 			// Move to next scope, reset span index
@@ -170,52 +165,50 @@ func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context) (pipeline.Row
 		r.spanIndex = 0
 	}
 
-	return nil, io.EOF
+	return io.EOF
 }
 
-// buildSpanRow creates a row from a single span and its context.
-func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) map[string]any {
-	ret := map[string]any{}
-
+// buildSpanRow populates the provided row from a single span and its context.
+func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span, row pipeline.Row) {
 	// Add resource attributes with prefix
 	rs.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "resource")] = value
+		row[wkk.NewRowKey(prefixAttribute(name, "resource"))] = value
 		return true
 	})
 
 	// Add scope attributes with prefix
 	ss.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "scope")] = value
+		row[wkk.NewRowKey(prefixAttribute(name, "scope"))] = value
 		return true
 	})
 
 	// Add span attributes with prefix
 	span.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "attr")] = value
+		row[wkk.NewRowKey(prefixAttribute(name, "attr"))] = value
 		return true
 	})
 
 	// Basic span fields - raw data only
-	ret["span_trace_id"] = span.TraceID().String()
-	ret["span_id"] = span.SpanID().String()
-	ret["span_parent_span_id"] = span.ParentSpanID().String()
-	ret["span_name"] = span.Name()
-	ret["span_kind"] = span.Kind().String()
-	ret["span_status_code"] = span.Status().Code().String()
-	ret["span_status_message"] = span.Status().Message()
+	row[wkk.RowKeySpanTraceID] = span.TraceID().String()
+	row[wkk.RowKeySpanID] = span.SpanID().String()
+	row[wkk.RowKeySpanParentSpanID] = span.ParentSpanID().String()
+	row[wkk.RowKeySpanName] = span.Name()
+	row[wkk.RowKeySpanKind] = span.Kind().String()
+	row[wkk.RowKeySpanStatusCode] = span.Status().Code().String()
+	row[wkk.RowKeySpanStatusMessage] = span.Status().Message()
 
 	// Handle start timestamp with fallback
 	if span.StartTimestamp() != 0 {
-		ret["chq_timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
-		ret["chq_tsns"] = int64(span.StartTimestamp())
+		row[wkk.RowKeyCTimestamp] = span.StartTimestamp().AsTime().UnixMilli()
+		row[wkk.RowKeyCTsns] = int64(span.StartTimestamp())
 	} else {
 		// Fallback to current time when start timestamp is zero
 		currentTime := time.Now()
-		ret["chq_timestamp"] = currentTime.UnixMilli()
-		ret["chq_tsns"] = currentTime.UnixNano()
+		row[wkk.RowKeyCTimestamp] = currentTime.UnixMilli()
+		row[wkk.RowKeyCTsns] = currentTime.UnixNano()
 		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("signal_type", "traces"),
 			attribute.String("reason", "current_fallback"),
@@ -224,45 +217,33 @@ func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Re
 
 	// Handle end timestamp with fallback
 	if span.EndTimestamp() != 0 {
-		ret["span_end_timestamp"] = span.EndTimestamp().AsTime().UnixMilli()
+		row[wkk.RowKeySpanEndTimestamp] = span.EndTimestamp().AsTime().UnixMilli()
 		// Calculate duration using actual timestamps
 		if span.StartTimestamp() != 0 {
-			ret["span_duration"] = span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime()).Milliseconds()
+			row[wkk.RowKeySpanDuration] = span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime()).Milliseconds()
 		} else {
 			// If start timestamp was fallback, use 0 duration
-			ret["span_duration"] = int64(0)
+			row[wkk.RowKeySpanDuration] = int64(0)
 		}
 	} else {
 		// Fallback to current time for end timestamp
 		currentTime := time.Now()
-		ret["span_end_timestamp"] = currentTime.UnixMilli()
+		row[wkk.RowKeySpanEndTimestamp] = currentTime.UnixMilli()
 		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("signal_type", "traces"),
 			attribute.String("reason", "current_fallback"),
 		))
 		// Calculate duration if we have a valid start timestamp
 		if span.StartTimestamp() != 0 {
-			ret["span_duration"] = currentTime.Sub(span.StartTimestamp().AsTime()).Milliseconds()
+			row[wkk.RowKeySpanDuration] = currentTime.Sub(span.StartTimestamp().AsTime()).Milliseconds()
 		} else {
-			ret["span_duration"] = int64(0)
+			row[wkk.RowKeySpanDuration] = int64(0)
 		}
 	}
 
-	return ret
-}
-
-// processRow applies any processing to a row.
-func (r *IngestProtoTracesReader) processRow(row map[string]any) (pipeline.Row, error) {
-	result := make(pipeline.Row)
-	for k, v := range row {
-		result[wkk.NewRowKey(k)] = v
-	}
-
 	// Calculate and add the fingerprint
-	fingerprint := fingerprinter.CalculateSpanFingerprintFromRow(result)
-	result[wkk.RowKeyCFingerprint] = fingerprint
-
-	return result, nil
+	fingerprint := fingerprinter.CalculateSpanFingerprintFromRow(row)
+	row[wkk.RowKeyCFingerprint] = fingerprint
 }
 
 // Close closes the reader and releases resources.
