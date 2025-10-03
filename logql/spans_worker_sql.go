@@ -18,10 +18,10 @@ import (
 	"fmt"
 )
 
-// ToSpansWorkerSQL generates SQL for spans queries with chq_name and _cardinalhq_kind as default fields
+// ToSpansWorkerSQL generates SQL for spans queries with metric_name and span_kind as default fields
 func (be *LogLeaf) ToSpansWorkerSQL(limit int, order string, fields []string) string {
 	const baseRel = "{table}"
-	const spansNameCol = "\"chq_name\""
+	const spansNameCol = "\"metric_name\""
 	const tsCol = "\"chq_timestamp\""
 
 	// 1) Prepare sets: group keys, parser-created, feature flags
@@ -91,15 +91,20 @@ func (be *LogLeaf) ToSpansWorkerSQLWithLimit(limit int, order string, fields []s
 // isSpansBaseCol checks if a column is a base column for spans
 func isSpansBaseCol(col string) bool {
 	spansBaseCols := map[string]struct{}{
-		"\"chq_name\"":                  {},
-		"\"_cardinalhq_kind\"":          {},
-		"\"_cardinalhq_span_id\"":       {},
-		"\"_cardinalhq_span_trace_id\"": {},
-		"\"_cardinalhq_status_code\"":   {},
-		"\"_cardinalhq_span_duration\"": {},
-		"\"chq_timestamp\"":             {},
-		"\"_cardinalhq_id\"":            {},
-		"\"chq_fingerprint\"":           {},
+		"\"metric_name\"":         {},
+		"\"span_kind\"":           {},
+		"\"span_id\"":             {},
+		"\"span_trace_id\"":       {},
+		"\"span_parent_span_id\"": {},
+		"\"span_status_code\"":    {},
+		"\"span_status_message\"": {},
+		"\"span_duration\"":       {},
+		"\"chq_timestamp\"":       {},
+		"\"chq_tsns\"":            {},
+		"\"chq_id\"":              {},
+		"\"chq_fingerprint\"":     {},
+		"\"chq_organization_id\"": {},
+		"\"chq_collector_id\"":    {},
 	}
 	_, ok := spansBaseCols[col]
 	return ok
