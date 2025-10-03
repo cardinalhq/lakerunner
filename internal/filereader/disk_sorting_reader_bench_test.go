@@ -50,10 +50,9 @@ func benchmarkSortingReader(b *testing.B, createReaderFunc func([]pipeline.Row) 
 	// Create test data
 	testRows := createTestRowsForSorting(1000)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		reader, err := createReaderFunc(testRows)
 		if err != nil {
 			b.Fatalf("Failed to create reader: %v", err)
@@ -99,10 +98,9 @@ func benchmarkSortingReaderWithSize(b *testing.B, numRows int, createReaderFunc 
 	// Create test data
 	testRows := createTestRowsForSorting(numRows)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		reader, err := createReaderFunc(testRows)
 		if err != nil {
 			b.Fatalf("Failed to create reader: %v", err)
