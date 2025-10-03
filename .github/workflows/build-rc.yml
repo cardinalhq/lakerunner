@@ -146,6 +146,23 @@ jobs:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
 
+      - name: Notify chip-release-watcher
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            public.ecr.aws/cardinalhq.io/lakerunner:${{ github.ref_name }} | \
+            grep ^Digest: | awk '{print $2}')
+
+          curl -X POST "https://chip-release-watcher.global.aws.cardinalhq.io/github/release" \
+            -H "Content-Type: application/json" \
+            -H "x-cardinalhq-api-key: ${{ secrets.CHIP_RELEASE_WATCHER_API_KEY }}" \
+            -d @- <<EOF
+          {
+            "repositoryName": "${{ github.repository }}",
+            "releaseTag": "${{ github.ref_name }}",
+            "digest": "${DIGEST}"
+          }
+          EOF
+
       - name: Output built images
         run: |
           echo "Release Candidate built successfully!"
