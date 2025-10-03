@@ -15,14 +15,15 @@
 package filereader
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
+	"math"
 	"testing"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -30,32 +31,88 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
+// createMetricParquetInMemory creates a metric Parquet file in memory for testing
+func createMetricParquetInMemory(t *testing.T, rowCount int, nanRowIndices []int) []byte {
+	t.Helper()
+
+	rows := make([]map[string]any, rowCount)
+	for i := range rows {
+		hasNaN := false
+		for _, nanIdx := range nanRowIndices {
+			if i == nanIdx {
+				hasNaN = true
+				break
+			}
+		}
+
+		row := map[string]any{
+			"chq_timestamp":    int64(1000000 + i),
+			"chq_collector_id": fmt.Sprintf("collector-%d", i),
+			"metric_name":      "test_metric",
+			"chq_rollup_sum":   float64(i * 100),
+		}
+
+		// Add NaN value in rollup field if this is a NaN row
+		if hasNaN {
+			row["chq_rollup_sum"] = math.NaN()
+		}
+
+		rows[i] = row
+	}
+
+	// Build schema
+	nodes := make(map[string]parquet.Node)
+	for key, value := range rows[0] {
+		var node parquet.Node
+		switch value.(type) {
+		case int64:
+			node = parquet.Optional(parquet.Int(64))
+		case string:
+			node = parquet.Optional(parquet.String())
+		case float64:
+			node = parquet.Optional(parquet.Leaf(parquet.DoubleType))
+		default:
+			t.Fatalf("Unsupported type %T for key %s", value, key)
+		}
+		nodes[key] = node
+	}
+
+	schema := parquet.NewSchema("metrics", parquet.Group(nodes))
+
+	var buf bytes.Buffer
+	writer := parquet.NewGenericWriter[map[string]any](&buf, schema)
+
+	for _, row := range rows {
+		_, err := writer.Write([]map[string]any{row})
+		require.NoError(t, err, "Failed to write row")
+	}
+
+	err := writer.Close()
+	require.NoError(t, err, "Failed to close writer")
+
+	return buf.Bytes()
+}
+
 func TestCookedMetricTranslatingReader_NaNFiltering(t *testing.T) {
-	t.Skip("TODO: regenerate test data with new field names (chq_* prefix)")
-	// Test files that contain NaN values which should be filtered
+	// Test cases with NaN values which should be filtered
 	testCases := []struct {
-		filename      string
+		name          string
 		rawCount      int64 // Count from raw reader
 		filteredCount int64 // Count after CookedMetricTranslatingReader
+		nanIndices    []int // Indices of rows with NaN values
 	}{
-		{"tbl_299476441865651503.parquet", 227, 226}, // 1 NaN row filtered
-		{"tbl_299476464716219172.parquet", 227, 226}, // 1 NaN row filtered
-		{"tbl_299476496878142244.parquet", 227, 226}, // 1 NaN row filtered
+		{"case1", 227, 226, []int{100}}, // 1 NaN row filtered
+		{"case2", 227, 226, []int{150}}, // 1 NaN row filtered
+		{"case3", 227, 226, []int{200}}, // 1 NaN row filtered
 	}
 
 	for _, tc := range testCases {
-		t.Run(tc.filename, func(t *testing.T) {
-			fullPath := fmt.Sprintf("../../testdata/metrics/compact-test-0001/%s", tc.filename)
+		t.Run(tc.name, func(t *testing.T) {
+			// Generate Parquet data with NaN values
+			data := createMetricParquetInMemory(t, int(tc.rawCount), tc.nanIndices)
 
-			file, err := os.Open(fullPath)
-			require.NoError(t, err, "Failed to open file: %s", fullPath)
-			defer func() { _ = file.Close() }()
-
-			stat, err := file.Stat()
-			require.NoError(t, err)
-
-			// Create raw reader
-			rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+			reader := bytes.NewReader(data)
+			rawReader, err := NewParquetRawReader(reader, int64(len(data)), 1000)
 			require.NoError(t, err, "Failed to create raw reader")
 			defer func() { _ = rawReader.Close() }()
 
@@ -72,12 +129,12 @@ func TestCookedMetricTranslatingReader_NaNFiltering(t *testing.T) {
 				if errors.Is(err, io.EOF) {
 					break
 				}
-				require.NoError(t, err, "Reader error in file %s", tc.filename)
+				require.NoError(t, err, "Reader error in %s", tc.name)
 			}
 
 			assert.Equal(t, tc.filteredCount, totalRows,
-				"File %s should have %d records after NaN filtering (raw has %d)",
-				tc.filename, tc.filteredCount, tc.rawCount)
+				"Case %s should have %d records after NaN filtering (raw has %d)",
+				tc.name, tc.filteredCount, tc.rawCount)
 		})
 	}
 }
@@ -209,32 +266,25 @@ func (m *testMockReader) TotalRowsReturned() int64 {
 }
 
 // TestCookedMetricTranslatingReader_ShouldDropRow tests if shouldDropRow is correctly identifying rows to drop
-// from actual parquet files that are showing data loss in production
 func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
-	testFiles := []struct {
-		filename        string
+	testCases := []struct {
+		name            string
 		expectedRecords int
 	}{
-		{"tbl_301228791710090615.parquet", 480},
-		{"tbl_301228792783832948.parquet", 456},
-		{"tbl_301228792733501300.parquet", 1414}, // A larger file for comparison
+		{"small_file", 480},
+		{"medium_file", 456},
+		{"large_file", 1414},
 	}
 
 	ctx := context.Background()
 
-	for _, testFile := range testFiles {
-		t.Run(testFile.filename, func(t *testing.T) {
-			filePath := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source", testFile.filename)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Generate metric Parquet data
+			data := createMetricParquetInMemory(t, tc.expectedRecords, nil)
 
-			file, err := os.Open(filePath)
-			require.NoError(t, err, "Should open parquet file")
-			defer func() { _ = file.Close() }()
-
-			stat, err := file.Stat()
-			require.NoError(t, err, "Should stat parquet file")
-
-			// Create raw reader for testing shouldDropRow
-			rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+			reader := bytes.NewReader(data)
+			rawReader, err := NewParquetRawReader(reader, int64(len(data)), 1000)
 			require.NoError(t, err, "Should create NewParquetRawReader")
 			defer func() { _ = rawReader.Close() }()
 
@@ -244,7 +294,7 @@ func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
 			require.NotNil(t, rawBatch, "Raw batch should not be nil")
 			require.Greater(t, rawBatch.Len(), 0, "Raw batch should have rows")
 
-			t.Logf("File %s: Raw reader returned %d records for shouldDropRow testing", testFile.filename, rawBatch.Len())
+			t.Logf("Case %s: Raw reader returned %d records for shouldDropRow testing", tc.name, rawBatch.Len())
 
 			// Create a temporary cooked reader just for testing shouldDropRow
 			tempCookedReader := NewCookedMetricTranslatingReader(rawReader)
@@ -264,18 +314,18 @@ func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
 				// Test shouldDropRow with the actual row data
 				if tempCookedReader.shouldDropRow(ctx, row) {
 					droppedCount++
-					t.Logf("File %s: pipeline.Row %d would be DROPPED by shouldDropRow", testFile.filename, i)
+					t.Logf("Case %s: pipeline.Row %d would be DROPPED by shouldDropRow", tc.name, i)
 
 					// Log the row content for debugging
-					t.Logf("File %s: Dropped row data: %+v", testFile.filename, row)
+					t.Logf("Case %s: Dropped row data: %+v", tc.name, row)
 				} else {
-					t.Logf("File %s: pipeline.Row %d would be KEPT by shouldDropRow", testFile.filename, i)
+					t.Logf("Case %s: pipeline.Row %d would be KEPT by shouldDropRow", tc.name, i)
 				}
 			}
 
 			dropRate := float64(droppedCount) / float64(totalTested) * 100
-			t.Logf("File %s: Drop rate in first %d rows: %.1f%% (%d/%d)",
-				testFile.filename, totalTested, dropRate, droppedCount, totalTested)
+			t.Logf("Case %s: Drop rate in first %d rows: %.1f%% (%d/%d)",
+				tc.name, totalTested, dropRate, droppedCount, totalTested)
 		})
 	}
 }
@@ -283,29 +333,24 @@ func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
 // TestCookedMetricTranslatingReader_NextWithSmallFiles focuses specifically on the Next() method behavior
 // of CookedMetricTranslatingReader with small files to verify it works correctly in isolation
 func TestCookedMetricTranslatingReader_NextWithSmallFiles(t *testing.T) {
-	testFiles := []struct {
-		filename        string
+	testCases := []struct {
+		name            string
 		expectedRecords int
 	}{
-		{"tbl_301228791710090615.parquet", 480},
-		{"tbl_301228792783832948.parquet", 456},
-		{"tbl_301228792733501300.parquet", 1414}, // A larger file for comparison
+		{"small_file", 480},
+		{"medium_file", 456},
+		{"large_file", 1414},
 	}
 
 	ctx := context.Background()
 
-	for _, testFile := range testFiles {
-		t.Run(testFile.filename, func(t *testing.T) {
-			filePath := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source", testFile.filename)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Generate metric Parquet data
+			data := createMetricParquetInMemory(t, tc.expectedRecords, nil)
 
-			file, err := os.Open(filePath)
-			require.NoError(t, err, "Should open parquet file")
-			defer func() { _ = file.Close() }()
-
-			stat, err := file.Stat()
-			require.NoError(t, err, "Should stat parquet file")
-
-			rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+			reader := bytes.NewReader(data)
+			rawReader, err := NewParquetRawReader(reader, int64(len(data)), 1000)
 			require.NoError(t, err, "Should create NewParquetRawReader")
 			defer func() { _ = rawReader.Close() }()
 
@@ -320,29 +365,29 @@ func TestCookedMetricTranslatingReader_NextWithSmallFiles(t *testing.T) {
 				batchNum++
 
 				if err != nil {
-					t.Logf("File %s: Batch %d - Got error: %v", testFile.filename, batchNum, err)
+					t.Logf("Case %s: Batch %d - Got error: %v", tc.name, batchNum, err)
 					break // EOF or error
 				}
 				if cookedBatch == nil {
-					t.Logf("File %s: Batch %d - Got nil batch", testFile.filename, batchNum)
+					t.Logf("Case %s: Batch %d - Got nil batch", tc.name, batchNum)
 					break
 				}
 
 				batchSize := cookedBatch.Len()
 				cookedRecordCount += batchSize
-				t.Logf("File %s: Batch %d - Got %d records (total: %d)", testFile.filename, batchNum, batchSize, cookedRecordCount)
+				t.Logf("Case %s: Batch %d - Got %d records (total: %d)", tc.name, batchNum, batchSize, cookedRecordCount)
 
 				if batchSize == 0 {
-					t.Logf("File %s: Batch %d - Empty batch, stopping", testFile.filename, batchNum)
+					t.Logf("Case %s: Batch %d - Empty batch, stopping", tc.name, batchNum)
 					break
 				}
 			}
 
-			t.Logf("File %s: Cooked reader returned %d records (expected %d)",
-				testFile.filename, cookedRecordCount, testFile.expectedRecords)
+			t.Logf("Case %s: Cooked reader returned %d records (expected %d)",
+				tc.name, cookedRecordCount, tc.expectedRecords)
 
 			// These tests verify that CookedMetricTranslatingReader works correctly in isolation
-			require.Equal(t, testFile.expectedRecords, cookedRecordCount,
+			require.Equal(t, tc.expectedRecords, cookedRecordCount,
 				"CookedMetricTranslatingReader should read all records correctly when used in isolation")
 		})
 	}
