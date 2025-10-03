@@ -80,7 +80,7 @@ func TestSpansQueryIntegration(t *testing.T) {
 		}
 	})
 
-	// Test 2: Spans query with _cardinalhq.kind matcher
+	// Test 2: Spans query with span_kind matcher
 	t.Run("SpanKindQuery", func(t *testing.T) {
 		leaf := logql.LogLeaf{
 			Matchers: []logql.LabelMatch{
@@ -94,7 +94,7 @@ func TestSpansQueryIntegration(t *testing.T) {
 			t.Fatalf("expected 2 rows (span_kind=server), got %d\nsql:\n%s", len(rows), sql)
 		}
 
-		// Verify all returned rows have _cardinalhq.kind = "server"
+		// Verify all returned rows have span_kind = "server"
 		for _, row := range rows {
 			spanKind := getString(row["span_kind"])
 			if spanKind != "server" {

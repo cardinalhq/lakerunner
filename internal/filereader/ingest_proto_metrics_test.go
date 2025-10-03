@@ -957,10 +957,10 @@ func ValidateMetricsReaderContract(t *testing.T, rows []pipeline.Row) {
 			assert.True(t, hasRequiredField, "Row %d missing required field %s", i, field)
 		}
 
-		// 11. _cardinalhq.tid computation should be done after transform (not in reader)
+		// 11. chq_tid computation should be done after transform (not in reader)
 		// The reader should NOT include TID - it should be added by MetricTranslator
 		_, tidExists := row[wkk.RowKeyCTID]
-		assert.False(t, tidExists, "Row %d should not contain _cardinalhq.tid - it should be computed after transform", i)
+		assert.False(t, tidExists, "Row %d should not contain chq_tid - it should be computed after transform", i)
 
 		// Additional validation: chq_sketch field should exist and be []byte
 		sketch, sketchOk := row[wkk.NewRowKey("chq_sketch")]

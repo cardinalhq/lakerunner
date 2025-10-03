@@ -399,7 +399,7 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 		// Fields starting with underscore should be skipped
 		wkk.NewRowKey("_internal"): "skip me",
 
-		// _cardinalhq fields should be skipped
+		// chq fields should be skipped
 		wkk.NewRowKey("chq_test"): "skip me too",
 
 		// resource fields should be kept as-is

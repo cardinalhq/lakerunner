@@ -156,7 +156,7 @@ func getExistingColumns(ctx context.Context, db execQuerier, table string) (map[
 	return cols, rows.Err()
 }
 
-// ensureColumnsForRow adds columns for keys present in row (except _cardinalhq.timestamp),
+// ensureColumnsForRow adds columns for keys present in row (except chq_timestamp),
 // choosing DuckDB types based on Go types. Uses IF NOT EXISTS for safety.
 func ensureColumnsForRow(ctx context.Context, db execQuerier, table string, row map[string]any, existing map[string]struct{}) error {
 	// Deterministic order so ALTER statements are stable
