@@ -27,8 +27,8 @@ import (
 // e.g., "resource.k8s.namespace.name" -> "resource_k8s_namespace_name"
 // This matches the actual column names in Parquet files
 func normalizeFieldName(field string) string {
-	// Special case: _cardinalhq fields already use underscores
-	if strings.HasPrefix(field, "_cardinalhq") {
+	// Special case: chq fields already use underscores
+	if strings.HasPrefix(field, "chq_") {
 		return field
 	}
 	// Convert dots to underscores for other fields

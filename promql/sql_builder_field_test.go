@@ -42,14 +42,14 @@ func TestFieldNameNormalization(t *testing.T) {
 			expected: "resource_k8s_pod_name",
 		},
 		{
-			name:     "_cardinalhq fields unchanged",
+			name:     "chq fields unchanged",
 			input:    "chq_timestamp",
 			expected: "chq_timestamp",
 		},
 		{
-			name:     "_cardinalhq with dots unchanged",
-			input:    "_cardinalhq.level",
-			expected: "_cardinalhq.level",
+			name:     "chq fields with underscores unchanged",
+			input:    "chq_level",
+			expected: "chq_level",
 		},
 	}
 
@@ -92,8 +92,8 @@ func TestSQLGenerationWithNormalizedFields(t *testing.T) {
 		t.Errorf("Expected normalized field name in GROUP BY, got: %s", sql)
 	}
 
-	// Check that _cardinalhq fields are preserved
+	// Check that chq fields are preserved
 	if !strings.Contains(sql, `"metric_name"`) {
-		t.Errorf("Expected _cardinalhq field to be preserved, got: %s", sql)
+		t.Errorf("Expected chq field to be preserved, got: %s", sql)
 	}
 }
