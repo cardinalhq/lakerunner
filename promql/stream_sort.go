@@ -19,7 +19,6 @@ import (
 	"context"
 	"log/slog"
 	"math"
-	"sync"
 )
 
 // Timestamped is the constraint for mergeable items.
@@ -64,12 +63,9 @@ func MergeSorted[T Timestamped](
 	}
 
 	// Per-source fetchers - use mergeCtx so they stop when we cancel
-	var fetchersWg sync.WaitGroup
-	fetchersWg.Add(len(chans))
 	for i, ch := range chans {
 		i, ch := i, ch
 		go func() {
-			defer fetchersWg.Done()
 			defer close(rsp[i])
 			for {
 				select {
