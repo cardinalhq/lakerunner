@@ -103,7 +103,7 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 	// Full base schema so SELECT * works without synthetic stubs.
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT
@@ -129,7 +129,7 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 
 	// Verify the default columns exist, including fingerprint.
 	for _, r := range rows {
-		_ = getString(r["_cardinalhq_id"])
+		_ = getString(r["chq_id"])
 		_ = getString(r["log_level"])
 		_ = getString(r["chq_fingerprint"]) // must exist even if empty
 	}
@@ -141,7 +141,7 @@ func TestToWorkerSQL_Fingerprint_AsString(t *testing.T) {
 	// Full base schema so SELECT * works and fingerprint can be CAST to VARCHAR.
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT
@@ -197,7 +197,7 @@ func createLogsTable(t *testing.T, db *sql.DB) {
 	mustDropTable(db, "logs")
 	stmt := `CREATE TABLE logs(
 		"chq_timestamp" BIGINT,
-		"_cardinalhq_id"       TEXT,
+		"chq_id"       TEXT,
 		"log_level"    TEXT,
 		"log_message"  TEXT,
 		"level"                TEXT,
@@ -214,7 +214,7 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 	// Full base schema so SELECT * works and parsers can add columns.
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT
@@ -268,7 +268,7 @@ func TestToWorkerSQL_Regexp_Kafka_DurationExtract(t *testing.T) {
 	// Full base schema + selector column
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
@@ -339,7 +339,7 @@ func TestToWorkerSQL_Regexp_NumericCompare_EmulateGTZero(t *testing.T) {
 	// Full base schema
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT
@@ -401,7 +401,7 @@ func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT
@@ -444,7 +444,7 @@ func TestToWorkerSQL_JSON_WithNOFilters(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT
@@ -480,7 +480,7 @@ func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT
@@ -527,14 +527,14 @@ func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
 		job                       TEXT
 	);`)
 
-	mustExec(t, db, `INSERT INTO logs("chq_timestamp", "_cardinalhq_id", "log_level", "log_message", "chq_fingerprint", job) VALUES
+	mustExec(t, db, `INSERT INTO logs("chq_timestamp", "chq_id", "log_level", "log_message", "chq_fingerprint", job) VALUES
 		(1, '', '', 'hello a', -4446492996171837732, 'my-app'),
 		(2, '', '', 'hello b', -4446492996171837732, 'other');`)
 
@@ -570,14 +570,14 @@ func TestToWorkerSQL_MatchersThenJSON_FilterApplied_FromLogQL(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
 		job                       TEXT
 	);`)
 
-	mustExec(t, db, `INSERT INTO logs("chq_timestamp", job, "log_message", "_cardinalhq_id", "log_level", "chq_fingerprint") VALUES
+	mustExec(t, db, `INSERT INTO logs("chq_timestamp", job, "log_message", "chq_id", "log_level", "chq_fingerprint") VALUES
 		(1, 'my-app',  '{"level":"ERROR","user":"bob","msg":"boom"}', '', '', -4446492996171837732),
 		(2, 'my-app',  '{"level":"INFO","user":"alice","msg":"ok"}',  '', '', -4446492996171837732),
 		(3, 'other',   '{"level":"ERROR","user":"carol","msg":"warn"}','', '', -4446492996171837732);`)
@@ -627,14 +627,14 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
 		job                       TEXT
 	);`)
 
-	mustExec(t, db, `INSERT INTO logs(job, "chq_timestamp", "log_message", "_cardinalhq_id", "log_level", "chq_fingerprint") VALUES
+	mustExec(t, db, `INSERT INTO logs(job, "chq_timestamp", "log_message", "chq_id", "log_level", "chq_fingerprint") VALUES
 	('my-app', 1, '{"response":"ErrorBadGateway","msg":"x"}', '', '', -4446492996171837732),
 	('my-app', 2, '{"response":"OK","msg":"y"}',              '', '', -4446492996171837732),
 	('my-app', 3, '{"response":"ErrorOops","msg":"z"}',       '', '', -4446492996171837732);`)
@@ -1077,7 +1077,7 @@ func TestToWorkerSQLWithLimit_Fields_Basic(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
@@ -1089,7 +1089,7 @@ func TestToWorkerSQLWithLimit_Fields_Basic(t *testing.T) {
 
 	// Insert test data
 	mustExec(t, db, `INSERT INTO logs(
-		"chq_timestamp","_cardinalhq_id","log_level","log_message",
+		"chq_timestamp","chq_id","log_level","log_message",
 		"chq_fingerprint","level","service","pod","user"
 	) VALUES
 	 (1000, 'id1', 'info',  'test message 1', -4446492996171837732, 'info',  'api', 'pod1', 'user1'),
@@ -1150,7 +1150,7 @@ func TestToWorkerSQLWithLimit_Fields_WithRegexpParser(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT
@@ -1158,7 +1158,7 @@ func TestToWorkerSQLWithLimit_Fields_WithRegexpParser(t *testing.T) {
 
 	// Choose timestamps so DESC order matches expected (alice, bob, charlie)
 	mustExec(t, db, `INSERT INTO logs(
-		"chq_timestamp","_cardinalhq_id","log_level","log_message","chq_fingerprint"
+		"chq_timestamp","chq_id","log_level","log_message","chq_fingerprint"
 	) VALUES 
 	(3000,'','', 'user=alice action=login status=success',  -4446492996171837732),
 	(2000,'','', 'user=bob action=logout status=success',   -4446492996171837732),
@@ -1216,7 +1216,7 @@ func TestToWorkerSQLWithLimit_Fields_EmptyFields(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
@@ -1228,7 +1228,7 @@ func TestToWorkerSQLWithLimit_Fields_EmptyFields(t *testing.T) {
 
 	// Insert test data
 	mustExec(t, db, `INSERT INTO logs(
-		"chq_timestamp","_cardinalhq_id","log_level","log_message",
+		"chq_timestamp","chq_id","log_level","log_message",
 		"chq_fingerprint","level","service","pod","user"
 	) VALUES
 	 (1000, 'id1', 'info',  'test message 1', -4446492996171837732, 'info',  'api', 'pod1', 'user1'),
@@ -1265,7 +1265,7 @@ func TestToWorkerSQLWithLimit_Fields_NonExistentFields_NoOp(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
@@ -1277,7 +1277,7 @@ func TestToWorkerSQLWithLimit_Fields_NonExistentFields_NoOp(t *testing.T) {
 
 	// Insert test data
 	mustExec(t, db, `INSERT INTO logs(
-		"chq_timestamp","_cardinalhq_id","log_level","log_message",
+		"chq_timestamp","chq_id","log_level","log_message",
 		"chq_fingerprint","level","service","pod","user"
 	) VALUES
 	 (1000, 'id1', 'info', 'test message 1', -4446492996171837732, 'info', 'api', 'pod1', 'user1')`)
@@ -1316,7 +1316,7 @@ func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
 	// Full base schema so SELECT * is always valid
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
@@ -1328,7 +1328,7 @@ func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
 
 	// Insert test data
 	mustExec(t, db, `INSERT INTO logs(
-		"chq_timestamp","_cardinalhq_id","log_level","log_message",
+		"chq_timestamp","chq_id","log_level","log_message",
 		"chq_fingerprint","level","service","pod","user"
 	) VALUES
 	 (1000, 'id1', 'info',  'test message 1', -4446492996171837732, 'info',  'api', 'pod1', 'user1'),
@@ -1379,12 +1379,12 @@ func TestToWorkerSQL_LineFormat_JSONToMessage(t *testing.T) {
 		app                       TEXT,
 		level                     TEXT,
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT
 	);`)
-	mustExec(t, db, `INSERT INTO logs(app, level, "chq_timestamp", "_cardinalhq_id", "log_level", "log_message", "chq_fingerprint") VALUES
+	mustExec(t, db, `INSERT INTO logs(app, level, "chq_timestamp", "chq_id", "log_level", "log_message", "chq_fingerprint") VALUES
 		('web',   'ERROR', 1000, '', '', '{"message":"boom","level":"ERROR","x":1}',  -4446492996171837732),
 		('web',   'INFO',  2000, '', '', '{"message":"ok","level":"INFO","x":2}',     -4446492996171837732),
 		('other', 'ERROR', 3000, '', '', '{"message":"nope","level":"ERROR","x":3}', -4446492996171837732)
@@ -1441,7 +1441,7 @@ func TestToWorkerSQL_LineFormat_IndexBaseField(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"resource_service_name"   TEXT,
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
@@ -1505,7 +1505,7 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"resource_service_name"   TEXT,
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
@@ -1566,7 +1566,7 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField_UnderscoreCompat(t *testing
 	mustExec(t, db, `CREATE TABLE logs(
 		"resource_service_name"   TEXT,
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
@@ -1623,7 +1623,7 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"resource_service_name"   TEXT,
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,
@@ -1706,7 +1706,7 @@ func TestToWorkerSQL_LineFormat_JSON_LabelFormat_ItemCount_WithFingerprint(t *te
 	// Full base table so we don't need replaceTable(..)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"log_message"     TEXT,
 		"chq_fingerprint" BIGINT,

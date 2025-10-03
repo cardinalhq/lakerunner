@@ -203,7 +203,7 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) 
 
 	// Add organization ID if available
 	if t.orgID != "" {
-		(*row)[wkk.NewRowKey("_cardinalhq_organization_id")] = t.orgID
+		(*row)[wkk.NewRowKey("chq_organization_id")] = t.orgID
 	}
 
 	return nil

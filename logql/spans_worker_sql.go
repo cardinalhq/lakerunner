@@ -18,10 +18,10 @@ import (
 	"fmt"
 )
 
-// ToSpansWorkerSQL generates SQL for spans queries with metric_name and span_kind as default fields
+// ToSpansWorkerSQL generates SQL for spans queries with span_name and span_kind as default fields
 func (be *LogLeaf) ToSpansWorkerSQL(limit int, order string, fields []string) string {
 	const baseRel = "{table}"
-	const spansNameCol = "\"metric_name\""
+	const spansNameCol = "\"span_name\""
 	const tsCol = "\"chq_timestamp\""
 
 	// 1) Prepare sets: group keys, parser-created, feature flags
@@ -91,7 +91,7 @@ func (be *LogLeaf) ToSpansWorkerSQLWithLimit(limit int, order string, fields []s
 // isSpansBaseCol checks if a column is a base column for spans
 func isSpansBaseCol(col string) bool {
 	spansBaseCols := map[string]struct{}{
-		"\"metric_name\"":         {},
+		"\"span_name\"":           {},
 		"\"span_kind\"":           {},
 		"\"span_id\"":             {},
 		"\"span_trace_id\"":       {},

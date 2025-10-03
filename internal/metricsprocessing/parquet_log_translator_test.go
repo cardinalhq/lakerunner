@@ -400,7 +400,7 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 		wkk.NewRowKey("_internal"): "skip me",
 
 		// _cardinalhq fields should be skipped
-		wkk.NewRowKey("_cardinalhq_test"): "skip me too",
+		wkk.NewRowKey("chq_test"): "skip me too",
 
 		// resource fields should be kept as-is
 		wkk.NewRowKey("resource_old"): "keep",
@@ -460,7 +460,7 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 	assert.Equal(t, "logs", telemetryType)
 
 	name, exists := row[wkk.RowKeyCName]
-	assert.True(t, exists, "Should have chq_name")
+	assert.True(t, exists, "Should have metric_name")
 	assert.Equal(t, "log_events", name)
 
 	// Check resource fields

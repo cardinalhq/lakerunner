@@ -234,7 +234,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		}
 
 		// Convert pipeline.Row to map[string]any efficiently
-		stringRow := make(map[string]any, len(row)+1) // +1 for _cardinalhq_id
+		stringRow := make(map[string]any, len(row)+1) // +1 for chq_id
 		for key, value := range row {
 			fieldName := string(key.Value())
 			// Apply string conversion for fields with configured prefixes
@@ -252,7 +252,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 			stringRow[fieldName] = convertedValue
 		}
 
-		stringRow["_cardinalhq_id"] = idgen.NextBase32ID()
+		stringRow["chq_id"] = idgen.NextBase32ID()
 
 		// Add to schema builder for evolution tracking
 		if err := s.currentSchema.AddRow(stringRow); err != nil {

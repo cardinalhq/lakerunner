@@ -201,7 +201,7 @@ func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.Re
 	ret["span_trace_id"] = span.TraceID().String()
 	ret["span_id"] = span.SpanID().String()
 	ret["span_parent_span_id"] = span.ParentSpanID().String()
-	ret["metric_name"] = span.Name()
+	ret["span_name"] = span.Name()
 	ret["span_kind"] = span.Kind().String()
 	ret["span_status_code"] = span.Status().Code().String()
 	ret["span_status_message"] = span.Status().Message()

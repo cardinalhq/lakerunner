@@ -148,14 +148,14 @@ type MetricsFileStats struct {
 func ValidateMetricsRow(row map[string]any) error {
 	nameVal, ok := row["metric_name"]
 	if !ok {
-		return fmt.Errorf("missing required field: chq_name")
+		return fmt.Errorf("missing required field: metric_name")
 	}
 	name, ok := nameVal.(string)
 	if !ok {
-		return fmt.Errorf("field chq_name must be a string, got %T", nameVal)
+		return fmt.Errorf("field metric_name must be a string, got %T", nameVal)
 	}
 	if len(name) == 0 {
-		return fmt.Errorf("field chq_name cannot be empty")
+		return fmt.Errorf("field metric_name cannot be empty")
 	}
 
 	tidVal, ok := row["chq_tid"]

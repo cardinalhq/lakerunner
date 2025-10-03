@@ -280,7 +280,7 @@ func TestGenerateRowFingerprints(t *testing.T) {
 	// Test that it includes fingerprints for indexed dimensions
 	expectedFingerprints := mapset.NewSet[int64]()
 
-	// chq_name is a full value dimension
+	// metric_name is a full value dimension
 	expectedFingerprints.Add(ComputeFingerprint("metric_name", "log_events"))
 	expectedFingerprints.Add(ComputeFingerprint("metric_name", ExistsRegex))
 

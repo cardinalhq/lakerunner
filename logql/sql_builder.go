@@ -143,10 +143,10 @@ func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
 
 	// ---- s0: minimal base projection ----
 	need := map[string]struct{}{
-		bodyCol:              {},
-		tsCol:                {},
-		"\"_cardinalhq_id\"": {},
-		"\"log_level\"":      {},
+		bodyCol:         {},
+		tsCol:           {},
+		"\"chq_id\"":    {},
+		"\"log_level\"": {},
 	}
 	for _, m := range be.Matchers {
 		need[quoteIdent(m.Label)] = struct{}{}

@@ -873,7 +873,7 @@ func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 //  2. All metric attribute tags must be prefixed with "attr_"
 //  3. All resource attribute tags must be prefixed with "resource_"
 //  4. All scope attribute tags must be prefixed with "scope_"
-//  5. All metrics must have chq_name as a string
+//  5. All metrics must have metric_name as a string
 //  6. All metrics must have chq_metric_type as one of "gauge", "count", "histogram"
 //  7. All metrics must have chq_timestamp as int64 (use Timestamp, fallback to StartTimestamp)
 //  8. NO chq_value field should be present (removed from all metric types)
@@ -928,10 +928,10 @@ func ValidateMetricsReaderContract(t *testing.T, rows []pipeline.Row) {
 			}
 		}
 
-		// 5. All metrics must have chq_name as string
+		// 5. All metrics must have metric_name as string
 		name, nameOk := row[wkk.RowKeyCName].(string)
-		assert.True(t, nameOk, "Row %d missing or invalid chq_name field", i)
-		assert.NotEmpty(t, name, "Row %d chq_name must not be empty", i)
+		assert.True(t, nameOk, "Row %d missing or invalid metric_name field", i)
+		assert.NotEmpty(t, name, "Row %d metric_name must not be empty", i)
 
 		// 6. All metrics must have chq_metric_type as valid type
 		metricType, metricTypeOk := row[wkk.RowKeyCMetricType].(string)

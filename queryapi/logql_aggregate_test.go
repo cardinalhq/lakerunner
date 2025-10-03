@@ -188,7 +188,7 @@ func TestRewrite_CountOverTime_ByLevel_JSON(t *testing.T) {
 	// Table must include exemplar defaults the LogQL pipeline always projects.
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -280,7 +280,7 @@ func TestRewrite_BytesRate_ByUser_Logfmt(t *testing.T) {
 
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -358,7 +358,7 @@ func TestRewrite_Rate_ByDerivedLabel_LabelFormat(t *testing.T) {
 
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -472,7 +472,7 @@ func TestRewrite_Unwrap_Avg_JSON(t *testing.T) {
 	// Table must include exemplar defaults the LogQL pipeline always projects.
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -560,7 +560,7 @@ func TestRewrite_Unwrap_Avg_Logfmt(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -643,7 +643,7 @@ func TestRewrite_Unwrap_Min_Duration_JSON(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -711,7 +711,7 @@ func TestRewrite_Unwrap_Max_Bytes_Logfmt(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -778,7 +778,7 @@ func TestRewrite_Unwrap_Max_Duration_Regexp(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -849,7 +849,7 @@ func TestRewrite_SumByPod_Rate_ServiceFilter(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -962,7 +962,7 @@ func TestRewrite_SumBy_LabelFormat_Service(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -1026,7 +1026,7 @@ func TestRewrite_SumBy_JSON_User(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -1090,7 +1090,7 @@ func TestRewrite_SumBy_Regexp_Pod(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -1153,7 +1153,7 @@ func TestRewrite_SumBy_Logfmt_Svc(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -1215,7 +1215,7 @@ func TestRewrite_CountOverTime_ByBaseJob_WithJSONFilter(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -1274,7 +1274,7 @@ func TestRewrite_CountOverTime_ByUser_JSON_WithParserMatcher(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -1331,7 +1331,7 @@ func TestRewrite_CountOverTime_ByUserSvc_Logfmt_MultiGroup(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -1400,7 +1400,7 @@ func TestRewrite_CountOverTime_ByBasePod_WithJSONFilter(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -1472,7 +1472,7 @@ func TestRewrite_CountOverTime_ByUserAndBasePod_JSON(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -1545,7 +1545,7 @@ func TestLog_CountByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	mustExec(t, db1, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -1566,7 +1566,7 @@ func TestLog_CountByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 	db2 := openDuckDB(t)
 	mustExec(t, db2, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -1690,7 +1690,7 @@ func TestLog_SumOfCountsByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	mustExec(t, db1, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -1711,7 +1711,7 @@ func TestLog_SumOfCountsByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 	db2 := openDuckDB(t)
 	mustExec(t, db2, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -1829,7 +1829,7 @@ func TestLog_SumRateCounter_Unwrap_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	mustExec(t, db1, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -1848,7 +1848,7 @@ func TestLog_SumRateCounter_Unwrap_TwoWorkers_Eval(t *testing.T) {
 	db2 := openDuckDB(t)
 	mustExec(t, db2, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -1968,7 +1968,7 @@ func TestRewrite_FilterThenJSON_UnwrapNested_Max(t *testing.T) {
 	// Include the default columns s0 always projects.
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
@@ -1977,7 +1977,7 @@ func TestRewrite_FilterThenJSON_UnwrapNested_Max(t *testing.T) {
 
 	// Two 1m buckets: [0..60s), [60..120s)
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp","_cardinalhq_id","log_level","chq_fingerprint",job,"log_message") VALUES
+	INSERT INTO logs("chq_timestamp","chq_id","log_level","chq_fingerprint",job,"log_message") VALUES
 	(10*1000, 'id-a', '', '-4446492996171837732', 'svc', '{"req":{"url":"/foo","lat_ms":"120"},"meta":{"trace":"t1"}}'),
 	(30*1000, 'id-b', '', '-4446492996171837732', 'svc', '{"req":{"url":"/bar","lat_ms":"200"},"meta":{"trace":"t2"}}'),
 	(70*1000, 'id-c', '', '-4446492996171837732', 'svc', '{"req":{"url":"/foo","lat_ms":"350"},"meta":{"trace":"t3"}}');
@@ -2037,7 +2037,7 @@ func TestLog_AvgOverTime_Regexp_UnwrapBytes_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	mustExec(t, db1, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -2056,7 +2056,7 @@ func TestLog_AvgOverTime_Regexp_UnwrapBytes_TwoWorkers_Eval(t *testing.T) {
 	db2 := openDuckDB(t)
 	mustExec(t, db2, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -2178,7 +2178,7 @@ func TestLog_CountOverTime_LineRegex_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	mustExec(t, db1, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -2197,7 +2197,7 @@ func TestLog_CountOverTime_LineRegex_TwoWorkers_Eval(t *testing.T) {
 	db2 := openDuckDB(t)
 	mustExec(t, db2, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -2319,7 +2319,7 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 	// - "log_@OrderResult"           (the source JSON blob to index)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,
@@ -2377,7 +2377,7 @@ func TestRewrite_SumOverTime_Unwrap_BaseField_LineFilter(t *testing.T) {
 	// Base table with top-level log_quantity.
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
-		"_cardinalhq_id"          TEXT,
+		"chq_id"          TEXT,
 		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		"log_message"     TEXT,

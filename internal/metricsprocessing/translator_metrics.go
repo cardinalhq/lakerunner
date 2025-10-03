@@ -55,7 +55,7 @@ func (t *MetricTranslator) TranslateRow(_ context.Context, row *pipeline.Row) er
 
 	// Compute and add TID field
 	if _, nameOk := (*row)[wkk.RowKeyCName].(string); !nameOk {
-		return fmt.Errorf("missing or invalid chq_name field for TID computation")
+		return fmt.Errorf("missing or invalid metric_name field for TID computation")
 	}
 
 	filterKeys(row)

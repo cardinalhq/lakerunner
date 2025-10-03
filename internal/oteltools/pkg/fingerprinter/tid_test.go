@@ -24,7 +24,7 @@ import (
 
 func TestComputeTID_NewBehavior(t *testing.T) {
 	// Test that TID changes when specific fields change
-	t.Run("TID changes with chq_name", func(t *testing.T) {
+	t.Run("TID changes with metric_name", func(t *testing.T) {
 		tags1 := map[wkk.RowKey]any{
 			wkk.NewRowKey("metric_name"):   "metric1",
 			wkk.NewRowKey("resource_host"): "server1",
@@ -35,7 +35,7 @@ func TestComputeTID_NewBehavior(t *testing.T) {
 		}
 		tid1 := ComputeTID(tags1)
 		tid2 := ComputeTID(tags2)
-		assert.NotEqual(t, tid1, tid2, "TID should change when chq_name changes")
+		assert.NotEqual(t, tid1, tid2, "TID should change when metric_name changes")
 	})
 
 	t.Run("TID changes with chq_metric_type", func(t *testing.T) {

@@ -318,7 +318,7 @@ func emitParsersWithPostLineFilters(
 	}
 
 	// base cols
-	addPresent("log_message", "chq_timestamp", "_cardinalhq_id", "log_level", "chq_fingerprint")
+	addPresent("log_message", "chq_timestamp", "chq_id", "log_level", "chq_fingerprint")
 	// matchers
 	for _, m := range be.Matchers {
 		addPresent(m.Label)

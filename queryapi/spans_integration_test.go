@@ -38,9 +38,9 @@ func TestSpansQueryIntegration(t *testing.T) {
 	// Create spans table with the expected schema
 	mustExecSpans(t, db, `CREATE TABLE spans(
   "chq_timestamp" BIGINT,
-  "_cardinalhq_id" VARCHAR,
+  "chq_id" VARCHAR,
   "chq_fingerprint" BIGINT,
-  "metric_name" VARCHAR,
+  "span_name" VARCHAR,
   "span_kind" VARCHAR,
   "span_id" VARCHAR,
   "span_trace_id" VARCHAR,
@@ -57,25 +57,25 @@ func TestSpansQueryIntegration(t *testing.T) {
 	 (3000, 'span3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1'),
 	 (4000, 'span4', -4446492996171837732, 'PUT /api/users/123', 'client', 'span4', 'trace4', 'OK', 300000000, 'my-service', 'v1.0');`)
 
-	// Test 1: Basic spans query with chq_name matcher
+	// Test 1: Basic spans query with span_name matcher
 	t.Run("BasicSpanNameQuery", func(t *testing.T) {
 		leaf := logql.LogLeaf{
 			Matchers: []logql.LabelMatch{
-				{Label: "metric_name", Op: logql.MatchEq, Value: "GET /api/users"},
+				{Label: "span_name", Op: logql.MatchEq, Value: "GET /api/users"},
 			},
 		}
 		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)))
 
 		rows := queryAllSpans(t, db, sql)
 		if len(rows) != 1 {
-			t.Fatalf("expected 1 row (chq_name=GET /api/users), got %d\nsql:\n%s", len(rows), sql)
+			t.Fatalf("expected 1 row (span_name=GET /api/users), got %d\nsql:\n%s", len(rows), sql)
 		}
 
-		// Verify all returned rows have chq_name = "GET /api/users"
+		// Verify all returned rows have span_name = "GET /api/users"
 		for _, row := range rows {
-			spanName := getString(row["metric_name"])
+			spanName := getString(row["span_name"])
 			if spanName != "GET /api/users" {
-				t.Fatalf("expected chq_name='GET /api/users', got %q", spanName)
+				t.Fatalf("expected span_name='GET /api/users', got %q", spanName)
 			}
 		}
 	})
@@ -107,7 +107,7 @@ func TestSpansQueryIntegration(t *testing.T) {
 	t.Run("MultipleMatchersQuery", func(t *testing.T) {
 		leaf := logql.LogLeaf{
 			Matchers: []logql.LabelMatch{
-				{Label: "metric_name", Op: logql.MatchRe, Value: "GET.*"},
+				{Label: "span_name", Op: logql.MatchRe, Value: "GET.*"},
 				{Label: "span_kind", Op: logql.MatchEq, Value: "server"},
 			},
 		}
@@ -115,15 +115,15 @@ func TestSpansQueryIntegration(t *testing.T) {
 
 		rows := queryAllSpans(t, db, sql)
 		if len(rows) != 2 {
-			t.Fatalf("expected 2 rows (chq_name matching GET.* AND span_kind=server), got %d\nsql:\n%s", len(rows), sql)
+			t.Fatalf("expected 2 rows (span_name matching GET.* AND span_kind=server), got %d\nsql:\n%s", len(rows), sql)
 		}
 
 		// Verify all returned rows have both conditions
 		for _, row := range rows {
-			spanName := getString(row["metric_name"])
+			spanName := getString(row["span_name"])
 			spanKind := getString(row["span_kind"])
 			if !strings.HasPrefix(spanName, "GET") || spanKind != "server" {
-				t.Fatalf("expected chq_name starting with 'GET' AND span_kind='server', got chq_name=%q span_kind=%q", spanName, spanKind)
+				t.Fatalf("expected span_name starting with 'GET' AND span_kind='server', got span_name=%q span_kind=%q", spanName, spanKind)
 			}
 		}
 	})
@@ -132,26 +132,26 @@ func TestSpansQueryIntegration(t *testing.T) {
 	t.Run("FieldsParameterQuery", func(t *testing.T) {
 		leaf := logql.LogLeaf{
 			Matchers: []logql.LabelMatch{
-				{Label: "metric_name", Op: logql.MatchRe, Value: "GET.*"},
+				{Label: "span_name", Op: logql.MatchRe, Value: "GET.*"},
 			},
 		}
-		fields := []string{"metric_name", "span_kind", "service_name", "span_trace_id"}
+		fields := []string{"span_name", "span_kind", "service_name", "span_trace_id"}
 		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", fields)))
 
 		rows := queryAllSpans(t, db, sql)
 		if len(rows) != 2 {
-			t.Fatalf("expected 2 rows (chq_name matching GET.*), got %d\nsql:\n%s", len(rows), sql)
+			t.Fatalf("expected 2 rows (span_name matching GET.*), got %d\nsql:\n%s", len(rows), sql)
 		}
 
 		// Verify that the specified fields are present and have values
 		for i, row := range rows {
-			spanName := getString(row["metric_name"])
+			spanName := getString(row["span_name"])
 			spanKind := getString(row["span_kind"])
 			serviceName := getString(row["service_name"])
 			traceID := getString(row["span_trace_id"])
 
 			if spanName == "" || spanKind == "" || serviceName == "" || traceID == "" {
-				t.Fatalf("row %d missing expected field values: chq_name=%q span_kind=%q service_name=%q span_trace_id=%q",
+				t.Fatalf("row %d missing expected field values: span_name=%q span_kind=%q service_name=%q span_trace_id=%q",
 					i, spanName, spanKind, serviceName, traceID)
 			}
 		}
@@ -161,21 +161,21 @@ func TestSpansQueryIntegration(t *testing.T) {
 	t.Run("RegexMatcherQuery", func(t *testing.T) {
 		leaf := logql.LogLeaf{
 			Matchers: []logql.LabelMatch{
-				{Label: "metric_name", Op: logql.MatchRe, Value: "GET.*"},
+				{Label: "span_name", Op: logql.MatchRe, Value: "GET.*"},
 			},
 		}
 		sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)))
 
 		rows := queryAllSpans(t, db, sql)
 		if len(rows) != 2 {
-			t.Fatalf("expected 2 rows (chq_name matching 'GET.*'), got %d\nsql:\n%s", len(rows), sql)
+			t.Fatalf("expected 2 rows (span_name matching 'GET.*'), got %d\nsql:\n%s", len(rows), sql)
 		}
 
-		// Verify all returned rows have chq_name starting with "GET"
+		// Verify all returned rows have span_name starting with "GET"
 		for _, row := range rows {
-			spanName := getString(row["metric_name"])
+			spanName := getString(row["span_name"])
 			if !strings.HasPrefix(spanName, "GET") {
-				t.Fatalf("expected chq_name to start with 'GET', got %q", spanName)
+				t.Fatalf("expected span_name to start with 'GET', got %q", spanName)
 			}
 		}
 	})
@@ -193,9 +193,9 @@ func TestSpansQueryWithTimeRange(t *testing.T) {
 	// Create spans table
 	mustExecSpans(t, db, `CREATE TABLE spans(
   "chq_timestamp" BIGINT,
-  "_cardinalhq_id" VARCHAR,
+  "chq_id" VARCHAR,
   "chq_fingerprint" BIGINT,
-  "metric_name" VARCHAR,
+  "span_name" VARCHAR,
   "span_kind" VARCHAR,
   "span_id" VARCHAR,
   "span_trace_id" VARCHAR,
@@ -215,7 +215,7 @@ func TestSpansQueryWithTimeRange(t *testing.T) {
 	// Test time range filtering
 	leaf := logql.LogLeaf{
 		Matchers: []logql.LabelMatch{
-			{Label: "metric_name", Op: logql.MatchRe, Value: "GET.*"},
+			{Label: "span_name", Op: logql.MatchRe, Value: "GET.*"},
 		},
 	}
 
@@ -247,9 +247,9 @@ func mustExecSpans(t *testing.T, db *sql.DB, query string) {
 
 func replaceSpansTable(sql string) string {
 	base := `(SELECT *,
-  COALESCE("_cardinalhq_id", ''::VARCHAR) AS "_cardinalhq_id",
+  COALESCE("chq_id", ''::VARCHAR) AS "chq_id",
   COALESCE("span_kind", ''::VARCHAR) AS "span_kind",
-  COALESCE("metric_name", ''::VARCHAR) AS "metric_name",
+  COALESCE("span_name", ''::VARCHAR) AS "span_name",
   COALESCE("span_id", ''::VARCHAR) AS "span_id",
   COALESCE("span_trace_id", ''::VARCHAR) AS "span_trace_id",
   COALESCE("span_status_code", ''::VARCHAR) AS "span_status_code",

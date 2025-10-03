@@ -263,7 +263,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 			assert.True(t, hasTraceId)
 			_, hasSpanId := row[wkk.NewRowKey("span_id")]
 			assert.True(t, hasSpanId)
-			_, hasName := row[wkk.NewRowKey("metric_name")]
+			_, hasName := row[wkk.NewRowKey("span_name")]
 			assert.True(t, hasName)
 			_, hasKind := row[wkk.NewRowKey("span_kind")]
 			assert.True(t, hasKind)
@@ -298,7 +298,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	// Verify specific spans
 	rootSpan := allRows[0]
 	assert.Equal(t, "1234567890123456", rootSpan[wkk.NewRowKey("span_id")])
-	assert.Equal(t, "root-operation", rootSpan[wkk.NewRowKey("metric_name")])
+	assert.Equal(t, "root-operation", rootSpan[wkk.NewRowKey("span_name")])
 	assert.Equal(t, "Client", rootSpan[wkk.NewRowKey("span_kind")])
 	assert.Equal(t, "Ok", rootSpan[wkk.NewRowKey("span_status_code")])
 	_, hasSpanHttpMethod := rootSpan[wkk.NewRowKey("attr_http_method")]
@@ -310,7 +310,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 
 	dbSpan := allRows[1]
 	assert.Equal(t, "2345678901234567", dbSpan[wkk.NewRowKey("span_id")])
-	assert.Equal(t, "database-query", dbSpan[wkk.NewRowKey("metric_name")])
+	assert.Equal(t, "database-query", dbSpan[wkk.NewRowKey("span_name")])
 	assert.Equal(t, "Producer", dbSpan[wkk.NewRowKey("span_kind")])
 	assert.Equal(t, "Unset", dbSpan[wkk.NewRowKey("span_status_code")])
 	_, hasSpanDbSystem := dbSpan[wkk.NewRowKey("attr_db_system")]
@@ -322,7 +322,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 
 	internalSpan := allRows[2]
 	assert.Equal(t, "3456789012345678", internalSpan[wkk.NewRowKey("span_id")])
-	assert.Equal(t, "internal-processing", internalSpan[wkk.NewRowKey("metric_name")])
+	assert.Equal(t, "internal-processing", internalSpan[wkk.NewRowKey("span_name")])
 	assert.Equal(t, "Internal", internalSpan[wkk.NewRowKey("span_kind")])
 	assert.Equal(t, "Unset", internalSpan[wkk.NewRowKey("span_status_code")])
 	_, hasSpanComponent := internalSpan[wkk.NewRowKey("attr_component")]
@@ -587,7 +587,7 @@ func TestProtoTracesReader_SyntheticEdgeCases(t *testing.T) {
 
 	// First span - empty name, zero timestamp
 	emptySpan := allRows[0]
-	assert.Equal(t, "", emptySpan[wkk.NewRowKey("metric_name")])
+	assert.Equal(t, "", emptySpan[wkk.NewRowKey("span_name")])
 	assert.Equal(t, "Unspecified", emptySpan[wkk.NewRowKey("span_kind")])
 	_, hasStartTimestamp := emptySpan[wkk.NewRowKey("chq_timestamp")]
 	assert.True(t, hasStartTimestamp)
@@ -598,7 +598,7 @@ func TestProtoTracesReader_SyntheticEdgeCases(t *testing.T) {
 
 	// Second span - zero values in attributes
 	zeroSpan := allRows[1]
-	assert.Equal(t, "span-with-zero-values", zeroSpan[wkk.NewRowKey("metric_name")])
+	assert.Equal(t, "span-with-zero-values", zeroSpan[wkk.NewRowKey("span_name")])
 	assert.Equal(t, "Error", zeroSpan[wkk.NewRowKey("span_status_code")])
 	_, hasStatusMessage := zeroSpan[wkk.NewRowKey("span_status_message")]
 	assert.True(t, hasStatusMessage)
