@@ -54,7 +54,9 @@ type Querier interface {
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
 	ListServiceMetrics(ctx context.Context, arg ListServiceMetricsParams) ([]string, error)
 	ListServiceNames(ctx context.Context, organizationID uuid.UUID) ([]string, error)
-	ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error)
+	// Extract tag keys from flat exemplar format for spans
+	// Only return keys that start with _cardinalhq_, resource_, scope_, or span_
+	ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	ListTraceSegmentsForQuery(ctx context.Context, arg ListTraceSegmentsForQueryParams) ([]ListTraceSegmentsForQueryRow, error)
 	// Returns an estimate of the number of log segments, accounting for per-file overhead.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)

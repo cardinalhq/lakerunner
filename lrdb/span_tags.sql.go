@@ -12,73 +12,25 @@ import (
 )
 
 const listSpanTags = `-- name: ListSpanTags :many
-WITH src AS (
-  SELECT exemplar::jsonb AS exemplar
-  FROM lrdb_exemplar_traces
-  WHERE organization_id = $1
-),
-res_keys AS (
-  SELECT DISTINCT (
-    CASE
-      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
-      ELSE 'resource.' || (attr->>'key')
-    END
-  ) AS k
-  FROM src
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(exemplar->'resourceSpans','[]'::jsonb)) rs
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rs->'resource'->'attributes','[]'::jsonb)) attr
-),
-span_attr_keys AS (
-  SELECT DISTINCT (
-    CASE
-      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
-      ELSE 'span.' || (attr->>'key')
-    END
-  ) AS k
-  FROM src
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(exemplar->'resourceSpans','[]'::jsonb)) rs
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rs->'scopeSpans','[]'::jsonb)) ss
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(ss->'spans','[]'::jsonb)) span
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(span->'attributes','[]'::jsonb)) attr
-),
-span_name_key AS (
-  SELECT DISTINCT '_cardinalhq.span_name'::text AS k
-  FROM src
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(exemplar->'resourceSpans','[]'::jsonb)) rs
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rs->'scopeSpans','[]'::jsonb)) ss
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(ss->'spans','[]'::jsonb)) span
-  WHERE span ? 'name'
-),
-span_kind_key AS (
-  SELECT DISTINCT '_cardinalhq.span_kind'::text AS k
-  FROM src
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(exemplar->'resourceSpans','[]'::jsonb)) rs
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rs->'scopeSpans','[]'::jsonb)) ss
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(ss->'spans','[]'::jsonb)) span
-  WHERE span ? 'kind'
-)
-SELECT k AS tag_key
-FROM (
-  SELECT k FROM res_keys
-  UNION
-  SELECT k FROM span_attr_keys
-  UNION
-  SELECT k FROM span_name_key
-  UNION
-  SELECT k FROM span_kind_key
-) all_keys
-ORDER BY k
+SELECT DISTINCT key::text AS tag_key
+FROM lrdb_exemplar_traces,
+    LATERAL jsonb_object_keys(exemplar) AS key
+WHERE organization_id = $1
+  AND key ~ '^(_cardinalhq_|resource_|scope_|span_)'
+ORDER BY tag_key
 `
 
-func (q *Queries) ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error) {
+// Extract tag keys from flat exemplar format for spans
+// Only return keys that start with _cardinalhq_, resource_, scope_, or span_
+func (q *Queries) ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]string, error) {
 	rows, err := q.db.Query(ctx, listSpanTags, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []interface{}
+	var items []string
 	for rows.Next() {
-		var tag_key interface{}
+		var tag_key string
 		if err := rows.Scan(&tag_key); err != nil {
 			return nil, err
 		}
