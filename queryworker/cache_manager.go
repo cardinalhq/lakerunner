@@ -238,6 +238,7 @@ func EvaluatePushDown[T promql.Timestamped](
 				profile.Bucket,
 				profile.Region,
 				profile.Endpoint,
+				profile.CloudProvider,
 				s3URIs,
 				s3GlobSize,
 				userSQL,
@@ -353,6 +354,7 @@ func streamFromS3[T promql.Timestamped](
 	bucket string,
 	region string,
 	endpoint string,
+	cloudProvider string,
 	s3URIs []string,
 	s3GlobSize int,
 	userSQL string,
@@ -387,7 +389,7 @@ func streamFromS3[T promql.Timestamped](
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
 			start := time.Now()
-			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, bucket, region, endpoint)
+			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, bucket, region, endpoint, cloudProvider)
 			connectionAcquireTime := time.Since(start)
 			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", bucket)
 

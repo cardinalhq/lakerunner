@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/marcboeker/go-duckdb/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -226,11 +227,11 @@ func (s *S3DB) GetConnection(ctx context.Context) (*sql.Conn, func(), error) {
 }
 
 // GetConnectionForBucket returns a connection configured with S3 credentials for the specified bucket.
-func (s *S3DB) GetConnectionForBucket(ctx context.Context, bucket, region string, endpoint string) (*sql.Conn, func(), error) {
+func (s *S3DB) GetConnectionForBucket(ctx context.Context, bucket, region string, endpoint string, cloudProvider string) (*sql.Conn, func(), error) {
 	if bucket == "" {
 		return nil, nil, fmt.Errorf("bucket is required")
 	}
-	return s.pool.acquireForBucket(ctx, bucket, region, endpoint)
+	return s.pool.acquireForBucket(ctx, bucket, region, endpoint, cloudProvider)
 }
 
 // acquireLocal gets a connection for local database queries (no S3 authentication needed).
@@ -273,7 +274,7 @@ func (p *connectionPool) acquireLocal(ctx context.Context) (*sql.Conn, func(), e
 }
 
 // acquireForBucket gets a connection configured with S3 credentials for the specified bucket.
-func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, endpoint string) (*sql.Conn, func(), error) {
+func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, endpoint string, cloudProvider string) (*sql.Conn, func(), error) {
 	// Ensure extensions are loaded and database is set up before any connection is used
 	if err := p.parent.ensureSetup(ctx); err != nil {
 		return nil, nil, err
@@ -283,7 +284,7 @@ func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, e
 	ensureCredentials := func(conn *sql.Conn) error {
 		// Create/replace the secret for this bucket
 		// This is idempotent - CREATE OR REPLACE will update if needed
-		return seedCloudSecretFromEnv(ctx, conn, bucket, region, endpoint)
+		return seedCloudSecretFromEnv(ctx, conn, bucket, region, endpoint, cloudProvider)
 	}
 
 	select {
@@ -310,7 +311,7 @@ func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, e
 	p.mu.Unlock()
 
 	if canCreate {
-		pc, err := p.newConnForBucket(ctx, bucket, region, endpoint)
+		pc, err := p.newConnForBucket(ctx, bucket, region, endpoint, cloudProvider)
 		if err != nil {
 			p.mu.Lock()
 			p.cur--
@@ -359,13 +360,13 @@ func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) 
 }
 
 // newConnForBucket creates a new connection configured with S3 credentials for the specified bucket.
-func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, endpoint string) (*pooledConn, error) {
+func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, endpoint string, cloudProvider string) (*pooledConn, error) {
 	pc, err := p.newConn(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := seedCloudSecretFromEnv(ctx, pc.conn, bucket, region, endpoint); err != nil {
+	if err := seedCloudSecretFromEnv(ctx, pc.conn, bucket, region, endpoint, cloudProvider); err != nil {
 		_ = pc.conn.Close()
 		_ = pc.db.Close()
 		return nil, err
@@ -588,14 +589,23 @@ func (c *connExecer) ExecContext(ctx context.Context, query string, args []drive
 }
 
 // CREATE OR REPLACE SECRET for a bucket (serialized).
-// Detects cloud provider based on environment variables and creates appropriate secret.
-func seedCloudSecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
+// Detects cloud provider and credentials source, then creates appropriate secret.
+func seedCloudSecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string, cloudProvider string) error {
 	// Check for Azure credentials first
 	if hasAzureCredentials() {
 		return seedAzureSecretFromEnv(ctx, conn, bucket, region, endpoint)
 	}
 
-	// Fall back to S3/AWS
+	// Determine if we should use AWS SDK credentials (real AWS) or env vars (S3-compatible)
+	// Real AWS is identified by: cloudProvider == "aws" AND no custom endpoint
+	useAWSSDK := cloudProvider == "aws" && endpoint == ""
+
+	if useAWSSDK {
+		// Use AWS SDK credential chain for real AWS (auto-refreshing credentials)
+		return seedS3SecretFromAWSSDK(ctx, conn, bucket, region, endpoint)
+	}
+
+	// Fall back to environment variables for S3-compatible systems (MinIO, LocalStack, etc.)
 	return seedS3SecretFromEnv(ctx, conn, bucket, region, endpoint)
 }
 
@@ -687,6 +697,57 @@ type S3SecretConfig struct {
 	SessionToken string
 	URLStyle     string
 	UseSSL       bool
+}
+
+// seedS3SecretFromAWSSDK fetches S3 credentials from AWS SDK credential chain and creates a DuckDB secret.
+// This is used for real AWS (not S3-compatible systems) to get auto-refreshing credentials.
+func seedS3SecretFromAWSSDK(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
+	// Load AWS config (auto-refreshing credentials)
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("load AWS config: %w", err)
+	}
+
+	// Retrieve current credentials
+	creds, err := cfg.Credentials.Retrieve(ctx)
+	if err != nil {
+		return fmt.Errorf("retrieve AWS credentials: %w", err)
+	}
+
+	// Determine region and endpoint
+	if region == "" {
+		region = cfg.Region
+		if region == "" {
+			region = "us-east-1"
+		}
+	}
+
+	useSSL := true
+	if endpoint == "" {
+		endpoint = fmt.Sprintf("s3.%s.amazonaws.com", region)
+	} else {
+		if after, ok := strings.CutPrefix(endpoint, "http://"); ok {
+			endpoint = after
+			useSSL = false
+		} else if after, ok = strings.CutPrefix(endpoint, "https://"); ok {
+			endpoint = after
+			useSSL = true
+		}
+	}
+
+	// Use the credentials to create DuckDB secret
+	secretConfig := S3SecretConfig{
+		Bucket:       bucket,
+		Region:       region,
+		Endpoint:     endpoint,
+		KeyID:        creds.AccessKeyID,
+		Secret:       creds.SecretAccessKey,
+		SessionToken: creds.SessionToken,
+		URLStyle:     "path",
+		UseSSL:       useSSL,
+	}
+
+	return createS3Secret(ctx, conn, secretConfig)
 }
 
 // seedS3SecretFromEnv fetches S3 credentials from environment and creates a DuckDB secret.
