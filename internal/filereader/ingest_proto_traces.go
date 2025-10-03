@@ -95,8 +95,9 @@ func (r *IngestProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < r.batchSize {
-		row := batch.AddRow()
-		err := r.getTraceRow(ctx, row)
+		// Prepare a temporary row to populate
+		tempRow := make(pipeline.Row)
+		err := r.getTraceRow(ctx, tempRow)
 		if err != nil {
 			if err == io.EOF {
 				if batch.Len() == 0 {
@@ -107,6 +108,12 @@ func (r *IngestProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 			}
 			pipeline.ReturnBatch(batch)
 			return nil, err
+		}
+
+		// Only add row to batch after successful read
+		row := batch.AddRow()
+		for k, v := range tempRow {
+			row[k] = v
 		}
 
 		// Track trace spans read from proto
