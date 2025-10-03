@@ -3,50 +3,49 @@
 Log parquet files are a flattened version of the OpenTelemetry wire format
 build for rapid searching.
 
-## _cardinalhq prefix
+## chq prefix
 
-Anything beginning with `_cardinalhq` is used by the CardinalHQ Lakerunner data lake
-system.
+Fields beginning with `chq_` are system fields used by the CardinalHQ Lakerunner data lake system.
 
 ### Field Specifications and Data Types
 
-`_cardinalhq.fingerprint` (int64, nullable) represents the message body content such that
+`chq_fingerprint` (int64, nullable) represents the message body content such that
 messages which are similar to one another will have the same fingerprint. Detectable items
 like IP addresses, identifiers, process IDs, and other variable content are removed, and the
 remaining string is fingerprinted using the fingerprinter library. Can be null if no message content
 is available for fingerprinting.
 
-`_cardinalhq.id` (string, required) is used by the CardinalHQ UI to identify this record. Generated
+`chq_id` (string, required) is used by the CardinalHQ UI to identify this record. Generated
 automatically at write time using `idgen.NextBase32ID()` to ensure uniqueness within the dataset.
 Format is base32-encoded string (e.g., "abc123def456").
 
-`_cardinalhq.level` (string, nullable) stores the log level in uppercase format. Allowed values are:
+`log_level` (string, nullable) stores the log level in uppercase format. Allowed values are:
 TRACE, DEBUG, INFO, WARN, ERROR, FATAL, or empty string. Derived from the OTEL `severity_text` field
 if not explicitly set. Can be null if no severity information is available.
 
-`_cardinalhq.json` (string, nullable) may contain JSON content extracted from the OTEL message body
+`log_json` (string, nullable) may contain JSON content extracted from the OTEL message body
 when the body itself is a JSON object or contains embedded JSON. The field contains the raw JSON
 string after searching for common message keys. Must be valid JSON when present. Can be null if
 no JSON content is detected or extractable.
 
-`_cardinalhq.message` (string, nullable) contains the human-readable log content extracted from either:
+`log_message` (string, nullable) contains the human-readable log content extracted from either:
 1. The OTEL `body` field directly (if it's a simple string)
 2. Common message keys found within JSON content in the body
 3. Processed/cleaned message text after JSON parsing
 May be blank or null if no readable message content can be extracted.
 
-`_cardinalhq.name` (string, required) is always set to the constant `"log.events"` for all log records.
+`metric_name` (string, required) is always set to the constant `"log.events"` for all log records.
 
-`_cardinalhq.telemetry_type` (string, required) is always set to the constant `"logs"` for all log records.
+`chq_telemetry_type` (string, required) is always set to the constant `"logs"` for all log records.
 
-`_cardinalhq.timestamp` (int64, required) represents milliseconds since the Unix epoch. Derived using
+`chq_timestamp` (int64, required) represents milliseconds since the Unix epoch. Derived using
 the following priority order:
 1. OTEL `timestamp` field (converted from nanoseconds if > 1e15)
 2. OTEL `observed_timestamp` field (converted from nanoseconds if > 1e15)  
 3. Current system time at processing (if both above are missing or invalid)
 Must be a positive integer representing a valid timestamp.
 
-`_cardinalhq.value` (float64, deprecated) is no longer used and should not be present in modern files.
+`chq_value` (float64, deprecated) is no longer used and should not be present in modern files.
 This field was historically set to 1.0 but has been removed from the current schema.
 
 ## Field Generation Rules
@@ -75,9 +74,10 @@ Resource, scope, and log attributes from OTEL are flattened and stored with pref
 
 ### Attribute Prefixes and Sources
 
-* `resource.*` - Attributes from the OTEL Resource object, containing deployment/infrastructure metadata
-* `scope.*` - Attributes from the OTEL Scope/InstrumentationScope, including library name, version, and schema URL
-* `log.*` - Attributes specific to individual log records from the OTEL LogRecord
+* `resource_*` - Attributes from the OTEL Resource object, containing deployment/infrastructure metadata
+* `scope_*` - Attributes from the OTEL Scope/InstrumentationScope, including library name, version, and schema URL
+* `attr_*` - Attributes specific to individual log records from the OTEL LogRecord (formerly `log_*`)
+* `log_*` - System fields for log-specific data (e.g., `log_message`, `log_level`, `log_json`)
 
 ### Null Handling
 
@@ -88,10 +88,10 @@ If a particular row has a `null` value for an attribute, this typically means:
 
 ### Attribute Name Normalization
 
-- OTEL attribute keys are preserved as-is after the prefix
-- Dots in attribute names are kept (e.g., `http.method` becomes `log.http.method`)  
+- OTEL attribute keys are normalized after adding the prefix
+- Dots in attribute names are converted to underscores (e.g., `http.method` becomes `attr_http_method`)
 - No case conversion is applied to attribute names
-- Special characters in attribute names are preserved
+- Special characters in attribute names are converted to underscores
 
 ### Type Coercion Rules
 
@@ -123,36 +123,36 @@ When JSON is detected in the body, the system searches for common message keys i
 5. `error` - Error message content
 6. `reason` - Reason or cause text
 
-The first non-empty string value found is used as `_cardinalhq.message`.
+The first non-empty string value found is used as `log_message`.
 
 ### JSON Content Storage
 
 When JSON processing occurs:
-- `_cardinalhq.json` contains the original JSON string (if valid JSON was detected)
-- `_cardinalhq.message` contains the extracted message text (if found)
-- If no message keys are found, `_cardinalhq.message` may contain the entire JSON as a string
+- `log_json` contains the original JSON string (if valid JSON was detected)
+- `log_message` contains the extracted message text (if found)
+- If no message keys are found, `log_message` may contain the entire JSON as a string
 
 ### JSON Processing Examples
 
 **Simple JSON with message:**
 ```json
 Input body: {"level":"error","message":"Database connection failed","timestamp":"2022-01-01T00:00:00Z"}
-→ _cardinalhq.message: "Database connection failed"
-→ _cardinalhq.json: "{\"level\":\"error\",\"message\":\"Database connection failed\",\"timestamp\":\"2022-01-01T00:00:00Z\"}"
+→ chq.message: "Database connection failed"
+→ chq.json: "{\"level\":\"error\",\"message\":\"Database connection failed\",\"timestamp\":\"2022-01-01T00:00:00Z\"}"
 ```
 
 **JSON with alternative message key:**
 ```json
 Input body: {"severity":"warning","msg":"Rate limit exceeded","service":"api"}
-→ _cardinalhq.message: "Rate limit exceeded"
-→ _cardinalhq.json: "{\"severity\":\"warning\",\"msg\":\"Rate limit exceeded\",\"service\":\"api\"}"
+→ chq.message: "Rate limit exceeded"
+→ chq.json: "{\"severity\":\"warning\",\"msg\":\"Rate limit exceeded\",\"service\":\"api\"}"
 ```
 
 **JSON without message keys:**
 ```json
 Input body: {"user_id":12345,"action":"login","success":true}
-→ _cardinalhq.message: null or empty
-→ _cardinalhq.json: "{\"user_id\":12345,\"action\":\"login\",\"success\":true}"
+→ chq.message: null or empty
+→ chq.json: "{\"user_id\":12345,\"action\":\"login\",\"success\":true}"
 ```
 
 ## Complete OTEL → Parquet Examples
@@ -187,18 +187,18 @@ scope: {
 
 **Parquet Output:**
 ```
-_cardinalhq.fingerprint: 789123456789 (calculated from "Database connection failed")
-_cardinalhq.id: "J7K2M9P8Q1R5" (generated)
-_cardinalhq.level: "ERROR"
-_cardinalhq.message: "Database connection failed"
-_cardinalhq.name: "log.events"
-_cardinalhq.telemetry_type: "logs"
-_cardinalhq.timestamp: 1640995200000 (converted to milliseconds)
-_cardinalhq.json: null
+chq.fingerprint: 789123456789 (calculated from "Database connection failed")
+chq.id: "J7K2M9P8Q1R5" (generated)
+chq.level: "ERROR"
+chq.message: "Database connection failed"
+chq.name: "log.events"
+chq.telemetry_type: "logs"
+chq.timestamp: 1640995200000 (converted to milliseconds)
+chq.json: null
 
-log.service.name: "api-gateway"
-log.http.method: "POST"
-log.error.code: "500"
+attr_service_name: "api-gateway"
+attr_http_method: "POST"
+attr_error_code: "500"
 
 resource.bucket.name: "my-logs-bucket" (from ingestion context)
 resource.file.name: "./2022-01-01/app-logs.pb" (from ingestion context)
@@ -233,17 +233,17 @@ resource: {
 
 **Parquet Output:**
 ```
-_cardinalhq.fingerprint: 456789123456 (calculated from "Rate limit exceeded")
-_cardinalhq.id: "M8N2P7Q9R3S1" (generated)
-_cardinalhq.level: "WARN"
-_cardinalhq.message: "Rate limit exceeded"
-_cardinalhq.name: "log.events"
-_cardinalhq.telemetry_type: "logs"
-_cardinalhq.timestamp: 1640995260000
-_cardinalhq.json: "{\"level\":\"warning\",\"message\":\"Rate limit exceeded\",\"user_id\":12345,\"endpoint\":\"/api/users\",\"rate\":\"100/min\"}"
+chq.fingerprint: 456789123456 (calculated from "Rate limit exceeded")
+chq.id: "M8N2P7Q9R3S1" (generated)
+chq.level: "WARN"
+chq.message: "Rate limit exceeded"
+chq.name: "log.events"
+chq.telemetry_type: "logs"
+chq.timestamp: 1640995260000
+chq.json: "{\"level\":\"warning\",\"message\":\"Rate limit exceeded\",\"user_id\":12345,\"endpoint\":\"/api/users\",\"rate\":\"100/min\"}"
 
-log.trace.id: "abc123def456"
-log.span.id: "789xyz"
+attr_trace_id: "abc123def456"
+attr_span_id: "789xyz"
 
 resource.bucket.name: "my-logs-bucket"
 resource.file.name: "./2022-01-01/rate-limiter.pb"
@@ -271,16 +271,16 @@ resource: {
 
 **Parquet Output:**
 ```
-_cardinalhq.fingerprint: 123456789123 (calculated from "Application started successfully")
-_cardinalhq.id: "Q5R8S2T6U9V3" (generated)
-_cardinalhq.level: "INFO"
-_cardinalhq.message: "Application started successfully"
-_cardinalhq.name: "log.events"
-_cardinalhq.telemetry_type: "logs"
-_cardinalhq.timestamp: 1640995320000 (current time at processing)
-_cardinalhq.json: null
+chq.fingerprint: 123456789123 (calculated from "Application started successfully")
+chq.id: "Q5R8S2T6U9V3" (generated)
+chq.level: "INFO"
+chq.message: "Application started successfully"
+chq.name: "log.events"
+chq.telemetry_type: "logs"
+chq.timestamp: 1640995320000 (current time at processing)
+chq.json: null
 
-log.version: "1.0.0"
+attr_version: "1.0.0"
 
 resource.bucket.name: "my-logs-bucket"
 resource.file.name: "./2022-01-01/my-app.pb"
@@ -298,14 +298,14 @@ body: "Heartbeat"
 
 **Parquet Output:**
 ```
-_cardinalhq.fingerprint: 987654321098 (calculated from "Heartbeat")
-_cardinalhq.id: "T7U1V5W9X3Y8" (generated)
-_cardinalhq.level: null (no severity_text provided)
-_cardinalhq.message: "Heartbeat"
-_cardinalhq.name: "log.events"
-_cardinalhq.telemetry_type: "logs"
-_cardinalhq.timestamp: 1640995380000
-_cardinalhq.json: null
+chq.fingerprint: 987654321098 (calculated from "Heartbeat")
+chq.id: "T7U1V5W9X3Y8" (generated)
+chq.level: null (no severity_text provided)
+chq.message: "Heartbeat"
+chq.name: "log.events"
+chq.telemetry_type: "logs"
+chq.timestamp: 1640995380000
+chq.json: null
 
 resource.bucket.name: "my-logs-bucket"
 resource.file.name: "./2022-01-01/minimal.pb"
@@ -333,8 +333,8 @@ Input: 0 or missing → Output: 1640995400000 (current time at processing)
 ### Message and Body Processing
 
 **Empty or Null Body:**
-- Empty string `""` → `_cardinalhq.message: ""` (empty but present)
-- Null/missing body → `_cardinalhq.message: null`
+- Empty string `""` → `chq.message: ""` (empty but present)
+- Null/missing body → `chq.message: null`
 - Whitespace-only body → Preserved as-is
 
 **Large Message Handling:**
@@ -343,24 +343,24 @@ Input: 0 or missing → Output: 1640995400000 (current time at processing)
 - Invalid UTF-8 sequences → Replaced with Unicode replacement character (�)
 
 **JSON Parsing Failures:**
-- Invalid JSON in body → `_cardinalhq.json: null`, `_cardinalhq.message: <original body text>`
+- Invalid JSON in body → `chq.json: null`, `chq.message: <original body text>`
 - Partially valid JSON → Attempts best-effort parsing, may extract partial content
 - JSON with circular references → Parsing fails gracefully, uses original text
 
 ### Severity/Level Processing
 
 **Invalid Severity Values:**
-- Numeric severity without severity_text → `_cardinalhq.level: null`
+- Numeric severity without severity_text → `chq.level: null`
 - Custom severity values → Preserved as-is (e.g., "CRITICAL", "LOW")
-- Empty string severity_text → `_cardinalhq.level: ""` (empty but present)
+- Empty string severity_text → `chq.level: ""` (empty but present)
 - Mixed case severity → Converted to uppercase (e.g., "Info" → "INFO")
 
 ### Attribute Processing
 
 **Special Characters in Attribute Names:**
-- Dots preserved: `http.method` → `log.http.method`
-- Spaces converted: `user name` → `log.user name` (spaces preserved)
-- Special chars preserved: `@metadata` → `log.@metadata`
+- Dots converted: `http.method` → `attr_http_method`
+- Spaces converted: `user name` → `attr_user_name`
+- Special chars converted: `@metadata` → `attr_metadata`
 
 **Large Attribute Values:**
 - Values > 32KB → May be truncated
@@ -376,8 +376,8 @@ Input: 0 or missing → Output: 1640995400000 (current time at processing)
 ### Fingerprint Calculation
 
 **Fingerprint Generation Failures:**
-- Empty message → `_cardinalhq.fingerprint: null`
-- Fingerprinter error → `_cardinalhq.fingerprint: null`, logs error
+- Empty message → `chq.fingerprint: null`
+- Fingerprinter error → `chq.fingerprint: null`, logs error
 - Unicode normalization issues → Best-effort fingerprinting
 - Very long messages → Fingerprinted on truncated content
 
@@ -422,7 +422,7 @@ Input: 0 or missing → Output: 1640995400000 (current time at processing)
 4. **Missing both:** No timestamp or observed_timestamp
 
 ### Attribute Validation
-1. **Reserved names:** Attributes that conflict with _cardinalhq fields
+1. **Reserved names:** Attributes that conflict with chq fields
 2. **Name conflicts:** Same attribute in resource, scope, and log
 3. **Type variety:** All supported OTEL attribute value types
 4. **Edge names:** Empty keys, very long keys, special characters
@@ -449,27 +449,27 @@ Input: 0 or missing → Output: 1640995400000 (current time at processing)
 
 ### Required Fields (Never Remove)
 These fields must always be present in log Parquet files:
-- `_cardinalhq.id` - Required for UI record identification
-- `_cardinalhq.name` - Always "log.events" 
-- `_cardinalhq.telemetry_type` - Always "logs"
-- `_cardinalhq.timestamp` - Required for time-based queries and partitioning
+- `chq_id` - Required for UI record identification
+- `metric_name` - Always "log.events" 
+- `chq_telemetry_type` - Always "logs"
+- `chq_timestamp` - Required for time-based queries and partitioning
 - `resource.bucket.name` - Required for data lineage
 - `resource.file.name` - Required for data lineage  
 - `resource.file.type` - Required for processing routing
 
 ### Optional Fields (Nullable)
 These fields may be null/missing depending on source data:
-- `_cardinalhq.fingerprint` - Null if message cannot be fingerprinted
-- `_cardinalhq.level` - Null if no severity information available
-- `_cardinalhq.message` - Null if no extractable message content
-- `_cardinalhq.json` - Null if body is not JSON
+- `chq_fingerprint` - Null if message cannot be fingerprinted
+- `log_level` - Null if no severity information available
+- `log_message` - Null if no extractable message content
+- `log_json` - Null if body is not JSON
 - All `log.*`, `resource.*`, and `scope.*` attributes - Depend on source OTEL data
 
 ### Deprecated Fields
-- `_cardinalhq.value` - Removed from current schema, should not appear in new files
+- `chq_value` - Removed from current schema, should not appear in new files
 
 ### Backward Compatibility
-- Older Parquet files may contain `_cardinalhq.value` field - readers should ignore
+- Older Parquet files may contain `chq_value` field - readers should ignore
 - New required fields added with defaults to maintain compatibility
 - Column ordering is not guaranteed - access by name only
 - Parquet schema allows missing columns (treated as all-null)
@@ -477,20 +477,20 @@ These fields may be null/missing depending on source data:
 ### Forward Compatibility
 - New optional fields may be added without breaking existing readers
 - Schema discovery should handle unknown columns gracefully
-- Reserved namespace: all `_cardinalhq.*` fields are system-controlled
+- Reserved namespace: all `chq.*` fields are system-controlled
 
 ## Performance Considerations
 
 ### Field Size Limits
-- `_cardinalhq.message`: Recommended max 64KB, may be truncated beyond this
-- `_cardinalhq.json`: Recommended max 32KB for optimal performance
+- `log_message`: Recommended max 64KB, may be truncated beyond this
+- `log_json`: Recommended max 32KB for optimal performance
 - Attribute values: Recommended max 32KB each
 - Total row size: Target <1MB per row for optimal Parquet compression
 
 ### Indexing and Query Optimization
-- `_cardinalhq.timestamp`: Primary partition key, always indexed
-- `_cardinalhq.fingerprint`: Frequently queried, consider secondary indexing
-- `_cardinalhq.level`: Low cardinality, good for column store compression
+- `chq_timestamp`: Primary partition key, always indexed
+- `chq_fingerprint`: Frequently queried, consider secondary indexing
+- `log_level`: Low cardinality, good for column store compression
 - `resource.service.name`: Common filter, consider indexing
 
 ### Parquet-Specific Optimizations

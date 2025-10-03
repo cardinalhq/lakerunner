@@ -468,10 +468,10 @@ func (t *ParquetLogTranslator) detectMessageField(row *pipeline.Row) (string, bo
 		}
 	}
 
-	// Also check for _cardinalhq.message in case it's already present
+	// Also check for log_message in case it's already present
 	if val, exists := (*row)[wkk.RowKeyCMessage]; exists {
 		if msg, ok := val.(string); ok && msg != "" {
-			return msg, true, "_cardinalhq.message"
+			return msg, true, "log_message"
 		}
 	}
 
@@ -556,10 +556,10 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.R
 			continue
 		}
 
-		// Skip _cardinalhq fields, underscore fields, and fields already with resource_ prefix
-		if strings.HasPrefix(keyStr, "_cardinalhq") || strings.HasPrefix(keyStr, "resource_") || keyStr[0] == '_' {
+		// Skip underscore fields and fields already with resource_ prefix
+		if strings.HasPrefix(keyStr, "resource_") || keyStr[0] == '_' {
 			// Remove underscore fields but keep existing resource_ fields
-			if keyStr[0] == '_' && !strings.HasPrefix(keyStr, "_cardinalhq") {
+			if keyStr[0] == '_' {
 				delete(*row, key)
 			}
 			// Keep existing resource_ fields as-is

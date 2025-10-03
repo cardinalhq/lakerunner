@@ -21,7 +21,7 @@ func prefixAttribute(name, prefix string) string {
 		return ""
 	}
 	if name[0] == '_' {
-		// Convert dots to underscores even for _cardinalhq fields
+		// Convert dots to underscores even for underscore-prefixed fields
 		return strings.ReplaceAll(name, ".", "_")
 	}
 	// Use underscore separator for PromQL/LogQL compatibility

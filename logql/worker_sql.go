@@ -915,8 +915,8 @@ func jsonPathFromMapping(s string) string {
 }
 
 func isBaseCol(q string) bool {
-	// quoted, so prefixes look like: "\"resource_", "\"log_", "\"_cardinalhq_", "\"attr_", "\"chq_"
-	if strings.HasPrefix(q, "\"resource_") || strings.HasPrefix(q, "\"log_") || strings.HasPrefix(q, "\"_cardinalhq_") || strings.HasPrefix(q, "\"attr_") || strings.HasPrefix(q, "\"chq_") {
+	// quoted, so prefixes look like: "\"resource_", "\"log_", "\"attr_", "\"chq_"
+	if strings.HasPrefix(q, "\"resource_") || strings.HasPrefix(q, "\"log_") || strings.HasPrefix(q, "\"attr_") || strings.HasPrefix(q, "\"chq_") {
 		return true
 	}
 	return false

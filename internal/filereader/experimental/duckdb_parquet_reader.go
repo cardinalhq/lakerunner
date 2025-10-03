@@ -127,7 +127,7 @@ func NewDuckDBParquetRawReader(ctx context.Context, s3db *duckdbx.S3DB, paths []
 	}
 	for i, c := range cols {
 		switch c {
-		case "_cardinalhq.tid":
+		case "chq_tid":
 			idxTID = i
 		case "chq_sketch":
 			idxSketch = i

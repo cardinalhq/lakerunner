@@ -45,7 +45,7 @@ All signal types share these base requirements:
 - Memory usage scales with largest TID group size
 
 ### Key Schema Fields
-- `_cardinalhq.tid` (int64, required): Timeseries identifier
+- `chq_tid` (int64, required): Timeseries identifier
 - Various metric fields based on metric type
 
 ## Logs Requirements
@@ -72,8 +72,8 @@ All signal types share these base requirements:
 - Temporary chunk files created during sorting
 
 ### Key Schema Fields
-- `_cardinalhq.timestamp` (int64, required): Event timestamp in milliseconds
-- `_cardinalhq.fingerprint` (int64, optional): For deduplication
+- `chq_timestamp` (int64, required): Event timestamp in milliseconds
+- `chq_fingerprint` (int64, optional): For deduplication
 - Log content fields vary by source
 
 ## Traces Requirements
@@ -100,9 +100,9 @@ All signal types share these base requirements:
 - Consider trace locality during splitting
 
 ### Key Schema Fields
-- `_cardinalhq.trace_id` (string, required): Trace identifier
-- `_cardinalhq.span_id` (string, required): Span identifier  
-- `_cardinalhq.start_time_unix_ns` (int64, required): Span start time
+- `span_trace_id` (string, required): Trace identifier
+- `span_id` (string, required): Span identifier  
+- `chq_timestamp` (int64, required): Span start time
 - Various span attributes and resource attributes
 
 ## Implementation Guidelines

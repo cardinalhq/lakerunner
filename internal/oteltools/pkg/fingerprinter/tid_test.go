@@ -158,33 +158,33 @@ func TestComputeTID_NewBehavior(t *testing.T) {
 		assert.Equal(t, tid1, tid2, "TID should not change when arbitrary fields are added")
 	})
 
-	t.Run("TID ignores other _cardinalhq.* fields", func(t *testing.T) {
+	t.Run("TID ignores other chq_* fields", func(t *testing.T) {
 		tags1 := map[wkk.RowKey]any{
-			wkk.NewRowKey("metric_name"):             "metric1",
-			wkk.NewRowKey("_cardinalhq.metric_type"): "gauge",
-			wkk.NewRowKey("resource_host"):           "server1",
+			wkk.NewRowKey("metric_name"):     "metric1",
+			wkk.NewRowKey("chq_metric_type"): "gauge",
+			wkk.NewRowKey("resource_host"):   "server1",
 		}
 		tags2 := map[wkk.RowKey]any{
-			wkk.NewRowKey("metric_name"):             "metric1",
-			wkk.NewRowKey("_cardinalhq.metric_type"): "gauge",
-			wkk.NewRowKey("resource_host"):           "server1",
-			wkk.NewRowKey("chq_timestamp"):           123456789,
-			wkk.NewRowKey("_cardinalhq.description"): "some description",
-			wkk.NewRowKey("_cardinalhq.unit"):        "bytes",
+			wkk.NewRowKey("metric_name"):     "metric1",
+			wkk.NewRowKey("chq_metric_type"): "gauge",
+			wkk.NewRowKey("resource_host"):   "server1",
+			wkk.NewRowKey("chq_timestamp"):   123456789,
+			wkk.NewRowKey("chq_description"): "some description",
+			wkk.NewRowKey("chq_unit"):        "bytes",
 		}
 		tid1 := ComputeTID(tags1)
 		tid2 := ComputeTID(tags2)
-		assert.Equal(t, tid1, tid2, "TID should not change when other _cardinalhq fields are added")
+		assert.Equal(t, tid1, tid2, "TID should not change when other chq_* fields are added")
 	})
 
 	t.Run("TID is deterministic", func(t *testing.T) {
 		tags := map[wkk.RowKey]any{
-			wkk.NewRowKey("metric_name"):             "metric1",
-			wkk.NewRowKey("_cardinalhq.metric_type"): "gauge",
-			wkk.NewRowKey("resource_host"):           "server1",
-			wkk.NewRowKey("resource_region"):         "us-east",
-			wkk.NewRowKey("metric_label1"):           "value1",
-			wkk.NewRowKey("metric_label2"):           "value2",
+			wkk.NewRowKey("metric_name"):     "metric1",
+			wkk.NewRowKey("chq_metric_type"): "gauge",
+			wkk.NewRowKey("resource_host"):   "server1",
+			wkk.NewRowKey("resource_region"): "us-east",
+			wkk.NewRowKey("metric_label1"):   "value1",
+			wkk.NewRowKey("metric_label2"):   "value2",
 		}
 		tid1 := ComputeTID(tags)
 		tid2 := ComputeTID(tags)

@@ -100,7 +100,7 @@ func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row
 		}
 	}
 
-	// Handle message: use body if _cardinalhq.message not set
+	// Handle message: use body if log_message not set
 	if _, ok := (*row)[wkk.RowKeyCMessage]; !ok {
 		bodyKey := wkk.NewRowKey("body")
 		if body, exists := (*row)[bodyKey]; exists {

@@ -365,7 +365,7 @@ func TestParse_Unwrap_Base_Case(t *testing.T) {
 }
 
 func TestVectorAggregation_Grouping_NormalizesLabelNames_By(t *testing.T) {
-	q := `sum by (resource_cluster, _cardinalhq_foo, log_level) (rate({app="a"}[5m]))`
+	q := `sum by (resource_cluster, chq_foo, log_level) (rate({app="a"}[5m]))`
 	ast, err := FromLogQL(q)
 	if err != nil {
 		t.Fatalf("FromLogQL() error: %v", err)
@@ -373,7 +373,7 @@ func TestVectorAggregation_Grouping_NormalizesLabelNames_By(t *testing.T) {
 	if ast.Kind != KindVectorAgg || ast.VectorAgg == nil {
 		t.Fatalf("expected VectorAgg, got: %#v", ast)
 	}
-	want := []string{"resource_cluster", "_cardinalhq_foo", "log_level"}
+	want := []string{"resource_cluster", "chq_foo", "log_level"}
 
 	if len(ast.VectorAgg.By) != len(want) {
 		t.Fatalf("By len = %d, want %d; By = %#v", len(ast.VectorAgg.By), len(want), ast.VectorAgg.By)
@@ -386,7 +386,7 @@ func TestVectorAggregation_Grouping_NormalizesLabelNames_By(t *testing.T) {
 }
 
 func TestVectorAggregation_Grouping_NormalizesLabelNames_Without(t *testing.T) {
-	q := `sum without (resource_cluster, _cardinalhq_foo, log_level) (rate({app="a"}[5m]))`
+	q := `sum without (resource_cluster, chq_foo, log_level) (rate({app="a"}[5m]))`
 	ast, err := FromLogQL(q)
 	if err != nil {
 		t.Fatalf("FromLogQL() error: %v", err)
@@ -394,7 +394,7 @@ func TestVectorAggregation_Grouping_NormalizesLabelNames_Without(t *testing.T) {
 	if ast.Kind != KindVectorAgg || ast.VectorAgg == nil {
 		t.Fatalf("expected VectorAgg, got: %#v", ast)
 	}
-	want := []string{"resource_cluster", "_cardinalhq_foo", "log_level"}
+	want := []string{"resource_cluster", "chq_foo", "log_level"}
 
 	if len(ast.VectorAgg.Without) != len(want) {
 		t.Fatalf("Without len = %d, want %d; Without = %#v", len(ast.VectorAgg.Without), len(want), ast.VectorAgg.Without)
