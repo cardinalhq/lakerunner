@@ -100,6 +100,12 @@ func IngestExemplarLogsJSONToDuckDB(
 				row[string(key.Value())] = value
 			}
 
+			// Add a dummy fingerprint for test queries that expect it
+			// (Real ingestion adds this via fingerprintTenantManager)
+			if _, exists := row["chq_fingerprint"]; !exists {
+				row["chq_fingerprint"] = "test-fingerprint"
+			}
+
 			if err := ensureColumnsForRow(ctx, tx, tableName, row, existingCols); err != nil {
 				return rowsInserted, err
 			}

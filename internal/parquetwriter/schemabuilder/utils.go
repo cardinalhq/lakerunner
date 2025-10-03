@@ -38,7 +38,7 @@ func WriterOptions(tmpdir string, schema *parquet.Schema) []parquet.WriterOption
 // dictionaryFieldOverride controls which fields should use dictionary encoding.
 // Some fields like messages and TIDs have high cardinality and don't benefit from dictionaries.
 var dictionaryFieldOverride = map[string]bool{
-	"chq_message": false,
+	"log_message": false,
 	"chq_tid":     false,
 }
 

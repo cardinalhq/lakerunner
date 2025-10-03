@@ -189,15 +189,15 @@ func TestRewrite_CountOverTime_ByLevel_JSON(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// Data: 3 events in two 1m buckets (0-60s, 60-120s)
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', '{"level":"INFO","user":"alice","msg":"a"}'),
 	(30*1000,  'svc', '{"level":"ERROR","user":"bob","msg":"b"}'),
 	(70*1000,  'svc', '{"level":"ERROR","user":"carol","msg":"c"}');
@@ -281,10 +281,10 @@ func TestRewrite_BytesRate_ByUser_Logfmt(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// Two buckets; ensure different message lengths per user to validate bytes aggregation.
@@ -293,7 +293,7 @@ func TestRewrite_BytesRate_ByUser_Logfmt(t *testing.T) {
 	//   "ts=40 user=carol m=\"zz\""     -> 23    (shorter: use m= instead of msg=)
 	//   "ts=65 user=bob msg=\"betaa\""  -> 26    (longer: extra 'a')
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(5*1000,   'web', 'ts=5 user=bob msg="alpha"'),
 	(40*1000,  'web', 'ts=40 user=carol m="zz"'),
 	(65*1000,  'web', 'ts=65 user=bob msg="betaa"');
@@ -359,16 +359,16 @@ func TestRewrite_Rate_ByDerivedLabel_LabelFormat(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// bucket 0: response=ErrorBadGateway, OK
 	// bucket 1: response=ErrorOops
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', '{"response":"ErrorBadGateway","msg":"x"}'),
 	(20*1000,  'svc', '{"response":"OK","msg":"y"}'),
 	(80*1000,  'svc', '{"response":"ErrorOops","msg":"z"}');
@@ -473,17 +473,17 @@ func TestRewrite_Unwrap_Avg_JSON(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// Two 1m buckets: [0..60s) and [60..120s)
 	// bucket 0: latency_ms = 100, 200   => avg = 150
 	// bucket 1: latency_ms = 300        => avg = 300
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', '{"latency_ms":"100","msg":"a"}'),
 	(30*1000,  'svc', '{"latency_ms":"200","msg":"b"}'),
 	(70*1000,  'svc', '{"latency_ms":"300","msg":"c"}');
@@ -561,17 +561,17 @@ func TestRewrite_Unwrap_Avg_Logfmt(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// Two 1m buckets: [0..60s), [60..120s)
 	// bucket 0: latency_ms = 100, 200 => avg = 150
 	// bucket 1: latency_ms = 300      => avg = 300
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', 'latency_ms=100 msg=a'),
 	(30*1000,  'svc', 'latency_ms=200 msg=b'),
 	(70*1000,  'svc', 'latency_ms=300 msg=c');
@@ -644,16 +644,16 @@ func TestRewrite_Unwrap_Min_Duration_JSON(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// bucket 0: 100ms, 200ms -> min = 0.1
 	// bucket 1: 300ms        -> min = 0.3
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', '{"lat":"100ms","msg":"a"}'),
 	(30*1000,  'svc', '{"lat":"200ms","msg":"b"}'),
 	(70*1000,  'svc', '{"lat":"300ms","msg":"c"}');
@@ -712,16 +712,16 @@ func TestRewrite_Unwrap_Max_Bytes_Logfmt(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// bucket 0: 1KB, 2KB -> max = 2000
 	// bucket 1: 3KB      -> max = 3000
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', 'size=1KB path=/a'),
 	(30*1000,  'svc', 'size=2KB path=/b'),
 	(70*1000,  'svc', 'size=3KB path=/c');
@@ -779,17 +779,17 @@ func TestRewrite_Unwrap_Max_Duration_Regexp(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// Two 1m buckets: [0..60s) and [60..120s)
 	// bucket 0 messages contain 2 ms and 4 ms -> max = 4 ms = 0.004 s
 	// bucket 1 message contains 3 ms         -> max = 3 ms = 0.003 s
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'kafka', '[LocalLog partition=__cluster_metadata-0, dir=/tmp/kafka-logs] Rolled new log segment at offset 111 in 2 ms.'),
 	(30*1000,  'kafka', '[LocalLog partition=__cluster_metadata-0, dir=/tmp/kafka-logs] Rolled new log segment at offset 222 in 4 ms.'),
 	(70*1000,  'kafka', '[LocalLog partition=__cluster_metadata-0, dir=/tmp/kafka-logs] Rolled new log segment at offset 333 in 3 ms.');
@@ -850,9 +850,9 @@ func TestRewrite_SumByPod_Rate_ServiceFilter(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT,
 		"resource_k8s_pod_name"   TEXT,
 		"log_source"              TEXT
@@ -861,7 +861,7 @@ func TestRewrite_SumByPod_Rate_ServiceFilter(t *testing.T) {
 	// Two 1m buckets: [0..60s) and [60..120s)
 	// We create two streams per pod (log.source = 'a' | 'b') so sum by(pod) actually sums.
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name","resource_k8s_pod_name","log_source") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name","resource_k8s_pod_name","log_source") VALUES
 	-- Pod A, bucket 0 (3)
 	(10*1000,  'evt', 'api-gateway', 'api-7f', 'a'),
 	(20*1000,  'evt', 'api-gateway', 'api-7f', 'b'),
@@ -963,15 +963,15 @@ func TestRewrite_SumBy_LabelFormat_Service(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT
 	);`)
 
 	// Two buckets [0..60s), [60..120s)
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name") VALUES
 	(10*1000,  'm', 'svc-a'),
 	(20*1000,  'm', 'svc-a'),
 	(40*1000,  'm', 'svc-b'),
@@ -1027,17 +1027,17 @@ func TestRewrite_SumBy_JSON_User(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// Two buckets:
 	// bucket 0: users alice(2), bob(1)
 	// bucket 1: users alice(1), carol(1)
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', '{"user":"alice","msg":"a"}'),
 	(25*1000,  'svc', '{"user":"alice","msg":"b"}'),
 	(50*1000,  'svc', '{"user":"bob","msg":"c"}'),
@@ -1091,15 +1091,15 @@ func TestRewrite_SumBy_Regexp_Pod(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// Messages embed "pod=<name>"
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', 'pod=api-7f src=a'),
 	(20*1000,  'svc', 'pod=api-7f src=b'),
 	(40*1000,  'svc', 'pod=api-9x src=b'),
@@ -1154,15 +1154,15 @@ func TestRewrite_SumBy_Logfmt_Svc(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// Messages like: "svc=api user=alice" etc.
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', 'svc=api user=a'),
 	(25*1000,  'svc', 'svc=api user=b'),
 	(45*1000,  'svc', 'svc=auth user=c'),
@@ -1216,16 +1216,16 @@ func TestRewrite_CountOverTime_ByBaseJob_WithJSONFilter(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// bucket 0: (svc, alice), (svc, bob), (api, alice)
 	// bucket 1: (svc, alice), (api, carol)
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', '{"user":"alice"}'),
 	(20*1000,  'svc', '{"user":"bob"}'),
 	(30*1000,  'api', '{"user":"alice"}'),
@@ -1275,16 +1275,16 @@ func TestRewrite_CountOverTime_ByUser_JSON_WithParserMatcher(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// bucket 0: alice, bob, alice  -> alice x2
 	// bucket 1: alice, bob         -> alice x1
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', '{"user":"alice"}'),
 	(20*1000,  'svc', '{"user":"bob"}'),
 	(40*1000,  'svc', '{"user":"alice"}'),
@@ -1332,10 +1332,10 @@ func TestRewrite_CountOverTime_ByUserSvc_Logfmt_MultiGroup(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// bucket 0:
@@ -1346,7 +1346,7 @@ func TestRewrite_CountOverTime_ByUserSvc_Logfmt_MultiGroup(t *testing.T) {
 	//   svc=api  user=a
 	//   svc=auth user=b
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp", job, "chq_message") VALUES
+	INSERT INTO logs("chq_timestamp", job, "log_message") VALUES
 	(10*1000,  'svc', 'svc=api user=a'),
 	(25*1000,  'svc', 'svc=api user=b'),
 	(50*1000,  'svc', 'svc=auth user=a'),
@@ -1401,9 +1401,9 @@ func TestRewrite_CountOverTime_ByBasePod_WithJSONFilter(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT,
 		"resource_k8s_pod_name"   TEXT
 	);`)
@@ -1412,7 +1412,7 @@ func TestRewrite_CountOverTime_ByBasePod_WithJSONFilter(t *testing.T) {
 	// bucket 0: (pod=api-7f, alice), (pod=api-7f, bob), (pod=api-9x, alice)
 	// bucket 1: (pod=api-7f, alice), (pod=api-9x, bob)
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name","resource_k8s_pod_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name","resource_k8s_pod_name") VALUES
 	(10*1000,  '{"user":"alice"}', 'api-gateway', 'api-7f'),
 	(20*1000,  '{"user":"bob"}',   'api-gateway', 'api-7f'),
 	(40*1000,  '{"user":"alice"}', 'api-gateway', 'api-9x'),
@@ -1473,9 +1473,9 @@ func TestRewrite_CountOverTime_ByUserAndBasePod_JSON(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT,
 		"resource_k8s_pod_name"   TEXT
 	);`)
@@ -1484,7 +1484,7 @@ func TestRewrite_CountOverTime_ByUserAndBasePod_JSON(t *testing.T) {
 	// bucket 0: (pod=api-7f, alice), (pod=api-7f, bob), (pod=api-9x, alice)
 	// bucket 1: (pod=api-7f, alice), (pod=api-9x, bob)
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name","resource_k8s_pod_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name","resource_k8s_pod_name") VALUES
 	(10*1000,  '{"user":"alice"}', 'api-gateway', 'api-7f'),
 	(20*1000,  '{"user":"bob"}',   'api-gateway', 'api-7f'),
 	(40*1000,  '{"user":"alice"}', 'api-gateway', 'api-9x'),
@@ -1546,16 +1546,16 @@ func TestLog_CountByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 	mustExec(t, db1, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT,
 		"resource_k8s_pod_name"   TEXT
 	);`)
 	// bucket 0: one alice (match), one bob (filtered out)
 	// bucket 1: two alice matches
 	mustExec(t, db1, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name","resource_k8s_pod_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name","resource_k8s_pod_name") VALUES
 	(10*1000,  '{"user":"alice","m":"x"}', 'api-gateway', 'api-7f'),
 	(20*1000,  '{"user":"bob","m":"y"}',   'api-gateway', 'api-7f'),
 	(70*1000,  '{"user":"alice","m":"z"}', 'api-gateway', 'api-7f'),
@@ -1567,16 +1567,16 @@ func TestLog_CountByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 	mustExec(t, db2, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT,
 		"resource_k8s_pod_name"   TEXT
 	);`)
 	// bucket 0: one alice (match)
 	// bucket 1: one alice (match)
 	mustExec(t, db2, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name","resource_k8s_pod_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name","resource_k8s_pod_name") VALUES
 	(40*1000,  '{"user":"alice","m":"p"}', 'api-gateway', 'api-9x'),
 	(100*1000, '{"user":"alice","m":"q"}', 'api-gateway', 'api-9x');
 	`)
@@ -1691,16 +1691,16 @@ func TestLog_SumOfCountsByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 	mustExec(t, db1, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT,
 		"resource_k8s_pod_name"   TEXT
 	);`)
 	// bucket 0: one alice (match), one bob (filtered out)
 	// bucket 1: two alice matches
 	mustExec(t, db1, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name","resource_k8s_pod_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name","resource_k8s_pod_name") VALUES
 	(10*1000,  '{"user":"alice","m":"x"}', 'api-gateway', 'api-7f'),
 	(20*1000,  '{"user":"bob","m":"y"}',   'api-gateway', 'api-7f'),
 	(70*1000,  '{"user":"alice","m":"z"}', 'api-gateway', 'api-7f'),
@@ -1712,16 +1712,16 @@ func TestLog_SumOfCountsByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 	mustExec(t, db2, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT,
 		"resource_k8s_pod_name"   TEXT
 	);`)
 	// bucket 0: one alice (match)
 	// bucket 1: one alice (match)
 	mustExec(t, db2, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name","resource_k8s_pod_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name","resource_k8s_pod_name") VALUES
 	(40*1000,  '{"user":"alice","m":"p"}', 'api-gateway', 'api-9x'),
 	(100*1000, '{"user":"alice","m":"q"}', 'api-gateway', 'api-9x');
 	`)
@@ -1830,15 +1830,15 @@ func TestLog_SumRateCounter_Unwrap_TwoWorkers_Eval(t *testing.T) {
 	mustExec(t, db1, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT
 	);`)
 	// bucket 0 (0..60s): 10 + 20
 	// bucket 1 (60..120s): 30
 	mustExec(t, db1, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name") VALUES
 	(10*1000,  'took 10 ms', 'kafka'),
 	(20*1000,  'took 20ms',  'kafka'),
 	(70*1000,  'took 30 ms', 'kafka');
@@ -1849,15 +1849,15 @@ func TestLog_SumRateCounter_Unwrap_TwoWorkers_Eval(t *testing.T) {
 	mustExec(t, db2, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT
 	);`)
 	// bucket 0: 40
 	// bucket 1: 50
 	mustExec(t, db2, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name") VALUES
 	(40*1000,  'took 40ms',  'kafka'),
 	(100*1000, 'took 50 ms', 'kafka');
 	`)
@@ -1969,15 +1969,15 @@ func TestRewrite_FilterThenJSON_UnwrapNested_Max(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
 		job TEXT,
-		"chq_message"     TEXT
+		"log_message"     TEXT
 	);`)
 
 	// Two 1m buckets: [0..60s), [60..120s)
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp","_cardinalhq_id","chq_level","chq_fingerprint",job,"chq_message") VALUES
+	INSERT INTO logs("chq_timestamp","_cardinalhq_id","log_level","chq_fingerprint",job,"log_message") VALUES
 	(10*1000, 'id-a', '', '-4446492996171837732', 'svc', '{"req":{"url":"/foo","lat_ms":"120"},"meta":{"trace":"t1"}}'),
 	(30*1000, 'id-b', '', '-4446492996171837732', 'svc', '{"req":{"url":"/bar","lat_ms":"200"},"meta":{"trace":"t2"}}'),
 	(70*1000, 'id-c', '', '-4446492996171837732', 'svc', '{"req":{"url":"/foo","lat_ms":"350"},"meta":{"trace":"t3"}}');
@@ -2038,15 +2038,15 @@ func TestLog_AvgOverTime_Regexp_UnwrapBytes_TwoWorkers_Eval(t *testing.T) {
 	mustExec(t, db1, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT
 	);`)
 	// bucket 0 (0..60s): 100, 200  -> sum=300 count=2
 	// bucket 1 (60..120s): 300     -> sum=300 count=1
 	mustExec(t, db1, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name") VALUES
 	(10*1000,  'processed bytes=100', 'kafka'),
 	(40*1000,  'processed bytes=200', 'kafka'),
 	(70*1000,  'processed bytes=300', 'kafka');
@@ -2057,15 +2057,15 @@ func TestLog_AvgOverTime_Regexp_UnwrapBytes_TwoWorkers_Eval(t *testing.T) {
 	mustExec(t, db2, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT
 	);`)
 	// bucket 0: 50   -> sum=50  count=1
 	// bucket 1: 400  -> sum=400 count=1
 	mustExec(t, db2, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name") VALUES
 	(20*1000,  'processed bytes=50',  'kafka'),
 	(100*1000, 'processed bytes=400', 'kafka');
 	`)
@@ -2179,15 +2179,15 @@ func TestLog_CountOverTime_LineRegex_TwoWorkers_Eval(t *testing.T) {
 	mustExec(t, db1, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT
 	);`)
 	// bucket 0 (0..60s): 2 matches
 	// bucket 1 (60..120s): 1 match
 	mustExec(t, db1, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name") VALUES
 	(10*1000,  'topic deleted by user=alice', 'kafka'),
 	(25*1000,  'partition deleted id=12',     'kafka'),
 	(70*1000,  'log deleted file=0001',       'kafka');
@@ -2198,15 +2198,15 @@ func TestLog_CountOverTime_LineRegex_TwoWorkers_Eval(t *testing.T) {
 	mustExec(t, db2, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT
 	);`)
 	// bucket 0: 3 matches
 	// bucket 1: 0 matches
 	mustExec(t, db2, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name") VALUES
 	(20*1000,  'deleted key=1',     'kafka'),
 	(40*1000,  'deleted key=2',     'kafka'),
 	(55*1000,  'deleted key=3',     'kafka'),
@@ -2314,15 +2314,15 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 
 	// Minimal table including defaults and the base column referenced by the first line_format:
 	// - "chq_timestamp"      (required)
-	// - "chq_message"        (replaced by line_format)
+	// - "log_message"        (replaced by line_format)
 	// - "resource_service_name"      (used by matcher)
 	// - "log_@OrderResult"           (the source JSON blob to index)
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT,
 		"log_@OrderResult"        TEXT
 	);`)
@@ -2330,7 +2330,7 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 	// Insert one row; the JSON is placed in the base column "log_@OrderResult".
 	const orderJSON = `{"orderId":"O-123","shippingCost":{"currencyCode":"USD","units":"12","nanos":"500000000"}}`
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name","log_@OrderResult") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name","log_@OrderResult") VALUES
 	(10*1000, 'ignored', 'accounting', '`+orderJSON+`');`)
 
 	// The exact LogQL pipeline under test.
@@ -2355,7 +2355,7 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 	sql = replaceWorkerPlaceholders(sql, 0, 60*1000)
 
 	// Sanity checks that both line_format stages and json extraction appear.
-	if !strings.Contains(sql, `chq_message`) || !strings.Contains(sql, "json_extract_string") {
+	if !strings.Contains(sql, `log_message`) || !strings.Contains(sql, "json_extract_string") {
 		t.Fatalf("expected line_format + json stages in SQL, got:\n%s", sql)
 	}
 
@@ -2365,10 +2365,10 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 		t.Fatalf("expected 1 row, got %d; sql=\n%s", len(rows), sql)
 	}
 
-	gotMsg := s(rows[0][`chq_message`])
+	gotMsg := s(rows[0][`log_message`])
 	wantMsg := "orderId=O-123 currency=USD units=12 nanos=500000000"
 	if gotMsg != wantMsg {
-		t.Fatalf("final chq_message mismatch:\n  got:  %q\n  want: %q\nsql:\n%s", gotMsg, wantMsg, sql)
+		t.Fatalf("final log_message mismatch:\n  got:  %q\n  want: %q\nsql:\n%s", gotMsg, wantMsg, sql)
 	}
 }
 
@@ -2378,9 +2378,9 @@ func TestRewrite_SumOverTime_Unwrap_BaseField_LineFilter(t *testing.T) {
 	mustExec(t, db, `CREATE TABLE logs(
 		"chq_timestamp"   BIGINT,
 		"_cardinalhq_id"          TEXT,
-		"chq_level"       TEXT,
+		"log_level"       TEXT,
 		"chq_fingerprint" TEXT,
-		"chq_message"     TEXT,
+		"log_message"     TEXT,
 		"resource_service_name"   TEXT,
 		"log_quantity"            INTEGER
 	);`)
@@ -2390,7 +2390,7 @@ func TestRewrite_SumOverTime_Unwrap_BaseField_LineFilter(t *testing.T) {
 	// bucket 1: quantity 3        => sum = 3
 	// Include a distractor row that shouldn't match the |= "AddItem" filter.
 	mustExec(t, db, `
-	INSERT INTO logs("chq_timestamp","chq_message","resource_service_name","log_quantity") VALUES
+	INSERT INTO logs("chq_timestamp","log_message","resource_service_name","log_quantity") VALUES
 	(10*1000,  'AddItemAsync called with userId=U1, productId=P1, quantity=1', 'cart', 1),
 	(25*1000,  'AddItem completed for userId=U2',                              'cart', 2),
 	(70*1000,  'AddItem scheduled for userId=U3',                               'cart', 3),
@@ -2414,7 +2414,7 @@ func TestRewrite_SumOverTime_Unwrap_BaseField_LineFilter(t *testing.T) {
 		t.Fatalf("expected unwrap of top-level log_quantity; sql=\n%s", sql)
 	}
 	// Sanity: the line filter should appear as LIKE '%AddItem%'.
-	if !strings.Contains(sql, `"chq_message" LIKE '%AddItem%'`) {
+	if !strings.Contains(sql, `"log_message" LIKE '%AddItem%'`) {
 		t.Fatalf("expected line filter on message; sql=\n%s", sql)
 	}
 

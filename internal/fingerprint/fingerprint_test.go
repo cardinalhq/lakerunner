@@ -263,9 +263,9 @@ func TestToFingerprints(t *testing.T) {
 func TestGenerateRowFingerprints(t *testing.T) {
 	// Example log row with CardinalHQ fields
 	row := map[string]interface{}{
-		"chq_message":                 "User login failed",
+		"log_message":                 "User login failed",
 		"metric_name":                 "log_events",
-		"chq_level":                   "error",
+		"log_level":                   "error",
 		"chq_timestamp":               int64(1640995200000),
 		"resource_service.name":       "auth-service",
 		"resource_k8s.namespace.name": "production",
@@ -284,10 +284,10 @@ func TestGenerateRowFingerprints(t *testing.T) {
 	expectedFingerprints.Add(ComputeFingerprint("metric_name", "log_events"))
 	expectedFingerprints.Add(ComputeFingerprint("metric_name", ExistsRegex))
 
-	// chq_level should have trigram fingerprints
+	// log_level should have trigram fingerprints
 	levelTrigrams := ToTrigrams("error")
 	for _, trigram := range levelTrigrams {
-		expectedFingerprints.Add(ComputeFingerprint("chq_level", trigram))
+		expectedFingerprints.Add(ComputeFingerprint("log_level", trigram))
 	}
 
 	// custom_field should get exists regex fingerprint only (not in DimensionsToIndex)

@@ -22,8 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
-
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -188,7 +186,6 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 }
 
 func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
-	t.Skip("TODO: update test to use new field names (chq_* prefix)")
 	tests := []struct {
 		name            string
 		inputRow        pipeline.Row
@@ -270,9 +267,8 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 			require.NoError(t, err)
 
 			// Check message was set correctly
-			messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
-			msg, exists := row[messageKey]
-			assert.True(t, exists, "Should have chq_message")
+			msg, exists := row[wkk.RowKeyCMessage]
+			assert.True(t, exists, "Should have log_message")
 			assert.Equal(t, tt.expectedMessage, msg)
 		})
 	}
@@ -433,9 +429,9 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 	_, hasLevel := row[wkk.NewRowKey("resource_level")]
 	assert.False(t, hasLevel, "Level field used for detection should not be promoted to resource.level")
 
-	// Check that level was correctly set in chq_level
-	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("chq_level")]
-	assert.True(t, hasCardinalLevel, "Should have chq_level")
+	// Check that level was correctly set in log_level
+	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("log_level")]
+	assert.True(t, hasCardinalLevel, "Should have log_level")
 	assert.Equal(t, "INFO", cardinalLevel, "Should have level as uppercase")
 
 	service, hasService := row[wkk.NewRowKey("resource_service")]
@@ -482,7 +478,6 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 }
 
 func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
-	t.Skip("TODO: update test to use new field names (chq_* prefix)")
 	translator := &ParquetLogTranslator{
 		OrgID:    "test-org",
 		Bucket:   "test-bucket",
@@ -504,8 +499,7 @@ func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
 	_, hasTimestamp := row[wkk.RowKeyCTimestamp]
 	assert.True(t, hasTimestamp, "Should have timestamp")
 
-	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
-	_, hasMessage := row[messageKey]
+	_, hasMessage := row[wkk.RowKeyCMessage]
 	assert.True(t, hasMessage, "Should have message")
 }
 
@@ -535,9 +529,9 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 	_, hasResourceLevel := row[wkk.NewRowKey("resource_level")]
 	assert.False(t, hasResourceLevel, "Level field used for detection should not be promoted to resource.level")
 
-	// Check that level was correctly set in chq_level
-	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("chq_level")]
-	assert.True(t, hasCardinalLevel, "Should have chq_level")
+	// Check that level was correctly set in log_level
+	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("log_level")]
+	assert.True(t, hasCardinalLevel, "Should have log_level")
 	assert.Equal(t, "ERROR", cardinalLevel, "Should have level as uppercase")
 
 	// Check that all other non-special fields are preserved with resource_ prefix
@@ -550,7 +544,6 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 }
 
 func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.T) {
-	t.Skip("TODO: update test to use new field names (chq_* prefix)")
 	translator := &ParquetLogTranslator{
 		OrgID:    "test-org",
 		Bucket:   "test-bucket",
@@ -587,8 +580,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 	assert.Equal(t, "192.168.1.100", row[wkk.NewRowKey("resource_source")])
 
 	// Verify message was extracted correctly
-	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
-	message, hasMessage := row[messageKey]
+	message, hasMessage := row[wkk.RowKeyCMessage]
 	assert.True(t, hasMessage, "Should have extracted message")
 	expectedMessage := "2025-09-13 18:09:15 PDT | CORE | INFO | (pkg/logs/service.go:123 in handleLogRotation) | Log rotation happened to /var/log/system.log"
 	assert.Equal(t, expectedMessage, message)
@@ -602,8 +594,8 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 	assert.False(t, hasResourceLevel, "Level field used for detection should not be promoted to resource.level")
 
 	// Verify that the level was correctly set
-	cardinalLevel, hasLevel := row[wkk.NewRowKey("chq_level")]
-	assert.True(t, hasLevel, "Should have chq_level")
+	cardinalLevel, hasLevel := row[wkk.NewRowKey("log_level")]
+	assert.True(t, hasLevel, "Should have log_level")
 	assert.Equal(t, "INFO", cardinalLevel, "Should preserve original level")
 }
 

@@ -408,7 +408,7 @@ func summaryToDDSketch(dp pmetric.SummaryDataPoint) (*ddsketch.DDSketch, error) 
 func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
+		ret[wkk.NewRowKey(prefixAttribute(name, "attr"))] = value
 		return true
 	})
 
@@ -495,7 +495,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 	}
 
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = v.AsString()
+		ret[wkk.NewRowKey(prefixAttribute(name, "attr"))] = v.AsString()
 		return true
 	})
 
@@ -680,7 +680,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
+		ret[wkk.NewRowKey(prefixAttribute(name, "attr"))] = value
 		return true
 	})
 
@@ -801,7 +801,7 @@ func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context
 	// Add attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
+		ret[wkk.NewRowKey(prefixAttribute(name, "attr"))] = value
 		return true
 	})
 

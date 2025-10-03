@@ -86,7 +86,7 @@ func TestParquetRawReaderNext(t *testing.T) {
 		testRows[i] = map[string]any{
 			"chq_collector_id": fmt.Sprintf("collector-%d", i),
 			"chq_timestamp":    int64(1000000 + i),
-			"chq_message":      fmt.Sprintf("Test message %d", i),
+			"log_message":      fmt.Sprintf("Test message %d", i),
 			"chq_severity":     "INFO",
 		}
 	}
@@ -136,7 +136,7 @@ func TestParquetRawReaderBatching(t *testing.T) {
 		testRows[i] = map[string]any{
 			"chq_collector_id": fmt.Sprintf("collector-%d", i),
 			"chq_timestamp":    int64(1000000 + i),
-			"chq_message":      fmt.Sprintf("Test message %d", i),
+			"log_message":      fmt.Sprintf("Test message %d", i),
 			"chq_severity":     "INFO",
 		}
 	}
@@ -192,7 +192,7 @@ func TestParquetRawReaderWithRealFile(t *testing.T) {
 		testRows[i] = map[string]any{
 			"chq_collector_id": fmt.Sprintf("collector-%d", i),
 			"chq_timestamp":    int64(1000000 + i),
-			"chq_message":      fmt.Sprintf("Test message %d", i),
+			"log_message":      fmt.Sprintf("Test message %d", i),
 			"chq_severity":     "INFO",
 		}
 	}
@@ -249,7 +249,7 @@ func TestParquetRawReaderMultipleFiles(t *testing.T) {
 				testRows[i] = map[string]any{
 					"chq_collector_id": fmt.Sprintf("collector-%d", i),
 					"chq_timestamp":    int64(1000000 + i),
-					"chq_message":      fmt.Sprintf("Test message %d", i),
+					"log_message":      fmt.Sprintf("Test message %d", i),
 					"chq_severity":     "INFO",
 				}
 			}
@@ -300,7 +300,7 @@ func TestParquetRawReaderClose(t *testing.T) {
 		testRows[i] = map[string]any{
 			"chq_collector_id": fmt.Sprintf("collector-%d", i),
 			"chq_timestamp":    int64(1000000 + i),
-			"chq_message":      fmt.Sprintf("Test message %d", i),
+			"log_message":      fmt.Sprintf("Test message %d", i),
 			"chq_severity":     "INFO",
 		}
 	}
@@ -351,7 +351,7 @@ func TestParquetRawReader_WithTranslator(t *testing.T) {
 		testRows[i] = map[string]any{
 			"chq_collector_id": fmt.Sprintf("collector-%d", i),
 			"chq_timestamp":    int64(1000000 + i),
-			"chq_message":      fmt.Sprintf("Test message %d", i),
+			"log_message":      fmt.Sprintf("Test message %d", i),
 			"chq_severity":     "INFO",
 		}
 	}

@@ -91,11 +91,11 @@ func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row
 		}
 	}
 
-	// Handle level: use severity_text if chq_level not set
-	if _, ok := (*row)[wkk.NewRowKey("chq_level")]; !ok {
+	// Handle level: use severity_text if log_level not set
+	if _, ok := (*row)[wkk.RowKeyCLevel]; !ok {
 		if severityText, exists := (*row)[wkk.NewRowKey("severity_text")]; exists {
 			if level, isString := severityText.(string); isString && level != "" {
-				(*row)[wkk.NewRowKey("chq_level")] = level
+				(*row)[wkk.RowKeyCLevel] = level
 			}
 		}
 	}

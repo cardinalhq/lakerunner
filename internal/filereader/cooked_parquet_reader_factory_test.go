@@ -91,8 +91,8 @@ func createTestLogParquet(t *testing.T, rowCount int) []byte {
 	for i := range rows {
 		rows[i] = map[string]any{
 			"chq_timestamp": int64(1000000 + i),
-			"chq_message":   fmt.Sprintf("Log message %d", i),
-			"chq_severity":  "INFO",
+			"log_message":   fmt.Sprintf("Log message %d", i),
+			"log_level":     "INFO",
 		}
 	}
 

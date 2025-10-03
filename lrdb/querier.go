@@ -44,18 +44,18 @@ type Querier interface {
 	InsertKafkaOffsets(ctx context.Context, arg InsertKafkaOffsetsParams) error
 	KafkaOffsetsAfter(ctx context.Context, arg KafkaOffsetsAfterParams) ([]int64, error)
 	// Extract tag keys from flat exemplar format
-	// Only return keys that start with _cardinalhq_, resource_, scope_, or log_
+	// Only return keys that start with chq_, resource_, scope_, log_, or attr_
 	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	// Extract tag keys from flat exemplar format
-	// Only return keys that start with _cardinalhq_, resource_, scope_, or metric_
+	// Only return keys that start with chq_, resource_, scope_, metric_, or attr_
 	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error)
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
 	ListServiceMetrics(ctx context.Context, arg ListServiceMetricsParams) ([]string, error)
 	ListServiceNames(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	// Extract tag keys from flat exemplar format for spans
-	// Only return keys that start with _cardinalhq_, resource_, scope_, or span_
+	// Only return keys that start with chq_, resource_, scope_, span_, or attr_
 	ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	ListTraceSegmentsForQuery(ctx context.Context, arg ListTraceSegmentsForQueryParams) ([]ListTraceSegmentsForQueryRow, error)
 	// Returns an estimate of the number of log segments, accounting for per-file overhead.

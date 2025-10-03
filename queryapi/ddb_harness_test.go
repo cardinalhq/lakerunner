@@ -96,7 +96,6 @@ func TestIngestExemplarLogsJSONToDuckDB_Smoke(t *testing.T) {
 }
 
 func TestValidateLogQLAgainstExemplar_AggregateRateCounter(t *testing.T) {
-	t.Skip("TODO: update test to use new field names (chq_* prefix)")
 	ctx := context.Background()
 
 	b, err := os.ReadFile("testdata/exemplar1.json")

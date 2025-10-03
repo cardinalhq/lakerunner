@@ -16,12 +16,12 @@ SELECT DISTINCT key::text AS tag_key
 FROM lrdb_exemplar_traces,
     LATERAL jsonb_object_keys(exemplar) AS key
 WHERE organization_id = $1
-  AND key ~ '^(_cardinalhq_|resource_|scope_|span_)'
+  AND key ~ '^(chq_|resource_|scope_|span_|attr_)'
 ORDER BY tag_key
 `
 
 // Extract tag keys from flat exemplar format for spans
-// Only return keys that start with _cardinalhq_, resource_, scope_, or span_
+// Only return keys that start with chq_, resource_, scope_, span_, or attr_
 func (q *Queries) ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]string, error) {
 	rows, err := q.db.Query(ctx, listSpanTags, organizationID)
 	if err != nil {

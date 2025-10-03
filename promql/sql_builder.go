@@ -102,7 +102,7 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	tsCol := "\"chq_timestamp\""
-	bodyCol := "\"chq_message\""
+	bodyCol := "\"log_message\""
 
 	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, "", nil))
 

@@ -30,11 +30,11 @@ func replaceSpansTable(sql string) string {
   ''::VARCHAR AS "_cardinalhq_id",
   -4446492996171837732::BIGINT   AS "chq_fingerprint",
   ''::VARCHAR AS "metric_name",
-  ''::VARCHAR AS "_cardinalhq_kind",
-  ''::VARCHAR AS "_cardinalhq_span_id",
-  ''::VARCHAR AS "_cardinalhq_span_trace_id",
-  ''::VARCHAR AS "_cardinalhq_status_code",
-  0::BIGINT   AS "_cardinalhq_span_duration",
+  ''::VARCHAR AS "span_kind",
+  ''::VARCHAR AS "span_id",
+  ''::VARCHAR AS "span_trace_id",
+  ''::VARCHAR AS "span_status_code",
+  0::BIGINT   AS "span_duration",
   ''::VARCHAR AS "service_name",
   ''::VARCHAR AS "service_version"
 FROM spans) AS _t`
@@ -72,11 +72,11 @@ func createSpansTable(t *testing.T, db *sql.DB) {
   "_cardinalhq_id" VARCHAR,
   "chq_fingerprint" BIGINT,
   "metric_name" VARCHAR,
-  "_cardinalhq_kind" VARCHAR,
-  "_cardinalhq_span_id" VARCHAR,
-  "_cardinalhq_span_trace_id" VARCHAR,
-  "_cardinalhq_status_code" VARCHAR,
-  "_cardinalhq_span_duration" BIGINT,
+  "span_kind" VARCHAR,
+  "span_id" VARCHAR,
+  "span_trace_id" VARCHAR,
+  "span_status_code" VARCHAR,
+  "span_duration" BIGINT,
   "service_name" VARCHAR,
   "service_version" VARCHAR
 );`)
@@ -110,11 +110,11 @@ func TestToSpansWorkerSQL_BasicFields(t *testing.T) {
 		_ = getString(r["_cardinalhq_id"])
 		_ = getString(r["chq_fingerprint"])
 		_ = getString(r["metric_name"])
-		_ = getString(r["_cardinalhq_kind"])
-		_ = getString(r["_cardinalhq_span_id"])
-		_ = getString(r["_cardinalhq_span_trace_id"])
-		_ = getString(r["_cardinalhq_status_code"])
-		_ = getInt64(r["_cardinalhq_span_duration"])
+		_ = getString(r["span_kind"])
+		_ = getString(r["span_id"])
+		_ = getString(r["span_trace_id"])
+		_ = getString(r["span_status_code"])
+		_ = getInt64(r["span_duration"])
 	}
 }
 
@@ -161,21 +161,21 @@ func TestToSpansWorkerSQL_WithCardinalhqKindMatcher(t *testing.T) {
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
-			{Label: "_cardinalhq_kind", Op: MatchEq, Value: "server"},
+			{Label: "span_kind", Op: MatchEq, Value: "server"},
 		},
 	}
 	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 2 {
-		t.Fatalf("expected 2 rows (_cardinalhq_kind=server), got %d\nsql:\n%s", len(rows), sql)
+		t.Fatalf("expected 2 rows (span_kind=server), got %d\nsql:\n%s", len(rows), sql)
 	}
 
 	// Verify we get the expected span kinds
 	for _, row := range rows {
-		spanKind := getString(row["_cardinalhq_kind"])
+		spanKind := getString(row["span_kind"])
 		if spanKind != "server" {
-			t.Fatalf("expected _cardinalhq_kind='server', got %q", spanKind)
+			t.Fatalf("expected span_kind='server', got %q", spanKind)
 		}
 	}
 }
@@ -193,22 +193,22 @@ func TestToSpansWorkerSQL_WithMultipleMatchers(t *testing.T) {
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
 			{Label: "metric_name", Op: MatchRe, Value: "GET.*"},
-			{Label: "_cardinalhq_kind", Op: MatchEq, Value: "server"},
+			{Label: "span_kind", Op: MatchEq, Value: "server"},
 		},
 	}
 	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 2 {
-		t.Fatalf("expected 2 rows (chq_name matching GET.* AND _cardinalhq_kind=server), got %d\nsql:\n%s", len(rows), sql)
+		t.Fatalf("expected 2 rows (chq_name matching GET.* AND span_kind=server), got %d\nsql:\n%s", len(rows), sql)
 	}
 
 	// Verify we get the expected combinations
 	for _, row := range rows {
 		spanName := getString(row["metric_name"])
-		spanKind := getString(row["_cardinalhq_kind"])
+		spanKind := getString(row["span_kind"])
 		if !strings.HasPrefix(spanName, "GET") || spanKind != "server" {
-			t.Fatalf("expected chq_name starting with 'GET' AND _cardinalhq_kind='server', got chq_name=%q _cardinalhq_kind=%q", spanName, spanKind)
+			t.Fatalf("expected chq_name starting with 'GET' AND span_kind='server', got chq_name=%q span_kind=%q", spanName, spanKind)
 		}
 	}
 }
@@ -229,7 +229,7 @@ func TestToSpansWorkerSQL_WithFieldsParameter(t *testing.T) {
 			{Label: "metric_name", Op: MatchRe, Value: "GET.*"},
 		},
 	}
-	fields := []string{"metric_name", "_cardinalhq_kind", "service_name"}
+	fields := []string{"metric_name", "span_kind", "service_name"}
 	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
 
 	rows := queryAll(t, db, sql)
@@ -242,12 +242,12 @@ func TestToSpansWorkerSQL_WithFieldsParameter(t *testing.T) {
 	// Verify that the specified fields are present in the results
 	for i, row := range rows {
 		spanName := getString(row["metric_name"])
-		spanKind := getString(row["_cardinalhq_kind"])
+		spanKind := getString(row["span_kind"])
 		serviceName := getString(row["service_name"])
 
 		// Check that fields are not empty (they should have values from our test data)
 		if spanName == "" || spanKind == "" || serviceName == "" {
-			t.Fatalf("row %d missing expected field values: chq_name=%q _cardinalhq_kind=%q service_name=%q", i, spanName, spanKind, serviceName)
+			t.Fatalf("row %d missing expected field values: chq_name=%q span_kind=%q service_name=%q", i, spanName, spanKind, serviceName)
 		}
 
 		// Verify we get the expected values (only GET.* rows)
@@ -255,7 +255,7 @@ func TestToSpansWorkerSQL_WithFieldsParameter(t *testing.T) {
 			t.Fatalf("row %d: expected chq_name to start with 'GET', got %q", i, spanName)
 		}
 		if spanKind != "server" {
-			t.Fatalf("row %d: expected _cardinalhq_kind='server', got %q", i, spanKind)
+			t.Fatalf("row %d: expected span_kind='server', got %q", i, spanKind)
 		}
 		if serviceName != "my-service" {
 			t.Fatalf("row %d: expected service_name='my-service', got %q", i, serviceName)

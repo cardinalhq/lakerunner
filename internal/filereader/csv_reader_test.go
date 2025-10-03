@@ -293,7 +293,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("level"):     "INFO",
 			},
 			expected: map[string]any{
-				"chq_message":   "This is a log message",
+				"log_message":   "This is a log message",
 				"chq_timestamp": int64(1758397185000),
 				"log_level":     "INFO",
 			},
@@ -305,7 +305,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("timestamp"): int64(1758397185000000000),
 			},
 			expected: map[string]any{
-				"chq_message":   "Test message",
+				"log_message":   "Test message",
 				"chq_timestamp": int64(1758397185000),
 			},
 		},
@@ -316,7 +316,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("timestamp"): int64(1758397185),
 			},
 			expected: map[string]any{
-				"chq_message":   "Test message",
+				"log_message":   "Test message",
 				"chq_timestamp": int64(1758397185000),
 			},
 		},
@@ -329,9 +329,9 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("status code"):  int64(200),
 			},
 			expected: map[string]any{
-				"chq_message":      "Message",
+				"log_message":      "Message",
 				"log_user_name":    "alice",
-				"log_request.type": "GET",
+				"log_request_type": "GET",
 				"log_status_code":  int64(200),
 			},
 		},
@@ -343,7 +343,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("user"):       "bob",
 			},
 			expected: map[string]any{
-				"chq_message":   "Message",
+				"log_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
 				"log_user":      "bob",
 			},
@@ -356,7 +356,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("User"):      "alice",
 			},
 			expected: map[string]any{
-				"chq_message":   "Message",
+				"log_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
 				"log_user":      "alice",
 			},
@@ -369,7 +369,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("User"):         "bob",
 			},
 			expected: map[string]any{
-				"chq_message":   "Message",
+				"log_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
 				"log_user":      "bob",
 			},
@@ -382,7 +382,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("User"):            "charlie",
 			},
 			expected: map[string]any{
-				"chq_message":   "Message",
+				"log_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
 				"log_user":      "charlie",
 			},
@@ -395,7 +395,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("User"):      "david",
 			},
 			expected: map[string]any{
-				"chq_message":   "Message",
+				"log_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
 				"log_user":      "david",
 			},
@@ -409,7 +409,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("time"):  int64(1758397185000),
 			},
 			expected: map[string]any{
-				"chq_message":   "Message",
+				"log_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
 				"log_alice":     "titlecase", // "Alice" comes first alphabetically
 				"log_alice_2":   "lowercase", // "alice" comes second alphabetically
@@ -425,7 +425,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("time"):  int64(1758397185000),
 			},
 			expected: map[string]any{
-				"chq_message":   "Message",
+				"log_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
 				"log_field":     "third",  // "FIELD" comes first alphabetically
 				"log_field_2":   "second", // "Field" comes second alphabetically
@@ -442,7 +442,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("time"):    int64(1758397185000),
 			},
 			expected: map[string]any{
-				"chq_message":   "Message",
+				"log_message":   "Message",
 				"chq_timestamp": int64(1758397185000),
 				"log_foo_bar":   "space", // "foo bar" comes first alphabetically
 				"log_foo_bar_2": "dash",  // "foo-bar" comes second alphabetically
@@ -460,7 +460,7 @@ func TestCSVLogTranslator_TranslateRow(t *testing.T) {
 				wkk.NewRowKey("time"):      int64(1758397185000),
 			},
 			expected: map[string]any{
-				"chq_message":     "Message",
+				"log_message":     "Message",
 				"chq_timestamp":   int64(1758397185000),
 				"log_user_name":   "space",      // "user name" comes first alphabetically
 				"log_user_name_2": "dash",       // "user-name" comes second alphabetically
@@ -565,14 +565,14 @@ func TestCSVLogTranslator_SanitizeFieldName(t *testing.T) {
 		expected string
 	}{
 		{"normal_field", "normal_field"},
-		{"field.with.dots", "field.with.dots"},
+		{"field.with.dots", "field_with_dots"},
 		{"field-with-dashes", "field_with_dashes"},
 		{"field with spaces", "field_with_spaces"},
 		{"field@with#special$chars", "field_with_special_chars"},
 		{"__leading_underscores", "leading_underscores"},
 		{"trailing_underscores__", "trailing_underscores"},
 		{"multiple___underscores", "multiple_underscores"},
-		{"MixedCaseField", "MixedCaseField"},
+		{"MixedCaseField", "mixedcasefield"},
 		{"field123", "field123"},
 		{"", ""},
 	}

@@ -49,7 +49,7 @@ func generateBenchmarkParquet(b *testing.B, rowCount int) []byte {
 		rows[i] = map[string]any{
 			"chq_collector_id": fmt.Sprintf("collector-%d", i),
 			"chq_timestamp":    int64(1000000 + i),
-			"chq_message":      fmt.Sprintf("Benchmark message %d", i),
+			"log_message":      fmt.Sprintf("Benchmark message %d", i),
 			"chq_severity":     "INFO",
 		}
 	}

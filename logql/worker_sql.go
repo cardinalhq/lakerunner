@@ -23,7 +23,7 @@ import (
 
 func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string {
 	const baseRel = "{table}"
-	const bodyCol = "\"chq_message\""
+	const bodyCol = "\"log_message\""
 	const tsCol = "\"chq_timestamp\""
 
 	// 1) Prepare sets: group keys, parser-created, feature flags
@@ -318,7 +318,7 @@ func emitParsersWithPostLineFilters(
 	}
 
 	// base cols
-	addPresent("chq_message", "chq_timestamp", "_cardinalhq_id", "chq_level", "chq_fingerprint")
+	addPresent("log_message", "chq_timestamp", "_cardinalhq_id", "log_level", "chq_fingerprint")
 	// matchers
 	for _, m := range be.Matchers {
 		addPresent(m.Label)
@@ -793,13 +793,13 @@ func emitParsersWithPostLineFilters(
 
 			// Replace the message column with the formatted result.
 			sel := []string{
-				pb.top() + `.* EXCLUDE "` + `chq_message` + `"`,
-				"(" + expr + `) AS "` + `chq_message` + `"`,
+				pb.top() + `.* EXCLUDE "` + `log_message` + `"`,
+				"(" + expr + `) AS "` + `log_message` + `"`,
 			}
 			pb.push(sel, pb.top(), nil)
 
 			// message still present
-			addPresent("chq_message")
+			addPresent("log_message")
 
 			// line_format doesn't create new labels; any stage label filters are carried
 			if len(p.Filters) > 0 {

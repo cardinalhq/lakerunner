@@ -111,9 +111,9 @@ func TestComputeFingerprint(t *testing.T) {
 		},
 		{
 			name:      "exists regex",
-			fieldName: "chq_message",
+			fieldName: "log_message",
 			trigram:   existsRegex,
-			expected:  computeHash("chq_message:.*"),
+			expected:  computeHash("log_message:.*"),
 		},
 		{
 			name:      "telemetry type",

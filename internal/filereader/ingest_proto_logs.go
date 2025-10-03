@@ -165,17 +165,15 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 
 	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "log")] = value
+		ret[prefixAttribute(name, "attr")] = value
 		return true
 	})
 
 	message := logRecord.Body().AsString()
-	ret["chq_message"] = message
+	ret["log_message"] = message
 	ret["chq_timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
 	ret["chq_tsns"] = int64(logRecord.Timestamp())
-	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
-	ret["chq_level"] = logRecord.SeverityText()
-	ret["severity_number"] = int64(logRecord.SeverityNumber())
+	ret["log_level"] = logRecord.SeverityText()
 	return ret
 }
 

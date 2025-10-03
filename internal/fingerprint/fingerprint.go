@@ -35,9 +35,9 @@ var (
 	DimensionsToIndex = append([]string{
 		"chq_telemetry_type",
 		"metric_name",
-		"chq_level",
-		//"chq_message",
-		"_cardinalhq_span_trace_id",
+		"log_level",
+		//"log_message",
+		"span_trace_id",
 	}, InfraDimensions...)
 	IndexFullValueDimensions = []string{"metric_name", "resource_file"}
 )

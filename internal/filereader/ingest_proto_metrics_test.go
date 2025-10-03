@@ -791,11 +791,11 @@ func TestIngestProtoMetrics_SyntheticEdgeCases(t *testing.T) {
 				// Should handle zero values
 				assert.Equal(t, "gauge", row[wkk.RowKeyCMetricType])
 				assert.Equal(t, 0.0, row[wkk.RowKeyRollupSum])
-				assert.Equal(t, "idle", row[wkk.NewRowKey("metric_measurement")])
+				assert.Equal(t, "idle", row[wkk.NewRowKey("attr_measurement")])
 			case "simple_histogram":
 				// Should handle simple histograms
 				assert.Equal(t, "histogram", row[wkk.RowKeyCMetricType])
-				assert.Equal(t, "test", row[wkk.NewRowKey("metric_operation")])
+				assert.Equal(t, "test", row[wkk.NewRowKey("attr_operation")])
 			}
 		})
 	}

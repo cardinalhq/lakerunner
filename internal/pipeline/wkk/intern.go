@@ -99,11 +99,11 @@ var (
 	// RowKeyCFingerprint: "chq_fingerprint"
 	RowKeyCFingerprint = NewRowKey("chq_fingerprint")
 
-	// RowKeyCLevel: "chq_level"
-	RowKeyCLevel = NewRowKey("chq_level")
+	// RowKeyCLevel: "log_level"
+	RowKeyCLevel = NewRowKey("log_level")
 
-	// RowKeyCMessage: "chq_message"
-	RowKeyCMessage = NewRowKey("chq_message")
+	// RowKeyCMessage: "log_message"
+	RowKeyCMessage = NewRowKey("log_message")
 
 	// RowKeyCMetricType: "chq_metric_type"
 	RowKeyCMetricType = NewRowKey("chq_metric_type")

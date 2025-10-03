@@ -32,7 +32,7 @@ func (be *LogLeaf) ToWorkerSQLWithLimit(limit int, order string, fields []string
 
 func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
 	const baseRel = "{table}"       // replace upstream
-	const bodyCol = `"chq_message"` // quoted column for message text
+	const bodyCol = `"log_message"` // quoted column for message text
 	const tsCol = `"chq_timestamp"` // quoted column for event timestamp
 
 	// Check if the tagName is created by any parser
@@ -114,7 +114,7 @@ func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
 // buildTagValuesQueryWithParsers builds a complex query when the tag is extracted by parsers
 func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
 	const baseRel = "{table}"         // replace upstream
-	const bodyCol = "\"chq_message\"" // quoted column for message text
+	const bodyCol = "\"log_message\"" // quoted column for message text
 	const tsCol = "\"chq_timestamp\"" // quoted column for event timestamp
 
 	type layer struct {
@@ -146,7 +146,7 @@ func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
 		bodyCol:              {},
 		tsCol:                {},
 		"\"_cardinalhq_id\"": {},
-		"\"chq_level\"":      {},
+		"\"log_level\"":      {},
 	}
 	for _, m := range be.Matchers {
 		need[quoteIdent(m.Label)] = struct{}{}
