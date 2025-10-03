@@ -15,21 +15,68 @@
 package filereader
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math/rand"
-	"os"
-	"path/filepath"
 	"sort"
 	"testing"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
+
+// createMergesortTestParquet creates a metric Parquet file in memory for mergesort testing
+func createMergesortTestParquet(t *testing.T, rowCount int) []byte {
+	t.Helper()
+
+	rows := make([]map[string]any, rowCount)
+	for i := range rows {
+		rows[i] = map[string]any{
+			"chq_timestamp":    int64(1000000 + i),
+			"chq_collector_id": fmt.Sprintf("collector-%d", i),
+			"metric_name":      "test_metric",
+			"chq_rollup_sum":   float64(i * 100),
+		}
+	}
+
+	// Build schema
+	nodes := make(map[string]parquet.Node)
+	for key, value := range rows[0] {
+		var node parquet.Node
+		switch value.(type) {
+		case int64:
+			node = parquet.Optional(parquet.Int(64))
+		case string:
+			node = parquet.Optional(parquet.String())
+		case float64:
+			node = parquet.Optional(parquet.Leaf(parquet.DoubleType))
+		default:
+			t.Fatalf("Unsupported type %T for key %s", value, key)
+		}
+		nodes[key] = node
+	}
+
+	schema := parquet.NewSchema("metrics", parquet.Group(nodes))
+
+	var buf bytes.Buffer
+	writer := parquet.NewGenericWriter[map[string]any](&buf, schema)
+
+	for _, row := range rows {
+		_, err := writer.Write([]map[string]any{row})
+		require.NoError(t, err, "Failed to write row")
+	}
+
+	err := writer.Close()
+	require.NoError(t, err, "Failed to close writer")
+
+	return buf.Bytes()
+}
 
 func TestNewMergesortReader(t *testing.T) {
 	// Test with valid readers and keyProvider
@@ -410,27 +457,19 @@ func TestMergesortReader_RowReuse(t *testing.T) {
 func TestMergesortReader_WithActualParquetReader(t *testing.T) {
 	ctx := context.Background()
 
-	// Test with one of the small files that shows 0 records in production
-	filename := "tbl_301228791710090615.parquet"
+	// Generate metric data
 	expectedRecords := 480
+	data := createMergesortTestParquet(t, expectedRecords)
 
-	filePath := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source", filename)
-
-	file, err := os.Open(filePath)
-	require.NoError(t, err, "Should open parquet file")
-	defer func() { _ = file.Close() }()
-
-	stat, err := file.Stat()
-	require.NoError(t, err, "Should stat parquet file")
-
-	rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+	reader := bytes.NewReader(data)
+	rawReader, err := NewParquetRawReader(reader, int64(len(data)), 1000)
 	require.NoError(t, err, "Should create NewParquetRawReader")
 	defer func() { _ = rawReader.Close() }()
 
 	cookedReader := NewCookedMetricTranslatingReader(rawReader)
 	defer func() { _ = cookedReader.Close() }()
 
-	t.Logf("Created cooked reader for %s expecting %d records", filename, expectedRecords)
+	t.Logf("Created cooked reader expecting %d records", expectedRecords)
 
 	// Create MergesortReader with single actual parquet reader
 	// Use the same key provider that the production code uses for metrics
@@ -479,13 +518,13 @@ func TestMergesortReader_WithActualParquetReader(t *testing.T) {
 // TestMergesortReader_WithMultipleActualParquetReaders tests NewMergesortReader with multiple actual readers
 // This replicates the production scenario where multiple files are merged together
 func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
-	testFiles := []struct {
-		filename        string
+	testCases := []struct {
+		name            string
 		expectedRecords int
 	}{
-		{"tbl_301228791710090615.parquet", 480},  // Small file 1
-		{"tbl_301228792783832948.parquet", 456},  // Small file 2
-		{"tbl_301228792733501300.parquet", 1414}, // Larger file for comparison
+		{"file1", 480},  // Small file 1
+		{"file2", 456},  // Small file 2
+		{"file3", 1414}, // Larger file for comparison
 	}
 
 	ctx := context.Background()
@@ -494,17 +533,12 @@ func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
 	var readers []Reader
 	var expectedTotalRecords int
 
-	for _, testFile := range testFiles {
-		filePath := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source", testFile.filename)
+	for _, tc := range testCases {
+		// Generate metric data
+		data := createMergesortTestParquet(t, tc.expectedRecords)
 
-		file, err := os.Open(filePath)
-		require.NoError(t, err, "Should open parquet file")
-		defer func() { _ = file.Close() }()
-
-		stat, err := file.Stat()
-		require.NoError(t, err, "Should stat parquet file")
-
-		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+		reader := bytes.NewReader(data)
+		rawReader, err := NewParquetRawReader(reader, int64(len(data)), 1000)
 		require.NoError(t, err, "Should create NewParquetRawReader")
 		defer func() { _ = rawReader.Close() }()
 
@@ -512,12 +546,12 @@ func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
 		defer func() { _ = cookedReader.Close() }()
 
 		readers = append(readers, cookedReader)
-		expectedTotalRecords += testFile.expectedRecords
+		expectedTotalRecords += tc.expectedRecords
 
-		t.Logf("Created reader for %s expecting %d records", testFile.filename, testFile.expectedRecords)
+		t.Logf("Created reader for %s expecting %d records", tc.name, tc.expectedRecords)
 	}
 
-	t.Logf("Total expected records from %d files: %d", len(testFiles), expectedTotalRecords)
+	t.Logf("Total expected records from %d files: %d", len(testCases), expectedTotalRecords)
 
 	// Create MergesortReader with multiple actual parquet readers
 	keyProvider := GetCurrentMetricSortKeyProvider()

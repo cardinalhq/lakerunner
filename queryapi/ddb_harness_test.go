@@ -61,12 +61,12 @@ func TestIngestExemplarLogsJSONToDuckDB_Smoke(t *testing.T) {
 	}
 
 	// 4) Ensure the anchor timestamp column exists.
-	hasTS, err := duckHasColumn(ctx, db, table, "_cardinalhq_timestamp")
+	hasTS, err := duckHasColumn(ctx, db, table, "chq_timestamp")
 	if err != nil {
 		t.Fatalf("duckHasColumn: %v", err)
 	}
 	if !hasTS {
-		t.Fatalf("missing required column _cardinalhq_timestamp")
+		t.Fatalf("missing required column chq_timestamp")
 	}
 
 	// 5) Re-ingest same exemplar; should not error on ALTER, and row count should increase.
@@ -200,7 +200,7 @@ func duckHasAnyNonTSColumn(ctx context.Context, db *sql.DB, table string) (bool,
 		if err := rows.Scan(&name); err != nil {
 			return false, err
 		}
-		if name != "_cardinalhq_timestamp" {
+		if name != "chq_timestamp" {
 			hasOther = true
 			break
 		}

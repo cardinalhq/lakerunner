@@ -20,14 +20,84 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"testing"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
+
+// createTestMetricParquetFile creates a temporary metric Parquet file for testing
+func createTestMetricParquetFile(t *testing.T, rowCount int, withSketch bool) string {
+	t.Helper()
+
+	rows := make([]map[string]any, rowCount)
+	for i := range rows {
+		row := map[string]any{
+			"chq_timestamp":    int64(1000000 + i),
+			"chq_collector_id": fmt.Sprintf("collector-%d", i),
+			"metric_name":      "test_metric",
+			"chq_rollup_sum":   float64(i * 100),
+		}
+
+		if withSketch {
+			// Add sketch data as bytes
+			row["chq_sketch"] = []byte(fmt.Sprintf("sketch-data-%d", i))
+		}
+
+		rows[i] = row
+	}
+
+	// Build schema
+	nodes := make(map[string]parquet.Node)
+	for key, value := range rows[0] {
+		var node parquet.Node
+		switch value.(type) {
+		case int64:
+			node = parquet.Optional(parquet.Int(64))
+		case string:
+			node = parquet.Optional(parquet.String())
+		case float64:
+			node = parquet.Optional(parquet.Leaf(parquet.DoubleType))
+		case []byte:
+			node = parquet.Optional(parquet.Leaf(parquet.ByteArrayType))
+		default:
+			t.Fatalf("Unsupported type %T for key %s", value, key)
+		}
+		nodes[key] = node
+	}
+
+	schema := parquet.NewSchema("metrics", parquet.Group(nodes))
+
+	// Create temporary file
+	tmpFile, err := os.CreateTemp("", "test-metrics-*.parquet")
+	require.NoError(t, err)
+
+	writer := parquet.NewGenericWriter[map[string]any](tmpFile, schema)
+
+	for _, row := range rows {
+		_, err := writer.Write([]map[string]any{row})
+		require.NoError(t, err, "Failed to write row")
+	}
+
+	err = writer.Close()
+	require.NoError(t, err, "Failed to close writer")
+
+	err = tmpFile.Close()
+	require.NoError(t, err, "Failed to close file")
+
+	// Register cleanup
+	t.Cleanup(func() {
+		_ = os.Remove(tmpFile.Name())
+	})
+
+	return tmpFile.Name()
+}
 
 func countDuckDBParquetRows(t *testing.T, paths []string) int {
 	reader, err := NewDuckDBParquetRawReader(context.TODO(), paths, 10)
@@ -53,24 +123,23 @@ func countDuckDBParquetRows(t *testing.T, paths []string) int {
 
 // TestDuckDBParquetRawReaderWithRealFile verifies streaming of a parquet file using DuckDB.
 func TestDuckDBParquetRawReaderWithRealFile(t *testing.T) {
-	path := "../../testdata/metrics/compact-test-0001/tbl_299476441865651503.parquet"
+	path := createTestMetricParquetFile(t, 100, false)
 	rows := countDuckDBParquetRows(t, []string{path})
 	require.Greater(t, rows, 0)
 }
 
 // TestDuckDBParquetRawReaderMultipleFiles verifies streaming multiple parquet files.
 func TestDuckDBParquetRawReaderMultipleFiles(t *testing.T) {
-	paths := []string{
-		"../../testdata/metrics/compact-test-0001/tbl_299476441865651503.parquet",
-		"../../testdata/metrics/compact-test-0001/tbl_299476446630380847.parquet",
-	}
+	path1 := createTestMetricParquetFile(t, 100, false)
+	path2 := createTestMetricParquetFile(t, 150, false)
+	paths := []string{path1, path2}
 	rows := countDuckDBParquetRows(t, paths)
-	require.Greater(t, rows, 0)
+	require.Equal(t, 250, rows, "should read all rows from both files")
 }
 
 // TestDuckDBParquetRawReaderCopiesSketch verifies sketch values aren't reused across rows.
 func TestDuckDBParquetRawReaderCopiesSketch(t *testing.T) {
-	path := "../../testdata/metrics/compact-test-0001/tbl_299476441865651503.parquet"
+	path := createTestMetricParquetFile(t, 100, true)
 	reader, err := NewDuckDBParquetRawReader(context.TODO(), []string{path}, 1)
 	require.NoError(t, err)
 	defer reader.Close()
@@ -89,9 +158,6 @@ func TestDuckDBParquetRawReaderCopiesSketch(t *testing.T) {
 	batch2, err := reader.Next(context.TODO())
 	if batch2 != nil {
 		pipeline.ReturnBatch(batch2)
-	}
-	if errors.Is(err, io.EOF) {
-		t.Skip("not enough rows to verify sketch copy")
 	}
 
 	require.True(t, bytes.Equal(sketch, snapshot))

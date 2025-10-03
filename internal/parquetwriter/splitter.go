@@ -133,7 +133,7 @@ func (s *FileSplitter) convertToStringIfNeeded(fieldName string, value any) any 
 	}
 }
 
-// convertFingerprintToInt64 converts _cardinalhq_fingerprint from string to int64 if needed.
+// convertFingerprintToInt64 converts chq_fingerprint from string to int64 if needed.
 // The fingerprint field must always be int64 in the schema.
 func (s *FileSplitter) convertFingerprintToInt64(value any) (any, error) {
 	if value == nil {
@@ -234,14 +234,14 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		}
 
 		// Convert pipeline.Row to map[string]any efficiently
-		stringRow := make(map[string]any, len(row)+1) // +1 for _cardinalhq_id
+		stringRow := make(map[string]any, len(row)+1) // +1 for chq_id
 		for key, value := range row {
 			fieldName := string(key.Value())
 			// Apply string conversion for fields with configured prefixes
 			convertedValue := s.convertToStringIfNeeded(fieldName, value)
 
-			// Special handling for _cardinalhq_fingerprint: must always be int64
-			if fieldName == "_cardinalhq_fingerprint" {
+			// Special handling for chq_fingerprint: must always be int64
+			if fieldName == "chq_fingerprint" {
 				var err error
 				convertedValue, err = s.convertFingerprintToInt64(convertedValue)
 				if err != nil {
@@ -252,7 +252,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 			stringRow[fieldName] = convertedValue
 		}
 
-		stringRow["_cardinalhq_id"] = idgen.NextBase32ID()
+		stringRow["chq_id"] = idgen.NextBase32ID()
 
 		// Add to schema builder for evolution tracking
 		if err := s.currentSchema.AddRow(stringRow); err != nil {

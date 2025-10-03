@@ -100,6 +100,12 @@ func IngestExemplarLogsJSONToDuckDB(
 				row[string(key.Value())] = value
 			}
 
+			// Add a dummy fingerprint for test queries that expect it
+			// (Real ingestion adds this via fingerprintTenantManager)
+			if _, exists := row["chq_fingerprint"]; !exists {
+				row["chq_fingerprint"] = "test-fingerprint"
+			}
+
 			if err := ensureColumnsForRow(ctx, tx, tableName, row, existingCols); err != nil {
 				return rowsInserted, err
 			}
@@ -121,7 +127,7 @@ func ensureBaseTable(ctx context.Context, db *sql.DB, table string) error {
 	q := fmt.Sprintf(
 		`CREATE TABLE IF NOT EXISTS %s ("%s" BIGINT);`,
 		quoteIdent(table),
-		"_cardinalhq_timestamp",
+		"chq_timestamp",
 	)
 	if _, err := db.ExecContext(ctx, q); err != nil {
 		return fmt.Errorf("create base table: %w", err)
@@ -150,13 +156,13 @@ func getExistingColumns(ctx context.Context, db execQuerier, table string) (map[
 	return cols, rows.Err()
 }
 
-// ensureColumnsForRow adds columns for keys present in row (except _cardinalhq.timestamp),
+// ensureColumnsForRow adds columns for keys present in row (except chq_timestamp),
 // choosing DuckDB types based on Go types. Uses IF NOT EXISTS for safety.
 func ensureColumnsForRow(ctx context.Context, db execQuerier, table string, row map[string]any, existing map[string]struct{}) error {
 	// Deterministic order so ALTER statements are stable
 	keys := make([]string, 0, len(row))
 	for k := range row {
-		if k == "_cardinalhq_timestamp" {
+		if k == "chq_timestamp" {
 			continue
 		}
 		if _, ok := existing[k]; ok {
@@ -184,9 +190,9 @@ func ensureColumnsForRow(ctx context.Context, db execQuerier, table string, row 
 
 func insertRow(ctx context.Context, db execQuerier, table string, row map[string]any) (int64, error) {
 	// Require timestamp
-	ts, ok := row["_cardinalhq_timestamp"]
+	ts, ok := row["chq_timestamp"]
 	if !ok {
-		return 0, fmt.Errorf("row missing %q", "_cardinalhq_timestamp")
+		return 0, fmt.Errorf("row missing %q", "chq_timestamp")
 	}
 	tsVal, err := toInt64(ts)
 	if err != nil {
@@ -196,7 +202,7 @@ func insertRow(ctx context.Context, db execQuerier, table string, row map[string
 	// Prepare stable column order: timestamp first, then sorted remaining keys
 	keys := make([]string, 0, len(row))
 	for k := range row {
-		if k == "_cardinalhq_timestamp" {
+		if k == "chq_timestamp" {
 			continue
 		}
 		keys = append(keys, k)
@@ -207,7 +213,7 @@ func insertRow(ctx context.Context, db execQuerier, table string, row map[string
 	vals := make([]any, 0, 1+len(keys))
 	placeholders := make([]string, 0, 1+len(keys))
 
-	cols = append(cols, quoteIdent("_cardinalhq_timestamp"))
+	cols = append(cols, quoteIdent("chq_timestamp"))
 	vals = append(vals, tsVal)
 	placeholders = append(placeholders, "?")
 
@@ -516,7 +522,7 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON strin
 
 func minMaxTimestamp(ctx context.Context, db *sql.DB, table string) (int64, int64, error) {
 	q := fmt.Sprintf(`SELECT MIN("%s"), MAX("%s") FROM %s`,
-		"_cardinalhq_timestamp", "_cardinalhq_timestamp", quoteIdent(table))
+		"chq_timestamp", "chq_timestamp", quoteIdent(table))
 	var minimum sql.NullInt64
 	var maximum sql.NullInt64
 	if err := db.QueryRowContext(ctx, q).Scan(&minimum, &maximum); err != nil {

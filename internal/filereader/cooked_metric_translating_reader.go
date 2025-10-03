@@ -111,7 +111,7 @@ func (r *CookedMetricTranslatingReader) shouldDropRow(ctx context.Context, row p
 		}
 	}
 
-	// Check and validate _cardinalhq.tid field
+	// Check and validate chq_tid field
 	if tidValue, exists := row[wkk.RowKeyCTID]; exists {
 		switch tidValue.(type) {
 		case int64:
@@ -133,7 +133,7 @@ func (r *CookedMetricTranslatingReader) shouldDropRow(ctx context.Context, row p
 
 // transformRow applies metric-specific transformations to a row in place.
 func (r *CookedMetricTranslatingReader) transformRow(row pipeline.Row) {
-	// Convert _cardinalhq.tid from string to int64 if needed
+	// Convert chq_tid from string to int64 if needed
 	if tidValue, exists := row[wkk.RowKeyCTID]; exists {
 		if tidStr, ok := tidValue.(string); ok {
 			if tidInt64, err := strconv.ParseInt(tidStr, 10, 64); err == nil {

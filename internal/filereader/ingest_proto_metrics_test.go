@@ -791,11 +791,11 @@ func TestIngestProtoMetrics_SyntheticEdgeCases(t *testing.T) {
 				// Should handle zero values
 				assert.Equal(t, "gauge", row[wkk.RowKeyCMetricType])
 				assert.Equal(t, 0.0, row[wkk.RowKeyRollupSum])
-				assert.Equal(t, "idle", row[wkk.NewRowKey("metric_measurement")])
+				assert.Equal(t, "idle", row[wkk.NewRowKey("attr_measurement")])
 			case "simple_histogram":
 				// Should handle simple histograms
 				assert.Equal(t, "histogram", row[wkk.RowKeyCMetricType])
-				assert.Equal(t, "test", row[wkk.NewRowKey("metric_operation")])
+				assert.Equal(t, "test", row[wkk.NewRowKey("attr_operation")])
 			}
 		})
 	}
@@ -869,25 +869,25 @@ func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 // ValidateMetricsReaderContract validates that a reader produces metrics data conforming to the 12-point contract.
 // This function can be used to test any metrics reader to ensure consistent output format.
 // Contract requirements:
-//  1. All rollup fields must always be set (rollup_avg, rollup_max, rollup_min, rollup_count, rollup_sum, rollup_p25, rollup_p50, rollup_p75, rollup_p90, rollup_p95, rollup_p99)
-//  2. All metric attribute tags must be prefixed with "metric_"
+//  1. All rollup fields must always be set (chq_rollup_avg, chq_rollup_max, chq_rollup_min, chq_rollup_count, chq_rollup_sum, chq_rollup_p25, chq_rollup_p50, chq_rollup_p75, chq_rollup_p90, chq_rollup_p95, chq_rollup_p99)
+//  2. All metric attribute tags must be prefixed with "attr_"
 //  3. All resource attribute tags must be prefixed with "resource_"
 //  4. All scope attribute tags must be prefixed with "scope_"
-//  5. All metrics must have _cardinalhq_name as a string
-//  6. All metrics must have _cardinalhq.metric_type as one of "gauge", "count", "histogram"
-//  7. All metrics must have _cardinalhq_timestamp as int64 (use Timestamp, fallback to StartTimestamp)
-//  8. NO _cardinalhq_value field should be present (removed from all metric types)
+//  5. All metrics must have metric_name as a string
+//  6. All metrics must have chq_metric_type as one of "gauge", "count", "histogram"
+//  7. All metrics must have chq_timestamp as int64 (use Timestamp, fallback to StartTimestamp)
+//  8. NO chq_value field should be present (removed from all metric types)
 //  9. Summary data points should be silently dropped (not present in output)
 //
 // 10. All metrics must have scope_url, scope_name, description, unit, type fields
-// 11. _cardinalhq.tid computation should be done after transform (not in reader)
-// 12. For histograms, len(sketch) must be > 0; for gauge/count, len(sketch) must be 0
+// 11. chq_tid computation should be done after transform (not in reader)
+// 12. For histograms, len(chq_sketch) must be > 0; for gauge/count, len(chq_sketch) must be 0
 func ValidateMetricsReaderContract(t *testing.T, rows []pipeline.Row) {
 	require.NotEmpty(t, rows, "ValidateMetricsReaderContract requires at least one row to validate")
 
 	for i, row := range rows {
 		// 1. All rollup fields must always be set
-		rollupFields := []string{"rollup_avg", "rollup_max", "rollup_min", "rollup_count", "rollup_sum", "rollup_p25", "rollup_p50", "rollup_p75", "rollup_p90", "rollup_p95", "rollup_p99"}
+		rollupFields := []string{"chq_rollup_avg", "chq_rollup_max", "chq_rollup_min", "chq_rollup_count", "chq_rollup_sum", "chq_rollup_p25", "chq_rollup_p50", "chq_rollup_p75", "chq_rollup_p90", "chq_rollup_p95", "chq_rollup_p99"}
 		for _, field := range rollupFields {
 			fieldKey := wkk.NewRowKey(field)
 			val, hasRollupField := row[fieldKey]
@@ -898,14 +898,14 @@ func ValidateMetricsReaderContract(t *testing.T, rows []pipeline.Row) {
 		}
 
 		// 2-4. Validate attribute prefixing
-		// Check that all metric/resource/scope attributes are properly prefixed
-		expectedPrefixes := []string{"metric_", "resource_", "scope_"}
-		standardFields := []string{"_cardinalhq_description", "_cardinalhq_unit", "_cardinalhq_scope_url", "_cardinalhq_scope_name", "sketch"}
+		// Check that all attr/resource/scope attributes are properly prefixed
+		expectedPrefixes := []string{"attr_", "resource_", "scope_"}
+		standardFields := []string{"chq_description", "chq_unit", "chq_scope_url", "chq_scope_name", "chq_sketch"}
 
 		for key := range row {
 			// Skip CardinalHQ internal fields and standard literal fields
 			keyStr := string(key.Value())
-			if strings.HasPrefix(keyStr, "_cardinalhq.") || strings.HasPrefix(keyStr, "rollup_") {
+			if strings.HasPrefix(keyStr, "chq_") {
 				continue
 			}
 
@@ -924,48 +924,48 @@ func ValidateMetricsReaderContract(t *testing.T, rows []pipeline.Row) {
 			}
 
 			if !hasValidPrefix {
-				t.Logf("Row %d: Field '%s' should have prefix (metric., resource., or scope.)", i, string(key.Value()))
+				t.Logf("Row %d: Field '%s' should have prefix (attr_, resource_, or scope_)", i, string(key.Value()))
 			}
 		}
 
-		// 5. All metrics must have _cardinalhq_name as string
+		// 5. All metrics must have metric_name as string
 		name, nameOk := row[wkk.RowKeyCName].(string)
-		assert.True(t, nameOk, "Row %d missing or invalid _cardinalhq_name field", i)
-		assert.NotEmpty(t, name, "Row %d _cardinalhq_name must not be empty", i)
+		assert.True(t, nameOk, "Row %d missing or invalid metric_name field", i)
+		assert.NotEmpty(t, name, "Row %d metric_name must not be empty", i)
 
-		// 6. All metrics must have _cardinalhq.metric_type as valid type
+		// 6. All metrics must have chq_metric_type as valid type
 		metricType, metricTypeOk := row[wkk.RowKeyCMetricType].(string)
-		assert.True(t, metricTypeOk, "Row %d missing or invalid _cardinalhq.metric_type field", i)
-		assert.Contains(t, []string{"gauge", "count", "histogram"}, metricType, "Row %d invalid _cardinalhq.metric_type: %s", i, metricType)
+		assert.True(t, metricTypeOk, "Row %d missing or invalid chq_metric_type field", i)
+		assert.Contains(t, []string{"gauge", "count", "histogram"}, metricType, "Row %d invalid chq_metric_type: %s", i, metricType)
 
-		// 7. All metrics must have _cardinalhq_timestamp as int64
+		// 7. All metrics must have chq_timestamp as int64
 		timestamp, timestampOk := row[wkk.RowKeyCTimestamp].(int64)
-		assert.True(t, timestampOk, "Row %d missing or invalid _cardinalhq_timestamp field", i)
-		assert.Greater(t, timestamp, int64(0), "Row %d _cardinalhq_timestamp must be positive", i)
+		assert.True(t, timestampOk, "Row %d missing or invalid chq_timestamp field", i)
+		assert.Greater(t, timestamp, int64(0), "Row %d chq_timestamp must be positive", i)
 
-		// 8. NO _cardinalhq_value field should be present
+		// 8. NO chq_value field should be present
 		_, valueExists := row[wkk.RowKeyCValue]
-		assert.False(t, valueExists, "Row %d should not contain _cardinalhq_value field", i)
+		assert.False(t, valueExists, "Row %d should not contain chq_value field", i)
 
 		// 9. Summary data points should be silently dropped (verified by absence in output)
 		// This is implicitly validated since summaries return errors and are not included
 
 		// 10. All metrics must have required fields
-		requiredFields := []string{"_cardinalhq_scope_url", "_cardinalhq_scope_name", "_cardinalhq_description", "_cardinalhq_unit"}
+		requiredFields := []string{"chq_scope_url", "chq_scope_name", "chq_description", "chq_unit"}
 		for _, field := range requiredFields {
 			_, hasRequiredField := row[wkk.NewRowKey(field)]
 			assert.True(t, hasRequiredField, "Row %d missing required field %s", i, field)
 		}
 
-		// 11. _cardinalhq.tid computation should be done after transform (not in reader)
+		// 11. chq_tid computation should be done after transform (not in reader)
 		// The reader should NOT include TID - it should be added by MetricTranslator
 		_, tidExists := row[wkk.RowKeyCTID]
-		assert.False(t, tidExists, "Row %d should not contain _cardinalhq.tid - it should be computed after transform", i)
+		assert.False(t, tidExists, "Row %d should not contain chq_tid - it should be computed after transform", i)
 
-		// Additional validation: sketch field should exist and be []byte
-		sketch, sketchOk := row[wkk.NewRowKey("sketch")]
-		assert.True(t, sketchOk, "Row %d missing sketch field", i)
-		assert.IsType(t, []byte{}, sketch, "Row %d sketch field must be []byte", i)
+		// Additional validation: chq_sketch field should exist and be []byte
+		sketch, sketchOk := row[wkk.NewRowKey("chq_sketch")]
+		assert.True(t, sketchOk, "Row %d missing chq_sketch field", i)
+		assert.IsType(t, []byte{}, sketch, "Row %d chq_sketch field must be []byte", i)
 
 		// Validate sketch content based on metric type
 		sketchBytes := sketch.([]byte)

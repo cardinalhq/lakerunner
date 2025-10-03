@@ -27,8 +27,8 @@ import (
 // e.g., "resource.k8s.namespace.name" -> "resource_k8s_namespace_name"
 // This matches the actual column names in Parquet files
 func normalizeFieldName(field string) string {
-	// Special case: _cardinalhq fields already use underscores
-	if strings.HasPrefix(field, "_cardinalhq") {
+	// Special case: chq fields already use underscores
+	if strings.HasPrefix(field, "chq_") {
 		return field
 	}
 	// Convert dots to underscores for other fields
@@ -68,10 +68,10 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 
 	// COUNT path (no HLL): densify steps and count rows per group.
 	// This yields one row per bucket per child-identity group (be.GroupBy).
-	// The API/parent agg can then “count the series” per keep-set (e.g. service).
+	// The API/parent agg can then "count the series" per keep-set (e.g. service).
 	if be.WantCount && equalStringSets(be.CountOnBy, be.GroupBy) {
-		// COUNT(rollup_count) avoids counting rows that have no data in the bucket.
-		return buildCountOnly(be, []proj{{"COUNT(rollup_count)", "count"}}, step)
+		// COUNT(chq_rollup_count) avoids counting rows that have no data in the bucket.
+		return buildCountOnly(be, []proj{{"COUNT(chq_rollup_count)", "count"}}, step)
 	}
 
 	switch be.FuncName {
@@ -101,8 +101,8 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 
 func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
-	tsCol := "\"_cardinalhq_timestamp\""
-	bodyCol := "\"_cardinalhq_message\""
+	tsCol := "\"chq_timestamp\""
+	bodyCol := "\"log_message\""
 
 	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, "", nil))
 
@@ -208,7 +208,7 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 	where := withTime(whereFor(be))
 
 	bucketExpr := fmt.Sprintf(
-		"(CAST(\"_cardinalhq_timestamp\" AS BIGINT) - (CAST(\"_cardinalhq_timestamp\" AS BIGINT) %% %d))",
+		"(CAST(\"chq_timestamp\" AS BIGINT) - (CAST(\"chq_timestamp\" AS BIGINT) %% %d))",
 		stepMs,
 	)
 
@@ -226,16 +226,16 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 	// Canonical aliases so MAP paths (and tests) are stable: sum,count,min,max
 	cols := []string{bucketExpr + " AS bucket_ts"}
 	if need.sum {
-		cols = append(cols, "SUM(rollup_sum) AS sum")
+		cols = append(cols, "SUM(chq_rollup_sum) AS sum")
 	}
 	if need.count {
-		cols = append(cols, "SUM(COALESCE(rollup_count, 0)) AS count")
+		cols = append(cols, "SUM(COALESCE(chq_rollup_count, 0)) AS count")
 	}
 	if need.min {
-		cols = append(cols, "MIN(rollup_min) AS min")
+		cols = append(cols, "MIN(chq_rollup_min) AS min")
 	}
 	if need.max {
-		cols = append(cols, "MAX(rollup_max) AS max")
+		cols = append(cols, "MAX(chq_rollup_max) AS max")
 	}
 	if len(gbq) > 0 {
 		cols = append(cols, strings.Join(gbq, ", "))
@@ -256,7 +256,7 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 // buildDDS: bucket timestamps, project group-by labels + sketch
 func buildDDS(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
-	bucket := fmt.Sprintf("(\"_cardinalhq_timestamp\" - (\"_cardinalhq_timestamp\" %% %d))", stepMs)
+	bucket := fmt.Sprintf("(\"chq_timestamp\" - (\"chq_timestamp\" %% %d))", stepMs)
 
 	// Use aligned, end-exclusive time like the numeric paths
 	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
@@ -264,7 +264,7 @@ func buildDDS(be *BaseExpr, step time.Duration) string {
 
 	base := whereFor(be)
 	timeWhere := func() string {
-		tc := fmt.Sprintf("\"_cardinalhq_timestamp\" >= %s AND \"_cardinalhq_timestamp\" < %s", alignedStart, alignedEndEx)
+		tc := fmt.Sprintf("\"chq_timestamp\" >= %s AND \"chq_timestamp\" < %s", alignedStart, alignedEndEx)
 		if base == "" {
 			return " WHERE " + tc
 		}
@@ -280,7 +280,7 @@ func buildDDS(be *BaseExpr, step time.Duration) string {
 		}
 		cols = append(cols, strings.Join(normalizedGroups, ", "))
 	}
-	cols = append(cols, "sketch")
+	cols = append(cols, "chq_sketch")
 
 	// One row per stored sample; we’ll merge per (bucket_ts, groupkey) in Go.
 	sql := "SELECT " + strings.Join(cols, ", ") +
@@ -296,12 +296,12 @@ type need struct {
 }
 
 const (
-	timePredicate = "\"_cardinalhq_timestamp\" >= {start} AND \"_cardinalhq_timestamp\" < {end}"
+	timePredicate = "\"chq_timestamp\" >= {start} AND \"chq_timestamp\" < {end}"
 )
 
 func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	stepMs := step.Milliseconds()
-	bucketExpr := fmt.Sprintf("(\"_cardinalhq_timestamp\" - (\"_cardinalhq_timestamp\" %% %d))", stepMs)
+	bucketExpr := fmt.Sprintf("(\"chq_timestamp\" - (\"chq_timestamp\" %% %d))", stepMs)
 
 	where := withTime(whereFor(be))
 
@@ -349,10 +349,10 @@ func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 		}
 	}
 	if needSum {
-		stepCols = append(stepCols, "SUM(rollup_sum) AS step_sum")
+		stepCols = append(stepCols, "SUM(chq_rollup_sum) AS step_sum")
 	}
 	if needCount {
-		stepCols = append(stepCols, "COUNT(rollup_count) AS step_count")
+		stepCols = append(stepCols, "COUNT(chq_rollup_count) AS step_count")
 	}
 	if len(gbq) > 0 {
 		stepCols = append(stepCols, strings.Join(gbq, ", "))
@@ -459,7 +459,7 @@ func whereFor(be *BaseExpr) string {
 
 	// For synthetic log metrics, we do NOT filter by metric name at all.
 	if be.Metric != "" && !be.isSyntheticLogMetric() {
-		parts = append(parts, fmt.Sprintf("\"_cardinalhq_name\" = %s", sqlLit(be.Metric)))
+		parts = append(parts, fmt.Sprintf("\"metric_name\" = %s", sqlLit(be.Metric)))
 	}
 
 	for _, m := range be.Matchers {

@@ -86,7 +86,7 @@ func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 	// Single singleton row - should pass through unchanged
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10500), // Will be truncated to 10000
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -113,7 +113,7 @@ func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 	assert.Equal(t, int64(10000), row[wkk.RowKeyCTimestamp])
 
 	// Verify other fields unchanged
-	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
+	assert.Equal(t, "cpu_usage", row[wkk.RowKeyCName])
 	assert.Equal(t, int64(12345), row[wkk.RowKeyCTID])
 	// DDSketch provides approximations, allow for small error
 	assert.InDelta(t, 75.0, row[wkk.RowKeyRollupSum], 1.0, "Sum should be approximately 75")
@@ -128,7 +128,7 @@ func TestAggregatingMetricsReader_MultipleSingletons(t *testing.T) {
 	// Multiple singleton rows with same key - should be aggregated into sketch
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10500), // Will be truncated to 10000
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -136,7 +136,7 @@ func TestAggregatingMetricsReader_MultipleSingletons(t *testing.T) {
 			wkk.RowKeyRollupCount: 1.0,
 		},
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10800), // Will be truncated to 10000 (same group)
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -158,7 +158,7 @@ func TestAggregatingMetricsReader_MultipleSingletons(t *testing.T) {
 	row := batch.Get(0)
 	// Verify aggregated values
 	assert.Equal(t, int64(10000), row[wkk.RowKeyCTimestamp])
-	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
+	assert.Equal(t, "cpu_usage", row[wkk.RowKeyCName])
 	assert.Equal(t, int64(12345), row[wkk.RowKeyCTID])
 
 	// Should have aggregated to 2 count, sum should be approximately 160.0
@@ -187,7 +187,7 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 	// Mix of sketch and singleton rows with same key - should merge properly
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10500), // Will be truncated to 10000
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -195,7 +195,7 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 			wkk.RowKeyRollupCount: 1.0,
 		},
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10800), // Will be truncated to 10000 (same group)
 			wkk.RowKeySketch:      sketchBytes,  // Has sketch
@@ -203,7 +203,7 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 			wkk.RowKeyRollupCount: 1.0,          // Should be ignored
 		},
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10900), // Will be truncated to 10000 (same group)
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -225,7 +225,7 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 	row := batch.Get(0)
 	// Verify the result
 	assert.Equal(t, int64(10000), row[wkk.RowKeyCTimestamp])
-	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
+	assert.Equal(t, "cpu_usage", row[wkk.RowKeyCName])
 	assert.Equal(t, int64(12345), row[wkk.RowKeyCTID])
 
 	// Should have aggregated: sketch(100.0) + singleton(75.0) + singleton(85.0) = 3 values
@@ -242,7 +242,7 @@ func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 	// Rows with different keys - should not be aggregated
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10000),
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -258,7 +258,7 @@ func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 			wkk.RowKeyRollupCount: 1.0,
 		},
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(54321), // Different TID
 			wkk.RowKeyCTimestamp:  int64(10000),
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -266,7 +266,7 @@ func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 			wkk.RowKeyRollupCount: 1.0,
 		},
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(20000), // Different timestamp bucket
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -307,7 +307,7 @@ func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 	// Rows with missing required fields - should be skipped
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10000),
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -316,14 +316,14 @@ func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 		},
 		{
 			// Missing TID - should be skipped
-			wkk.RowKeyCName:       "memory.usage",
+			wkk.RowKeyCName:       "memory_usage",
 			wkk.RowKeyCTimestamp:  int64(10000),
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
 			wkk.RowKeyRollupSum:   85.0,
 			wkk.RowKeyRollupCount: 1.0,
 		},
 		{
-			wkk.RowKeyCName:       "disk.usage",
+			wkk.RowKeyCName:       "disk_usage",
 			wkk.RowKeyCTID:        int64(54321),
 			wkk.RowKeyCTimestamp:  int64(10000),
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -355,15 +355,15 @@ func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 	require.Len(t, allRows, 2)
 
 	// Verify the valid rows
-	assert.Equal(t, "cpu.usage", allRows[0][wkk.RowKeyCName])
-	assert.Equal(t, "disk.usage", allRows[1][wkk.RowKeyCName])
+	assert.Equal(t, "cpu_usage", allRows[0][wkk.RowKeyCName])
+	assert.Equal(t, "disk_usage", allRows[1][wkk.RowKeyCName])
 }
 
 func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 	// Test that timestamps are properly truncated to aggregation period
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10123), // Should truncate to 10000
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -371,7 +371,7 @@ func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 			wkk.RowKeyRollupCount: 1.0,
 		},
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(19999), // Should truncate to 10000 (same group)
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -379,7 +379,7 @@ func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 			wkk.RowKeyRollupCount: 1.0,
 		},
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(20001), // Should truncate to 20000 (different group)
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -444,7 +444,7 @@ func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
 	// Two rows with sketches - should be merged
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:       "response.time",
+			wkk.RowKeyCName:       "response_time",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10000),
 			wkk.RowKeySketch:      sketch1Bytes, // Sketch with 2 values: 100, 200
@@ -452,7 +452,7 @@ func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
 			wkk.RowKeyRollupSum:   300.0,
 		},
 		{
-			wkk.RowKeyCName:       "response.time",
+			wkk.RowKeyCName:       "response_time",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10000), // Same key
 			wkk.RowKeySketch:      sketch2Bytes, // Sketch with 1 value: 300
@@ -533,7 +533,7 @@ func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 	// Test the n>0 && io.EOF case: ensure last row is processed correctly
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10000),
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),
@@ -557,7 +557,7 @@ func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 
 	row := batch.Get(0)
 	// Verify the row was processed correctly
-	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
+	assert.Equal(t, "cpu_usage", row[wkk.RowKeyCName])
 	assert.Equal(t, int64(12345), row[wkk.RowKeyCTID])
 	assert.Equal(t, int64(10000), row[wkk.RowKeyCTimestamp])
 	assert.InDelta(t, 75.0, row[wkk.RowKeyRollupSum], 1.0, "DDSketch approximation")
@@ -571,7 +571,7 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 	// Test that histogram rows without sketches are dropped
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:       "http.request_duration",
+			wkk.RowKeyCName:       "http_request_duration",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10500),
 			wkk.RowKeyCMetricType: "histogram", // This is a histogram
@@ -580,7 +580,7 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 			wkk.RowKeyRollupCount: 1.0,
 		},
 		{
-			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCName:       "cpu_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10500),
 			wkk.RowKeySketch:      createTestSketch(t, 50.0),
@@ -601,7 +601,7 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 
 	row := batch.Get(0)
 	// Verify only the gauge row was returned
-	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
+	assert.Equal(t, "cpu_usage", row[wkk.RowKeyCName])
 	assert.InDelta(t, 50.0, row[wkk.RowKeyRollupSum], 1.0, "DDSketch approximation")
 
 	// Second read should return EOF
@@ -612,7 +612,7 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:         "cpu.usage",
+			wkk.RowKeyCName:         "cpu_usage",
 			wkk.RowKeyCTID:          int64(12345),
 			wkk.RowKeyCTimestamp:    int64(10000),
 			wkk.RowKeySketch:        createTestSketch(t, 75.0),
@@ -621,7 +621,7 @@ func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
 			wkk.NewRowKey("unused"): "extra",
 		},
 		{
-			wkk.RowKeyCName:       "memory.usage",
+			wkk.RowKeyCName:       "memory_usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10000),
 			wkk.RowKeySketch:      createTestSketch(t, 75.0),

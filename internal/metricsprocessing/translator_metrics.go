@@ -45,7 +45,7 @@ func (t *MetricTranslator) TranslateRow(_ context.Context, row *pipeline.Row) er
 	// Validate required timestamp field - drop row if missing or invalid
 	timestamp, ok := (*row)[wkk.RowKeyCTimestamp].(int64)
 	if !ok {
-		return fmt.Errorf("_cardinalhq_timestamp field is missing or not int64")
+		return fmt.Errorf("chq_timestamp field is missing or not int64")
 	}
 
 	// Truncate timestamp to nearest 10-second interval
@@ -55,7 +55,7 @@ func (t *MetricTranslator) TranslateRow(_ context.Context, row *pipeline.Row) er
 
 	// Compute and add TID field
 	if _, nameOk := (*row)[wkk.RowKeyCName].(string); !nameOk {
-		return fmt.Errorf("missing or invalid _cardinalhq_name field for TID computation")
+		return fmt.Errorf("missing or invalid metric_name field for TID computation")
 	}
 
 	filterKeys(row)

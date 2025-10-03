@@ -14,14 +14,34 @@
 
 package filereader
 
-import "strings"
+import (
+	"strings"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+)
+
+func prefixAttributeRowKey(name, prefix string) wkk.RowKey {
+	if name == "" {
+		return wkk.NewRowKey("")
+	}
+	var result string
+	if name[0] == '_' {
+		// Convert dots to underscores even for underscore-prefixed fields
+		result = strings.ReplaceAll(name, ".", "_")
+	} else {
+		// Use underscore separator for PromQL/LogQL compatibility
+		result = prefix + "_" + strings.ReplaceAll(name, ".", "_")
+	}
+	return wkk.NewRowKey(result)
+}
+
+// prefixAttribute is kept for compatibility with tests
 func prefixAttribute(name, prefix string) string {
 	if name == "" {
 		return ""
 	}
 	if name[0] == '_' {
-		// Convert dots to underscores even for _cardinalhq fields
+		// Convert dots to underscores even for underscore-prefixed fields
 		return strings.ReplaceAll(name, ".", "_")
 	}
 	// Use underscore separator for PromQL/LogQL compatibility

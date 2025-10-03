@@ -192,7 +192,7 @@ func (q *QuerierService) logsPushDown(
 	worker Worker,
 	request PushDownRequest,
 ) (<-chan promql.Timestamped, error) {
-	return PushDownStream[promql.Timestamped](ctx, worker, request,
+	return PushDownStream(ctx, worker, request,
 		func(typ string, data json.RawMessage) (promql.Timestamped, bool, error) {
 			var zero promql.Timestamped
 			if typ != "result" {
@@ -208,7 +208,7 @@ func (q *QuerierService) logsPushDown(
 
 type SegmentLookupFunc func(context.Context, lrdb.ListLogSegmentsForQueryParams) ([]lrdb.ListLogSegmentsForQueryRow, error)
 
-const bodyField = "_cardinalhq_message"
+const bodyField = "log_message"
 
 type TrigramQuery struct {
 	Op        index.QueryOp

@@ -22,8 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
-
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -160,10 +158,10 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 
 			// Check that timestamp was set correctly
 			tsMs, exists := row[wkk.RowKeyCTimestamp]
-			assert.True(t, exists, "Should have _cardinalhq_timestamp")
+			assert.True(t, exists, "Should have chq_timestamp")
 
-			tsNs, exists := row[wkk.NewRowKey("_cardinalhq_tsns")]
-			assert.True(t, exists, "Should have _cardinalhq_tsns")
+			tsNs, exists := row[wkk.NewRowKey("chq_tsns")]
+			assert.True(t, exists, "Should have chq_tsns")
 
 			if tt.shouldFindTime {
 				assert.Equal(t, tt.expectedMs, tsMs, "Millisecond timestamp mismatch")
@@ -269,9 +267,8 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 			require.NoError(t, err)
 
 			// Check message was set correctly
-			messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
-			msg, exists := row[messageKey]
-			assert.True(t, exists, "Should have _cardinalhq_message")
+			msg, exists := row[wkk.RowKeyCMessage]
+			assert.True(t, exists, "Should have log_message")
 			assert.Equal(t, tt.expectedMessage, msg)
 		})
 	}
@@ -402,8 +399,8 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 		// Fields starting with underscore should be skipped
 		wkk.NewRowKey("_internal"): "skip me",
 
-		// _cardinalhq fields should be skipped
-		wkk.NewRowKey("_cardinalhq_test"): "skip me too",
+		// chq fields should be skipped
+		wkk.NewRowKey("chq_test"): "skip me too",
 
 		// resource fields should be kept as-is
 		wkk.NewRowKey("resource_old"): "keep",
@@ -432,9 +429,9 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 	_, hasLevel := row[wkk.NewRowKey("resource_level")]
 	assert.False(t, hasLevel, "Level field used for detection should not be promoted to resource.level")
 
-	// Check that level was correctly set in _cardinalhq_level
-	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("_cardinalhq_level")]
-	assert.True(t, hasCardinalLevel, "Should have _cardinalhq_level")
+	// Check that level was correctly set in log_level
+	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("log_level")]
+	assert.True(t, hasCardinalLevel, "Should have log_level")
 	assert.Equal(t, "INFO", cardinalLevel, "Should have level as uppercase")
 
 	service, hasService := row[wkk.NewRowKey("resource_service")]
@@ -459,11 +456,11 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 
 	// Check required CardinalhQ fields
 	telemetryType, exists := row[wkk.RowKeyCTelemetryType]
-	assert.True(t, exists, "Should have _cardinalhq_telemetry_type")
+	assert.True(t, exists, "Should have chq_telemetry_type")
 	assert.Equal(t, "logs", telemetryType)
 
 	name, exists := row[wkk.RowKeyCName]
-	assert.True(t, exists, "Should have _cardinalhq_name")
+	assert.True(t, exists, "Should have metric_name")
 	assert.Equal(t, "log_events", name)
 
 	// Check resource fields
@@ -502,8 +499,7 @@ func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
 	_, hasTimestamp := row[wkk.RowKeyCTimestamp]
 	assert.True(t, hasTimestamp, "Should have timestamp")
 
-	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
-	_, hasMessage := row[messageKey]
+	_, hasMessage := row[wkk.RowKeyCMessage]
 	assert.True(t, hasMessage, "Should have message")
 }
 
@@ -533,9 +529,9 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 	_, hasResourceLevel := row[wkk.NewRowKey("resource_level")]
 	assert.False(t, hasResourceLevel, "Level field used for detection should not be promoted to resource.level")
 
-	// Check that level was correctly set in _cardinalhq_level
-	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("_cardinalhq_level")]
-	assert.True(t, hasCardinalLevel, "Should have _cardinalhq_level")
+	// Check that level was correctly set in log_level
+	cardinalLevel, hasCardinalLevel := row[wkk.NewRowKey("log_level")]
+	assert.True(t, hasCardinalLevel, "Should have log_level")
 	assert.Equal(t, "ERROR", cardinalLevel, "Should have level as uppercase")
 
 	// Check that all other non-special fields are preserved with resource_ prefix
@@ -569,9 +565,9 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 	err := translator.TranslateRow(context.Background(), &row)
 	require.NoError(t, err)
 
-	// Verify that the timestamp was correctly used for _cardinalhq_timestamp
+	// Verify that the timestamp was correctly used for chq_timestamp
 	cardinalTimestamp, exists := row[wkk.RowKeyCTimestamp]
-	assert.True(t, exists, "Should have _cardinalhq_timestamp")
+	assert.True(t, exists, "Should have chq_timestamp")
 	assert.Equal(t, int64(1757812155208), cardinalTimestamp, "Should preserve original timestamp, not use current time")
 
 	// Verify that the timestamp field was NOT promoted to resource.timestamp
@@ -584,8 +580,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 	assert.Equal(t, "192.168.1.100", row[wkk.NewRowKey("resource_source")])
 
 	// Verify message was extracted correctly
-	messageKey := wkk.NewRowKey(translate.CardinalFieldMessage)
-	message, hasMessage := row[messageKey]
+	message, hasMessage := row[wkk.RowKeyCMessage]
 	assert.True(t, hasMessage, "Should have extracted message")
 	expectedMessage := "2025-09-13 18:09:15 PDT | CORE | INFO | (pkg/logs/service.go:123 in handleLogRotation) | Log rotation happened to /var/log/system.log"
 	assert.Equal(t, expectedMessage, message)
@@ -599,8 +594,8 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 	assert.False(t, hasResourceLevel, "Level field used for detection should not be promoted to resource.level")
 
 	// Verify that the level was correctly set
-	cardinalLevel, hasLevel := row[wkk.NewRowKey("_cardinalhq_level")]
-	assert.True(t, hasLevel, "Should have _cardinalhq_level")
+	cardinalLevel, hasLevel := row[wkk.NewRowKey("log_level")]
+	assert.True(t, hasLevel, "Should have log_level")
 	assert.Equal(t, "INFO", cardinalLevel, "Should preserve original level")
 }
 
@@ -629,7 +624,7 @@ func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testin
 
 	// Verify that the mock string timestamp was NOT used and we fell back to current time
 	cardinalTimestamp, exists := row[wkk.RowKeyCTimestamp]
-	assert.True(t, exists, "Should have _cardinalhq_timestamp")
+	assert.True(t, exists, "Should have chq_timestamp")
 
 	// The timestamp should be recent (current time), not 2025 milliseconds since epoch
 	timestamp := cardinalTimestamp.(int64)

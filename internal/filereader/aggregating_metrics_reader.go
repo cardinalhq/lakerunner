@@ -99,17 +99,17 @@ func (ar *AggregatingMetricsReader) makeAggregationKey(row pipeline.Row) (SortKe
 	// Validate required fields
 	_, nameOk := row[wkk.RowKeyCName].(string)
 	if !nameOk {
-		return nil, fmt.Errorf("missing or invalid _cardinalhq.name field")
+		return nil, fmt.Errorf("missing or invalid metric_name field")
 	}
 
 	_, tidOk := row[wkk.RowKeyCTID].(int64)
 	if !tidOk {
-		return nil, fmt.Errorf("missing or invalid _cardinalhq.tid field")
+		return nil, fmt.Errorf("missing or invalid chq_tid field")
 	}
 
 	_, tsOk := row[wkk.RowKeyCTimestamp].(int64)
 	if !tsOk {
-		return nil, fmt.Errorf("missing or invalid _cardinalhq_timestamp field")
+		return nil, fmt.Errorf("missing or invalid chq_timestamp field")
 	}
 
 	// Use the row directly - timestamp should already be truncated

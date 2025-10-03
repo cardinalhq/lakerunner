@@ -24,6 +24,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
 
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 const (
@@ -134,4 +135,78 @@ func CalculateSpanFingerprint(res pcommon.Resource, sr ptrace.Span) int64 {
 
 func toHash(fingerprintAttributes []string) int64 {
 	return int64(xxhash.Sum64String(strings.Join(fingerprintAttributes, "##")))
+}
+
+// GetStringFromRow retrieves a string value from a row map by RowKey.
+// Returns empty string if the key is not found or the value is not a string.
+func GetStringFromRow(row map[wkk.RowKey]any, key wkk.RowKey) string {
+	val, exists := row[key]
+	if !exists {
+		return ""
+	}
+	if str, ok := val.(string); ok {
+		return str
+	}
+	return ""
+}
+
+// CalculateSpanFingerprintFromRow calculates a span fingerprint from a row map.
+// The row should contain resource attributes and span attributes with appropriate prefixes.
+func CalculateSpanFingerprintFromRow(row map[wkk.RowKey]any) int64 {
+	fingerprintAttributes := make([]string, 0)
+
+	// Extract resource-level attributes
+	clusterName := GetStringFromRow(row, wkk.RowKeyResourceK8sClusterName)
+	if clusterName == "" {
+		clusterName = "unknown"
+	}
+	namespaceName := GetStringFromRow(row, wkk.RowKeyResourceK8sNamespaceName)
+	if namespaceName == "" {
+		namespaceName = "unknown"
+	}
+	serviceName := GetStringFromRow(row, wkk.RowKeyResourceServiceName)
+	if serviceName == "" {
+		serviceName = "unknown"
+	}
+
+	// Extract span kind
+	spanKindStr := GetStringFromRow(row, wkk.RowKeySpanKind)
+
+	fingerprintAttributes = append(fingerprintAttributes, clusterName, namespaceName, serviceName, spanKindStr)
+
+	// Check messaging system first
+	messagingSystem := GetStringFromRow(row, wkk.RowKeyAttrMessagingSystem)
+	if messagingSystem != "" {
+		messagingOperationType := GetStringFromRow(row, wkk.RowKeyAttrMessagingOperationType)
+		messagingDestinationName := GetStringFromRow(row, wkk.RowKeyAttrMessagingDestinationName)
+		fingerprintAttributes = append(fingerprintAttributes, messagingSystem, messagingOperationType, messagingDestinationName)
+		return toHash(fingerprintAttributes)
+	}
+
+	// Check database system
+	dbSystem := GetStringFromRow(row, wkk.RowKeyAttrDBSystemName)
+	if dbSystem != "" {
+		dbNamespace := GetStringFromRow(row, wkk.RowKeyAttrDBNamespace)
+		dbOperationName := GetStringFromRow(row, wkk.RowKeyAttrDBOperationName)
+		serverAddress := GetStringFromRow(row, wkk.RowKeyAttrServerAddress)
+		collectionName := GetStringFromRow(row, wkk.RowKeyAttrDBCollectionName)
+		spanName := GetStringFromRow(row, wkk.RowKeySpanName)
+
+		fingerprintAttributes = append(fingerprintAttributes, spanName, dbSystem, dbNamespace, dbOperationName, serverAddress, collectionName)
+		return toHash(fingerprintAttributes)
+	}
+
+	// Check HTTP request method
+	httpRequestMethod := GetStringFromRow(row, wkk.RowKeyAttrHTTPRequestMethod)
+	if httpRequestMethod != "" {
+		httpUrlTemplate := GetStringFromRow(row, wkk.RowKeyAttrURLTemplate)
+		fingerprintAttributes = append(fingerprintAttributes, httpRequestMethod, httpUrlTemplate)
+		return toHash(fingerprintAttributes)
+	}
+
+	// Default: use span name
+	sanitizedName := GetStringFromRow(row, wkk.RowKeySpanName)
+	fingerprintAttributes = append(fingerprintAttributes, sanitizedName)
+
+	return toHash(fingerprintAttributes)
 }

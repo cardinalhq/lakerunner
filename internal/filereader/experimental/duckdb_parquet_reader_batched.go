@@ -132,9 +132,9 @@ func (r *DuckDBParquetBatchedReader) initSchema(ctx context.Context) error {
 
 	for i, c := range cols {
 		switch c {
-		case "_cardinalhq.tid":
+		case "chq_tid":
 			r.idxTID = i
-		case "sketch":
+		case "chq_sketch":
 			r.idxSketch = i
 		default:
 			for j, name := range rollupFieldNames {
@@ -213,7 +213,7 @@ func (r *DuckDBParquetBatchedReader) Next(ctx context.Context) (*filereader.Batc
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
 
-		// Handle _cardinalhq.tid field conversion
+		// Handle chq_tid field conversion
 		if r.idxTID >= 0 {
 			val := values[r.idxTID]
 			switch v := val.(type) {

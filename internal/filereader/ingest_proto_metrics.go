@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -99,9 +98,12 @@ func (r *IngestProtoMetricsReader) Next(ctx context.Context) (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < r.batchSize {
-		row := make(pipeline.Row)
+		// Get a row from the pool to populate
+		row := pipeline.GetPooledRow()
 
 		if err := r.getMetricRow(ctx, row); err != nil {
+			// Return unused row to pool
+			pipeline.ReturnPooledRow(row)
 			if err == io.EOF {
 				if batch.Len() == 0 {
 					pipeline.ReturnBatch(batch)
@@ -113,8 +115,8 @@ func (r *IngestProtoMetricsReader) Next(ctx context.Context) (*Batch, error) {
 			return nil, err
 		}
 
-		batchRow := batch.AddRow()
-		maps.Copy(batchRow, row)
+		// Add the populated row to the batch (batch takes ownership)
+		batch.AppendRow(row)
 	}
 
 	if batch.Len() > 0 {
@@ -206,22 +208,22 @@ func (r *IngestProtoMetricsReader) getDatapointCount(metric pmetric.Metric) int 
 func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pipeline.Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (bool, error) {
 	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		row[wkk.NewRowKey(prefixAttribute(name, "resource"))] = value
+		row[prefixAttributeRowKey(name, "resource")] = value
 		return true
 	})
 
 	sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		row[wkk.NewRowKey(prefixAttribute(name, "scope"))] = value
+		row[prefixAttributeRowKey(name, "scope")] = value
 		return true
 	})
 
-	row[wkk.NewRowKey("_cardinalhq_scope_url")] = sm.Scope().Version()
-	row[wkk.NewRowKey("_cardinalhq_scope_name")] = sm.Scope().Name()
+	row[wkk.NewRowKey("chq_scope_url")] = sm.Scope().Version()
+	row[wkk.NewRowKey("chq_scope_name")] = sm.Scope().Name()
 
 	row[wkk.RowKeyCName] = strings.ReplaceAll(metric.Name(), ".", "_")
-	row[wkk.NewRowKey("_cardinalhq_description")] = metric.Description()
-	row[wkk.NewRowKey("_cardinalhq_unit")] = metric.Unit()
+	row[wkk.NewRowKey("chq_description")] = metric.Description()
+	row[wkk.NewRowKey("chq_unit")] = metric.Unit()
 
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
@@ -408,7 +410,7 @@ func summaryToDDSketch(dp pmetric.SummaryDataPoint) (*ddsketch.DDSketch, error) 
 func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
+		ret[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
 
@@ -495,7 +497,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 	}
 
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = v.AsString()
+		ret[prefixAttributeRowKey(name, "attr")] = v.AsString()
 		return true
 	})
 
@@ -680,7 +682,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
+		ret[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
 
@@ -801,7 +803,7 @@ func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context
 	// Add attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
+		ret[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
 

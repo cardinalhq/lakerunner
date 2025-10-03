@@ -275,14 +275,12 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 			assert.True(t, hasMessage, "Row should have log body")
 			_, hasTimestamp := row[wkk.RowKeyCTimestamp]
 			assert.True(t, hasTimestamp, "Row should have timestamp")
-			_, hasLevel := row[wkk.NewRowKey("_cardinalhq_level")]
+			_, hasLevel := row[wkk.NewRowKey("log_level")]
 			assert.True(t, hasLevel, "Row should have severity text")
-			_, hasSeverityNumber := row[wkk.NewRowKey("severity_number")]
-			assert.True(t, hasSeverityNumber, "Row should have severity number")
 
 			// Check specific values
 			assert.Equal(t, expectedBodies[i], row[wkk.RowKeyCMessage], "Log body should match expected value")
-			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("_cardinalhq_level")], "Severity text should match")
+			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("log_level")], "Severity text should match")
 
 			// Check for resource attributes
 			_, hasResourceServiceName := row[wkk.NewRowKey("resource_service_name")]
@@ -298,13 +296,13 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 			assert.Equal(t, "structured", row[wkk.NewRowKey("scope_logger_type")])
 
 			// Check for log attributes
-			_, hasLogLogLevel := row[wkk.NewRowKey("log_log_level")]
+			_, hasLogLogLevel := row[wkk.NewRowKey("attr_log_level")]
 			assert.True(t, hasLogLogLevel, "Should have log level attribute")
-			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("log_log_level")])
-			_, hasLogLogSource := row[wkk.NewRowKey("log_log_source")]
+			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("attr_log_level")])
+			_, hasLogLogSource := row[wkk.NewRowKey("attr_log_source")]
 			assert.True(t, hasLogLogSource, "Should have log source attribute")
 			expectedSource := fmt.Sprintf("test-component-%d", i)
-			assert.Equal(t, expectedSource, row[wkk.NewRowKey("log_log_source")])
+			assert.Equal(t, expectedSource, row[wkk.NewRowKey("attr_log_source")])
 		})
 	}
 
@@ -393,7 +391,6 @@ func TestIngestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	require.Equal(t, 5, len(allRows), "Should read exactly 5 rows for synthetic field analysis")
 
 	severityTexts := make(map[string]int)
-	severityNumbers := make(map[int32]int)
 	bodyCount := 0
 
 	for _, row := range allRows {
@@ -402,21 +399,15 @@ func TestIngestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 				bodyCount++
 			}
 		}
-		if severityText, exists := row[wkk.NewRowKey("_cardinalhq_level")]; exists {
+		if severityText, exists := row[wkk.NewRowKey("log_level")]; exists {
 			if textStr, ok := severityText.(string); ok {
 				severityTexts[textStr]++
-			}
-		}
-		if severityNum, exists := row[wkk.NewRowKey("severity_number")]; exists {
-			if numInt64, ok := severityNum.(int64); ok {
-				severityNumbers[int32(numInt64)]++
 			}
 		}
 	}
 
 	t.Logf("Found %d synthetic logs with non-empty bodies", bodyCount)
 	t.Logf("Found synthetic severity texts: %+v", severityTexts)
-	t.Logf("Found synthetic severity numbers: %+v", severityNumbers)
 
 	// Validate expected synthetic data
 	assert.Equal(t, 5, bodyCount, "Should have 5 logs with bodies")
@@ -425,13 +416,6 @@ func TestIngestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	assert.Equal(t, 1, severityTexts["WARN"], "Should have 1 WARN log")
 	assert.Equal(t, 1, severityTexts["ERROR"], "Should have 1 ERROR log")
 	assert.Equal(t, 1, severityTexts["FATAL"], "Should have 1 FATAL log")
-
-	// Validate severity numbers (using OTEL severity number values)
-	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberDebug)], "Should have 1 DEBUG severity number")
-	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberInfo)], "Should have 1 INFO severity number")
-	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberWarn)], "Should have 1 WARN severity number")
-	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberError)], "Should have 1 ERROR severity number")
-	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberFatal)], "Should have 1 FATAL severity number")
 }
 
 // Test IngestProtoLogsReader with structured Go-based synthetic data
@@ -549,7 +533,7 @@ func TestIngestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 		t.Run(fmt.Sprintf("structured_log_%d", i), func(t *testing.T) {
 			// Check basic log fields
 			assert.Equal(t, expectedBodies[i], row[wkk.RowKeyCMessage], "Structured log body should match")
-			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("_cardinalhq_level")], "Structured severity should match")
+			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("log_level")], "Structured severity should match")
 
 			// Check resource attributes from structured data
 			assert.Equal(t, "structured-test-service", row[wkk.NewRowKey("resource_service_name")])
@@ -564,28 +548,28 @@ func TestIngestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 			// Check log-specific attributes from structured data with proper types
 			switch i {
 			case 0: // TRACE log
-				assert.Equal(t, "abc123def456", row[wkk.NewRowKey("log_trace_id")])
-				assert.Equal(t, "user-001", row[wkk.NewRowKey("log_user_id")])
-				assert.Equal(t, "data_fetch", row[wkk.NewRowKey("log_operation")])
+				assert.Equal(t, "abc123def456", row[wkk.NewRowKey("attr_trace_id")])
+				assert.Equal(t, "user-001", row[wkk.NewRowKey("attr_user_id")])
+				assert.Equal(t, "data_fetch", row[wkk.NewRowKey("attr_operation")])
 				// OTEL attribute processing may convert numbers to strings regardless of input type
-				t.Logf("duration_ms type: %T, value: %v", row[wkk.NewRowKey("log_duration_ms")], row[wkk.NewRowKey("log_duration_ms")])
-				assert.Contains(t, []any{int64(45), "45"}, row[wkk.NewRowKey("log_duration_ms")])
+				t.Logf("duration_ms type: %T, value: %v", row[wkk.NewRowKey("attr_duration_ms")], row[wkk.NewRowKey("attr_duration_ms")])
+				assert.Contains(t, []any{int64(45), "45"}, row[wkk.NewRowKey("attr_duration_ms")])
 			case 1: // INFO log
-				assert.Equal(t, "user-001", row[wkk.NewRowKey("log_user_id")])
-				assert.Equal(t, "oauth2", row[wkk.NewRowKey("log_auth_method")])
-				assert.Equal(t, "sess_987654321", row[wkk.NewRowKey("log_session_id")])
+				assert.Equal(t, "user-001", row[wkk.NewRowKey("attr_user_id")])
+				assert.Equal(t, "oauth2", row[wkk.NewRowKey("attr_auth_method")])
+				assert.Equal(t, "sess_987654321", row[wkk.NewRowKey("attr_session_id")])
 			case 2: // WARN log
-				assert.Equal(t, "/api/v1/data", row[wkk.NewRowKey("log_endpoint")])
+				assert.Equal(t, "/api/v1/data", row[wkk.NewRowKey("attr_endpoint")])
 				// OTEL attribute processing may convert numbers to strings regardless of input type
-				assert.Contains(t, []any{int64(950), "950"}, row[wkk.NewRowKey("log_current_rate")])
-				assert.Contains(t, []any{int64(1000), "1000"}, row[wkk.NewRowKey("log_rate_limit")])
-				assert.Equal(t, "192.168.1.100", row[wkk.NewRowKey("log_client_ip")])
+				assert.Contains(t, []any{int64(950), "950"}, row[wkk.NewRowKey("attr_current_rate")])
+				assert.Contains(t, []any{int64(1000), "1000"}, row[wkk.NewRowKey("attr_rate_limit")])
+				assert.Equal(t, "192.168.1.100", row[wkk.NewRowKey("attr_client_ip")])
 			case 3: // ERROR log
-				assert.Equal(t, "primary_db", row[wkk.NewRowKey("log_database")])
-				assert.Equal(t, "pool_1", row[wkk.NewRowKey("log_connection_pool")])
+				assert.Equal(t, "primary_db", row[wkk.NewRowKey("attr_database")])
+				assert.Equal(t, "pool_1", row[wkk.NewRowKey("attr_connection_pool")])
 				// OTEL attribute processing may convert numbers to strings regardless of input type
-				assert.Contains(t, []any{int64(3), "3"}, row[wkk.NewRowKey("log_retry_count")])
-				assert.Equal(t, "CONNECTION_TIMEOUT", row[wkk.NewRowKey("log_error_code")])
+				assert.Contains(t, []any{int64(3), "3"}, row[wkk.NewRowKey("attr_retry_count")])
+				assert.Equal(t, "CONNECTION_TIMEOUT", row[wkk.NewRowKey("attr_error_code")])
 			}
 		})
 	}

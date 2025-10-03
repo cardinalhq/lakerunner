@@ -23,16 +23,16 @@ import (
 func BenchmarkComputeTID(b *testing.B) {
 	// Start with wkk map as that's what we have in practice
 	wkkTags := map[wkk.RowKey]any{
-		wkk.NewRowKey("_cardinalhq_name"):        "http.requests.total",
-		wkk.NewRowKey("_cardinalhq_metric_type"): "counter",
-		wkk.NewRowKey("resource_service_name"):   "api-gateway",
-		wkk.NewRowKey("resource_environment"):    "production",
-		wkk.NewRowKey("resource_region"):         "us-east-1",
-		wkk.NewRowKey("metric_http_method"):      "GET",
-		wkk.NewRowKey("metric_http_status"):      "200",
-		wkk.NewRowKey("metric_endpoint"):         "/api/v1/users",
-		wkk.NewRowKey("other_field"):             "ignored",  // Should be skipped
-		wkk.NewRowKey("timestamp"):               1234567890, // Non-string, should be skipped
+		wkk.NewRowKey("metric_name"):           "http.requests.total",
+		wkk.NewRowKey("chq_metric_type"):       "counter",
+		wkk.NewRowKey("resource_service_name"): "api-gateway",
+		wkk.NewRowKey("resource_environment"):  "production",
+		wkk.NewRowKey("resource_region"):       "us-east-1",
+		wkk.NewRowKey("metric_http_method"):    "GET",
+		wkk.NewRowKey("metric_http_status"):    "200",
+		wkk.NewRowKey("metric_endpoint"):       "/api/v1/users",
+		wkk.NewRowKey("other_field"):           "ignored",  // Should be skipped
+		wkk.NewRowKey("timestamp"):             1234567890, // Non-string, should be skipped
 	}
 
 	// Benchmark the optimized WKK version
@@ -47,7 +47,7 @@ func BenchmarkComputeTID(b *testing.B) {
 	// Benchmark with different map sizes
 	b.Run("Small", func(b *testing.B) {
 		smallTags := map[wkk.RowKey]any{
-			wkk.NewRowKey("_cardinalhq_name"):      "test.metric",
+			wkk.NewRowKey("metric_name"):           "test.metric",
 			wkk.NewRowKey("resource_service_name"): "test-service",
 		}
 		b.ReportAllocs()
@@ -68,7 +68,7 @@ func BenchmarkComputeTID(b *testing.B) {
 		for i := 0; i < 10; i++ {
 			largeTags[wkk.NewRowKey(string("other_field_"+string(rune('a'+i))))] = "ignored"
 		}
-		largeTags[wkk.NewRowKey("_cardinalhq_name")] = "test.metric"
+		largeTags[wkk.NewRowKey("metric_name")] = "test.metric"
 
 		b.ReportAllocs()
 		b.ResetTimer()

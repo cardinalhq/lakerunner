@@ -142,17 +142,17 @@ func replaceStartEnd(sql string, start, end int64) string {
 }
 
 // Sets up a minimal metrics table used by step-agg tests.
-// Columns: timestamp/name + rollup_* + optional "pod" label for group-by tests.
+// Columns: timestamp/name + chq_rollup_* + optional "pod" label for group-by tests.
 func createMetricsTable(t *testing.T, db *sql.DB, withPod bool) {
 	t.Helper()
 	mustDropTable(db, "metrics")
 	stmt := `CREATE TABLE metrics(
-		"_cardinalhq_timestamp" BIGINT,
-		"_cardinalhq_name"     TEXT,
-		rollup_sum    DOUBLE,
-		rollup_count  BIGINT,
-		rollup_min    DOUBLE,
-		rollup_max    DOUBLE` +
+		"chq_timestamp" BIGINT,
+		"metric_name"     TEXT,
+		chq_rollup_sum    DOUBLE,
+		chq_rollup_count  BIGINT,
+		chq_rollup_min    DOUBLE,
+		chq_rollup_max    DOUBLE` +
 		func() string {
 			if withPod {
 				return `,
@@ -190,7 +190,7 @@ func TestBuildStepAgg_Sum_NoGroup_GappySeries(t *testing.T) {
 		t.Fatal("empty SQL from ToWorkerSQL")
 	}
 	// Sanity: metric WHERE + sentinel present
-	if !strings.Contains(sql, `"_cardinalhq_name" = 'm'`) || !strings.Contains(sql, "AND true") {
+	if !strings.Contains(sql, `"metric_name" = 'm'`) || !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected metric filter + AND true, got:\n%s", sql)
 	}
 	sql = replaceStartEnd(replaceTableMetrics(sql), 0, 50000)
@@ -266,7 +266,7 @@ func TestBuildStepAgg_Sum_GroupBy_Isolation(t *testing.T) {
 	}
 }
 
-// Verify we use SUM(rollup_count), not COUNT(*), per bucket.
+// Verify we use SUM(chq_rollup_count), not COUNT(*), per bucket.
 func TestBuildStepAgg_Avg_UsesSumOfRollupCount_PerBucket(t *testing.T) {
 	db := openDuckDB(t)
 	createMetricsTable(t, db, false)
@@ -289,7 +289,7 @@ func TestBuildStepAgg_Avg_UsesSumOfRollupCount_PerBucket(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
 	}
-	// Check ts=10000 count = 7 (SUM(rollup_count)), not COUNT(*)
+	// Check ts=10000 count = 7 (SUM(chq_rollup_count)), not COUNT(*)
 	var found bool
 	for _, r := range rows {
 		if getInt64(r["bucket_ts"]) == 10000 {
@@ -355,7 +355,7 @@ func TestBuildStepAgg_RespectsMetricFilter_IgnoresOtherMetrics(t *testing.T) {
 		Range:    "20s",
 	}
 	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 20000)
-	if !strings.Contains(sql, `"_cardinalhq_name" = 'm'`) {
+	if !strings.Contains(sql, `"metric_name" = 'm'`) {
 		t.Fatalf("missing metric WHERE in SQL:\n%s", sql)
 	}
 	rows := queryAll(t, db, sql)
@@ -419,12 +419,12 @@ func TestToWorkerSQLForTagValues_WithMatchers(t *testing.T) {
 	// Create a custom table with both pod and region columns
 	mustDropTable(db, "metrics")
 	mustExec(t, db, `CREATE TABLE metrics(
-		"_cardinalhq_timestamp" BIGINT,
-		"_cardinalhq_name"     TEXT,
-		rollup_sum    DOUBLE,
-		rollup_count  BIGINT,
-		rollup_min    DOUBLE,
-		rollup_max    DOUBLE,
+		"chq_timestamp" BIGINT,
+		"metric_name"     TEXT,
+		chq_rollup_sum    DOUBLE,
+		chq_rollup_count  BIGINT,
+		chq_rollup_min    DOUBLE,
+		chq_rollup_max    DOUBLE,
 		"pod"         TEXT,
 		"region"      TEXT
 	)`)

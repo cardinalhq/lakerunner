@@ -198,8 +198,8 @@ func runParquetCat(filename string, limit int, keepByteSlices bool) error {
 }
 
 func convertSketchField(row map[string]any) map[string]any {
-	if sketch, ok := row["sketch"].(string); ok && sketch != "" {
-		row["sketch"] = []byte(sketch)
+	if sketch, ok := row["chq_sketch"].(string); ok && sketch != "" {
+		row["chq_sketch"] = []byte(sketch)
 	}
 	return row
 }
@@ -289,8 +289,8 @@ func runParquetSchemaFromData(filename string) error {
 					// Track original type before any conversion
 					originalType := getGoTypeName(value)
 
-					// Special case: sketch field conversion from string to []byte
-					if columnName == "sketch" {
+					// Special case: chq_sketch field conversion from string to []byte
+					if columnName == "chq_sketch" {
 						if _, ok := value.(string); ok {
 							rawTypes[columnName] = originalType
 							seenColumns[columnName] = "[]byte"

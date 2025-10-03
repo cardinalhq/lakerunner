@@ -53,8 +53,8 @@ func (n *LeafNode) Hints() ExecHints {
 
 type winEntry struct {
 	ts    int64   // bucket start (ms)
-	sum   float64 // SUM(rollup_sum) within bucket
-	count float64 // SUM(rollup_count) within bucket
+	sum   float64 // SUM(chq_rollup_sum) within bucket
+	count float64 // SUM(chq_rollup_count) within bucket
 }
 
 // winSumCount maintains a left-inclusive sliding window over *query-step/effective* buckets.

@@ -19,9 +19,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"runtime"
 	"testing"
+
+	"github.com/parquet-go/parquet-go"
 )
 
 // BenchmarkData holds preloaded test data to eliminate disk I/O from benchmarks
@@ -35,40 +36,81 @@ type BenchmarkData struct {
 
 // Global benchmark data - loaded once and reused
 var benchmarkFiles = map[string]*BenchmarkData{
-	"small":  nil, // logs-cooked-0001.parquet (32 rows)
-	"medium": nil, // metrics-cooked-0001.parquet (211 rows)
-	"large":  nil, // logs-chqs3-0001.parquet (1807 rows)
+	"small":  nil, // 32 rows
+	"medium": nil, // 211 rows
+	"large":  nil, // 1807 rows
 }
 
-// loadBenchmarkData preloads all test files into memory
+// generateBenchmarkParquet generates a parquet file in memory for benchmarks
+func generateBenchmarkParquet(b *testing.B, rowCount int) []byte {
+	// Create test data
+	rows := make([]map[string]any, rowCount)
+	for i := range rows {
+		rows[i] = map[string]any{
+			"chq_collector_id": fmt.Sprintf("collector-%d", i),
+			"chq_timestamp":    int64(1000000 + i),
+			"log_message":      fmt.Sprintf("Benchmark message %d", i),
+			"chq_severity":     "INFO",
+		}
+	}
+
+	// Build schema from first row
+	nodes := make(map[string]parquet.Node)
+	for key, value := range rows[0] {
+		var node parquet.Node
+		switch value.(type) {
+		case int64:
+			node = parquet.Optional(parquet.Int(64))
+		case string:
+			node = parquet.Optional(parquet.String())
+		default:
+			b.Fatalf("Unsupported type %T for key %s", value, key)
+		}
+		nodes[key] = node
+	}
+
+	schema := parquet.NewSchema("benchmark", parquet.Group(nodes))
+
+	// Create parquet writer to buffer
+	var buf bytes.Buffer
+	writer := parquet.NewGenericWriter[map[string]any](&buf, schema)
+
+	// Write all rows
+	for _, row := range rows {
+		_, err := writer.Write([]map[string]any{row})
+		if err != nil {
+			b.Fatalf("Failed to write row: %v", err)
+		}
+	}
+
+	// Close writer to finalize
+	if err := writer.Close(); err != nil {
+		b.Fatalf("Failed to close writer: %v", err)
+	}
+
+	return buf.Bytes()
+}
+
+// loadBenchmarkData generates all benchmark data into memory
 func loadBenchmarkData(b *testing.B) {
 	if benchmarkFiles["small"] != nil {
 		return // Already loaded
 	}
 
-	testFiles := map[string]string{
-		"small":  "../../testdata/logs/logs-cooked-0001.parquet",
-		"medium": "../../testdata/metrics/metrics-cooked-0001.parquet",
-		"large":  "../../testdata/logs/logs-chqs3-0001.parquet",
-	}
-
-	expectedRows := map[string]int64{
+	expectedRows := map[string]int{
 		"small":  32,
 		"medium": 211,
 		"large":  1807,
 	}
 
-	for key, filename := range testFiles {
-		data, err := os.ReadFile(filename)
-		if err != nil {
-			b.Fatalf("Failed to load benchmark data %s: %v", filename, err)
-		}
+	for key, rowCount := range expectedRows {
+		data := generateBenchmarkParquet(b, rowCount)
 
 		// Count fields by reading a few rows
 		reader := bytes.NewReader(data)
 		parquetReader, err := NewParquetRawReader(reader, int64(len(data)), 1000)
 		if err != nil {
-			b.Fatalf("Failed to create reader for %s: %v", filename, err)
+			b.Fatalf("Failed to create reader for %s: %v", key, err)
 		}
 
 		// Sample first few rows to get average field count
@@ -83,7 +125,7 @@ func loadBenchmarkData(b *testing.B) {
 				totalFields += len(batch.Get(i))
 			}
 		}
-		avgFields := 15 // default
+		avgFields := 4 // default (we have 4 fields in our generated data)
 		if n > 0 {
 			avgFields = totalFields / n
 		}
@@ -92,7 +134,7 @@ func loadBenchmarkData(b *testing.B) {
 			Name:      key,
 			Data:      data,
 			Size:      int64(len(data)),
-			RowCount:  expectedRows[key],
+			RowCount:  int64(rowCount),
 			FieldsAvg: avgFields,
 		}
 	}
@@ -178,13 +220,12 @@ func BenchmarkParquetRawReader_Small(b *testing.B) {
 	loadBenchmarkData(b)
 	data := benchmarkFiles["small"]
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
 	ms := captureMemStatsBefore()
 	totalRows := int64(0)
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		reader, err := createReaderFromData(data)
 		if err != nil {
 			b.Fatalf("Failed to create reader: %v", err)
@@ -217,13 +258,12 @@ func BenchmarkParquetRawReader_Medium(b *testing.B) {
 	loadBenchmarkData(b)
 	data := benchmarkFiles["medium"]
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
 	ms := captureMemStatsBefore()
 	totalRows := int64(0)
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		reader, err := createReaderFromData(data)
 		if err != nil {
 			b.Fatalf("Failed to create reader: %v", err)
@@ -256,13 +296,12 @@ func BenchmarkParquetRawReader_Large(b *testing.B) {
 	loadBenchmarkData(b)
 	data := benchmarkFiles["large"]
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
 	ms := captureMemStatsBefore()
 	totalRows := int64(0)
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		reader, err := createReaderFromData(data)
 		if err != nil {
 			b.Fatalf("Failed to create reader: %v", err)
@@ -305,7 +344,7 @@ func BenchmarkParquetRawReader_BatchSizes(b *testing.B) {
 			ms := captureMemStatsBefore()
 			totalRows := int64(0)
 
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				reader, err := createReaderFromData(data)
 				if err != nil {
 					b.Fatalf("Failed to create reader: %v", err)

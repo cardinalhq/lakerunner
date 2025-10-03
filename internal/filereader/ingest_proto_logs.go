@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"maps"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
@@ -78,8 +77,12 @@ func (r *IngestProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < r.batchSize {
-		row, err := r.getLogRow(ctx)
+		// Get a row from the pool to populate
+		row := pipeline.GetPooledRow()
+		err := r.getLogRow(ctx, row)
 		if err != nil {
+			// Return unused row to pool
+			pipeline.ReturnPooledRow(row)
 			if err == io.EOF {
 				if batch.Len() == 0 {
 					pipeline.ReturnBatch(batch)
@@ -91,12 +94,12 @@ func (r *IngestProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 			return nil, err
 		}
 
+		// Add the populated row to the batch (batch takes ownership)
+		batch.AppendRow(row)
+
 		rowsInCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoLogsReader"),
 		))
-
-		batchRow := batch.AddRow()
-		maps.Copy(batchRow, row)
 	}
 
 	if batch.Len() > 0 {
@@ -111,10 +114,10 @@ func (r *IngestProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 	return nil, io.EOF
 }
 
-// getLogRow handles reading the next log row.
-func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (pipeline.Row, error) {
+// getLogRow handles reading the next log row, populating the provided row.
+func (r *IngestProtoLogsReader) getLogRow(ctx context.Context, row pipeline.Row) error {
 	if r.logs == nil {
-		return nil, io.EOF
+		return io.EOF
 	}
 
 	// Iterator pattern: advance through resources -> scopes -> logs
@@ -126,13 +129,9 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (pipeline.Row, er
 
 			if r.logIndex < sl.LogRecords().Len() {
 				logRecord := sl.LogRecords().At(r.logIndex)
-				row := r.buildLogRow(rl, sl, logRecord)
+				r.buildLogRow(rl, sl, logRecord, row)
 				r.logIndex++
-				processedRow, err := r.processRow(row)
-				if err != nil {
-					return nil, err
-				}
-				return processedRow, nil
+				return nil
 			}
 
 			r.scopeIndex++
@@ -144,47 +143,34 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (pipeline.Row, er
 		r.logIndex = 0
 	}
 
-	return nil, io.EOF
+	return io.EOF
 }
 
-// buildLogRow creates a row from a single log record and its context.
-func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord) map[string]any {
-	ret := map[string]any{}
-
+// buildLogRow populates the provided row from a single log record and its context.
+func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord, row pipeline.Row) {
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "resource")] = value
+		row[prefixAttributeRowKey(name, "resource")] = value
 		return true
 	})
 
 	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "scope")] = value
+		row[prefixAttributeRowKey(name, "scope")] = value
 		return true
 	})
 
 	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "log")] = value
+		row[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
 
 	message := logRecord.Body().AsString()
-	ret["_cardinalhq_message"] = message
-	ret["_cardinalhq_timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
-	ret["_cardinalhq_tsns"] = int64(logRecord.Timestamp())
-	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
-	ret["_cardinalhq_level"] = logRecord.SeverityText()
-	ret["severity_number"] = int64(logRecord.SeverityNumber())
-	return ret
-}
-
-func (r *IngestProtoLogsReader) processRow(row map[string]any) (pipeline.Row, error) {
-	result := make(pipeline.Row)
-	for k, v := range row {
-		result[wkk.NewRowKey(k)] = v
-	}
-	return result, nil
+	row[wkk.RowKeyCMessage] = message
+	row[wkk.RowKeyCTimestamp] = logRecord.Timestamp().AsTime().UnixMilli()
+	row[wkk.RowKeyCTsns] = int64(logRecord.Timestamp())
+	row[wkk.RowKeyCLevel] = logRecord.SeverityText()
 }
 
 // GetOTELLogs returns the underlying parsed OTEL logs structure.

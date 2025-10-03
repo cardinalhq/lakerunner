@@ -15,12 +15,28 @@
 package filereader
 
 import (
-	"strings"
+	"cmp"
 	"sync"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
+
+// compareOptional compares two optional values (value + ok flag)
+// Returns: -1 if k < o, 0 if k == o, 1 if k > o
+// nil values sort after non-nil values
+func compareOptional[T cmp.Ordered](kVal T, kOk bool, oVal T, oOk bool) int {
+	if !kOk || !oOk {
+		if !kOk && !oOk {
+			return 0
+		}
+		if !kOk {
+			return 1
+		}
+		return -1
+	}
+	return cmp.Compare(kVal, oVal)
+}
 
 // MetricSortKey represents the sort key for metrics: [name, tid, timestamp]
 type MetricSortKey struct {
@@ -39,55 +55,13 @@ func (k *MetricSortKey) Compare(other SortKey) int {
 		panic("MetricSortKey.Compare: other key is not MetricSortKey")
 	}
 
-	// Compare name field
-	if !k.NameOk || !o.NameOk {
-		if !k.NameOk && !o.NameOk {
-			return 0
-		}
-		if !k.NameOk {
-			return 1
-		}
-		return -1
-	}
-	if cmp := strings.Compare(k.Name, o.Name); cmp != 0 {
+	if cmp := compareOptional(k.Name, k.NameOk, o.Name, o.NameOk); cmp != 0 {
 		return cmp
 	}
-
-	// Compare TID field
-	if !k.TidOk || !o.TidOk {
-		if !k.TidOk && !o.TidOk {
-			return 0
-		}
-		if !k.TidOk {
-			return 1
-		}
-		return -1
+	if cmp := compareOptional(k.Tid, k.TidOk, o.Tid, o.TidOk); cmp != 0 {
+		return cmp
 	}
-	if k.Tid < o.Tid {
-		return -1
-	}
-	if k.Tid > o.Tid {
-		return 1
-	}
-
-	// Compare timestamp field
-	if !k.TsOk || !o.TsOk {
-		if !k.TsOk && !o.TsOk {
-			return 0
-		}
-		if !k.TsOk {
-			return 1
-		}
-		return -1
-	}
-	if k.Timestamp < o.Timestamp {
-		return -1
-	}
-	if k.Timestamp > o.Timestamp {
-		return 1
-	}
-
-	return 0
+	return compareOptional(k.Timestamp, k.TsOk, o.Timestamp, o.TsOk)
 }
 
 // Release returns the MetricSortKey to the pool for reuse
@@ -129,93 +103,6 @@ func (p *MetricSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
 // MakeMetricSortKey creates a pooled MetricSortKey from a row
 func MakeMetricSortKey(row pipeline.Row) *MetricSortKey {
 	key := getMetricSortKey()
-	key.Name, key.NameOk = row[wkk.RowKeyCName].(string)
-	key.Tid, key.TidOk = row[wkk.RowKeyCTID].(int64)
-	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
-	return key
-}
-
-// NonPooledMetricSortKey is like MetricSortKey but doesn't use object pools
-// This is safer for long-lived keys that are retained during sorting operations
-type NonPooledMetricSortKey struct {
-	Name      string
-	Tid       int64
-	Timestamp int64
-	NameOk    bool
-	TidOk     bool
-	TsOk      bool
-}
-
-// Compare implements SortKey interface for NonPooledMetricSortKey
-func (k *NonPooledMetricSortKey) Compare(other SortKey) int {
-	o, ok := other.(*NonPooledMetricSortKey)
-	if !ok {
-		panic("NonPooledMetricSortKey.Compare: other key is not NonPooledMetricSortKey")
-	}
-
-	// Compare name field
-	if !k.NameOk || !o.NameOk {
-		if !k.NameOk && !o.NameOk {
-			return 0
-		}
-		if !k.NameOk {
-			return 1
-		}
-		return -1
-	}
-	if cmp := strings.Compare(k.Name, o.Name); cmp != 0 {
-		return cmp
-	}
-
-	// Compare TID field
-	if !k.TidOk || !o.TidOk {
-		if !k.TidOk && !o.TidOk {
-			return 0
-		}
-		if !k.TidOk {
-			return 1
-		}
-		return -1
-	}
-	if k.Tid < o.Tid {
-		return -1
-	}
-	if k.Tid > o.Tid {
-		return 1
-	}
-
-	// Compare timestamp field
-	if !k.TsOk || !o.TsOk {
-		if !k.TsOk && !o.TsOk {
-			return 0
-		}
-		if !k.TsOk {
-			return 1
-		}
-		return -1
-	}
-	if k.Timestamp < o.Timestamp {
-		return -1
-	}
-	if k.Timestamp > o.Timestamp {
-		return 1
-	}
-
-	return 0
-}
-
-// Release is a no-op for non-pooled keys
-func (k *NonPooledMetricSortKey) Release() {
-	// No pooling, nothing to release
-}
-
-// NonPooledMetricSortKeyProvider creates NonPooledMetricSortKey instances
-// This is safer for long-lived keys that are retained during sorting operations
-type NonPooledMetricSortKeyProvider struct{}
-
-// MakeKey implements SortKeyProvider interface for metrics without using pools
-func (p *NonPooledMetricSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
-	key := &NonPooledMetricSortKey{}
 	key.Name, key.NameOk = row[wkk.RowKeyCName].(string)
 	key.Tid, key.TidOk = row[wkk.RowKeyCTID].(int64)
 	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)

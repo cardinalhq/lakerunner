@@ -333,19 +333,19 @@
                   }
                 },
                 {
-                  "key": "_cardinalhq.tokens",
+                  "key": "chq_tokens",
                   "value": {
                     "arrayValue": {}
                   }
                 },
                 {
-                  "key": "_cardinalhq.fingerprint",
+                  "key": "chq_fingerprint",
                   "value": {
                     "intValue": "-1205034819632174695"
                   }
                 },
                 {
-                  "key": "_cardinalhq.level",
+                  "key": "log_level",
                   "value": {
                     "stringValue": ""
                   }

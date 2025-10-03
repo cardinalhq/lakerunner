@@ -56,7 +56,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 
@@ -98,7 +98,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 
 func TestMemorySortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]pipeline.Row{})
-	sortingReader, err := NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 
@@ -131,7 +131,7 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 

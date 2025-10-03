@@ -26,7 +26,7 @@ var (
 	RowKeyResourceServiceName      = wkk.NewRowKey("resource_service_name")
 	RowKeyResourceK8sClusterName   = wkk.NewRowKey("resource_k8s_cluster_name")
 	RowKeyResourceK8sNamespaceName = wkk.NewRowKey("resource_k8s_namespace_name")
-	RowKeyCardinalhqOldFingerprint = wkk.NewRowKey("_cardinalhq_old_fingerprint")
+	RowKeyCardinalhqOldFingerprint = wkk.NewRowKey("chq_old_fingerprint")
 	RowKeySpanName                 = wkk.NewRowKey("span_name")
 	RowKeySpanKind                 = wkk.NewRowKey("span_kind")
 )

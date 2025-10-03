@@ -15,7 +15,7 @@
 package translate
 
 const (
-	CardinalFieldPrefix = "_cardinalhq"
+	CardinalFieldPrefix = "chq"
 
 	CardinalFieldFingerprint = CardinalFieldPrefix + "_fingerprint"
 	CardinalFieldMessage     = CardinalFieldPrefix + "_message"

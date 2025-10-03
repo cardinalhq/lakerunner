@@ -90,77 +90,77 @@ func NewRowKeyFromBytes(keyBytes []byte) RowKey {
 }
 
 var (
-	// RowKeyCCollectorID: "_cardinalhq_collector_id"
-	RowKeyCCollectorID = NewRowKey("_cardinalhq_collector_id")
+	// RowKeyCCollectorID: "chq_collector_id"
+	RowKeyCCollectorID = NewRowKey("chq_collector_id")
 
-	// RowKeyCCustomerID: "_cardinalhq_customer_id"
-	RowKeyCCustomerID = NewRowKey("_cardinalhq_customer_id")
+	// RowKeyCCustomerID: "chq_customer_id"
+	RowKeyCCustomerID = NewRowKey("chq_customer_id")
 
-	// RowKeyCFingerprint: "_cardinalhq_fingerprint"
-	RowKeyCFingerprint = NewRowKey("_cardinalhq_fingerprint")
+	// RowKeyCFingerprint: "chq_fingerprint"
+	RowKeyCFingerprint = NewRowKey("chq_fingerprint")
 
-	// RowKeyCLevel: "_cardinalhq_level"
-	RowKeyCLevel = NewRowKey("_cardinalhq_level")
+	// RowKeyCLevel: "log_level"
+	RowKeyCLevel = NewRowKey("log_level")
 
-	// RowKeyCMessage: "_cardinalhq_message"
-	RowKeyCMessage = NewRowKey("_cardinalhq_message")
+	// RowKeyCMessage: "log_message"
+	RowKeyCMessage = NewRowKey("log_message")
 
-	// RowKeyCMetricType: "_cardinalhq_metric_type"
-	RowKeyCMetricType = NewRowKey("_cardinalhq_metric_type")
+	// RowKeyCMetricType: "chq_metric_type"
+	RowKeyCMetricType = NewRowKey("chq_metric_type")
 
-	// RowKeyCName: "_cardinalhq_name"
-	RowKeyCName = NewRowKey("_cardinalhq_name")
+	// RowKeyCName: "metric_name"
+	RowKeyCName = NewRowKey("metric_name")
 
-	// RowKeyCTelemetryType: "_cardinalhq_telemetry_type"
-	RowKeyCTelemetryType = NewRowKey("_cardinalhq_telemetry_type")
+	// RowKeyCTelemetryType: "chq_telemetry_type"
+	RowKeyCTelemetryType = NewRowKey("chq_telemetry_type")
 
-	// RowKeyCTID: "_cardinalhq_tid"
-	RowKeyCTID = NewRowKey("_cardinalhq_tid")
+	// RowKeyCTID: "chq_tid"
+	RowKeyCTID = NewRowKey("chq_tid")
 
-	// RowKeyCTimestamp: "_cardinalhq_timestamp"
-	RowKeyCTimestamp = NewRowKey("_cardinalhq_timestamp")
+	// RowKeyCTimestamp: "chq_timestamp"
+	RowKeyCTimestamp = NewRowKey("chq_timestamp")
 
-	// RowKeyCTsns: "_cardinalhq_tsns" (nanoseconds)
-	RowKeyCTsns = NewRowKey("_cardinalhq_tsns")
+	// RowKeyCTsns: "chq_tsns" (nanoseconds)
+	RowKeyCTsns = NewRowKey("chq_tsns")
 
-	// RowKeyCValue: "_cardinalhq_value" (DEPRECATED)
-	RowKeyCValue = NewRowKey("_cardinalhq_value") // Deprecated
+	// RowKeyCValue: "chq_value" (DEPRECATED)
+	RowKeyCValue = NewRowKey("chq_value") // Deprecated
 
-	// RowKeyRollupAvg: "rollup_avg"
-	RowKeyRollupAvg = NewRowKey("rollup_avg")
+	// RowKeyRollupAvg: "chq_rollup_avg"
+	RowKeyRollupAvg = NewRowKey("chq_rollup_avg")
 
-	// RowKeyRollupCount: "rollup_count"
-	RowKeyRollupCount = NewRowKey("rollup_count")
+	// RowKeyRollupCount: "chq_rollup_count"
+	RowKeyRollupCount = NewRowKey("chq_rollup_count")
 
-	// RowKeyRollupMax: "rollup_max"
-	RowKeyRollupMax = NewRowKey("rollup_max")
+	// RowKeyRollupMax: "chq_rollup_max"
+	RowKeyRollupMax = NewRowKey("chq_rollup_max")
 
-	// RowKeyRollupMin: "rollup_min"
-	RowKeyRollupMin = NewRowKey("rollup_min")
+	// RowKeyRollupMin: "chq_rollup_min"
+	RowKeyRollupMin = NewRowKey("chq_rollup_min")
 
-	// RowKeyRollupP25: "rollup_p25" (25th percentile)
-	RowKeyRollupP25 = NewRowKey("rollup_p25")
+	// RowKeyRollupP25: "chq_rollup_p25" (25th percentile)
+	RowKeyRollupP25 = NewRowKey("chq_rollup_p25")
 
-	// RowKeyRollupP50: "rollup_p50" (50th percentile/median)
-	RowKeyRollupP50 = NewRowKey("rollup_p50")
+	// RowKeyRollupP50: "chq_rollup_p50" (50th percentile/median)
+	RowKeyRollupP50 = NewRowKey("chq_rollup_p50")
 
-	// RowKeyRollupP75: "rollup_p75" (75th percentile)
-	RowKeyRollupP75 = NewRowKey("rollup_p75")
+	// RowKeyRollupP75: "chq_rollup_p75" (75th percentile)
+	RowKeyRollupP75 = NewRowKey("chq_rollup_p75")
 
-	// RowKeyRollupP90: "rollup_p90" (90th percentile)
-	RowKeyRollupP90 = NewRowKey("rollup_p90")
+	// RowKeyRollupP90: "chq_rollup_p90" (90th percentile)
+	RowKeyRollupP90 = NewRowKey("chq_rollup_p90")
 
-	// RowKeyRollupP95: "rollup_p95" (95th percentile)
-	RowKeyRollupP95 = NewRowKey("rollup_p95")
+	// RowKeyRollupP95: "chq_rollup_p95" (95th percentile)
+	RowKeyRollupP95 = NewRowKey("chq_rollup_p95")
 
-	// RowKeyRollupP99: "rollup_p99" (99th percentile)
-	RowKeyRollupP99 = NewRowKey("rollup_p99")
+	// RowKeyRollupP99: "chq_rollup_p99" (99th percentile)
+	RowKeyRollupP99 = NewRowKey("chq_rollup_p99")
 
-	// RowKeyRollupSum: "rollup_sum"
-	RowKeyRollupSum = NewRowKey("rollup_sum")
+	// RowKeyRollupSum: "chq_rollup_sum"
+	RowKeyRollupSum = NewRowKey("chq_rollup_sum")
 
-	// RowKeySketch: "sketch"
-	RowKeySketch = NewRowKey("sketch")
+	// RowKeySketch: "chq_sketch"
+	RowKeySketch = NewRowKey("chq_sketch")
 
 	// RowKeyResourceBucketName: "resource_bucket_name"
 	RowKeyResourceBucketName = NewRowKey("resource_bucket_name")
@@ -173,4 +173,73 @@ var (
 
 	// RowKeyResourceFileType: "resource_file_type"
 	RowKeyResourceFileType = NewRowKey("resource_file_type")
+
+	// Span field keys
+	// RowKeySpanTraceID: "span_trace_id"
+	RowKeySpanTraceID = NewRowKey("span_trace_id")
+
+	// RowKeySpanID: "span_id"
+	RowKeySpanID = NewRowKey("span_id")
+
+	// RowKeySpanParentSpanID: "span_parent_span_id"
+	RowKeySpanParentSpanID = NewRowKey("span_parent_span_id")
+
+	// RowKeySpanName: "span_name"
+	RowKeySpanName = NewRowKey("span_name")
+
+	// RowKeySpanKind: "span_kind"
+	RowKeySpanKind = NewRowKey("span_kind")
+
+	// RowKeySpanStatusCode: "span_status_code"
+	RowKeySpanStatusCode = NewRowKey("span_status_code")
+
+	// RowKeySpanStatusMessage: "span_status_message"
+	RowKeySpanStatusMessage = NewRowKey("span_status_message")
+
+	// RowKeySpanEndTimestamp: "span_end_timestamp"
+	RowKeySpanEndTimestamp = NewRowKey("span_end_timestamp")
+
+	// RowKeySpanDuration: "span_duration"
+	RowKeySpanDuration = NewRowKey("span_duration")
+
+	// Resource attribute keys (with k8s prefix as seen in semconv)
+	// RowKeyResourceK8sClusterName: "resource_k8s_cluster_name"
+	RowKeyResourceK8sClusterName = NewRowKey("resource_k8s_cluster_name")
+
+	// RowKeyResourceK8sNamespaceName: "resource_k8s_namespace_name"
+	RowKeyResourceK8sNamespaceName = NewRowKey("resource_k8s_namespace_name")
+
+	// RowKeyResourceServiceName: "resource_service_name"
+	RowKeyResourceServiceName = NewRowKey("resource_service_name")
+
+	// Span attribute keys (with attr_ prefix)
+	// RowKeyAttrDBSystemName: "attr_db_system_name"
+	RowKeyAttrDBSystemName = NewRowKey("attr_db_system_name")
+
+	// RowKeyAttrMessagingSystem: "attr_messaging_system"
+	RowKeyAttrMessagingSystem = NewRowKey("attr_messaging_system")
+
+	// RowKeyAttrHTTPRequestMethod: "attr_http_request_method"
+	RowKeyAttrHTTPRequestMethod = NewRowKey("attr_http_request_method")
+
+	// RowKeyAttrMessagingOperationType: "attr_messaging_operation_type"
+	RowKeyAttrMessagingOperationType = NewRowKey("attr_messaging_operation_type")
+
+	// RowKeyAttrMessagingDestinationName: "attr_messaging_destination_name"
+	RowKeyAttrMessagingDestinationName = NewRowKey("attr_messaging_destination_name")
+
+	// RowKeyAttrDBNamespace: "attr_db_namespace"
+	RowKeyAttrDBNamespace = NewRowKey("attr_db_namespace")
+
+	// RowKeyAttrDBOperationName: "attr_db_operation_name"
+	RowKeyAttrDBOperationName = NewRowKey("attr_db_operation_name")
+
+	// RowKeyAttrServerAddress: "attr_server_address"
+	RowKeyAttrServerAddress = NewRowKey("attr_server_address")
+
+	// RowKeyAttrDBCollectionName: "attr_db_collection_name"
+	RowKeyAttrDBCollectionName = NewRowKey("attr_db_collection_name")
+
+	// RowKeyAttrURLTemplate: "attr_url_template"
+	RowKeyAttrURLTemplate = NewRowKey("attr_url_template")
 )

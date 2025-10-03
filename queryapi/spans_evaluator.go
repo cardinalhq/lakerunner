@@ -216,7 +216,7 @@ func (q *QuerierService) spansPushDown(
 
 type TraceSegmentLookupFunc func(context.Context, lrdb.ListTraceSegmentsForQueryParams) ([]lrdb.ListTraceSegmentsForQueryRow, error)
 
-const spansNameField = "_cardinalhq_name"
+const spansNameField = "span_name"
 
 func (q *QuerierService) lookupSpansSegments(
 	ctx context.Context,
@@ -262,7 +262,7 @@ func (q *QuerierService) lookupSpansSegments(
 
 	slog.Info("lookupSpansSegments", "dih", dih, "startTs", startTs, "endTs", endTs, "fps", len(fpsToFetch))
 	if len(fpsToFetch) == 0 {
-		// For spans, default to _cardinalhq.name field instead of _cardinalhq.message
+		// For spans, default to span_name field instead of log_message
 		addExistsNode(spansNameField, fpsToFetch, &root)
 	}
 

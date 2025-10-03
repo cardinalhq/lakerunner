@@ -29,17 +29,17 @@ func createTestRowsForSorting(numRows int) []pipeline.Row {
 
 	for i := range numRows {
 		rows[i] = pipeline.Row{
-			wkk.RowKeyCName:                          fmt.Sprintf("metric_%d", i%10), // 10 different metric names
-			wkk.RowKeyCTID:                           int64(100 + i%5),               // 5 different TIDs per metric
-			wkk.RowKeyCTimestamp:                     int64(1000 + i*1000),           // Sequential timestamps
-			wkk.RowKeyRollupAvg:                      float64(50.0 + float64(i)),
-			wkk.RowKeyRollupCount:                    float64(1),
-			wkk.RowKeyRollupSum:                      float64(50.0 + float64(i)),
-			wkk.RowKeySketch:                         []byte{byte(i % 256)},
-			wkk.NewRowKey("_cardinalhq_description"): fmt.Sprintf("Test metric %d", i),
-			wkk.NewRowKey("_cardinalhq_unit"):        "percent",
-			wkk.NewRowKey("service_name"):            fmt.Sprintf("service_%d", i%3),
-			wkk.NewRowKey("host"):                    fmt.Sprintf("host_%d", i%5),
+			wkk.RowKeyCName:                  fmt.Sprintf("metric_%d", i%10), // 10 different metric names
+			wkk.RowKeyCTID:                   int64(100 + i%5),               // 5 different TIDs per metric
+			wkk.RowKeyCTimestamp:             int64(1000 + i*1000),           // Sequential timestamps
+			wkk.RowKeyRollupAvg:              float64(50.0 + float64(i)),
+			wkk.RowKeyRollupCount:            float64(1),
+			wkk.RowKeyRollupSum:              float64(50.0 + float64(i)),
+			wkk.RowKeySketch:                 []byte{byte(i % 256)},
+			wkk.NewRowKey("chq_description"): fmt.Sprintf("Test metric %d", i),
+			wkk.NewRowKey("chq_unit"):        "percent",
+			wkk.NewRowKey("service_name"):    fmt.Sprintf("service_%d", i%3),
+			wkk.NewRowKey("host"):            fmt.Sprintf("host_%d", i%5),
 		}
 	}
 
@@ -50,10 +50,9 @@ func benchmarkSortingReader(b *testing.B, createReaderFunc func([]pipeline.Row) 
 	// Create test data
 	testRows := createTestRowsForSorting(1000)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		reader, err := createReaderFunc(testRows)
 		if err != nil {
 			b.Fatalf("Failed to create reader: %v", err)
@@ -84,14 +83,14 @@ func benchmarkSortingReader(b *testing.B, createReaderFunc func([]pipeline.Row) 
 func BenchmarkMemorySortingReader(b *testing.B) {
 	benchmarkSortingReader(b, func(rows []pipeline.Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
+		return NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	})
 }
 
 func BenchmarkDiskSortingReader(b *testing.B) {
 	benchmarkSortingReader(b, func(rows []pipeline.Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
+		return NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	})
 }
 
@@ -99,10 +98,9 @@ func benchmarkSortingReaderWithSize(b *testing.B, numRows int, createReaderFunc 
 	// Create test data
 	testRows := createTestRowsForSorting(numRows)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		reader, err := createReaderFunc(testRows)
 		if err != nil {
 			b.Fatalf("Failed to create reader: %v", err)
@@ -133,27 +131,27 @@ func benchmarkSortingReaderWithSize(b *testing.B, numRows int, createReaderFunc 
 func BenchmarkMemorySortingReader_LargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 10000, func(rows []pipeline.Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
+		return NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	})
 }
 
 func BenchmarkDiskSortingReader_LargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 10000, func(rows []pipeline.Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
+		return NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	})
 }
 
 func BenchmarkMemorySortingReader_VeryLargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 100000, func(rows []pipeline.Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
+		return NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	})
 }
 
 func BenchmarkDiskSortingReader_VeryLargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 100000, func(rows []pipeline.Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
+		return NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	})
 }

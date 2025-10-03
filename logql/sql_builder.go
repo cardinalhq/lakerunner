@@ -31,9 +31,9 @@ func (be *LogLeaf) ToWorkerSQLWithLimit(limit int, order string, fields []string
 }
 
 func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
-	const baseRel = "{table}"               // replace upstream
-	const bodyCol = `"_cardinalhq_message"` // quoted column for message text
-	const tsCol = `"_cardinalhq_timestamp"` // quoted column for event timestamp
+	const baseRel = "{table}"       // replace upstream
+	const bodyCol = `"log_message"` // quoted column for message text
+	const tsCol = `"chq_timestamp"` // quoted column for event timestamp
 
 	// Check if the tagName is created by any parser
 	tagCreatedByParser := false
@@ -113,9 +113,9 @@ func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
 
 // buildTagValuesQueryWithParsers builds a complex query when the tag is extracted by parsers
 func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
-	const baseRel = "{table}"                 // replace upstream
-	const bodyCol = "\"_cardinalhq_message\"" // quoted column for message text
-	const tsCol = "\"_cardinalhq_timestamp\"" // quoted column for event timestamp
+	const baseRel = "{table}"         // replace upstream
+	const bodyCol = "\"log_message\"" // quoted column for message text
+	const tsCol = "\"chq_timestamp\"" // quoted column for event timestamp
 
 	type layer struct {
 		name string
@@ -143,10 +143,10 @@ func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
 
 	// ---- s0: minimal base projection ----
 	need := map[string]struct{}{
-		bodyCol:                 {},
-		tsCol:                   {},
-		"\"_cardinalhq_id\"":    {},
-		"\"_cardinalhq_level\"": {},
+		bodyCol:         {},
+		tsCol:           {},
+		"\"chq_id\"":    {},
+		"\"log_level\"": {},
 	}
 	for _, m := range be.Matchers {
 		need[quoteIdent(m.Label)] = struct{}{}

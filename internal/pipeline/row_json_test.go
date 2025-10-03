@@ -55,7 +55,7 @@ func TestMarshalRowJSON(t *testing.T) {
 				wkk.RowKeyCMetricType:   "gauge",
 				wkk.RowKeyCTimestamp:    int64(1234567890),
 			},
-			expected: `{"_cardinalhq_metric_type":"gauge","_cardinalhq_name":"metric_name","_cardinalhq_timestamp":1234567890,"bool":true,"float":3.14,"int":42,"null":null,"string":"value"}`,
+			expected: `{"chq_metric_type":"gauge","metric_name":"metric_name","chq_timestamp":1234567890,"bool":true,"float":3.14,"int":42,"null":null,"string":"value"}`,
 		},
 		{
 			name: "row with nested structures",
@@ -71,10 +71,10 @@ func TestMarshalRowJSON(t *testing.T) {
 				wkk.NewRowKey("resource_service_name"):       "test-service",
 				wkk.NewRowKey("resource_k8s_cluster_name"):   "prod-cluster",
 				wkk.NewRowKey("resource_k8s_namespace_name"): "default",
-				wkk.NewRowKey("_cardinalhq_fingerprint"):     int64(123456),
+				wkk.NewRowKey("chq_fingerprint"):             int64(123456),
 				wkk.NewRowKey("metric_label"):                "value",
 			},
-			expected: `{"_cardinalhq_fingerprint":123456,"metric_label":"value","resource_k8s_cluster_name":"prod-cluster","resource_k8s_namespace_name":"default","resource_service_name":"test-service"}`,
+			expected: `{"chq_fingerprint":123456,"metric_label":"value","resource_k8s_cluster_name":"prod-cluster","resource_k8s_namespace_name":"default","resource_service_name":"test-service"}`,
 		},
 		{
 			name: "row with special characters in keys",
@@ -149,10 +149,10 @@ func TestUnmarshalRowJSON(t *testing.T) {
 		},
 		{
 			name:  "object with underscore-prefixed keys",
-			input: `{"resource_service_name":"test-service","_cardinalhq_fingerprint":123456}`,
+			input: `{"resource_service_name":"test-service","chq_fingerprint":123456}`,
 			expected: Row{
-				wkk.NewRowKey("resource_service_name"):   "test-service",
-				wkk.NewRowKey("_cardinalhq_fingerprint"): float64(123456),
+				wkk.NewRowKey("resource_service_name"): "test-service",
+				wkk.NewRowKey("chq_fingerprint"):       float64(123456),
 			},
 		},
 	}
@@ -180,7 +180,7 @@ func TestRowJSON_RoundTrip(t *testing.T) {
 		wkk.RowKeyCName:                          "http_requests_total",
 		wkk.RowKeyCMetricType:                    "count",
 		wkk.RowKeyCTimestamp:                     int64(1234567890),
-		wkk.NewRowKey("_cardinalhq_fingerprint"): int64(987654321),
+		wkk.NewRowKey("chq_fingerprint"):         int64(987654321),
 		wkk.NewRowKey("metric_http_status_code"): "200",
 		wkk.NewRowKey("metric_method"):           "GET",
 	}
@@ -232,7 +232,7 @@ func TestRowJSON_InvalidJSON(t *testing.T) {
 
 func TestRowJSON_KeyInterning(t *testing.T) {
 	// Create two rows from the same JSON
-	input := `{"resource_service_name":"test","_cardinalhq_name":"metric"}`
+	input := `{"resource_service_name":"test","metric_name":"metric"}`
 
 	var row1 Row
 	err := row1.Unmarshal([]byte(input))
@@ -277,7 +277,7 @@ func BenchmarkMarshalRowJSON(b *testing.B) {
 }
 
 func BenchmarkUnmarshalRowJSON(b *testing.B) {
-	input := []byte(`{"resource_service_name":"test-service","resource_k8s_cluster_name":"prod-cluster","resource_k8s_namespace_name":"default","_cardinalhq_name":"http_requests_total","_cardinalhq_metric_type":"count","_cardinalhq_timestamp":1234567890,"_cardinalhq_fingerprint":987654321,"metric_http_status_code":"200","metric_method":"GET"}`)
+	input := []byte(`{"resource_service_name":"test-service","resource_k8s_cluster_name":"prod-cluster","resource_k8s_namespace_name":"default","metric_name":"http_requests_total","chq_metric_type":"count","chq_timestamp":1234567890,"chq_fingerprint":987654321,"metric_http_status_code":"200","metric_method":"GET"}`)
 
 	for b.Loop() {
 		var row Row

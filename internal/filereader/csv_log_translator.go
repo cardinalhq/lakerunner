@@ -31,8 +31,8 @@ import (
 )
 
 var (
-	// Pattern to sanitize field names - removes non-alphanumeric chars except dots and underscores
-	fieldSanitizeRegex = regexp.MustCompile(`[^a-zA-Z0-9._]+`)
+	// Pattern to sanitize field names - removes non-alphanumeric chars except underscores
+	fieldSanitizeRegex = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
 	// Pattern to match Unix timestamp strings (all digits)
 	timestampDigitsRegex = regexp.MustCompile(`^\d+$`)
 )
@@ -102,10 +102,11 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) 
 
 	// Special handling for "data" field as message
 	dataKey := wkk.NewRowKey("data")
+	logMessageKey := wkk.NewRowKey("log_message")
 	if dataVal, exists := (*row)[dataKey]; exists {
 		// Set as message
 		if msg, isString := dataVal.(string); isString && msg != "" {
-			(*row)[wkk.RowKeyCMessage] = msg
+			(*row)[logMessageKey] = msg
 		}
 		// Remove from row to avoid duplication
 		delete(*row, dataKey)
@@ -151,7 +152,7 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) 
 	remainingKeys := make([]wkk.RowKey, 0)
 	for key := range *row {
 		// Skip already processed fields
-		if key == wkk.RowKeyCTimestamp || key == wkk.RowKeyCMessage {
+		if key == wkk.RowKeyCTimestamp || key == logMessageKey {
 			continue
 		}
 		remainingKeys = append(remainingKeys, key)
@@ -163,8 +164,8 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) 
 	newFields := make(map[wkk.RowKey]any)
 	// Add already processed fields
 	newFields[wkk.RowKeyCTimestamp] = (*row)[wkk.RowKeyCTimestamp]
-	if msgVal, exists := (*row)[wkk.RowKeyCMessage]; exists {
-		newFields[wkk.RowKeyCMessage] = msgVal
+	if msgVal, exists := (*row)[logMessageKey]; exists {
+		newFields[logMessageKey] = msgVal
 	}
 
 	usedSanitizedNames := make(map[string]int) // Track sanitized name usage
@@ -202,7 +203,7 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) 
 
 	// Add organization ID if available
 	if t.orgID != "" {
-		(*row)[wkk.NewRowKey("_cardinalhq_organization_id")] = t.orgID
+		(*row)[wkk.NewRowKey("chq_organization_id")] = t.orgID
 	}
 
 	return nil
@@ -278,8 +279,11 @@ func (t *CSVLogTranslator) normalizeTimestamp(ts int64) int64 {
 	return ts
 }
 
-// sanitizeFieldName removes special characters from field names
+// sanitizeFieldName removes special characters from field names and converts to lowercase
 func (t *CSVLogTranslator) sanitizeFieldName(name string) string {
+	// Convert to lowercase first
+	name = strings.ToLower(name)
+
 	// Replace spaces and special characters with underscores
 	sanitized := fieldSanitizeRegex.ReplaceAllString(name, "_")
 

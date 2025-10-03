@@ -25,8 +25,8 @@ import (
 func TestToStringMap_KeysArePureStrings(t *testing.T) {
 	// Create a row with various RowKeys
 	row := make(Row)
-	row[wkk.NewRowKey("_cardinalhq_name")] = "test_metric"
-	row[wkk.NewRowKey("_cardinalhq_tid")] = int64(123)
+	row[wkk.NewRowKey("metric_name")] = "test_metric"
+	row[wkk.NewRowKey("chq_tid")] = int64(123)
 	row[wkk.NewRowKey("metric_test_field")] = "test_value"
 	row[wkk.NewRowKey("resource_service_name")] = "test_service"
 
@@ -37,8 +37,8 @@ func TestToStringMap_KeysArePureStrings(t *testing.T) {
 	assert.Equal(t, 4, len(stringMap))
 
 	// Check that all keys exist with expected values
-	assert.Equal(t, "test_metric", stringMap["_cardinalhq_name"])
-	assert.Equal(t, int64(123), stringMap["_cardinalhq_tid"])
+	assert.Equal(t, "test_metric", stringMap["metric_name"])
+	assert.Equal(t, int64(123), stringMap["chq_tid"])
 	assert.Equal(t, "test_value", stringMap["metric_test_field"])
 	assert.Equal(t, "test_service", stringMap["resource_service_name"])
 

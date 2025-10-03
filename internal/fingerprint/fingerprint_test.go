@@ -83,9 +83,9 @@ func TestComputeHash(t *testing.T) {
 			expect: -3949595362870219360,
 		},
 		{
-			name:   "_cardinalhq_telemetry_type:log",
-			input:  "_cardinalhq_telemetry_type:log",
-			expect: -1269926491184316255,
+			name:   "chq_telemetry_type:log",
+			input:  "chq_telemetry_type:log",
+			expect: -7512638186058326211,
 		},
 	}
 
@@ -184,22 +184,22 @@ func TestToFingerprints(t *testing.T) {
 		{
 			name: "single indexed dimension, single value",
 			input: map[string]mapset.Set[string]{
-				"_cardinalhq_name": mapset.NewSet("foo"),
+				"metric_name": mapset.NewSet("foo"),
 			},
 			expectedFingerp: mapset.NewSet[int64](
-				ComputeFingerprint("_cardinalhq_name", "foo"),
-				ComputeFingerprint("_cardinalhq_name", ExistsRegex),
+				ComputeFingerprint("metric_name", "foo"),
+				ComputeFingerprint("metric_name", ExistsRegex),
 			),
 		},
 		{
 			name: "single indexed dimension, multiple values",
 			input: map[string]mapset.Set[string]{
-				"_cardinalhq_name": mapset.NewSet("foo", "bar"),
+				"metric_name": mapset.NewSet("foo", "bar"),
 			},
 			expectedFingerp: mapset.NewSet(
-				ComputeFingerprint("_cardinalhq_name", "foo"),
-				ComputeFingerprint("_cardinalhq_name", "bar"),
-				ComputeFingerprint("_cardinalhq_name", ExistsRegex),
+				ComputeFingerprint("metric_name", "foo"),
+				ComputeFingerprint("metric_name", "bar"),
+				ComputeFingerprint("metric_name", ExistsRegex),
 			),
 		},
 		{
@@ -214,26 +214,26 @@ func TestToFingerprints(t *testing.T) {
 		{
 			name: "indexed and unindexed dimensions",
 			input: map[string]mapset.Set[string]{
-				"_cardinalhq_name": mapset.NewSet("foo"),
-				"custom":           mapset.NewSet("abc"),
+				"metric_name": mapset.NewSet("foo"),
+				"custom":      mapset.NewSet("abc"),
 			},
 			expectedFingerp: mapset.NewSet(
-				ComputeFingerprint("_cardinalhq_name", "foo"),
-				ComputeFingerprint("_cardinalhq_name", ExistsRegex),
+				ComputeFingerprint("metric_name", "foo"),
+				ComputeFingerprint("metric_name", ExistsRegex),
 				ComputeFingerprint("custom", ExistsRegex),
 			),
 		},
 		{
 			name: "multiple values, mixed dimensions",
 			input: map[string]mapset.Set[string]{
-				"_cardinalhq_name": mapset.NewSet("foo", "bar"),
-				"resource_file":    mapset.NewSet("file1", "file2"),
-				"custom":           mapset.NewSet("baz"),
+				"metric_name":   mapset.NewSet("foo", "bar"),
+				"resource_file": mapset.NewSet("file1", "file2"),
+				"custom":        mapset.NewSet("baz"),
 			},
 			expectedFingerp: mapset.NewSet(
-				ComputeFingerprint("_cardinalhq_name", "foo"),
-				ComputeFingerprint("_cardinalhq_name", "bar"),
-				ComputeFingerprint("_cardinalhq_name", ExistsRegex),
+				ComputeFingerprint("metric_name", "foo"),
+				ComputeFingerprint("metric_name", "bar"),
+				ComputeFingerprint("metric_name", ExistsRegex),
 				ComputeFingerprint("resource_file", "file1"),
 				ComputeFingerprint("resource_file", "file2"),
 				ComputeFingerprint("resource_file", ExistsRegex),
@@ -243,10 +243,10 @@ func TestToFingerprints(t *testing.T) {
 		{
 			name: "verify query-api generated log check",
 			input: map[string]mapset.Set[string]{
-				"_cardinalhq_telemetry_type": mapset.NewSet("logs"),
+				"chq_telemetry_type": mapset.NewSet("logs"),
 			},
 			expectedFingerp: mapset.NewSet(
-				ComputeFingerprint("_cardinalhq_telemetry_type", ExistsRegex),
+				ComputeFingerprint("chq_telemetry_type", ExistsRegex),
 			),
 		},
 	}
@@ -263,10 +263,10 @@ func TestToFingerprints(t *testing.T) {
 func TestGenerateRowFingerprints(t *testing.T) {
 	// Example log row with CardinalHQ fields
 	row := map[string]interface{}{
-		"_cardinalhq_message":         "User login failed",
-		"_cardinalhq_name":            "log_events",
-		"_cardinalhq_level":           "error",
-		"_cardinalhq_timestamp":       int64(1640995200000),
+		"log_message":                 "User login failed",
+		"metric_name":                 "log_events",
+		"log_level":                   "error",
+		"chq_timestamp":               int64(1640995200000),
 		"resource_service.name":       "auth-service",
 		"resource_k8s.namespace.name": "production",
 		"custom_field":                "some_value",
@@ -280,14 +280,14 @@ func TestGenerateRowFingerprints(t *testing.T) {
 	// Test that it includes fingerprints for indexed dimensions
 	expectedFingerprints := mapset.NewSet[int64]()
 
-	// _cardinalhq_name is a full value dimension
-	expectedFingerprints.Add(ComputeFingerprint("_cardinalhq_name", "log_events"))
-	expectedFingerprints.Add(ComputeFingerprint("_cardinalhq_name", ExistsRegex))
+	// metric_name is a full value dimension
+	expectedFingerprints.Add(ComputeFingerprint("metric_name", "log_events"))
+	expectedFingerprints.Add(ComputeFingerprint("metric_name", ExistsRegex))
 
-	// _cardinalhq_level should have trigram fingerprints
+	// log_level should have trigram fingerprints
 	levelTrigrams := ToTrigrams("error")
 	for _, trigram := range levelTrigrams {
-		expectedFingerprints.Add(ComputeFingerprint("_cardinalhq_level", trigram))
+		expectedFingerprints.Add(ComputeFingerprint("log_level", trigram))
 	}
 
 	// custom_field should get exists regex fingerprint only (not in DimensionsToIndex)

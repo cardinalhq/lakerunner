@@ -65,7 +65,7 @@ func TestStagewiseValidator_Accounting_PreLineFilter_ThenLineFormat_OK(t *testin
 
 	// 4) Expression under test:
 	//    pre line filter (|= "Order details:") then line_format -> index base field with special chars
-	q := `{resource_service_name="accounting"} |= "Order details:" | line_format "{{ index . \"log.@OrderResult\" }}"`
+	q := `{resource_service_name="accounting"} |= "Order details:" | line_format "{{ index . \"attr_@OrderResult\" }}"`
 
 	ast, err := logql.FromLogQL(q)
 	if err != nil {
@@ -116,7 +116,7 @@ func TestStagewiseValidator_Accounting_PreLineFilter_ThenLineFormat_OK(t *testin
 		t.Fatalf("expected stage 1 to return rows (pre line filter); sql:\n%s", s1.SQL)
 	}
 
-	// Stage 2: line_format should rewrite _cardinalhq_message from base "log.@OrderResult"
+	// Stage 2: line_format should rewrite log_message from base "attr_@OrderResult"
 	s2 := stages[2]
 	if s2.Name != "parser[0]: line_format" {
 		t.Fatalf("unexpected stage 2 name: %q\nsql:\n%s", s2.Name, s2.SQL)
@@ -125,8 +125,8 @@ func TestStagewiseValidator_Accounting_PreLineFilter_ThenLineFormat_OK(t *testin
 		t.Fatalf("expected line_format stage to return rows; sql:\n%s", s2.SQL)
 	}
 	// Hoisted base field should appear in the SQL (dependency for index in template)
-	if !strings.Contains(s2.SQL, `"log_@OrderResult"`) {
-		t.Fatalf("expected hoisted base column \"log_@OrderResult\" in SQL:\n%s", s2.SQL)
+	if !strings.Contains(s2.SQL, `"attr_@OrderResult"`) {
+		t.Fatalf("expected hoisted base column \"attr_@OrderResult\" in SQL:\n%s", s2.SQL)
 	}
 
 	// 6) Inspect final stage rows: message should now be the JSON payload
@@ -136,14 +136,14 @@ func TestStagewiseValidator_Accounting_PreLineFilter_ThenLineFormat_OK(t *testin
 	}
 	foundJSONMsg := false
 	for _, r := range rows {
-		raw, ok := r["_cardinalhq_message"]
+		raw, ok := r["log_message"]
 		if !ok || raw == nil {
 			continue
 		}
 		foundJSONMsg = true
 	}
 	if !foundJSONMsg {
-		t.Fatalf("did not find a JSON-like rewritten _cardinalhq_message in stage 2 rows; sql:\n%s", s2.SQL)
+		t.Fatalf("did not find a JSON-like rewritten log_message in stage 2 rows; sql:\n%s", s2.SQL)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestStagewiseValidator_Accounting_CountOverTime_ByZipCode(t *testing.T) {
 	q := `sum by (zipCode) (` +
 		`count_over_time(` +
 		`{resource_service_name="accounting"} |= "Order details:" ` +
-		`| line_format "{{index . \"log.@OrderResult\"}}" ` +
+		`| line_format "{{index . \"attr_@OrderResult\"}}" ` +
 		`| json zipCode="shippingAddress.zipCode" ` +
 		`[5m]))`
 
@@ -340,7 +340,7 @@ func TestStagewiseValidator_InvalidLineFormatThenRegexp_NoCountry(t *testing.T) 
 	}
 
 	// 4) Pipeline: selector + line filter + line_format (broken) + regexp(country)
-	q := `{resource_service_name="accounting"} |= "Order details:" | line_format "{{ . \"log.@OrderResult\" }}" | regexp "country\":\\s*\"(?P<country>[^\"]+)\""`
+	q := `{resource_service_name="accounting"} |= "Order details:" | line_format "{{ . \"attr_@OrderResult\" }}" | regexp "country\":\\s*\"(?P<country>[^\"]+)\""`
 
 	ast, err := logql.FromLogQL(q)
 	if err != nil {
@@ -386,12 +386,12 @@ func TestStagewiseValidator_InvalidLineFormatThenRegexp_NoCountry(t *testing.T) 
 	}
 
 	// parser[0] is line_format — with the current template it wipes the body to ''.
-	// Since we now validate line_format, this stage should FAIL with _cardinalhq_message missing.
+	// Since we now validate line_format, this stage should FAIL with log_message missing.
 	lf := stages[2]
 	if lf.OK {
 		t.Fatalf("expected line_format stage to fail; sql:\n%s", lf.SQL)
 	}
-	wantMissing := "_cardinalhq_message"
+	wantMissing := "log_message"
 	found := slices.Contains(lf.MissingFields, wantMissing)
 	if !found {
 		t.Fatalf("line_format stage failed, but did not report %q missing; got: %v\nsql:\n%s",
@@ -445,7 +445,7 @@ func TestStagewiseValidator_AggregateJsonUnwrap_GroupByCardType(t *testing.T) {
 	//    - json revenue + json card_type
 	//    - unwrap revenue
 	//    - sum_over_time(...) by card_type
-	q := `sum by (card_type) (sum_over_time(({resource_service_name="segment", _cardinalhq_fingerprint="2082887339816129672"} | json revenue="properties.revenue" | json card_type="properties.cardType" | unwrap revenue)[24h]))`
+	q := `sum by (card_type) (sum_over_time(({resource_service_name="segment", chq_fingerprint="test-fingerprint"} | json revenue="properties.revenue" | json card_type="properties.cardType" | unwrap revenue)[24h]))`
 
 	ast, err := logql.FromLogQL(q)
 	if err != nil {
@@ -806,7 +806,7 @@ func TestStagewiseValidator_Accounting_LineFormatThenLineFilter_WA(t *testing.T)
 	// 4) Expression under test:
 	//    line_format rewrites the body to the @OrderResult JSON string, and
 	//    the contains filter ("WA") must run AFTER that rewrite.
-	q := `{resource_service_name="accounting", _cardinalhq_fingerprint="7754623969787599908"} | line_format "{{ index . \"log.@OrderResult\" }}" |= "WA"`
+	q := `{resource_service_name="accounting", chq_fingerprint="test-fingerprint"} | line_format "{{ index . \"attr_@OrderResult\" }}" |= "WA"`
 
 	ast, err := logql.FromLogQL(q)
 	if err != nil {

@@ -351,7 +351,7 @@ func TestRewrite_MinOverTime_Unwrap_WithOffset(t *testing.T) {
 func TestRewrite_Grouping_QuotesDotLabels_By(t *testing.T) {
 	leaf := logql.LogLeaf{ID: "idDotBy", Range: "1m"}
 
-	// sum by("resource.cluster","_cardinalhq.foo",plain) (rate(...))
+	// sum by("resource.cluster","chq_foo",plain) (rate(...))
 	root := &logql.LAggNode{
 		Op: "sum",
 		By: []string{"resource.cluster", "test.foo", "plain"},

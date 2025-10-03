@@ -58,8 +58,8 @@ type DuckDBParquetRawReader struct {
 }
 
 var rollupFieldNames = []string{
-	"rollup_sum", "rollup_count", "rollup_avg", "rollup_min", "rollup_max",
-	"rollup_p25", "rollup_p50", "rollup_p75", "rollup_p90", "rollup_p95", "rollup_p99",
+	"chq_rollup_sum", "chq_rollup_count", "chq_rollup_avg", "chq_rollup_min", "chq_rollup_max",
+	"chq_rollup_p25", "chq_rollup_p50", "chq_rollup_p75", "chq_rollup_p90", "chq_rollup_p95", "chq_rollup_p99",
 }
 
 // NewDuckDBParquetRawReader creates a new DuckDBParquetRawReader for the given
@@ -127,9 +127,9 @@ func NewDuckDBParquetRawReader(ctx context.Context, s3db *duckdbx.S3DB, paths []
 	}
 	for i, c := range cols {
 		switch c {
-		case "_cardinalhq.tid":
+		case "chq_tid":
 			idxTID = i
-		case "sketch":
+		case "chq_sketch":
 			idxSketch = i
 		default:
 			for j, name := range rollupFieldNames {

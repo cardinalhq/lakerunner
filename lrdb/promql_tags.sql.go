@@ -38,7 +38,7 @@ FROM lrdb_exemplar_metrics,
      LATERAL jsonb_object_keys(exemplar) AS key
 WHERE organization_id = $1
   AND metric_name = $2
-  AND key ~ '^(_cardinalhq_|resource_|scope_|metric_)'
+  AND key ~ '^(chq_|resource_|scope_|metric_|attr_)'
 ORDER BY tag_key
 `
 
@@ -48,7 +48,7 @@ type ListPromMetricTagsParams struct {
 }
 
 // Extract tag keys from flat exemplar format
-// Only return keys that start with _cardinalhq_, resource_, scope_, or metric_
+// Only return keys that start with chq_, resource_, scope_, metric_, or attr_
 func (q *Queries) ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error) {
 	rows, err := q.db.Query(ctx, listPromMetricTags, arg.OrganizationID, arg.MetricName)
 	if err != nil {

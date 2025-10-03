@@ -25,9 +25,8 @@ const (
 var DefaultStringConversionPrefixes = []string{
 	"resource_",
 	"scope_",
-	"log_",
+	"attr_",
 	"metric_",
-	"span_",
 }
 
 // WriterConfig contains all configuration options for creating a ParquetWriter.
@@ -50,7 +49,7 @@ type WriterConfig struct {
 
 	// StringConversionPrefixes is a list of field name prefixes that should have their
 	// values converted to strings to avoid type conflicts during schema merging.
-	// If nil or empty, uses default prefixes: resource., scope., log., metric., span.
+	// If nil or empty, uses default prefixes: resource_, scope_, attr_, metric_
 	StringConversionPrefixes []string
 }
 

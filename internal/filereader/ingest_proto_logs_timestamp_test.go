@@ -103,7 +103,7 @@ func TestIngestProtoLogsReader_TimestampHandling(t *testing.T) {
 
 			// Check timestamp
 			tsValue, ok := row[wkk.RowKeyCTimestamp]
-			require.True(t, ok, "Should have _cardinalhq_timestamp field")
+			require.True(t, ok, "Should have chq_timestamp field")
 
 			timestampResult := tsValue.(int64)
 
@@ -146,7 +146,7 @@ func TestProtoBinLogTranslator_TimestampValidation(t *testing.T) {
 		description       string
 	}{
 		{
-			name: "Row with valid _cardinalhq_timestamp",
+			name: "Row with valid chq_timestamp",
 			inputRow: pipeline.Row{
 				wkk.RowKeyCTimestamp: int64(1704110400000), // 2024-01-01 12:00:00 UTC
 			},
@@ -211,7 +211,7 @@ func TestProtoBinLogTranslator_TimestampValidation(t *testing.T) {
 
 			// Check timestamp
 			tsValue, ok := row[wkk.RowKeyCTimestamp]
-			require.True(t, ok, "Should have _cardinalhq_timestamp field after translation")
+			require.True(t, ok, "Should have chq_timestamp field after translation")
 
 			timestamp := tsValue.(int64)
 

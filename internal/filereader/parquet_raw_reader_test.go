@@ -15,14 +15,15 @@
 package filereader
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"strconv"
+	"math"
 	"testing"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -30,17 +31,70 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
+// createTestParquetInMemory generates a parquet file in memory with the specified rows.
+// Returns the parquet data as bytes and the number of rows written.
+func createTestParquetInMemory(t *testing.T, rows []map[string]any) ([]byte, int) {
+	t.Helper()
+
+	if len(rows) == 0 {
+		t.Fatal("Cannot create parquet file with zero rows")
+	}
+
+	// Build schema from first row
+	nodes := make(map[string]parquet.Node)
+	for key, value := range rows[0] {
+		var node parquet.Node
+		switch value.(type) {
+		case int64:
+			node = parquet.Optional(parquet.Int(64))
+		case string:
+			node = parquet.Optional(parquet.String())
+		case float64:
+			node = parquet.Optional(parquet.Leaf(parquet.DoubleType))
+		case bool:
+			node = parquet.Optional(parquet.Leaf(parquet.BooleanType))
+		default:
+			t.Fatalf("Unsupported type %T for key %s", value, key)
+		}
+		nodes[key] = node
+	}
+
+	schema := parquet.NewSchema("test", parquet.Group(nodes))
+
+	// Create parquet writer to buffer
+	var buf bytes.Buffer
+	writer := parquet.NewGenericWriter[map[string]any](&buf, schema)
+
+	// Write all rows
+	for _, row := range rows {
+		_, err := writer.Write([]map[string]any{row})
+		require.NoError(t, err, "Failed to write row")
+	}
+
+	// Close writer to finalize
+	err := writer.Close()
+	require.NoError(t, err, "Failed to close writer")
+
+	return buf.Bytes(), len(rows)
+}
+
 // TestParquetRawReaderNext tests the actual Next() method behavior
 func TestParquetRawReaderNext(t *testing.T) {
-	// Test with a real file to verify Next() behavior
-	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
-	require.NoError(t, err)
-	defer func() { _ = file.Close() }()
+	// Generate test data with 32 rows
+	testRows := make([]map[string]any, 32)
+	for i := range testRows {
+		testRows[i] = map[string]any{
+			"chq_collector_id": fmt.Sprintf("collector-%d", i),
+			"chq_timestamp":    int64(1000000 + i),
+			"log_message":      fmt.Sprintf("Test message %d", i),
+			"chq_severity":     "INFO",
+		}
+	}
 
-	stat, err := file.Stat()
-	require.NoError(t, err)
+	// Generate parquet file in memory
+	parquetData, _ := createTestParquetInMemory(t, testRows)
 
-	reader, err := NewParquetRawReader(file, stat.Size(), 10) // Small batch size
+	reader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), 10) // Small batch size
 	require.NoError(t, err)
 	defer func() { _ = reader.Close() }()
 
@@ -74,14 +128,21 @@ func TestParquetRawReaderNext(t *testing.T) {
 	assert.Equal(t, totalRows, reader.TotalRowsReturned(), "TotalRowsReturned should match actual rows read")
 }
 
-// TestParquetRawReaderBatching tests batching behavior with real file
+// TestParquetRawReaderBatching tests batching behavior with different batch sizes
 func TestParquetRawReaderBatching(t *testing.T) {
-	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
-	require.NoError(t, err)
-	defer func() { _ = file.Close() }()
+	// Generate test data with 32 rows
+	testRows := make([]map[string]any, 32)
+	for i := range testRows {
+		testRows[i] = map[string]any{
+			"chq_collector_id": fmt.Sprintf("collector-%d", i),
+			"chq_timestamp":    int64(1000000 + i),
+			"log_message":      fmt.Sprintf("Test message %d", i),
+			"chq_severity":     "INFO",
+		}
+	}
 
-	stat, err := file.Stat()
-	require.NoError(t, err)
+	// Generate parquet file in memory
+	parquetData, _ := createTestParquetInMemory(t, testRows)
 
 	// Test different batch sizes
 	testCases := []struct {
@@ -96,7 +157,7 @@ func TestParquetRawReaderBatching(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("BatchSize%d", tc.batchSize), func(t *testing.T) {
-			reader, err := NewParquetRawReader(file, stat.Size(), tc.batchSize)
+			reader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), tc.batchSize)
 			require.NoError(t, err)
 			defer func() { _ = reader.Close() }()
 
@@ -123,16 +184,24 @@ func TestParquetRawReaderBatching(t *testing.T) {
 	}
 }
 
-// TestParquetRawReaderWithRealFile tests ParquetRawReader with actual parquet files
+// TestParquetRawReaderWithRealFile tests ParquetRawReader with generated parquet files
 func TestParquetRawReaderWithRealFile(t *testing.T) {
-	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
-	require.NoError(t, err)
-	defer func() { _ = file.Close() }()
+	// Create test data with proper field names
+	testRows := make([]map[string]any, 32)
+	for i := range testRows {
+		testRows[i] = map[string]any{
+			"chq_collector_id": fmt.Sprintf("collector-%d", i),
+			"chq_timestamp":    int64(1000000 + i),
+			"log_message":      fmt.Sprintf("Test message %d", i),
+			"chq_severity":     "INFO",
+		}
+	}
 
-	stat, err := file.Stat()
-	require.NoError(t, err)
+	// Generate parquet file in memory
+	parquetData, expectedRows := createTestParquetInMemory(t, testRows)
 
-	reader, err := NewParquetRawReader(file, stat.Size(), 1000)
+	// Create reader from in-memory parquet data
+	reader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), 1000)
 	require.NoError(t, err)
 	defer func() { _ = reader.Close() }()
 
@@ -160,28 +229,36 @@ func TestParquetRawReaderWithRealFile(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// logs-cooked-0001.parquet should have 32 rows
-	assert.Equal(t, int64(32), rowCount, "Should read exactly 32 rows from logs-cooked-0001.parquet")
+	// Verify we read all the expected rows
+	assert.Equal(t, int64(expectedRows), rowCount, "Should read exactly %d rows from generated parquet file", expectedRows)
 }
 
-// TestParquetRawReaderMultipleFiles tests ParquetRawReader with different files
+// TestParquetRawReaderMultipleFiles tests ParquetRawReader with different file sizes
 func TestParquetRawReaderMultipleFiles(t *testing.T) {
-	testFiles := map[string]int64{
-		"../../testdata/logs/logs-cooked-0001.parquet":       32,   // 32 rows
-		"../../testdata/metrics/metrics-cooked-0001.parquet": 211,  // 211 rows
-		"../../testdata/logs/logs-chqs3-0001.parquet":        1807, // 1807 rows
+	testCases := map[string]int{
+		"small":  32,   // 32 rows
+		"medium": 211,  // 211 rows
+		"large":  1807, // 1807 rows
 	}
 
-	for filename, expectedRows := range testFiles {
-		t.Run(filename, func(t *testing.T) {
-			file, err := os.Open(filename)
-			require.NoError(t, err)
-			defer func() { _ = file.Close() }()
+	for name, expectedRows := range testCases {
+		t.Run(name, func(t *testing.T) {
+			// Generate test data
+			testRows := make([]map[string]any, expectedRows)
+			for i := range testRows {
+				testRows[i] = map[string]any{
+					"chq_collector_id": fmt.Sprintf("collector-%d", i),
+					"chq_timestamp":    int64(1000000 + i),
+					"log_message":      fmt.Sprintf("Test message %d", i),
+					"chq_severity":     "INFO",
+				}
+			}
 
-			stat, err := file.Stat()
-			require.NoError(t, err)
+			// Generate parquet file in memory
+			parquetData, rowCount := createTestParquetInMemory(t, testRows)
 
-			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
+			// Create reader from in-memory parquet data
+			reader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), 1000)
 			require.NoError(t, err)
 			defer func() { _ = reader.Close() }()
 
@@ -210,21 +287,28 @@ func TestParquetRawReaderMultipleFiles(t *testing.T) {
 			}
 
 			// Verify exact row count
-			assert.Equal(t, expectedRows, totalRows, "Should read exactly %d rows from %s", expectedRows, filename)
+			assert.Equal(t, int64(rowCount), totalRows, "Should read exactly %d rows from %s", rowCount, name)
 		})
 	}
 }
 
 // TestParquetRawReaderClose tests proper cleanup
 func TestParquetRawReaderClose(t *testing.T) {
-	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
-	require.NoError(t, err)
-	defer func() { _ = file.Close() }()
+	// Generate test data
+	testRows := make([]map[string]any, 32)
+	for i := range testRows {
+		testRows[i] = map[string]any{
+			"chq_collector_id": fmt.Sprintf("collector-%d", i),
+			"chq_timestamp":    int64(1000000 + i),
+			"log_message":      fmt.Sprintf("Test message %d", i),
+			"chq_severity":     "INFO",
+		}
+	}
 
-	stat, err := file.Stat()
-	require.NoError(t, err)
+	// Generate parquet file in memory
+	parquetData, _ := createTestParquetInMemory(t, testRows)
 
-	reader, err := NewParquetRawReader(file, stat.Size(), 1000)
+	reader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), 1000)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
@@ -245,42 +329,6 @@ func TestParquetRawReaderClose(t *testing.T) {
 	assert.Contains(t, err.Error(), "closed")
 }
 
-func TestParquetRawReader_SpecificProblemFile(t *testing.T) {
-	// Test the specific file that's failing in production
-	filename := "../../testdata/logs/logs_1747427310000_667024137.parquet"
-
-	reader, err := createParquetReader(filename, ReaderOptions{})
-	if err != nil {
-		t.Fatalf("Failed to create reader for problem file: %v", err)
-	}
-	defer func() { _ = reader.Close() }()
-
-	// Try to read some rows
-	batch, err := reader.Next(context.TODO())
-	n := 0
-	if batch != nil {
-		n = batch.Len()
-	}
-	t.Logf("Read result: n=%d, err=%v", n, err)
-
-	if err != nil && err != io.EOF {
-		t.Fatalf("Read failed: %v", err)
-	}
-
-	if n == 0 {
-		t.Fatalf("Expected to read some rows, got 0")
-	}
-
-	t.Logf("Successfully read %d rows from problem file", n)
-	for i := 0; i < n && i < 3; i++ {
-		t.Logf("Row %d has %d fields", i, len(batch.Get(i)))
-	}
-
-	// Close should be idempotent
-	err = reader.Close()
-	assert.NoError(t, err)
-}
-
 // testTranslator is a simple translator for testing
 type testTranslator struct {
 	addField string
@@ -296,11 +344,23 @@ func (t *testTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) er
 }
 
 func TestParquetRawReader_WithTranslator(t *testing.T) {
-	// Test ParquetRawReader with TranslatingReader using the problem file
-	filename := "../../testdata/logs/logs_1747427310000_667024137.parquet"
+	// Test ParquetRawReader with TranslatingReader using generated data
+	// Generate test data
+	testRows := make([]map[string]any, 32)
+	for i := range testRows {
+		testRows[i] = map[string]any{
+			"chq_collector_id": fmt.Sprintf("collector-%d", i),
+			"chq_timestamp":    int64(1000000 + i),
+			"log_message":      fmt.Sprintf("Test message %d", i),
+			"chq_severity":     "INFO",
+		}
+	}
+
+	// Generate parquet file in memory
+	parquetData, _ := createTestParquetInMemory(t, testRows)
 
 	// Create base parquet reader
-	baseReader, err := createParquetReader(filename, ReaderOptions{})
+	baseReader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), 1000)
 	require.NoError(t, err)
 	defer func() { _ = baseReader.Close() }()
 
@@ -375,36 +435,35 @@ func TestIngestProtoLogsReader_WithTranslator(t *testing.T) {
 }
 
 func TestParquetRawReader_CompactTestFiles(t *testing.T) {
-	// Test files from compact-test-0001 with expected record counts
-	// ParquetRawReader returns all rows without filtering
-	expectedCounts := map[string]int64{
-		"tbl_299476429685392687.parquet": 227,
-		"tbl_299476441865651503.parquet": 227,
-		"tbl_299476446630380847.parquet": 227,
-		"tbl_299476458558980900.parquet": 231,
-		"tbl_299476464716219172.parquet": 227,
-		"tbl_299476475503969060.parquet": 227,
-		"tbl_299476481342440751.parquet": 227,
-		"tbl_299476495972173103.parquet": 231,
-		"tbl_299476496878142244.parquet": 227,
-		"tbl_299476509242950436.parquet": 227,
-		"tbl_299476513621803812.parquet": 227,
-		"tbl_299476526607368996.parquet": 227,
+	// Test ParquetRawReader with different file sizes that would be typical in compaction
+	testCases := []struct {
+		name         string
+		expectedRows int64
+	}{
+		{"compact_227_rows", 227},
+		{"compact_231_rows", 231},
+		{"compact_250_rows", 250},
 	}
 
-	for filename, expectedCount := range expectedCounts {
-		t.Run(filename, func(t *testing.T) {
-			fullPath := fmt.Sprintf("../../testdata/metrics/compact-test-0001/%s", filename)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Generate test data with metric fields
+			testRows := make([]map[string]any, tc.expectedRows)
+			for i := range testRows {
+				testRows[i] = map[string]any{
+					"chq_collector_id": fmt.Sprintf("collector-%d", i),
+					"chq_timestamp":    int64(1000000 + i),
+					"chq_metric_name":  "test_metric",
+					"chq_rollup_sum":   float64(i * 10),
+					"chq_rollup_count": float64(i),
+				}
+			}
 
-			file, err := os.Open(fullPath)
-			require.NoError(t, err, "Failed to open file: %s", fullPath)
-			defer func() { _ = file.Close() }()
+			// Generate parquet file in memory
+			parquetData, _ := createTestParquetInMemory(t, testRows)
 
-			stat, err := file.Stat()
-			require.NoError(t, err)
-
-			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
-			require.NoError(t, err, "Failed to create reader for file: %s", filename)
+			reader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), 1000)
+			require.NoError(t, err, "Failed to create reader")
 			defer func() { _ = reader.Close() }()
 
 			var totalRows int64
@@ -429,29 +488,36 @@ func TestParquetRawReader_CompactTestFiles(t *testing.T) {
 				if errors.Is(err, io.EOF) {
 					break
 				}
-				require.NoError(t, err, "Reader error in file %s", filename)
+				require.NoError(t, err, "Reader error in test %s", tc.name)
 			}
 
-			assert.Equal(t, expectedCount, totalRows, "File %s should have exactly %d records", filename, expectedCount)
-			assert.Equal(t, totalRows, reader.TotalRowsReturned(), "TotalRowsReturned should match for file %s", filename)
+			assert.Equal(t, tc.expectedRows, totalRows, "Test %s should have exactly %d records", tc.name, tc.expectedRows)
+			assert.Equal(t, totalRows, reader.TotalRowsReturned(), "TotalRowsReturned should match for test %s", tc.name)
 
-			t.Logf("File %s: successfully read %d records in %d batches", filename, totalRows, batchCount)
+			t.Logf("Test %s: successfully read %d records in %d batches", tc.name, totalRows, batchCount)
 		})
 	}
 }
 
 func TestParquetRawReader_TIDConversion(t *testing.T) {
-	// Test TID field type in actual compact test file data
-	fullPath := "../../testdata/metrics/compact-test-0001/tbl_299476429685392687.parquet"
+	// Test TID field type - should be int64
+	testRows := []map[string]any{
+		{
+			"chq_tid":         int64(123456789),
+			"chq_timestamp":   int64(1000000),
+			"chq_metric_name": "test_metric",
+		},
+		{
+			"chq_tid":         int64(987654321),
+			"chq_timestamp":   int64(1000001),
+			"chq_metric_name": "test_metric",
+		},
+	}
 
-	file, err := os.Open(fullPath)
-	require.NoError(t, err, "Failed to open test file")
-	defer func() { _ = file.Close() }()
+	// Generate parquet file in memory
+	parquetData, _ := createTestParquetInMemory(t, testRows)
 
-	stat, err := file.Stat()
-	require.NoError(t, err)
-
-	reader, err := NewParquetRawReader(file, stat.Size(), 1000)
+	reader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), 1000)
 	require.NoError(t, err, "Failed to create reader")
 	defer func() { _ = reader.Close() }()
 
@@ -471,70 +537,68 @@ func TestParquetRawReader_TIDConversion(t *testing.T) {
 
 	// Check what type the TID field actually is
 	tidValue, hasTID := row[wkk.RowKeyCTID]
-	t.Logf("Row has TID field: %v", hasTID)
+	require.True(t, hasTID, "Row should have TID field")
+	t.Logf("TID value: %v (type: %T)", tidValue, tidValue)
 
-	if hasTID {
-		t.Logf("TID value: %v (type: %T)", tidValue, tidValue)
-
-		// Test if it's int64 as expected
-		if tidInt64, isInt64 := tidValue.(int64); isInt64 {
-			t.Logf("TID is int64: %d", tidInt64)
-		} else if tidStr, isString := tidValue.(string); isString {
-			t.Logf("TID is still string: %s", tidStr)
-			// Try manual conversion
-			converted, err := strconv.ParseInt(tidStr, 10, 64)
-			t.Logf("Manual conversion result: %d (err: %v)", converted, err)
-		} else {
-			t.Logf("TID is unexpected type: %T", tidValue)
-		}
-	} else {
-		t.Log("No TID field found")
-	}
+	// Test if it's int64 as expected
+	tidInt64, isInt64 := tidValue.(int64)
+	require.True(t, isInt64, "TID should be int64, got %T", tidValue)
+	assert.Equal(t, int64(123456789), tidInt64, "TID value should match")
 
 	// Also check timestamp
 	timestampValue, hasTimestamp := row[wkk.RowKeyCTimestamp]
-	t.Logf("Row has timestamp field: %v", hasTimestamp)
-	if hasTimestamp {
-		t.Logf("Timestamp value: %v (type: %T)", timestampValue, timestampValue)
-	}
+	require.True(t, hasTimestamp, "Row should have timestamp field")
+	t.Logf("Timestamp value: %v (type: %T)", timestampValue, timestampValue)
+
+	tsInt64, isInt64 := timestampValue.(int64)
+	require.True(t, isInt64, "Timestamp should be int64, got %T", timestampValue)
+	assert.Equal(t, int64(1000000), tsInt64, "Timestamp value should match")
 }
 
 func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 	// Test DiskSortingReader(CookedMetricTranslatingReader(ParquetReader)) combination
 	// CookedMetricTranslatingReader filters out rows with NaN values
-	expectedCounts := map[string]int64{
-		"tbl_299476429685392687.parquet": 227,
-		"tbl_299476441865651503.parquet": 226, // 1 NaN row filtered
-		"tbl_299476446630380847.parquet": 227,
-		"tbl_299476458558980900.parquet": 231,
-		"tbl_299476464716219172.parquet": 226, // 1 NaN row filtered
-		"tbl_299476475503969060.parquet": 227,
-		"tbl_299476481342440751.parquet": 227,
-		"tbl_299476495972173103.parquet": 231,
-		"tbl_299476496878142244.parquet": 226, // 1 NaN row filtered
-		"tbl_299476509242950436.parquet": 227,
-		"tbl_299476513621803812.parquet": 227,
-		"tbl_299476526607368996.parquet": 227,
+	testCases := []struct {
+		name          string
+		rowCount      int
+		nanRows       int // number of rows with NaN values that will be filtered
+		expectedCount int64
+	}{
+		{"no_nan_rows", 227, 0, 227},
+		{"with_one_nan", 227, 1, 226},
+		{"with_multiple_nan", 231, 2, 229},
+		{"all_valid", 227, 0, 227},
 	}
 
 	// Use the standard metric sorting provider
 	keyProvider := &MetricSortKeyProvider{}
 
-	for filename, expectedCount := range expectedCounts {
-		t.Run(filename, func(t *testing.T) {
-			fullPath := fmt.Sprintf("../../testdata/metrics/compact-test-0001/%s", filename)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create test data with metric fields
+			testRows := make([]map[string]any, tc.rowCount)
+			for i := range testRows {
+				testRows[i] = map[string]any{
+					"chq_collector_id": fmt.Sprintf("collector-%d", i),
+					"chq_timestamp":    int64(1000000 + i),
+					"chq_metric_name":  "test_metric",
+					"chq_rollup_sum":   float64(i * 10),
+					"chq_rollup_count": float64(i),
+					"chq_rollup_avg":   float64(10),
+				}
 
-			// Open fresh file for the DiskSortingReader test
-			file, err := os.Open(fullPath)
-			require.NoError(t, err, "Failed to open file: %s", fullPath)
-			defer func() { _ = file.Close() }()
+				// Add NaN values to some rows to test filtering
+				if i < tc.nanRows {
+					testRows[i]["chq_rollup_sum"] = math.NaN()
+				}
+			}
 
-			stat, err := file.Stat()
-			require.NoError(t, err)
+			// Generate parquet file in memory
+			parquetData, _ := createTestParquetInMemory(t, testRows)
 
 			// Create the ParquetReader
-			parquetReader, err := NewParquetRawReader(file, stat.Size(), 1000)
-			require.NoError(t, err, "Failed to create ParquetReader for file: %s", filename)
+			parquetReader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), 1000)
+			require.NoError(t, err, "Failed to create ParquetReader")
 			defer func() { _ = parquetReader.Close() }()
 
 			// Wrap with CookedMetricTranslatingReader to handle metric-specific transformations
@@ -543,7 +607,7 @@ func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 
 			// Wrap with DiskSortingReader
 			diskSortingReader, err := NewDiskSortingReader(translatingReader, keyProvider, 1000)
-			require.NoError(t, err, "Failed to create DiskSortingReader for file: %s", filename)
+			require.NoError(t, err, "Failed to create DiskSortingReader")
 			defer func() { _ = diskSortingReader.Close() }()
 
 			var totalRows int64
@@ -568,43 +632,48 @@ func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 				if errors.Is(err, io.EOF) {
 					break
 				}
-				require.NoError(t, err, "DiskSortingReader error in file %s", filename)
+				require.NoError(t, err, "DiskSortingReader error in test %s", tc.name)
 			}
 
-			assert.Equal(t, expectedCount, totalRows, "DiskSortingReader should preserve all %d records from %s", expectedCount, filename)
-			assert.Equal(t, totalRows, diskSortingReader.TotalRowsReturned(), "DiskSortingReader TotalRowsReturned should match for file %s", filename)
+			assert.Equal(t, tc.expectedCount, totalRows, "DiskSortingReader should preserve all %d records from %s", tc.expectedCount, tc.name)
+			assert.Equal(t, totalRows, diskSortingReader.TotalRowsReturned(), "DiskSortingReader TotalRowsReturned should match for %s", tc.name)
 
-			t.Logf("File %s: DiskSortingReader successfully read %d records in %d batches", filename, totalRows, batchCount)
+			t.Logf("Test %s: DiskSortingReader successfully read %d records in %d batches (filtered %d NaN rows)", tc.name, totalRows, batchCount, tc.nanRows)
 		})
 	}
 }
 
-// TestParquetRawReaderSmallFiles tests the NewParquetRawReader with small files from seglog-990
+// TestParquetRawReaderSmallFiles tests the NewParquetRawReader with different file sizes
 func TestParquetRawReaderSmallFiles(t *testing.T) {
-	// Test the small files directly with NewParquetRawReader
-	testFiles := []struct {
-		filename        string
+	// Test files with different record counts
+	testCases := []struct {
+		name            string
 		expectedRecords int
 	}{
-		{"tbl_301228791710090615.parquet", 480},
-		{"tbl_301228792783832948.parquet", 456},
-		{"tbl_301228792733501300.parquet", 1414}, // A larger file for comparison
+		{"small_480", 480},
+		{"medium_456", 456},
+		{"large_1414", 1414},
 	}
 
 	ctx := context.Background()
 
-	for _, testFile := range testFiles {
-		t.Run(testFile.filename, func(t *testing.T) {
-			filePath := fmt.Sprintf("../../testdata/metrics/seglog-990/source/%s", testFile.filename)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Generate test data
+			testRows := make([]map[string]any, tc.expectedRecords)
+			for i := range testRows {
+				testRows[i] = map[string]any{
+					"chq_collector_id": fmt.Sprintf("collector-%d", i),
+					"chq_timestamp":    int64(1000000 + i),
+					"chq_metric_name":  "test_metric",
+					"chq_rollup_sum":   float64(i * 10),
+				}
+			}
 
-			file, err := os.Open(filePath)
-			require.NoError(t, err, "Should open parquet file")
-			defer func() { _ = file.Close() }()
+			// Generate parquet file in memory
+			parquetData, _ := createTestParquetInMemory(t, testRows)
 
-			stat, err := file.Stat()
-			require.NoError(t, err, "Should stat parquet file")
-
-			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
+			reader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), 1000)
 			require.NoError(t, err, "Should create NewParquetRawReader")
 			defer func() { _ = reader.Close() }()
 
@@ -613,29 +682,29 @@ func TestParquetRawReaderSmallFiles(t *testing.T) {
 				batch, err := reader.Next(ctx)
 				if err != nil {
 					if errors.Is(err, io.EOF) {
-						t.Logf("File %s: Got EOF after reading %d records", testFile.filename, recordCount)
+						t.Logf("Test %s: Got EOF after reading %d records", tc.name, recordCount)
 						break
 					}
 					require.NoError(t, err, "Next should not fail")
 				}
 
 				if batch == nil {
-					t.Logf("File %s: Got nil batch after reading %d records", testFile.filename, recordCount)
+					t.Logf("Test %s: Got nil batch after reading %d records", tc.name, recordCount)
 					break
 				}
 
 				batchSize := batch.Len()
 				recordCount += batchSize
-				t.Logf("File %s: Read batch of %d records (total: %d)", testFile.filename, batchSize, recordCount)
+				t.Logf("Test %s: Read batch of %d records (total: %d)", tc.name, batchSize, recordCount)
 
 				if batchSize == 0 {
-					t.Logf("File %s: Got empty batch, stopping", testFile.filename)
+					t.Logf("Test %s: Got empty batch, stopping", tc.name)
 					break
 				}
 			}
 
-			t.Logf("File %s: Final count %d, expected %d", testFile.filename, recordCount, testFile.expectedRecords)
-			require.Equal(t, testFile.expectedRecords, recordCount, "Should read correct number of records from %s", testFile.filename)
+			t.Logf("Test %s: Final count %d, expected %d", tc.name, recordCount, tc.expectedRecords)
+			require.Equal(t, tc.expectedRecords, recordCount, "Should read correct number of records from %s", tc.name)
 		})
 	}
 }
