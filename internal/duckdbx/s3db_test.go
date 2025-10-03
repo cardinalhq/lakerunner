@@ -159,7 +159,7 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 	}()
 
 	// Get first connection and create a secret (using a test bucket)
-	conn1, release1, err := s3db.GetConnectionForBucket(ctx, "test-bucket-1", "", "")
+	conn1, release1, err := s3db.GetConnectionForBucket(ctx, "test-bucket-1", "", "", "aws")
 	require.NoError(t, err)
 	defer release1()
 
@@ -181,7 +181,7 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 	require.True(t, found1, "secret should exist in first connection")
 
 	// Get second connection for a different bucket
-	conn2, release2, err := s3db.GetConnectionForBucket(ctx, "test-bucket-2", "", "")
+	conn2, release2, err := s3db.GetConnectionForBucket(ctx, "test-bucket-2", "", "", "aws")
 	require.NoError(t, err)
 	defer release2()
 
@@ -205,7 +205,7 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 
 	// Now get a third connection back to the first bucket
 	// It should reuse the existing secret (CREATE OR REPLACE)
-	conn3, release3, err := s3db.GetConnectionForBucket(ctx, "test-bucket-1", "", "")
+	conn3, release3, err := s3db.GetConnectionForBucket(ctx, "test-bucket-1", "", "", "aws")
 	require.NoError(t, err)
 	defer release3()
 
@@ -610,7 +610,7 @@ func TestPooledConnectionReuseAcrossBuckets(t *testing.T) {
 	}()
 
 	// Get connection for bucket 1
-	conn1, release1, err := s3db.GetConnectionForBucket(ctx, "bucket-one", "us-east-1", "")
+	conn1, release1, err := s3db.GetConnectionForBucket(ctx, "bucket-one", "us-east-1", "", "aws")
 	require.NoError(t, err)
 
 	// Verify secret was created for bucket-one
@@ -631,7 +631,7 @@ func TestPooledConnectionReuseAcrossBuckets(t *testing.T) {
 	release1()
 
 	// Get connection for a different bucket (should reuse the same connection)
-	conn2, release2, err := s3db.GetConnectionForBucket(ctx, "bucket-two", "eu-west-1", "")
+	conn2, release2, err := s3db.GetConnectionForBucket(ctx, "bucket-two", "eu-west-1", "", "aws")
 	require.NoError(t, err)
 	defer release2()
 
