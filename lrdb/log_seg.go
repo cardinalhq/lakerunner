@@ -42,4 +42,5 @@ type CompactLogSegsNew struct {
 	RecordCount  int64
 	FileSize     int64
 	Fingerprints []int64
+	LabelNameMap []byte
 }

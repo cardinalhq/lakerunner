@@ -125,6 +125,7 @@ func (q *Store) CompactLogSegments(
 					Fingerprints:   r.Fingerprints,
 					Published:      true,
 					Compacted:      true,
+					LabelNameMap:   r.LabelNameMap,
 				}
 			}
 
