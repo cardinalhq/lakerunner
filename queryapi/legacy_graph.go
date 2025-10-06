@@ -119,7 +119,13 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 
 			// For logs, we use promql.Exemplar which has Timestamp and Tags
 			// The Value field is always 1.0 for log events (indicating presence)
-			event := ToLegacySSEEvent(exprID, segmentID, ts.GetTimestamp(), 1.0, ts.(promql.Exemplar).Tags, denormalizer)
+			exemplar, ok := ts.(promql.Exemplar)
+			if !ok {
+				slog.Error("unexpected type in resultsCh; expected promql.Exemplar",
+					slog.String("exprID", exprID))
+				continue
+			}
+			event := ToLegacySSEEvent(exprID, segmentID, ts.GetTimestamp(), 1.0, exemplar.Tags, denormalizer)
 
 			if err := writeSSE("event", event); err != nil {
 				slog.Error("failed to write SSE event", slog.String("error", err.Error()))
