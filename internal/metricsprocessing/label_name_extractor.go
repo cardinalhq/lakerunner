@@ -75,9 +75,11 @@ func extractLabelNameMap(parquetFile string) ([]byte, error) {
 	return nil, nil
 }
 
-// isLabelColumn determines if a column is a label/tag column that should be mapped.
+// isLabelColumn determines if a column should be included in the label name mapping.
+// This includes both user-facing labels (like resource.* and log.*) and internal fields
+// (like _cardinalhq.*) that need translation for legacy API compatibility.
 func isLabelColumn(columnName string) bool {
-	// Known label prefixes
+	// All columns with these prefixes need mapping for legacy API compatibility
 	labelPrefixes := []string{
 		"_cardinalhq_",
 		"resource_",
@@ -85,26 +87,11 @@ func isLabelColumn(columnName string) bool {
 		"metric_",
 		"span_",
 		"trace_",
+		"attr_",
 	}
 
 	for _, prefix := range labelPrefixes {
 		if strings.HasPrefix(columnName, prefix) {
-			return true
-		}
-	}
-
-	// Skip known non-label columns
-	nonLabelColumns := []string{
-		"_cardinalhq_timestamp",
-		"_cardinalhq_message",
-		"_cardinalhq_fingerprint",
-		"_cardinalhq_trace_id",
-		"_cardinalhq_span_id",
-	}
-
-	for _, nonLabel := range nonLabelColumns {
-		if columnName == nonLabel {
-			// These are values, not labels, but they still need mapping
 			return true
 		}
 	}
@@ -114,6 +101,13 @@ func isLabelColumn(columnName string) bool {
 
 // underscoreToDotted converts an underscored name to a dotted name.
 func underscoreToDotted(underscored string) string {
+	// Handle attr_ prefix: strip it first, then convert the rest
+	// For legacy API compatibility: attr_log_level → log.level, attr_log_source → log.source
+	if strings.HasPrefix(underscored, "attr_") {
+		rest := underscored[len("attr_"):]
+		return underscoreToDotted(rest) // Recursively handle the rest
+	}
+
 	// Known prefixes that should be converted
 	prefixes := []string{"_cardinalhq_", "resource_", "log_", "metric_", "span_", "trace_"}
 
