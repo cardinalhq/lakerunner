@@ -101,6 +101,31 @@ func TestLabelDenormalizer_DenormalizeMap(t *testing.T) {
 	assert.Equal(t, expected, result)
 }
 
+func TestLabelDenormalizer_AttrTranslation(t *testing.T) {
+	// Test that attr_ prefixed fields are translated correctly for legacy API
+	denormalizer := NewLabelDenormalizer(nil)
+
+	tags := map[string]any{
+		"resource_service_name": "my-service",
+		"attr_log_level":        "error",
+		"attr_log_source":       "test-component",
+		"log_message":           "Test message",
+		"attr_custom_field":     "value",
+	}
+
+	result := denormalizer.DenormalizeMap(0, tags)
+
+	expected := map[string]any{
+		"resource.service.name": "my-service",
+		"log.level":             "error",          // attr_ stripped
+		"log.source":            "test-component", // attr_ stripped
+		"log.message":           "Test message",
+		"custom_field":          "value", // attr_ stripped, no known prefix
+	}
+
+	assert.Equal(t, expected, result)
+}
+
 func TestHeuristicDenormalize(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -114,6 +139,10 @@ func TestHeuristicDenormalize(t *testing.T) {
 		{"trace_id", "trace.id"},
 		{"unknown_field", "unknown_field"}, // No known prefix
 		{"no_prefix", "no_prefix"},         // No known prefix
+		// attr_ prefix should be stripped for legacy API compatibility
+		{"attr_log_level", "log.level"},
+		{"attr_log_source", "log.source"},
+		{"attr_custom_field", "custom_field"}, // attr_ stripped, no known prefix after so kept as-is
 	}
 
 	for _, tt := range tests {

@@ -69,6 +69,14 @@ func heuristicDenormalize(underscored string) string {
 		return "_cardinalhq." + strings.ReplaceAll(rest, "_", ".")
 	}
 
+	// Handle attr_ prefix: strip it and denormalize the rest
+	// For legacy API compatibility: attr_log_level → log.level, attr_log_source → log.source
+	if strings.HasPrefix(underscored, "attr_") {
+		rest := underscored[len("attr_"):]
+		// Recursively denormalize the rest
+		return heuristicDenormalize(rest)
+	}
+
 	// Known prefixes that should have dots
 	prefixes := []string{"resource_", "log_", "metric_", "span_", "trace_"}
 
