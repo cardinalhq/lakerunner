@@ -40,11 +40,11 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&adminAPIKey, "api-key", "", "Admin API key (or set ADMIN_API_KEY)")
+	rootCmd.PersistentFlags().StringVar(&adminAPIKey, "api-key", "", "Admin API key (or set LAKERUNNER_ADMIN_API_KEY)")
 
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		if adminAPIKey == "" {
-			adminAPIKey = os.Getenv("ADMIN_API_KEY")
+			adminAPIKey = os.Getenv("LAKERUNNER_ADMIN_API_KEY")
 		}
 		organizations.SetAPIKey(adminAPIKey)
 		kafka.SetAPIKey(adminAPIKey)
