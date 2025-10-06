@@ -158,8 +158,9 @@ func escapeLogQLValue(s string) string {
 }
 
 // escapeRegexValue escapes regex special characters for use in LogQL regex.
+var regexEscapePattern = regexp.MustCompile(`([.+*?()\[\]{}^$|\\])`)
+
 func escapeRegexValue(s string) string {
 	// Escape regex special characters
-	re := regexp.MustCompile(`([.+*?()\[\]{}^$|\\])`)
-	return re.ReplaceAllString(s, `\$1`)
+	return regexEscapePattern.ReplaceAllString(s, `\$1`)
 }
