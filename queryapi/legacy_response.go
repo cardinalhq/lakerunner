@@ -46,6 +46,9 @@ func ToLegacySSEEvent(
 ) LegacyEvent {
 	dottedTags := denormalizer.DenormalizeMap(segmentID, tags)
 
+	// Add timestamp to tags for legacy API compatibility
+	dottedTags["_cardinalhq.timestamp"] = timestamp
+
 	return LegacyEvent{
 		ID:   queryID,
 		Type: "event",

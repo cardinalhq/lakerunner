@@ -125,8 +125,8 @@ func TestLabelDenormalizer_AttrTranslation(t *testing.T) {
 		"resource.service.name": "my-service",
 		"log.level":             "error",          // attr_ stripped
 		"log.source":            "test-component", // attr_ stripped
-		"log.message":           "Test message",
-		"custom_field":          "value", // attr_ stripped, no known prefix
+		"_cardinalhq.message":   "Test message",   // log_message -> _cardinalhq.message
+		"custom_field":          "value",          // attr_ stripped, no known prefix
 	}
 
 	assert.Equal(t, expected, result)
@@ -140,6 +140,7 @@ func TestHeuristicDenormalize(t *testing.T) {
 		{"resource_service_name", "resource.service.name"},
 		{"_cardinalhq_timestamp", "_cardinalhq.timestamp"},
 		{"log_body", "log.body"},
+		{"log_message", "_cardinalhq.message"}, // Special case: log_message -> _cardinalhq.message
 		{"metric_value", "metric.value"},
 		{"span_name", "span.name"},
 		{"trace_id", "trace.id"},

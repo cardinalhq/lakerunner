@@ -84,6 +84,11 @@ func heuristicDenormalize(underscored string) string {
 		return heuristicDenormalize(rest)
 	}
 
+	// Special case: log_message should map to _cardinalhq.message for legacy API
+	if underscored == "log_message" {
+		return "_cardinalhq.message"
+	}
+
 	// Known prefixes that should have dots
 	prefixes := []string{"resource_", "log_", "metric_", "span_", "trace_"}
 
