@@ -58,7 +58,7 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 
 	// Use a query that matches logs with any fingerprint (always exists)
 	// This avoids the empty matcher validation error
-	logqlQuery := "{_cardinalhq_fingerprint=~\".+\"}"
+	logqlQuery := "{chq_fingerprint=~\".+\"}"
 
 	// Parse and compile LogQL
 	logAst, err := logql.FromLogQL(logqlQuery)
