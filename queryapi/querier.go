@@ -550,7 +550,7 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 
 	// Legacy Scala API compatibility endpoints
 	mux.HandleFunc("/api/v1/graph", q.apiKeyMiddleware(q.handleGraphQuery))
-	mux.HandleFunc("POST /api/v1/tags/{dataset}", q.apiKeyMiddleware(q.handleTagsQuery))
+	mux.HandleFunc("/api/v1/tags/logs", q.apiKeyMiddleware(q.handleTagsQuery))
 
 	mux.HandleFunc("/api/v1/spans/tags", q.apiKeyMiddleware(q.handleListSpanTags))
 	mux.HandleFunc("/api/v1/spans/tagvalues", q.apiKeyMiddleware(q.handleGetSpanTagValues))

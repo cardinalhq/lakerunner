@@ -20,25 +20,14 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gorilla/mux"
-
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 )
 
-// handleTagsQuery handles the legacy /api/v1/tags/{dataset} endpoint.
+// handleTagsQuery handles the legacy /api/v1/tags/logs endpoint.
 // This endpoint returns unique tag names (if tagName not provided) or unique tag values (if tagName provided).
 func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request) {
-	// Get dataset from path
-	vars := mux.Vars(r)
-	dataset := vars["dataset"]
-
-	if dataset != "logs" {
-		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "only logs dataset supported")
-		return
-	}
-
 	// Get org from context
 	orgID, ok := GetOrgIDFromContext(r.Context())
 	if !ok {
@@ -92,7 +81,6 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 	}
 
 	slog.Debug("Tags query",
-		slog.String("dataset", dataset),
 		slog.String("tagName", tagName),
 		slog.String("logql", logqlQuery),
 		slog.Int64("limit", limit))
