@@ -16,9 +16,12 @@ package queryapi
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
@@ -38,30 +41,44 @@ func GetOrgIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	return orgID, ok
 }
 
-// apiKeyMiddleware validates the API key from various sources and adds orgId to context.
+// apiKeyMiddleware validates the API key or JWT token from various sources and adds orgId to context.
 // Checks in order:
 // 1. x-cardinalhq-api-key header
 // 2. Api-Key header (for legacy Scala compatibility)
 // 3. api_key cookie (for legacy Scala compatibility)
+// 4. cardinal_token cookie with JWT (for legacy Scala compatibility)
 func (q *QuerierService) apiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var orgID *uuid.UUID
+		var err error
+
+		// Try API key authentication first
 		apiKey := extractAPIKey(r)
-		if apiKey == "" {
-			http.Error(w, "missing API key (provide via x-cardinalhq-api-key or Api-Key header, or api_key cookie)", http.StatusUnauthorized)
-			return
-		}
+		if apiKey != "" {
+			orgID, err = q.apiKeyProvider.ValidateAPIKey(r.Context(), apiKey)
+			if err != nil {
+				slog.Error("API key validation failed", "error", err)
+				http.Error(w, "invalid API key", http.StatusUnauthorized)
+				return
+			}
 
-		// Validate API key and get organization ID
-		orgID, err := q.apiKeyProvider.ValidateAPIKey(r.Context(), apiKey)
-		if err != nil {
-			slog.Error("API key validation failed", "error", err)
-			http.Error(w, "invalid API key", http.StatusUnauthorized)
-			return
-		}
+			if orgID == nil {
+				http.Error(w, "invalid API key", http.StatusUnauthorized)
+				return
+			}
+		} else {
+			// Try JWT token authentication
+			orgID, err = extractOrgIDFromJWT(r)
+			if err != nil {
+				slog.Error("JWT validation failed", "error", err)
+				http.Error(w, "authentication required (provide API key or valid JWT token)", http.StatusUnauthorized)
+				return
+			}
 
-		if orgID == nil {
-			http.Error(w, "invalid API key", http.StatusUnauthorized)
-			return
+			if orgID == nil {
+				http.Error(w, "authentication required (provide API key or valid JWT token)", http.StatusUnauthorized)
+				return
+			}
 		}
 
 		// Add organization ID to context
@@ -92,4 +109,70 @@ func extractAPIKey(r *http.Request) string {
 	}
 
 	return ""
+}
+
+// extractOrgIDFromJWT validates a JWT token from the cardinal_token cookie and extracts the org_id.
+// Returns the organization ID if the token is valid, or an error if validation fails.
+func extractOrgIDFromJWT(r *http.Request) (*uuid.UUID, error) {
+	// Get cardinal_token cookie
+	cookie, err := r.Cookie("cardinal_token")
+	if err != nil {
+		return nil, fmt.Errorf("no cardinal_token cookie found")
+	}
+
+	tokenString := cookie.Value
+	if tokenString == "" {
+		return nil, fmt.Errorf("empty cardinal_token cookie")
+	}
+
+	// Get the secret key from environment
+	secretKey := os.Getenv("TOKEN_HMAC256_KEY")
+	if secretKey == "" {
+		// If the secret key is not configured, JWT authentication is not available
+		// This is not an error - just means JWT auth isn't configured
+		return nil, fmt.Errorf("JWT authentication not configured")
+	}
+
+	// Parse and validate the JWT token
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		// Verify the signing method is HMAC
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(secretKey), nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse JWT: %w", err)
+	}
+
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid JWT token")
+	}
+
+	// Extract claims
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("failed to extract JWT claims")
+	}
+
+	// Verify issuer
+	issuer, ok := claims["iss"].(string)
+	if !ok || issuer != "cardinalhq.io" {
+		return nil, fmt.Errorf("invalid JWT issuer")
+	}
+
+	// Extract org_id claim
+	orgIDStr, ok := claims["org_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("missing org_id claim in JWT")
+	}
+
+	// Parse org_id as UUID
+	orgID, err := uuid.Parse(orgIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid org_id format: %w", err)
+	}
+
+	return &orgID, nil
 }
