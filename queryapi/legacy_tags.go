@@ -19,10 +19,14 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+
+	"github.com/cardinalhq/lakerunner/logql"
+	"github.com/cardinalhq/lakerunner/promql"
+	"github.com/cardinalhq/oteltools/pkg/dateutils"
 )
 
 // handleTagsQuery handles the legacy /api/v1/tags/logs endpoint.
-// This endpoint returns unique tag names available for querying.
+// This endpoint returns sample log records to discover available tag names.
 func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request) {
 	// Get org from context
 	orgID, ok := GetOrgIDFromContext(r.Context())
@@ -32,17 +36,42 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Parse query parameters
-	tagName := r.URL.Query().Get("tagName")
-	limit := int64(1000) // Default limit
+	limit := int64(100) // Default limit for tag discovery
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if parsedLimit, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
 			limit = parsedLimit
 		}
 	}
 
+	s := r.URL.Query().Get("s")
+	e := r.URL.Query().Get("e")
+	startTs, endTs, err := dateutils.ToStartEnd(s, e)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid time range: "+err.Error())
+		return
+	}
+
 	slog.Debug("Tags query",
-		slog.String("tagName", tagName),
+		slog.Int64("startTs", startTs),
+		slog.Int64("endTs", endTs),
 		slog.Int64("limit", limit))
+
+	// Use a query that matches logs with any fingerprint (always exists)
+	// This avoids the empty matcher validation error
+	logqlQuery := "{_cardinalhq_fingerprint=~\".+\"}"
+
+	// Parse and compile LogQL
+	logAst, err := logql.FromLogQL(logqlQuery)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid LogQL: "+err.Error())
+		return
+	}
+
+	lplan, err := logql.CompileLog(logAst)
+	if err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, ErrCompileError, "compilation error: "+err.Error())
+		return
+	}
 
 	// Setup SSE
 	writeSSE, ok := q.sseWriter(w)
@@ -50,39 +79,60 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if tagName != "" {
-		// If tagName is specified, this is a tag values query - not supported in this simplified endpoint
-		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "tag values query not supported, only tag names")
-		return
-	}
-
-	// Query database for available tag names
-	tags, err := q.mdb.ListLogQLTags(r.Context(), orgID)
+	// Execute query to get sample logs
+	resultsCh, err := q.EvaluateLogsQuery(
+		r.Context(),
+		orgID,
+		startTs,
+		endTs,
+		false, // not reversed
+		int(limit),
+		lplan,
+		nil, // fields
+	)
 	if err != nil {
-		slog.Error("ListLogQLTags failed", "org", orgID, "error", err)
-		writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "failed to list tags: "+err.Error())
+		writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "query execution failed: "+err.Error())
 		return
 	}
 
-	// Denormalize tag names (underscore to dotted format)
-	denormalizer := NewLabelDenormalizer(nil) // No segment-specific maps needed for tag names
-	count := int64(0)
+	// Pre-load label maps for denormalization
+	labelMaps, err := q.loadLabelMapsForTimeRange(r.Context(), orgID, startTs, endTs, lplan)
+	if err != nil {
+		slog.Warn("failed to load label name maps for tags query",
+			slog.String("error", err.Error()))
+	}
+	denormalizer := NewLabelDenormalizer(labelMaps)
 
-	for _, tag := range tags {
-		if count >= limit {
-			break
+	// Stream sample log records
+	for ts := range resultsCh {
+		exemplar, ok := ts.(promql.Exemplar)
+		if !ok {
+			continue
 		}
 
-		// Denormalize the tag name
-		denormalized := denormalizer.Denormalize(0, tag)
+		// Extract segment_id for proper denormalization
+		segmentID := int64(0)
+		if sid, ok := exemplar.Tags["_segment_id"]; ok {
+			if sidInt, ok := sid.(int64); ok {
+				segmentID = sidInt
+			}
+		}
 
-		payload := map[string]string{"tag": denormalized}
-		jsonBytes, _ := json.Marshal(payload)
-		if err := writeSSE("tag", string(jsonBytes)); err != nil {
+		// Denormalize tag names
+		denormalizedTags := denormalizer.DenormalizeMap(segmentID, exemplar.Tags)
+
+		// Format as legacy response
+		event := map[string]interface{}{
+			"id":      "_",
+			"type":    "data",
+			"message": denormalizedTags,
+		}
+
+		jsonBytes, _ := json.Marshal(event)
+		if err := writeSSE("data", string(jsonBytes)); err != nil {
 			slog.Error("failed to write SSE event", slog.String("error", err.Error()))
 			return
 		}
-		count++
 	}
 
 	// Send done event
