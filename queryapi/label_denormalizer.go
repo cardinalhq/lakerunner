@@ -78,7 +78,7 @@ func heuristicDenormalize(underscored string) string {
 	}
 
 	// Known prefixes that should have dots
-	prefixes := []string{"resource_", "log_", "metric_", "span_", "trace_"}
+	prefixes := []string{"resource_", "log_", "metric_", "span_", "trace_", "chq_"}
 
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(underscored, prefix) {

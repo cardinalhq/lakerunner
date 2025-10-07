@@ -67,6 +67,12 @@ func TestLabelDenormalizer_HeuristicConversion(t *testing.T) {
 	result = denormalizer.Denormalize(999, "log_custom_attribute")
 	assert.Equal(t, "log.custom.attribute", result)
 
+	result = denormalizer.Denormalize(999, "chq_fingerprint")
+	assert.Equal(t, "chq.fingerprint", result)
+
+	result = denormalizer.Denormalize(999, "chq_telemetry_type")
+	assert.Equal(t, "chq.telemetry.type", result)
+
 	// Unknown prefix should be kept as-is
 	result = denormalizer.Denormalize(999, "unknown_prefix_label")
 	assert.Equal(t, "unknown_prefix_label", result)
