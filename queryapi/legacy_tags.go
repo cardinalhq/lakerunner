@@ -15,7 +15,6 @@
 package queryapi
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -128,8 +127,7 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 			"message": denormalizedTags,
 		}
 
-		jsonBytes, _ := json.Marshal(event)
-		if err := writeSSE("data", string(jsonBytes)); err != nil {
+		if err := writeSSE("data", event); err != nil {
 			slog.Error("failed to write SSE event", slog.String("error", err.Error()))
 			return
 		}
