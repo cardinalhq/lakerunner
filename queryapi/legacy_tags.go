@@ -15,6 +15,8 @@
 package queryapi
 
 import (
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -72,11 +74,15 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Setup SSE
-	writeSSE, ok := q.sseWriter(w)
+	// Setup SSE manually (without the envelope wrapper)
+	flusher, ok := w.(http.Flusher)
 	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
 
 	// Execute query to get sample logs
 	resultsCh, err := q.EvaluateLogsQuery(
@@ -127,13 +133,22 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 			"message": denormalizedTags,
 		}
 
-		if err := writeSSE("data", event); err != nil {
+		// Write SSE event directly
+		jsonData, err := json.Marshal(event)
+		if err != nil {
+			slog.Error("failed to marshal event", slog.String("error", err.Error()))
+			return
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", jsonData); err != nil {
 			slog.Error("failed to write SSE event", slog.String("error", err.Error()))
 			return
 		}
+		flusher.Flush()
 	}
 
 	// Send done event
 	doneEvent := NewLegacyDoneEvent("tags", "ok")
-	_ = writeSSE("done", doneEvent.Message)
+	jsonData, _ := json.Marshal(doneEvent)
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", jsonData)
+	flusher.Flush()
 }
