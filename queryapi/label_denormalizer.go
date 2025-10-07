@@ -69,6 +69,13 @@ func heuristicDenormalize(underscored string) string {
 		return "_cardinalhq." + strings.ReplaceAll(rest, "_", ".")
 	}
 
+	// Handle chq_ prefix: convert to _cardinalhq. for legacy API compatibility
+	// chq_fingerprint → _cardinalhq.fingerprint, chq_level → _cardinalhq.level
+	if strings.HasPrefix(underscored, "chq_") {
+		rest := underscored[len("chq_"):]
+		return "_cardinalhq." + strings.ReplaceAll(rest, "_", ".")
+	}
+
 	// Handle attr_ prefix: strip it and denormalize the rest
 	// For legacy API compatibility: attr_log_level → log.level, attr_log_source → log.source
 	if strings.HasPrefix(underscored, "attr_") {
@@ -78,7 +85,7 @@ func heuristicDenormalize(underscored string) string {
 	}
 
 	// Known prefixes that should have dots
-	prefixes := []string{"resource_", "log_", "metric_", "span_", "trace_", "chq_"}
+	prefixes := []string{"resource_", "log_", "metric_", "span_", "trace_"}
 
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(underscored, prefix) {
