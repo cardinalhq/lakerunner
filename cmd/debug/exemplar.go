@@ -30,7 +30,11 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -147,6 +151,9 @@ func runExemplarFromParquet(ctx context.Context, bucket string, fileCount int, s
 	// Create exemplar processor
 	exemplarProcessor := createExemplarProcessor()
 
+	// Create fingerprint tenant manager
+	fingerprintTenantManager := fingerprint.NewTenantManager(0.5)
+
 	// Create temp directory for downloads
 	tempDir, err := os.MkdirTemp("", "exemplar-debug-*")
 	if err != nil {
@@ -211,7 +218,7 @@ func runExemplarFromParquet(ctx context.Context, bucket string, fileCount int, s
 			file.Bucket, file.ObjectID, fileSignalType.String())
 
 		if err := processFile(ctx, cloudManagers, profileProvider, exemplarProcessor,
-			orgID, file.Bucket, file.ObjectID, tempDir, fileSignalType); err != nil {
+			fingerprintTenantManager, orgID, file.Bucket, file.ObjectID, tempDir, fileSignalType); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to process file %s/%s: %v\n",
 				file.Bucket, file.ObjectID, err)
 			continue
@@ -274,6 +281,7 @@ func printExemplars(telemetryType string, rows []pipeline.Row) error {
 func processFile(ctx context.Context, cloudManagers cloudstorage.ClientProvider,
 	profileProvider storageprofile.StorageProfileProvider,
 	exemplarProcessor *exemplars.Processor,
+	fingerprintTenantManager *fingerprint.TenantManager,
 	orgID uuid.UUID, bucket, objectID, tempDir string, signalType filereader.SignalType) error {
 
 	// Get storage profiles for this bucket - we just need credentials to download
@@ -302,8 +310,8 @@ func processFile(ctx context.Context, cloudManagers cloudstorage.ClientProvider,
 	}
 	defer func() { _ = os.Remove(tmpFile) }()
 
-	// Process the file
-	reader, err := filereader.ReaderForFile(tmpFile, signalType, orgID.String(), exemplarProcessor)
+	// Create reader stack matching production ingestion
+	reader, err := createReaderStack(tmpFile, orgID.String(), bucket, objectID, signalType, fingerprintTenantManager)
 	if err != nil {
 		return fmt.Errorf("failed to create reader: %w", err)
 	}
@@ -326,6 +334,19 @@ func processFile(ctx context.Context, cloudManagers cloudstorage.ClientProvider,
 		// Process rows through exemplar processor
 		for i := range batch.Len() {
 			row := batch.Get(i)
+
+			// Add fingerprint for logs (matching production)
+			if signalType == filereader.SignalTypeLogs {
+				if message, ok := row[wkk.RowKeyCMessage].(string); ok && message != "" {
+					tenant := fingerprintTenantManager.GetTenant(orgID.String())
+					trieClusterManager := tenant.GetTrieClusterManager()
+					fp, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
+					if err == nil {
+						row[wkk.RowKeyCFingerprint] = fp
+					}
+				}
+			}
+
 			switch signalType {
 			case filereader.SignalTypeLogs:
 				if err := exemplarProcessor.ProcessLogsFromRow(ctx, orgID, row); err != nil {
@@ -341,9 +362,54 @@ func processFile(ctx context.Context, cloudManagers cloudstorage.ClientProvider,
 				}
 			}
 		}
+		pipeline.ReturnBatch(batch)
 	}
 
 	return nil
+}
+
+// createReaderStack creates a reader stack matching production ingestion
+func createReaderStack(tmpFilename, orgID, bucket, objectID string, signalType filereader.SignalType, fingerprintTenantManager *fingerprint.TenantManager) (filereader.Reader, error) {
+	// Create base reader
+	options := filereader.ReaderOptions{
+		SignalType: signalType,
+		BatchSize:  1000,
+		OrgID:      orgID,
+	}
+	reader, err := filereader.ReaderForFileWithOptions(tmpFilename, options)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create base reader: %w", err)
+	}
+
+	// Wrap with translator to add resource_* fields
+	var translator filereader.RowTranslator
+	switch signalType {
+	case filereader.SignalTypeLogs:
+		if strings.HasSuffix(tmpFilename, ".parquet") {
+			translator = metricsprocessing.NewParquetLogTranslator(orgID, bucket, objectID)
+		} else {
+			translator = metricsprocessing.NewLogTranslator(orgID, bucket, objectID, fingerprintTenantManager)
+		}
+	case filereader.SignalTypeMetrics:
+		translator = &metricsprocessing.MetricTranslator{
+			OrgID:    orgID,
+			Bucket:   bucket,
+			ObjectID: objectID,
+		}
+	case filereader.SignalTypeTraces:
+		translator = metricsprocessing.NewTraceTranslator(orgID, bucket, objectID)
+	default:
+		_ = reader.Close()
+		return nil, fmt.Errorf("unsupported signal type: %v", signalType)
+	}
+
+	translatedReader, err := filereader.NewTranslatingReader(reader, translator, 1000)
+	if err != nil {
+		_ = reader.Close()
+		return nil, fmt.Errorf("failed to create translating reader: %w", err)
+	}
+
+	return translatedReader, nil
 }
 
 func parseOtelRawPath(objectID string) (uuid.UUID, string, error) {
