@@ -44,6 +44,44 @@ func (q *Queries) PubSubMessageHistoryCount(ctx context.Context) (int64, error) 
 	return total_count, err
 }
 
+const pubSubMessageHistoryGetRecentForBucket = `-- name: PubSubMessageHistoryGetRecentForBucket :many
+SELECT bucket, object_id, source, received_at
+FROM pubsub_message_history
+WHERE bucket = $1
+ORDER BY received_at DESC
+LIMIT $2
+`
+
+type PubSubMessageHistoryGetRecentForBucketParams struct {
+	Bucket     string `json:"bucket"`
+	LimitCount int32  `json:"limit_count"`
+}
+
+func (q *Queries) PubSubMessageHistoryGetRecentForBucket(ctx context.Context, arg PubSubMessageHistoryGetRecentForBucketParams) ([]PubsubMessageHistory, error) {
+	rows, err := q.db.Query(ctx, pubSubMessageHistoryGetRecentForBucket, arg.Bucket, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PubsubMessageHistory
+	for rows.Next() {
+		var i PubsubMessageHistory
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.ObjectID,
+			&i.Source,
+			&i.ReceivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pubSubMessageHistoryInsert = `-- name: PubSubMessageHistoryInsert :execresult
 INSERT INTO pubsub_message_history (
     bucket, object_id, source

@@ -19,3 +19,10 @@ WHERE (bucket, object_id, source) IN (
 SELECT COUNT(*) as total_count
 FROM pubsub_message_history;
 
+-- name: PubSubMessageHistoryGetRecentForBucket :many
+SELECT bucket, object_id, source, received_at
+FROM pubsub_message_history
+WHERE bucket = @bucket
+ORDER BY received_at DESC
+LIMIT @limit_count;
+
