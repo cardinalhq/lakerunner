@@ -15,11 +15,13 @@
 package queryapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/promql"
@@ -83,6 +85,25 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+
+	// Start heartbeat to keep connection alive
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(r.Context())
+	defer cancelHeartbeat()
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		heartbeat := map[string]string{"type": "heartbeat"}
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				jsonData, _ := json.Marshal(heartbeat)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", jsonData)
+				flusher.Flush()
+			}
+		}
+	}()
 
 	// Execute query to get sample logs
 	resultsCh, err := q.EvaluateLogsQuery(

@@ -60,6 +60,22 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Start heartbeat to keep connection alive
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(r.Context())
+	defer cancelHeartbeat()
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				_ = writeSSE("heartbeat", map[string]string{})
+			}
+		}
+	}()
+
 	// Process each base expression
 	for exprID, baseExpr := range req.BaseExpressions {
 		if !baseExpr.ReturnResults {
