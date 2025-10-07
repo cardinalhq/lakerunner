@@ -145,7 +145,8 @@ func TestNormalizeLabelName(t *testing.T) {
 		expected string
 	}{
 		{"resource.service.name", "resource_service_name"},
-		{"_cardinalhq.fingerprint", "_cardinalhq_fingerprint"},
+		{"_cardinalhq.fingerprint", "chq_fingerprint"},
+		{"_cardinalhq.level", "chq_level"},
 		{"log.level", "log_level"},
 		{"no_dots_here", "no_dots_here"},
 	}
