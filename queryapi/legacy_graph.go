@@ -121,6 +121,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 		}
 
 		// Stream results
+		eventCount := 0
 		for ts := range resultsCh {
 			// For logs, we use promql.Exemplar which has Timestamp and Tags
 			// The Value field is always 1.0 for log events (indicating presence)
@@ -145,10 +146,16 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 				slog.Error("failed to write SSE event", slog.String("error", err.Error()))
 				return
 			}
+			eventCount++
 		}
+
+		slog.Info("Completed streaming events for expression",
+			slog.String("exprID", exprID),
+			slog.Int("eventCount", eventCount))
 	}
 
 	// Send done event
+	slog.Debug("Sending done event")
 	doneEvent := NewLegacyDoneEvent("query", "ok")
 	_ = writeSSE("done", doneEvent.Message)
 }
