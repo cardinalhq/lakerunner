@@ -63,36 +63,40 @@ type Config struct {
 
 // TelemetryConfig holds configuration for a specific telemetry type
 type TelemetryConfig struct {
-	Enabled        bool
-	CacheSize      int
-	Expiry         time.Duration
-	ReportInterval time.Duration
-	BatchSize      int
+	Enabled            bool
+	CacheSize          int
+	Expiry             time.Duration
+	ReportInterval     time.Duration
+	BatchSize          int
+	MaxPublishPerSweep int
 }
 
 // DefaultConfig returns a default configuration
 func DefaultConfig() Config {
 	return Config{
 		Logs: TelemetryConfig{
-			Enabled:        true,
-			CacheSize:      1000,
-			Expiry:         5 * time.Minute,
-			ReportInterval: 1 * time.Minute,
-			BatchSize:      100,
+			Enabled:            true,
+			CacheSize:          1000,
+			Expiry:             5 * time.Minute,
+			ReportInterval:     1 * time.Minute,
+			BatchSize:          100,
+			MaxPublishPerSweep: 100,
 		},
 		Metrics: TelemetryConfig{
-			Enabled:        true,
-			CacheSize:      1000,
-			Expiry:         5 * time.Minute,
-			ReportInterval: 1 * time.Minute,
-			BatchSize:      100,
+			Enabled:            true,
+			CacheSize:          1000,
+			Expiry:             5 * time.Minute,
+			ReportInterval:     1 * time.Minute,
+			BatchSize:          100,
+			MaxPublishPerSweep: 100,
 		},
 		Traces: TelemetryConfig{
-			Enabled:        true,
-			CacheSize:      1000,
-			Expiry:         5 * time.Minute,
-			ReportInterval: 1 * time.Minute,
-			BatchSize:      100,
+			Enabled:            true,
+			CacheSize:          1000,
+			Expiry:             5 * time.Minute,
+			ReportInterval:     1 * time.Minute,
+			BatchSize:          100,
+			MaxPublishPerSweep: 100,
 		},
 	}
 }
@@ -120,6 +124,7 @@ func (p *Processor) GetTenant(ctx context.Context, organizationID uuid.UUID) *Te
 			p.config.Logs.CacheSize,
 			p.config.Logs.Expiry,
 			p.config.Logs.ReportInterval,
+			p.config.Logs.MaxPublishPerSweep,
 			p.createLogsCallback(ctx, organizationID))
 	}
 
@@ -128,6 +133,7 @@ func (p *Processor) GetTenant(ctx context.Context, organizationID uuid.UUID) *Te
 			p.config.Metrics.CacheSize,
 			p.config.Metrics.Expiry,
 			p.config.Metrics.ReportInterval,
+			p.config.Metrics.MaxPublishPerSweep,
 			p.createMetricsCallback(ctx, organizationID))
 	}
 
@@ -136,6 +142,7 @@ func (p *Processor) GetTenant(ctx context.Context, organizationID uuid.UUID) *Te
 			p.config.Traces.CacheSize,
 			p.config.Traces.Expiry,
 			p.config.Traces.ReportInterval,
+			p.config.Traces.MaxPublishPerSweep,
 			p.createTracesCallback(ctx, organizationID))
 	}
 

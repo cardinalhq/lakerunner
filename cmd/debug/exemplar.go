@@ -56,6 +56,7 @@ func getExemplarFromParquetCmd() *cobra.Command {
 	var fileCount int
 	var signalType string
 	var skipSchemaCheck bool
+	var maxExemplars int
 
 	cmd := &cobra.Command{
 		Use:   "from-parquet",
@@ -64,7 +65,7 @@ func getExemplarFromParquetCmd() *cobra.Command {
 processes them through the exemplar processor, and prints exemplars to stdout as JSON lines.
 Does not create segments, only generates and outputs exemplars.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runExemplarFromParquet(cmd.Context(), bucket, fileCount, signalType, skipSchemaCheck)
+			return runExemplarFromParquet(cmd.Context(), bucket, fileCount, signalType, skipSchemaCheck, maxExemplars)
 		},
 	}
 
@@ -72,12 +73,13 @@ Does not create segments, only generates and outputs exemplars.`,
 	cmd.Flags().IntVar(&fileCount, "file-count", 100, "Number of recent files to process")
 	cmd.Flags().StringVar(&signalType, "signal-type", "", "Filter by signal type: logs, metrics, or traces")
 	cmd.Flags().BoolVar(&skipSchemaCheck, "skip-schema-check", false, "Skip database schema version check")
+	cmd.Flags().IntVar(&maxExemplars, "max-exemplars", 0, "Maximum exemplars to output per signal type (0 = unlimited)")
 	_ = cmd.MarkFlagRequired("bucket")
 
 	return cmd
 }
 
-func runExemplarFromParquet(ctx context.Context, bucket string, fileCount int, signalTypeFilter string, skipSchemaCheck bool) error {
+func runExemplarFromParquet(ctx context.Context, bucket string, fileCount int, signalTypeFilter string, skipSchemaCheck bool, maxExemplars int) error {
 	if bucket == "" {
 		return fmt.Errorf("bucket is required")
 	}
@@ -149,7 +151,7 @@ func runExemplarFromParquet(ctx context.Context, bucket string, fileCount int, s
 	fmt.Fprintf(os.Stderr, "Found %d files to process\n", len(files))
 
 	// Create exemplar processor
-	exemplarProcessor := createExemplarProcessor()
+	exemplarProcessor := createExemplarProcessor(maxExemplars)
 
 	// Create fingerprint tenant manager
 	fingerprintTenantManager := fingerprint.NewTenantManager(0.5)
@@ -236,13 +238,18 @@ func runExemplarFromParquet(ctx context.Context, bucket string, fileCount int, s
 	return nil
 }
 
-func createExemplarProcessor() *exemplars.Processor {
+func createExemplarProcessor(maxExemplars int) *exemplars.Processor {
 	config := exemplars.DefaultConfig()
 	// Set very long report interval - we'll manually flush at the end
 	// (can't be 0 or time.NewTicker will panic)
 	config.Logs.ReportInterval = 1000 * time.Hour
 	config.Metrics.ReportInterval = 1000 * time.Hour
 	config.Traces.ReportInterval = 1000 * time.Hour
+
+	// Set max exemplars (0 = unlimited)
+	config.Logs.MaxPublishPerSweep = maxExemplars
+	config.Metrics.MaxPublishPerSweep = maxExemplars
+	config.Traces.MaxPublishPerSweep = maxExemplars
 
 	processor := exemplars.NewProcessor(config)
 
