@@ -54,10 +54,33 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Setup SSE
-	writeSSE, ok := q.sseWriter(w)
+	// Setup SSE manually (without the envelope wrapper)
+	flusher, ok := w.(http.Flusher)
 	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Helper to write SSE events directly
+	writeSSE := func(data any) error {
+		jsonData, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write([]byte("data: ")); err != nil {
+			return err
+		}
+		if _, err := w.Write(jsonData); err != nil {
+			return err
+		}
+		if _, err := w.Write([]byte("\n\n")); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
 	}
 
 	// Start heartbeat to keep connection alive
@@ -66,12 +89,13 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
+		heartbeat := map[string]string{"type": "heartbeat"}
 		for {
 			select {
 			case <-heartbeatCtx.Done():
 				return
 			case <-ticker.C:
-				_ = writeSSE("heartbeat", map[string]string{})
+				_ = writeSSE(heartbeat)
 			}
 		}
 	}()
@@ -158,7 +182,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 
 			event := ToLegacySSEEvent(exprID, segmentID, ts.GetTimestamp(), 1.0, exemplar.Tags, denormalizer)
 
-			if err := writeSSE("event", event); err != nil {
+			if err := writeSSE(event); err != nil {
 				slog.Error("failed to write SSE event", slog.String("error", err.Error()))
 				return
 			}
@@ -173,7 +197,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 	// Send done event
 	slog.Debug("Sending done event")
 	doneEvent := NewLegacyDoneEvent("query", "ok")
-	_ = writeSSE("done", doneEvent.Message)
+	_ = writeSSE(doneEvent)
 }
 
 // loadLabelMapsForTimeRange loads label name maps for all segments in the query time range.
