@@ -38,12 +38,16 @@ func GetOrgIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	return orgID, ok
 }
 
-// apiKeyMiddleware validates the x-cardinalhq-api-key header and adds orgId to context
+// apiKeyMiddleware validates the API key from various sources and adds orgId to context.
+// Checks in order:
+// 1. x-cardinalhq-api-key header
+// 2. Api-Key header (for legacy Scala compatibility)
+// 3. api_key cookie (for legacy Scala compatibility)
 func (q *QuerierService) apiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		apiKey := r.Header.Get("x-cardinalhq-api-key")
+		apiKey := extractAPIKey(r)
 		if apiKey == "" {
-			http.Error(w, "missing x-cardinalhq-api-key header", http.StatusUnauthorized)
+			http.Error(w, "missing API key (provide via x-cardinalhq-api-key or Api-Key header, or api_key cookie)", http.StatusUnauthorized)
 			return
 		}
 
@@ -67,4 +71,25 @@ func (q *QuerierService) apiKeyMiddleware(next http.HandlerFunc) http.HandlerFun
 		// Call the next handler
 		next(w, r)
 	}
+}
+
+// extractAPIKey extracts the API key from various sources in the request.
+// Checks in order: x-cardinalhq-api-key header, Api-Key header, api_key cookie.
+func extractAPIKey(r *http.Request) string {
+	// Check x-cardinalhq-api-key header (primary method)
+	if apiKey := r.Header.Get("x-cardinalhq-api-key"); apiKey != "" {
+		return apiKey
+	}
+
+	// Check Api-Key header (legacy Scala compatibility)
+	if apiKey := r.Header.Get("Api-Key"); apiKey != "" {
+		return apiKey
+	}
+
+	// Check api_key cookie (legacy Scala compatibility)
+	if cookie, err := r.Cookie("api_key"); err == nil && cookie.Value != "" {
+		return cookie.Value
+	}
+
+	return ""
 }
