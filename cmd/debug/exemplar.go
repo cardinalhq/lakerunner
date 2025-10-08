@@ -240,8 +240,8 @@ func runExemplarFromParquet(ctx context.Context, bucket string, fileCount int, s
 
 func createExemplarProcessor(maxExemplars int) *exemplars.Processor {
 	config := exemplars.DefaultConfig()
-	// Set very long report interval - we'll manually flush at the end
-	// (can't be 0 or time.NewTicker will panic)
+	// Set very long report interval (1000 hours) to ensure the ticker never fires during this short-lived debug command.
+	// (Can't be 0 or time.NewTicker will panic; 1000 hours is arbitrarily chosen as a value much larger than any expected runtime.)
 	config.Logs.ReportInterval = 1000 * time.Hour
 	config.Metrics.ReportInterval = 1000 * time.Hour
 	config.Traces.ReportInterval = 1000 * time.Hour
@@ -271,10 +271,13 @@ func createExemplarProcessor(maxExemplars int) *exemplars.Processor {
 
 func printExemplars(telemetryType string, rows []pipeline.Row) error {
 	for _, row := range rows {
+		// Convert row to string-keyed map for JSON marshalling
+		stringRow := pipeline.ToStringMap(row)
+
 		// Add telemetry type to the output
 		output := map[string]interface{}{
 			"telemetry_type": telemetryType,
-			"exemplar":       row,
+			"exemplar":       stringRow,
 		}
 		jsonBytes, err := json.Marshal(output)
 		if err != nil {

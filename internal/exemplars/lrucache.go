@@ -17,6 +17,7 @@ package exemplars
 import (
 	"container/list"
 	"log/slog"
+	"math"
 	"math/rand"
 	"sync"
 	"time"
@@ -54,7 +55,7 @@ func NewLRUCache(
 ) *LRUCache {
 	// 0 means unlimited
 	if maxPublishPerSweep == 0 {
-		maxPublishPerSweep = 1<<31 - 1 // Max int32
+		maxPublishPerSweep = math.MaxInt32
 	}
 	lru := &LRUCache{
 		capacity:           capacity,
