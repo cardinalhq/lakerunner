@@ -10,7 +10,8 @@ INSERT INTO log_seg (
   created_by,
   fingerprints,
   published,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   @organization_id,
@@ -23,7 +24,8 @@ VALUES (
   @created_by,
   @fingerprints::bigint[],
   @published,
-  @compacted
+  @compacted,
+  @label_name_map
 );
 
 -- name: GetLogSeg :one
@@ -46,7 +48,8 @@ INSERT INTO log_seg (
   created_by,
   fingerprints,
   published,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   @organization_id,
@@ -59,7 +62,8 @@ VALUES (
   @created_by,
   @fingerprints::bigint[],
   @published,
-  @compacted
+  @compacted,
+  @label_name_map
 );
 
 -- name: MarkLogSegsCompactedByKeys :exec
@@ -97,3 +101,21 @@ WHERE
   AND s.fingerprints && @fingerprints::BIGINT[]
   AND t.fp            = ANY(@fingerprints::BIGINT[])
   AND ts_range && int8range(@s, @e, '[)');
+
+-- name: GetLabelNameMaps :many
+SELECT
+    segment_id,
+    label_name_map
+FROM log_seg
+WHERE organization_id = @organization_id
+  AND dateint = @dateint
+  AND segment_id = ANY(@segment_ids::BIGINT[])
+  AND label_name_map IS NOT NULL;
+
+-- name: UpdateLogSegLabelNameMap :exec
+UPDATE log_seg
+SET label_name_map = @label_name_map
+WHERE organization_id = @organization_id
+  AND dateint = @dateint
+  AND segment_id = @segment_id
+  AND instance_num = @instance_num;

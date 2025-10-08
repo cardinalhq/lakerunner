@@ -31,6 +31,7 @@ type Querier interface {
 	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
 	// Retrieves all existing pack estimates for EWMA calculations across all signals
 	GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error)
+	GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsParams) ([]GetLabelNameMapsRow, error)
 	GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error)
 	GetLogSegmentsForDownload(ctx context.Context, arg GetLogSegmentsForDownloadParams) ([]LogSeg, error)
 	// Retrieves metric pack estimates for EWMA calculations (backward compatibility)
@@ -81,6 +82,7 @@ type Querier interface {
 	TraceSegmentCleanupBatchDelete(ctx context.Context, arg []TraceSegmentCleanupBatchDeleteParams) *TraceSegmentCleanupBatchDeleteBatchResults
 	TraceSegmentCleanupDelete(ctx context.Context, arg TraceSegmentCleanupDeleteParams) error
 	TraceSegmentCleanupGet(ctx context.Context, arg TraceSegmentCleanupGetParams) ([]TraceSegmentCleanupGetRow, error)
+	UpdateLogSegLabelNameMap(ctx context.Context, arg UpdateLogSegLabelNameMapParams) error
 	// Updates or inserts a single metric pack estimate (backward compatibility)
 	UpsertMetricPackEstimate(ctx context.Context, arg UpsertMetricPackEstimateParams) error
 	// Updates or inserts a single pack estimate for any signal type

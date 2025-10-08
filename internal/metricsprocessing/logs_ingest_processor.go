@@ -574,6 +574,13 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			slog.Int64("recordCount", result.RecordCount),
 			slog.Int64("fileSize", result.FileSize))
 
+		// Extract label name mapping for legacy API support
+		labelNameMap, err := extractLabelNameMap(result.FileName)
+		if err != nil {
+			ll.Warn("failed to extract label name map", slog.String("error", err.Error()))
+			// Continue without label map - it's not critical
+		}
+
 		params := lrdb.InsertLogSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
 			Dateint:        dateint,
@@ -587,6 +594,7 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			Fingerprints:   stats.Fingerprints,
 			Published:      true,  // Mark ingested segments as published
 			Compacted:      false, // New segments are not compacted
+			LabelNameMap:   labelNameMap,
 		}
 
 		segmentParams = append(segmentParams, params)

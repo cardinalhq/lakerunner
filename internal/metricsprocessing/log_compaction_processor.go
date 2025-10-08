@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -242,6 +243,9 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 		totalInputRecords += seg.RecordCount
 	}
 
+	// Merge label name maps from input segments for legacy API support
+	mergedLabelMap := mergeLabelNameMaps(inputSegments)
+
 	var segments []lrdb.LogSeg
 	var totalOutputSize, totalOutputRecords int64
 	var segmentIDs []int64
@@ -283,6 +287,7 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			Compacted:    true,
 			Fingerprints: stats.Fingerprints,
 			CreatedBy:    lrdb.CreatedByCompact,
+			LabelNameMap: mergedLabelMap,
 		}
 
 		segments = append(segments, segment)
@@ -340,6 +345,7 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 			RecordCount:  seg.RecordCount,
 			FileSize:     seg.FileSize,
 			Fingerprints: seg.Fingerprints,
+			LabelNameMap: seg.LabelNameMap,
 		}
 	}
 
@@ -409,4 +415,40 @@ func (p *LogCompactionProcessor) markLogSegmentsAsCompacted(ctx context.Context,
 		InstanceNum:    key.InstanceNum,
 		SegmentIds:     segmentIDs,
 	})
+}
+
+// mergeLabelNameMaps merges label name maps from multiple input segments.
+// Returns nil if no segments have label maps, otherwise returns a merged JSONB map.
+func mergeLabelNameMaps(inputSegments []lrdb.LogSeg) []byte {
+	merged := make(map[string]string)
+
+	for _, seg := range inputSegments {
+		if len(seg.LabelNameMap) == 0 {
+			continue
+		}
+
+		// Parse existing JSON
+		var segMap map[string]string
+		if err := json.Unmarshal(seg.LabelNameMap, &segMap); err != nil {
+			// Skip segments with invalid label maps
+			continue
+		}
+
+		// Merge into result - later segments override earlier ones
+		for k, v := range segMap {
+			merged[k] = v
+		}
+	}
+
+	if len(merged) == 0 {
+		return nil
+	}
+
+	// Serialize back to JSON
+	result, err := json.Marshal(merged)
+	if err != nil {
+		return nil // Return nil on error
+	}
+
+	return result
 }
