@@ -15,6 +15,7 @@
 package queryapi
 
 import (
+	"os"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
@@ -55,8 +56,16 @@ type QuerierService struct {
 	mdb             lrdb.StoreFull
 	workerDiscovery WorkerDiscovery
 	apiKeyProvider  orgapikey.OrganizationAPIKeyProvider
+	jwtSecretKey    string // Cached JWT secret key from TOKEN_HMAC256_KEY environment variable
 }
 
 func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery, apiKeyProvider orgapikey.OrganizationAPIKeyProvider) (*QuerierService, error) {
-	return &QuerierService{mdb: mdb, workerDiscovery: workerDiscovery, apiKeyProvider: apiKeyProvider}, nil
+	// Cache JWT secret key at startup (empty string if not configured)
+	jwtSecretKey := os.Getenv("TOKEN_HMAC256_KEY")
+	return &QuerierService{
+		mdb:             mdb,
+		workerDiscovery: workerDiscovery,
+		apiKeyProvider:  apiKeyProvider,
+		jwtSecretKey:    jwtSecretKey,
+	}, nil
 }

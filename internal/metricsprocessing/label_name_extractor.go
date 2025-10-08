@@ -17,6 +17,7 @@ package metricsprocessing
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -33,7 +34,9 @@ func extractLabelNameMap(parquetFile string) ([]byte, error) {
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
 			// Log warning but don't fail the operation
-			fmt.Fprintf(os.Stderr, "warning: failed to close file %s: %v\n", parquetFile, closeErr)
+			slog.Warn("failed to close parquet file",
+				slog.String("file", parquetFile),
+				slog.String("error", closeErr.Error()))
 		}
 	}()
 

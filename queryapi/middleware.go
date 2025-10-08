@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -68,7 +67,7 @@ func (q *QuerierService) apiKeyMiddleware(next http.HandlerFunc) http.HandlerFun
 			}
 		} else {
 			// Try JWT token authentication
-			orgID, err = extractOrgIDFromJWT(r)
+			orgID, err = q.extractOrgIDFromJWT(r)
 			if err != nil {
 				slog.Error("JWT validation failed", "error", err)
 				http.Error(w, "authentication required (provide API key or valid JWT token)", http.StatusUnauthorized)
@@ -113,7 +112,7 @@ func extractAPIKey(r *http.Request) string {
 
 // extractOrgIDFromJWT validates a JWT token from the cardinal_token cookie and extracts the org_id.
 // Returns the organization ID if the token is valid, or an error if validation fails.
-func extractOrgIDFromJWT(r *http.Request) (*uuid.UUID, error) {
+func (q *QuerierService) extractOrgIDFromJWT(r *http.Request) (*uuid.UUID, error) {
 	// Get cardinal_token cookie
 	cookie, err := r.Cookie("cardinal_token")
 	if err != nil {
@@ -125,9 +124,8 @@ func extractOrgIDFromJWT(r *http.Request) (*uuid.UUID, error) {
 		return nil, fmt.Errorf("empty cardinal_token cookie")
 	}
 
-	// Get the secret key from environment
-	secretKey := os.Getenv("TOKEN_HMAC256_KEY")
-	if secretKey == "" {
+	// Use the cached secret key (loaded at startup)
+	if q.jwtSecretKey == "" {
 		// If the secret key is not configured, JWT authentication is not available
 		// This is not an error - just means JWT auth isn't configured
 		return nil, fmt.Errorf("JWT authentication not configured")
@@ -139,7 +137,7 @@ func extractOrgIDFromJWT(r *http.Request) (*uuid.UUID, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(secretKey), nil
+		return []byte(q.jwtSecretKey), nil
 	})
 
 	if err != nil {

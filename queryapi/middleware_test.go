@@ -16,7 +16,6 @@ package queryapi
 
 import (
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -133,15 +132,11 @@ func TestExtractAPIKey(t *testing.T) {
 func TestExtractOrgIDFromJWT(t *testing.T) {
 	// Set up test secret key
 	testSecret := "test-secret-key-for-jwt-validation"
-	oldSecret := os.Getenv("TOKEN_HMAC256_KEY")
-	require.NoError(t, os.Setenv("TOKEN_HMAC256_KEY", testSecret))
-	defer func() {
-		if oldSecret != "" {
-			_ = os.Setenv("TOKEN_HMAC256_KEY", oldSecret)
-		} else {
-			_ = os.Unsetenv("TOKEN_HMAC256_KEY")
-		}
-	}()
+
+	// Create a QuerierService with the test secret key
+	querier := &QuerierService{
+		jwtSecretKey: testSecret,
+	}
 
 	testOrgID := uuid.New()
 
@@ -260,7 +255,7 @@ func TestExtractOrgIDFromJWT(t *testing.T) {
 
 			tt.setupReq(req)
 
-			orgID, err := extractOrgIDFromJWT(req)
+			orgID, err := querier.extractOrgIDFromJWT(req)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -274,15 +269,11 @@ func TestExtractOrgIDFromJWT(t *testing.T) {
 	}
 }
 
-func TestExtractOrgIDFromJWT_NoEnvVar(t *testing.T) {
-	// Ensure TOKEN_HMAC256_KEY is not set
-	oldSecret := os.Getenv("TOKEN_HMAC256_KEY")
-	require.NoError(t, os.Unsetenv("TOKEN_HMAC256_KEY"))
-	defer func() {
-		if oldSecret != "" {
-			_ = os.Setenv("TOKEN_HMAC256_KEY", oldSecret)
-		}
-	}()
+func TestExtractOrgIDFromJWT_NoSecretKey(t *testing.T) {
+	// Create a QuerierService with no JWT secret key (empty string)
+	querier := &QuerierService{
+		jwtSecretKey: "",
+	}
 
 	req, err := http.NewRequest("GET", "/test", nil)
 	require.NoError(t, err)
@@ -292,7 +283,7 @@ func TestExtractOrgIDFromJWT_NoEnvVar(t *testing.T) {
 		Value: "dummy-token",
 	})
 
-	orgID, err := extractOrgIDFromJWT(req)
+	orgID, err := querier.extractOrgIDFromJWT(req)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "JWT authentication not configured")
 	assert.Nil(t, orgID)
