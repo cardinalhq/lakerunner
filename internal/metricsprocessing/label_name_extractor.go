@@ -30,7 +30,12 @@ func extractLabelNameMap(parquetFile string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			// Log warning but don't fail the operation
+			fmt.Fprintf(os.Stderr, "warning: failed to close file %s: %v\n", parquetFile, closeErr)
+		}
+	}()
 
 	stat, err := file.Stat()
 	if err != nil {

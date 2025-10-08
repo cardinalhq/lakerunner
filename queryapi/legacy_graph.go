@@ -17,6 +17,7 @@ package queryapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -64,19 +65,14 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Helper to write SSE events directly
+	// Helper to write SSE events directly (optimized to reduce system calls)
 	writeSSE := func(data any) error {
 		jsonData, err := json.Marshal(data)
 		if err != nil {
 			return err
 		}
-		if _, err := w.Write([]byte("data: ")); err != nil {
-			return err
-		}
-		if _, err := w.Write(jsonData); err != nil {
-			return err
-		}
-		if _, err := w.Write([]byte("\n\n")); err != nil {
+		// Use fmt.Fprintf to write in a single call
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", jsonData); err != nil {
 			return err
 		}
 		flusher.Flush()
@@ -211,9 +207,9 @@ func (q *QuerierService) loadLabelMapsForTimeRange(
 	// Calculate dateints for the time range
 	dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, false)
 
-	// Collect all segment IDs across all dateints and query leaves
-	var allSegmentIDs []int64
-	segmentIDSet := make(map[int64]bool)
+	// Collect unique segment IDs grouped by dateint in a single pass
+	// Use a map of sets to track uniqueness per dateint
+	segmentSetsByDateint := make(map[int32]map[int64]bool)
 
 	for _, leaf := range queryPlan.Leaves {
 		for _, dih := range dateIntHours {
@@ -223,38 +219,29 @@ func (q *QuerierService) loadLabelMapsForTimeRange(
 				continue
 			}
 
+			dateint := int32(dih.DateInt)
+			if segmentSetsByDateint[dateint] == nil {
+				segmentSetsByDateint[dateint] = make(map[int64]bool)
+			}
+
 			for _, seg := range segments {
-				if !segmentIDSet[seg.SegmentID] {
-					segmentIDSet[seg.SegmentID] = true
-					allSegmentIDs = append(allSegmentIDs, seg.SegmentID)
-				}
+				segmentSetsByDateint[dateint][seg.SegmentID] = true
 			}
 		}
 	}
 
-	if len(allSegmentIDs) == 0 {
+	if len(segmentSetsByDateint) == 0 {
 		return nil, nil
 	}
 
-	// Load label maps for all unique segments
-	// We need to query by dateint, so group segments by dateint
-	segmentsByDateint := make(map[int32][]int64)
-	for _, dih := range dateIntHours {
-		segmentsByDateint[int32(dih.DateInt)] = []int64{}
-	}
-
-	// Re-scan to group by dateint (we need dateint for the query)
-	for _, leaf := range queryPlan.Leaves {
-		for _, dih := range dateIntHours {
-			segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery)
-			if err != nil {
-				continue
-			}
-
-			for _, seg := range segments {
-				segmentsByDateint[int32(dih.DateInt)] = append(segmentsByDateint[int32(dih.DateInt)], seg.SegmentID)
-			}
+	// Convert sets to slices for database query
+	segmentsByDateint := make(map[int32][]int64, len(segmentSetsByDateint))
+	for dateint, segmentSet := range segmentSetsByDateint {
+		segments := make([]int64, 0, len(segmentSet))
+		for segmentID := range segmentSet {
+			segments = append(segments, segmentID)
 		}
+		segmentsByDateint[dateint] = segments
 	}
 
 	// Load label maps for each dateint
@@ -264,20 +251,11 @@ func (q *QuerierService) loadLabelMapsForTimeRange(
 			continue
 		}
 
-		// Remove duplicates
-		uniqueIDs := make([]int64, 0, len(segmentIDs))
-		seen := make(map[int64]bool)
-		for _, id := range segmentIDs {
-			if !seen[id] {
-				seen[id] = true
-				uniqueIDs = append(uniqueIDs, id)
-			}
-		}
-
+		// Segment IDs are already unique from the collection phase
 		rows, err := q.mdb.GetLabelNameMaps(ctx, lrdb.GetLabelNameMapsParams{
 			OrganizationID: orgID,
 			Dateint:        dateint,
-			SegmentIds:     uniqueIDs,
+			SegmentIds:     segmentIDs,
 		})
 		if err != nil {
 			slog.Warn("failed to get label name maps for dateint",
