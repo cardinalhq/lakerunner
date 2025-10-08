@@ -76,6 +76,7 @@ type Querier interface {
 	MetricSegmentCleanupGet(ctx context.Context, arg MetricSegmentCleanupGetParams) ([]MetricSegmentCleanupGetRow, error)
 	PubSubMessageHistoryCleanup(ctx context.Context, arg PubSubMessageHistoryCleanupParams) (pgconn.CommandTag, error)
 	PubSubMessageHistoryCount(ctx context.Context) (int64, error)
+	PubSubMessageHistoryGetRecentForBucket(ctx context.Context, arg PubSubMessageHistoryGetRecentForBucketParams) ([]PubsubMessageHistory, error)
 	PubSubMessageHistoryInsert(ctx context.Context, arg PubSubMessageHistoryInsertParams) (pgconn.CommandTag, error)
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)

@@ -32,6 +32,7 @@ func TestLRUCache_PutAndContains(t *testing.T) {
 		10,
 		time.Hour,
 		time.Hour,
+		100,
 		func([]*Entry) { publishCalled = true },
 	)
 	defer cache.Close()
@@ -54,6 +55,7 @@ func TestLRUCache_UpdateExisting(t *testing.T) {
 		10,
 		time.Hour,
 		time.Hour,
+		100,
 		func([]*Entry) {},
 	)
 	defer cache.Close()
@@ -72,6 +74,7 @@ func TestLRUCache_Expiry(t *testing.T) {
 		10,
 		50*time.Millisecond, // Short expiry
 		time.Hour,
+		100,
 		func([]*Entry) {},
 	)
 	defer cache.Close()
@@ -95,6 +98,7 @@ func TestLRUCache_CapacityEviction(t *testing.T) {
 		3, // Small capacity
 		time.Hour,
 		time.Hour,
+		100,
 		func(entries []*Entry) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -135,6 +139,7 @@ func TestLRUCache_LRUOrdering(t *testing.T) {
 		3,
 		time.Hour,
 		time.Hour,
+		100,
 		func([]*Entry) {},
 	)
 	defer cache.Close()
@@ -167,6 +172,7 @@ func TestLRUCache_PublishCallback(t *testing.T) {
 		5,
 		50*time.Millisecond,  // Short expiry
 		100*time.Millisecond, // Short report interval
+		100,
 		func(entries []*Entry) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -197,6 +203,7 @@ func TestLRUCache_FlushPending(t *testing.T) {
 		10,
 		time.Hour,
 		time.Hour,
+		100,
 		func(entries []*Entry) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -224,6 +231,7 @@ func TestLRUCache_ConcurrentAccess(t *testing.T) {
 		100,
 		time.Hour,
 		time.Hour,
+		100,
 		func([]*Entry) {},
 	)
 	defer cache.Close()
@@ -302,6 +310,7 @@ func TestLRUCache_EntryPublishing(t *testing.T) {
 		5,
 		100*time.Millisecond, // Entry expiry
 		50*time.Millisecond,  // Cleanup interval
+		100,
 		func(entries []*Entry) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -329,6 +338,7 @@ func TestLRUCache_PutIfAbsent(t *testing.T) {
 		10,
 		time.Hour,
 		time.Hour,
+		100,
 		func([]*Entry) {},
 	)
 	defer cache.Close()
@@ -353,6 +363,7 @@ func TestLRUCache_PutIfAbsentExpired(t *testing.T) {
 		10,
 		50*time.Millisecond, // Short expiry
 		time.Hour,
+		100,
 		func([]*Entry) {},
 	)
 	defer cache.Close()
@@ -376,6 +387,7 @@ func TestLRUCache_PutIfAbsentConcurrent(t *testing.T) {
 		100,
 		time.Hour,
 		time.Hour,
+		100,
 		func([]*Entry) {},
 	)
 	defer cache.Close()

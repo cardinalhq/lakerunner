@@ -17,6 +17,7 @@ package exemplars
 import (
 	"container/list"
 	"log/slog"
+	"math"
 	"math/rand"
 	"sync"
 	"time"
@@ -49,8 +50,13 @@ func NewLRUCache(
 	capacity int,
 	expiry time.Duration,
 	reportInterval time.Duration,
+	maxPublishPerSweep int,
 	publishCallBack func(expiredItems []*Entry),
 ) *LRUCache {
+	// 0 means unlimited
+	if maxPublishPerSweep == 0 {
+		maxPublishPerSweep = math.MaxInt32
+	}
 	lru := &LRUCache{
 		capacity:           capacity,
 		cache:              make(map[uint64]*list.Element),
@@ -60,7 +66,7 @@ func NewLRUCache(
 		stopCleanup:        make(chan struct{}),
 		pending:            make([]*Entry, 0),
 		publishCallBack:    publishCallBack,
-		maxPublishPerSweep: 100,
+		maxPublishPerSweep: maxPublishPerSweep,
 		rng:                rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	go lru.startCleanup()
