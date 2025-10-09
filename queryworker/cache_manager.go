@@ -176,7 +176,7 @@ func EvaluatePushDown[T promql.Timestamped](
 			append(segmentsByOrg[seg.OrganizationID][seg.InstanceNum], seg)
 	}
 	metadataCreationTime := time.Since(start)
-	slog.Info("Metadata Creation Time", "duration", metadataCreationTime.String())
+	slog.Debug("Metadata Creation Time", "duration", metadataCreationTime.String())
 	start = time.Now()
 
 	outs := make([]<-chan T, 0)
@@ -234,7 +234,7 @@ func EvaluatePushDown[T promql.Timestamped](
 			w.mu.RLock()
 			numPresent := len(w.present)
 			w.mu.RUnlock()
-			slog.Info("Segment Stats",
+			slog.Debug("Segment Stats",
 				"numS3", len(s3URIs),
 				"numCached", len(cachedIDs),
 				"numPresent", numPresent)
@@ -266,7 +266,7 @@ func EvaluatePushDown[T promql.Timestamped](
 		}
 	}
 	channelCreationTime := time.Since(start)
-	slog.Info("Channel Creation Time", "duration", channelCreationTime.String())
+	slog.Debug("Channel Creation Time", "duration", channelCreationTime.String())
 
 	// Merge all sources (cached + S3 batches) in timestamp order.
 	// Use smaller buffer for the final merge to reduce memory overhead
@@ -387,7 +387,7 @@ func streamFromS3[T promql.Timestamped](
 	outs := make([]<-chan T, 0, len(batches))
 
 	for _, uris := range batches {
-		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
+		slog.Debug("Streaming from S3", slog.Int("uris", len(uris)))
 		out := make(chan T, ChannelBufferSize)
 		outs = append(outs, out)
 

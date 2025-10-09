@@ -99,7 +99,11 @@ func MergeSorted[T Timestamped](
 		}()
 	}
 
-	// Drain goroutines - started after fetchers, drain input channels when merge stops
+	// Drain goroutines - started after fetchers, drain input channels when merge stops.
+	// DESIGN NOTE: Both fetchers and drain goroutines read from the same input channels.
+	// This is intentional and safe: Go channels allow multiple readers, and only one will
+	// receive each value. When mergeCtx is cancelled, fetchers exit and drain goroutines
+	// take over to consume any remaining data, ensuring upstream producers don't block.
 	for _, ch := range chans {
 		ch := ch
 		go func() {
@@ -114,8 +118,14 @@ func MergeSorted[T Timestamped](
 
 	go func() {
 		defer close(out)
-		defer cancelMerge() // Signal all fetchers to stop
-		defer func() {      // unblock/wind-down sources
+		defer cancelMerge() // Signal all fetchers and drain goroutines to stop
+		defer func() {
+			// Always cancel producer context to prevent context leak
+			if producerCancel != nil {
+				producerCancel()
+			}
+		}()
+		defer func() { // unblock/wind-down sources
 			for i := range req {
 				close(req[i])
 			}
@@ -142,6 +152,9 @@ func MergeSorted[T Timestamped](
 		}
 
 		// Request the first head from every source.
+		// NOTE: We check the parent ctx here (not mergeCtx) because initialization must
+		// respect the original caller's cancellation. mergeCtx is only used for internal
+		// coordination when we stop early due to limits.
 		for i := range chans {
 			open[i] = true
 			awaiting[i] = true
