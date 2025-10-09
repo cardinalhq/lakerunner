@@ -184,18 +184,18 @@ func TestEscapeRegexValue(t *testing.T) {
 		expected string
 	}{
 		{`simple-value`, `simple-value`},
-		{`value.with.dots`, `value\.with\.dots`},
+		{`value.with.dots`, `value\\.with\\.dots`},
 		{`value_with_underscores`, `value_with_underscores`},
-		{`chewy.com-abu-8qt6qskwan4-1692736963.994821_2025-09-24-074731_controller`, `chewy\.com-abu-8qt6qskwan4-1692736963\.994821_2025-09-24-074731_controller`},
-		{`special*chars?here`, `special\*chars\?here`},
-		{`brackets[test]`, `brackets\[test\]`},
-		{`parens(test)`, `parens\(test\)`},
-		{`braces{test}`, `braces\{test\}`},
-		{`caret^test`, `caret\^test`},
-		{`dollar$test`, `dollar\$test`},
-		{`pipe|test`, `pipe\|test`},
-		{`backslash\test`, `backslash\\test`},
-		{`plus+test`, `plus\+test`},
+		{`chewy.com-abu-8qt6qskwan4-1692736963.994821_2025-09-24-074731_controller`, `chewy\\.com-abu-8qt6qskwan4-1692736963\\.994821_2025-09-24-074731_controller`},
+		{`special*chars?here`, `special\\*chars\\?here`},
+		{`brackets[test]`, `brackets\\[test\\]`},
+		{`parens(test)`, `parens\\(test\\)`},
+		{`braces{test}`, `braces\\{test\\}`},
+		{`caret^test`, `caret\\^test`},
+		{`dollar$test`, `dollar\\$test`},
+		{`pipe|test`, `pipe\\|test`},
+		{`backslash\test`, `backslash\\\test`},
+		{`plus+test`, `plus\\+test`},
 	}
 
 	for _, tt := range tests {
@@ -226,5 +226,5 @@ func TestTranslateToLogQL_InOperatorWithSpecialChars(t *testing.T) {
 
 	logql, _, err := TranslateToLogQL(baseExpr)
 	require.NoError(t, err)
-	assert.Equal(t, `{resource_bucket_name="avxit-dev-s3-use2-datalake",resource_file=~"^(chewy\.com-abu-8qt6qskwan4-1692736963\.994821_2025-09-24-074731_controller)$"}`, logql)
+	assert.Equal(t, `{resource_bucket_name="avxit-dev-s3-use2-datalake",resource_file=~"^(chewy\\.com-abu-8qt6qskwan4-1692736963\\.994821_2025-09-24-074731_controller)$"}`, logql)
 }

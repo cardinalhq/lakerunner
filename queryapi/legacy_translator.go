@@ -164,12 +164,14 @@ func escapeLogQLValue(s string) string {
 }
 
 // escapeRegexValue escapes regex special characters for use in LogQL regex.
+// In LogQL, regex patterns are quoted strings, so backslashes need to be double-escaped.
 var regexEscapePattern = regexp.MustCompile(`([.+*?()\[\]{}^$|\\])`)
 
 func escapeRegexValue(s string) string {
-	// Escape regex special characters
-	// Use ReplaceAllStringFunc to properly insert backslash before each matched character
+	// Escape regex special characters with double backslash for LogQL quoted strings
+	// In LogQL: label=~"pattern" - the pattern goes through string parsing then regex parsing
+	// So to match a literal '.', we need '\\.' which becomes '\.' after string parsing
 	return regexEscapePattern.ReplaceAllStringFunc(s, func(match string) string {
-		return `\` + match
+		return `\\` + match
 	})
 }
