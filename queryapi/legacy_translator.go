@@ -78,17 +78,23 @@ func filterToLogQL(clause QueryClause, ctx *TranslationContext) ([]string, []str
 			matchers = append(matchers, fmt.Sprintf(`%s="%s"`, normalized, escapedVal))
 
 		case "in":
-			// LogQL: label=~"^(val1|val2|val3)$" - anchored for exact match
 			if len(c.V) == 0 {
 				return nil, nil, fmt.Errorf("in operator requires at least one value")
 			}
-			// Escape each value and join with |
-			escaped := make([]string, len(c.V))
-			for i, v := range c.V {
-				escaped[i] = escapeRegexValue(v)
+			// Optimize single value to use exact match instead of regex
+			if len(c.V) == 1 {
+				escapedVal := escapeLogQLValue(c.V[0])
+				matchers = append(matchers, fmt.Sprintf(`%s="%s"`, normalized, escapedVal))
+			} else {
+				// LogQL: label=~"^(val1|val2|val3)$" - anchored for exact match
+				// Escape each value and join with |
+				escaped := make([]string, len(c.V))
+				for i, v := range c.V {
+					escaped[i] = escapeRegexValue(v)
+				}
+				pattern := "^(" + strings.Join(escaped, "|") + ")$"
+				matchers = append(matchers, fmt.Sprintf(`%s=~"%s"`, normalized, pattern))
 			}
-			pattern := "^(" + strings.Join(escaped, "|") + ")$"
-			matchers = append(matchers, fmt.Sprintf(`%s=~"%s"`, normalized, pattern))
 
 		case "contains":
 			// LogQL line filter: |~ "pattern"

@@ -226,5 +226,22 @@ func TestTranslateToLogQL_InOperatorWithSpecialChars(t *testing.T) {
 
 	logql, _, err := TranslateToLogQL(baseExpr)
 	require.NoError(t, err)
-	assert.Equal(t, `{resource_bucket_name="avxit-dev-s3-use2-datalake",resource_file=~"^(chewy\\.com-abu-8qt6qskwan4-1692736963\\.994821_2025-09-24-074731_controller)$"}`, logql)
+	// Single value in "in" operator should use exact match, not regex
+	assert.Equal(t, `{resource_bucket_name="avxit-dev-s3-use2-datalake",resource_file="chewy.com-abu-8qt6qskwan4-1692736963.994821_2025-09-24-074731_controller"}`, logql)
+}
+
+func TestTranslateToLogQL_InOperatorMultipleValues(t *testing.T) {
+	baseExpr := BaseExpression{
+		Dataset: "logs",
+		Filter: Filter{
+			K:  "resource.file",
+			V:  []string{"file1.log", "file2.log", "file.with.dots.log"},
+			Op: "in",
+		},
+	}
+
+	logql, _, err := TranslateToLogQL(baseExpr)
+	require.NoError(t, err)
+	// Multiple values should use regex with anchored OR pattern
+	assert.Equal(t, `{resource_file=~"^(file1\\.log|file2\\.log|file\\.with\\.dots\\.log)$"}`, logql)
 }
