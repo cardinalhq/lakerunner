@@ -168,5 +168,8 @@ var regexEscapePattern = regexp.MustCompile(`([.+*?()\[\]{}^$|\\])`)
 
 func escapeRegexValue(s string) string {
 	// Escape regex special characters
-	return regexEscapePattern.ReplaceAllString(s, `\$1`)
+	// Use ReplaceAllStringFunc to properly insert backslash before each matched character
+	return regexEscapePattern.ReplaceAllStringFunc(s, func(match string) string {
+		return `\` + match
+	})
 }
