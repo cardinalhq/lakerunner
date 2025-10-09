@@ -235,7 +235,15 @@ func (q *QuerierService) lookupLogsSegments(
 			continue
 		}
 		switch lm.Op {
-		case logql.MatchEq, logql.MatchRe:
+		case logql.MatchEq:
+			// For full-value dimensions with exact match, use the full value fingerprint
+			if slices.Contains(fullValueDimensions, label) {
+				addFullValueNode(label, val, fpsToFetch, &root)
+			} else {
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			}
+		case logql.MatchRe:
+			// Regex always uses trigrams (even for full-value dimensions)
 			addAndNodeFromPattern(label, val, fpsToFetch, &root)
 		default:
 			addExistsNode(label, fpsToFetch, &root)
@@ -252,7 +260,15 @@ func (q *QuerierService) lookupLogsSegments(
 			continue
 		}
 		switch lf.Op {
-		case logql.MatchEq, logql.MatchRe:
+		case logql.MatchEq:
+			// For full-value dimensions with exact match, use the full value fingerprint
+			if slices.Contains(fullValueDimensions, label) {
+				addFullValueNode(label, val, fpsToFetch, &root)
+			} else {
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			}
+		case logql.MatchRe:
+			// Regex always uses trigrams (even for full-value dimensions)
 			addAndNodeFromPattern(label, val, fpsToFetch, &root)
 		default:
 			addExistsNode(label, fpsToFetch, &root)
@@ -329,6 +345,24 @@ func addExistsNode(label string, fps map[int64]struct{}, root **TrigramQuery) {
 		Trigram:   []string{existsRegex},
 	}
 	slog.Info("Adding exists node", "label", label, "fp", fp)
+	*root = &TrigramQuery{Op: index.QAnd, Sub: []*TrigramQuery{*root, tq}}
+}
+
+func addFullValueNode(label, value string, fps map[int64]struct{}, root **TrigramQuery) {
+	// For full-value dimensions, we index both the exists fingerprint and the exact value
+	// Add both fingerprints to the query
+	existsFp := computeFingerprint(label, existsRegex)
+	valueFp := computeFingerprint(label, value)
+	fps[existsFp] = struct{}{}
+	fps[valueFp] = struct{}{}
+
+	// Create a query node that requires both fingerprints (AND)
+	tq := &TrigramQuery{
+		Op:        index.QAnd,
+		fieldName: label,
+		Trigram:   []string{existsRegex, value},
+	}
+	slog.Info("Adding full-value node", "label", label, "value", value, "existsFp", existsFp, "valueFp", valueFp)
 	*root = &TrigramQuery{Op: index.QAnd, Sub: []*TrigramQuery{*root, tq}}
 }
 

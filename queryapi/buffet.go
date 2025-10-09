@@ -14,23 +14,18 @@
 
 package queryapi
 
+import (
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
+)
+
 const (
-	existsRegex = ".*"
+	existsRegex = fingerprint.ExistsRegex
 )
 
 var (
-	infraDimensions = []string{
-		"resource_k8s_namespace_name",
-		"resource_service_name",
-		"resource_file",
-	}
-	dimensionsToIndex = append([]string{
-		"chq_telemetry_type",
-		"metric_name",
-		"log_level",
-		//"log_message",
-		"span_trace_id",
-	}, infraDimensions...)
+	// Use fingerprint configuration as the single source of truth
+	dimensionsToIndex   = fingerprint.DimensionsToIndex
+	fullValueDimensions = fingerprint.FullValueDimensions
 )
 
 // computeFingerprint combines fieldName and trigram and hashes them.

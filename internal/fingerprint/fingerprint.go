@@ -23,15 +23,19 @@ import (
 )
 
 const (
+	// ExistsRegex is the wildcard pattern used for "field exists" fingerprints
 	ExistsRegex = ".*"
 )
 
 var (
+	// InfraDimensions are infrastructure-related labels that should be indexed
 	InfraDimensions = []string{
 		"resource_k8s_namespace_name",
 		"resource_service_name",
 		"resource_file",
 	}
+
+	// DimensionsToIndex are all dimensions that should have fingerprints generated
 	DimensionsToIndex = append([]string{
 		"chq_telemetry_type",
 		"metric_name",
@@ -39,7 +43,10 @@ var (
 		//"log_message",
 		"span_trace_id",
 	}, InfraDimensions...)
-	IndexFullValueDimensions = []string{"metric_name", "resource_file"}
+
+	// FullValueDimensions are dimensions that should be indexed with exact full values
+	// instead of trigrams. These support exact matching efficiently but not substring/regex.
+	FullValueDimensions = []string{"metric_name", "resource_file"}
 )
 
 // ToFingerprints converts a map of tagName → slice of tagValues into a set of fingerprints.
@@ -53,7 +60,7 @@ func ToFingerprints(tagValuesByName map[string]mapset.Set[string]) mapset.Set[in
 			continue
 		}
 
-		if slices.Contains(IndexFullValueDimensions, tagName) {
+		if slices.Contains(FullValueDimensions, tagName) {
 			fingerprints.Add(ComputeFingerprint(tagName, ExistsRegex))
 			for _, tagValue := range values.ToSlice() {
 				fingerprints.Add(ComputeFingerprint(tagName, tagValue))
