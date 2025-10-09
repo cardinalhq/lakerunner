@@ -70,10 +70,10 @@ func heuristicDenormalize(underscored string) string {
 	}
 
 	// Handle chq_ prefix: convert to _cardinalhq. for legacy API compatibility
-	// chq_fingerprint → _cardinalhq.fingerprint, chq_level → _cardinalhq.level
+	// chq_telemetry_type → _cardinalhq.telemetry_type (keep underscores after prefix)
 	if strings.HasPrefix(underscored, "chq_") {
 		rest := underscored[len("chq_"):]
-		return "_cardinalhq." + strings.ReplaceAll(rest, "_", ".")
+		return "_cardinalhq." + rest
 	}
 
 	// Handle attr_ prefix: strip it and denormalize the rest
