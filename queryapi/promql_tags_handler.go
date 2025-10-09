@@ -24,6 +24,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -129,7 +130,13 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	tags, err := q.mdb.ListPromMetricTags(ctx, orgUUID)
+	// Compute fingerprint for the metric name to filter segments
+	metricFingerprint := fingerprint.ComputeFingerprint("metric_name", metric)
+
+	tags, err := q.mdb.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
+		OrganizationID:    orgUUID,
+		MetricFingerprint: []int64{metricFingerprint},
+	})
 	if err != nil {
 		slog.Error("ListPromMetricTags failed", slog.Any("error", err))
 		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)

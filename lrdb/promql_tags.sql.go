@@ -37,15 +37,22 @@ SELECT DISTINCT key::text AS tag_key
 FROM metric_seg,
      LATERAL jsonb_object_keys(label_name_map) AS key
 WHERE organization_id = $1
+  AND $2 = ANY(fingerprints)
   AND label_name_map IS NOT NULL
 ORDER BY tag_key
 `
 
-// Extract tag keys from label_name_map in metric_seg table
+type ListPromMetricTagsParams struct {
+	OrganizationID    uuid.UUID `json:"organization_id"`
+	MetricFingerprint []int64   `json:"metric_fingerprint"`
+}
+
+// Extract tag keys from label_name_map in metric_seg table for a specific metric
+// Filters by metric fingerprint to return tags only for the requested metric
 // Returns all keys from label_name_map (for v2 APIs)
 // Handler code can filter by non-empty values for v1 legacy API support
-func (q *Queries) ListPromMetricTags(ctx context.Context, organizationID uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, listPromMetricTags, organizationID)
+func (q *Queries) ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listPromMetricTags, arg.OrganizationID, arg.MetricFingerprint)
 	if err != nil {
 		return nil, err
 	}
