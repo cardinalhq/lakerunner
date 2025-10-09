@@ -101,6 +101,8 @@ func TestListPromMetricTags_FiltersByMetricFingerprint(t *testing.T) {
 	// Query tags for http_requests_total only
 	tags1, err := db.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
 		OrganizationID:    orgID,
+		StartDateint:      20250109,
+		EndDateint:        20250109,
 		MetricFingerprint: fp1,
 	})
 	require.NoError(t, err)
@@ -115,6 +117,8 @@ func TestListPromMetricTags_FiltersByMetricFingerprint(t *testing.T) {
 	// Query tags for cpu_usage_percent only
 	tags2, err := db.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
 		OrganizationID:    orgID,
+		StartDateint:      20250109,
+		EndDateint:        20250109,
 		MetricFingerprint: fp2,
 	})
 	require.NoError(t, err)
@@ -138,6 +142,97 @@ func TestListPromMetricTags_NoSegments(t *testing.T) {
 	fp := fingerprint.ComputeFingerprint("metric_name", "nonexistent_metric")
 	tags, err := db.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
 		OrganizationID:    orgID,
+		StartDateint:      20250109,
+		EndDateint:        20250109,
+		MetricFingerprint: fp,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, tags)
+}
+
+// TestListPromMetricTags_DateintFiltering tests that dateint range filters correctly
+func TestListPromMetricTags_DateintFiltering(t *testing.T) {
+	ctx := context.Background()
+	db := testhelpers.NewTestLRDBStore(t)
+
+	orgID := uuid.New()
+	now := time.Now()
+
+	// Create label_name_map
+	labelMap := map[string]string{
+		"resource_service_name": "resource.service.name",
+		"metric_status_code":    "metric.status.code",
+	}
+	labelMapJSON, err := json.Marshal(labelMap)
+	require.NoError(t, err)
+
+	fp := fingerprint.ComputeFingerprint("metric_name", "http_requests_total")
+
+	// Insert segment for Jan 9, 2025
+	err = db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250109,
+		FrequencyMs:    10000,
+		SegmentID:      1001,
+		InstanceNum:    1,
+		StartTs:        now.UnixMilli(),
+		EndTs:          now.Add(time.Hour).UnixMilli(),
+		RecordCount:    1000,
+		FileSize:       50000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Fingerprints:   []int64{fp},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		LabelNameMap:   labelMapJSON,
+	})
+	require.NoError(t, err)
+
+	// Insert segment for Jan 10, 2025
+	err = db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250110,
+		FrequencyMs:    10000,
+		SegmentID:      1002,
+		InstanceNum:    1,
+		StartTs:        now.UnixMilli(),
+		EndTs:          now.Add(time.Hour).UnixMilli(),
+		RecordCount:    1000,
+		FileSize:       50000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Fingerprints:   []int64{fp},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		LabelNameMap:   labelMapJSON,
+	})
+	require.NoError(t, err)
+
+	// Query with dateint range that includes both segments
+	tags, err := db.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
+		OrganizationID:    orgID,
+		StartDateint:      20250109,
+		EndDateint:        20250110,
+		MetricFingerprint: fp,
+	})
+	require.NoError(t, err)
+	assert.Len(t, tags, 2)
+	assert.Contains(t, tags, "resource_service_name")
+	assert.Contains(t, tags, "metric_status_code")
+
+	// Query with dateint range that includes only Jan 9
+	tags, err = db.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
+		OrganizationID:    orgID,
+		StartDateint:      20250109,
+		EndDateint:        20250109,
+		MetricFingerprint: fp,
+	})
+	require.NoError(t, err)
+	assert.Len(t, tags, 2)
+	assert.Contains(t, tags, "resource_service_name")
+	assert.Contains(t, tags, "metric_status_code")
+
+	// Query with dateint range that excludes all segments (future date)
+	tags, err = db.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
+		OrganizationID:    orgID,
+		StartDateint:      20250120,
+		EndDateint:        20250121,
 		MetricFingerprint: fp,
 	})
 	require.NoError(t, err)
