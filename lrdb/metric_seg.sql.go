@@ -188,8 +188,8 @@ WHERE ts_range && int8range($1, $2, '[)')
 `
 
 type ListMetricSegmentsForQueryParams struct {
-	Int8range      int64     `json:"int8range"`
-	Int8range_2    int64     `json:"int8range_2"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
 	Dateint        int32     `json:"dateint"`
 	FrequencyMs    int32     `json:"frequency_ms"`
 	OrganizationID uuid.UUID `json:"organization_id"`
@@ -205,8 +205,8 @@ type ListMetricSegmentsForQueryRow struct {
 
 func (q *Queries) ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error) {
 	rows, err := q.db.Query(ctx, listMetricSegmentsForQuery,
-		arg.Int8range,
-		arg.Int8range_2,
+		arg.StartTs,
+		arg.EndTs,
 		arg.Dateint,
 		arg.FrequencyMs,
 		arg.OrganizationID,

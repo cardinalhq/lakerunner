@@ -3,14 +3,14 @@ SELECT DISTINCT
   metric_name,
   metric_type
 FROM lrdb_exemplar_metrics
-WHERE organization_id = $1
+WHERE organization_id = @organization_id
 ORDER BY metric_name;
 
 -- name: GetMetricType :one
 SELECT metric_type
 FROM lrdb_exemplar_metrics
-WHERE organization_id = $1
-  AND metric_name = $2
+WHERE organization_id = @organization_id
+  AND metric_name = @metric_name
 ORDER BY 1
 LIMIT 1;
 

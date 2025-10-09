@@ -189,7 +189,7 @@ All source files must include AGPL v3 header:
 - `MIGRATION_CHECK_RETRY_INTERVAL` – check interval (default: 5s)
 - `MIGRATION_CHECK_ALLOW_DIRTY` – allow dirty state (default: false)
 
-### Health Checks
+### Health Check Config
 
 - `HEALTH_CHECK_PORT` – HTTP server port (default: 8090)
 - `HEALTH_CHECK_SERVICE_NAME` – service name in responses
@@ -202,7 +202,7 @@ All source files must include AGPL v3 header:
 - Run `make check` before submitting
 - Use conventional commit style when applicable
 
-## Health Checks
+## Health Check Endpoints
 
 Worker services provide HTTP health check endpoints for Kubernetes monitoring:
 

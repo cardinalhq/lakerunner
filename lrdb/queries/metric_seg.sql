@@ -108,10 +108,10 @@ SELECT
     lower(ts_range)::bigint AS start_ts,
     (upper(ts_range) - 1)::bigint AS end_ts
 FROM metric_seg
-WHERE ts_range && int8range($1, $2, '[)')
-  AND dateint = $3
-  AND frequency_ms = $4
-  AND organization_id = $5
+WHERE ts_range && int8range(@start_ts, @end_ts, '[)')
+  AND dateint = @dateint
+  AND frequency_ms = @frequency_ms
+  AND organization_id = @organization_id
   AND fingerprints && @fingerprints::BIGINT[]
   AND published = true;
 
