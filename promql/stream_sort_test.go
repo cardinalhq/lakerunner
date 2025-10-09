@@ -323,14 +323,15 @@ func TestMergeSorted_LimitDrainsPreventsBlocking(t *testing.T) {
 
 				// Use a timeout to detect if we're blocked
 				timer := time.NewTimer(100 * time.Millisecond)
-				defer timer.Stop()
 				select {
 				case ch <- item:
+					timer.Stop()
 				case <-timer.C:
 					// If we timeout, it means the send is blocked
 					producerBlocked[idx] = true
 					return
 				case <-ctx.Done():
+					timer.Stop()
 					return
 				}
 			}
