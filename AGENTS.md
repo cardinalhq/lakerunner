@@ -42,7 +42,47 @@ Lakerunner is a **real-time telemetry ingestion engine** that transforms S3-comp
 - Migrations run inside transactions (no CREATE INDEX CONCURRENTLY)
 - `*_seg` tables are partitioned by `organization_id` then `dateint`
 - Test databases available: `testing_configdb` and `testing_lrdb`
-- Use `psql-17` command for database access
+
+#### Using psql-17 for Database Management
+
+To connect to PostgreSQL using `psql-17`, you must specify the `postgres` database:
+
+```bash
+# Connect to postgres admin database (required for DROP/CREATE DATABASE)
+psql-17 -h localhost -d postgres
+
+# Once connected, you can manage databases:
+DROP DATABASE IF EXISTS testing_lrdb;
+CREATE DATABASE testing_lrdb;
+
+# Or run commands directly from command line:
+psql-17 -h localhost -d postgres -c "DROP DATABASE IF EXISTS testing_lrdb;"
+psql-17 -h localhost -d postgres -c "CREATE DATABASE testing_lrdb;"
+```
+
+**Recreating and migrating test databases:**
+
+```bash
+# Drop and recreate both test databases
+psql-17 -h localhost -d postgres -c "DROP DATABASE IF EXISTS testing_lrdb;"
+psql-17 -h localhost -d postgres -c "DROP DATABASE IF EXISTS testing_configdb;"
+psql-17 -h localhost -d postgres -c "CREATE DATABASE testing_lrdb;"
+psql-17 -h localhost -d postgres -c "CREATE DATABASE testing_configdb;"
+
+# Run migrations
+CONFIGDB_HOST=localhost CONFIGDB_DBNAME=testing_configdb ./bin/lakerunner migrate --databases=configdb
+LRDB_HOST=localhost LRDB_DBNAME=testing_lrdb ./bin/lakerunner migrate
+```
+
+**Inspecting database schema:**
+
+```bash
+# Connect to specific database
+psql-17 -h localhost -d testing_lrdb
+
+# Or run queries directly
+psql-17 -h localhost -d testing_lrdb -c "\d metric_seg"
+```
 
 ## Code Standards
 
@@ -223,12 +263,14 @@ Inside the container, memory and CPU limits for Go will match the constraints of
 **Location**: `.claude/agents/observability-investigator.md`
 
 **When to use**:
+
 - User asks questions about service health, errors, or performance
 - Need to investigate issues in the test/production environment
 - Want to understand patterns in logs, metrics, or traces
 - Need to analyze error rates, latencies, or system behavior
 
 **Key capabilities**:
+
 - Query metrics (PromQL) and logs (LogQL)
 - Find error patterns and summarize them intelligently
 - Analyze service dependencies and impact
@@ -236,7 +278,8 @@ Inside the container, memory and CPU limits for Go will match the constraints of
 
 **Important**: This agent provides intelligent summaries, NOT raw log dumps. It groups errors, calculates rates, and provides actionable insights.
 
-# important-instruction-reminders
+## important-instruction-reminders
+
 Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.

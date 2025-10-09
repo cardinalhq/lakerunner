@@ -45,6 +45,7 @@ type TracesStatsProvider struct{}
 func (p *TracesStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &TracesStatsAccumulator{
 		fingerprints: mapset.NewSet[int64](),
+		labelColumns: mapset.NewSet[string](),
 	}
 }
 
@@ -54,9 +55,17 @@ type TracesStatsAccumulator struct {
 	lastTS       int64
 	first        bool
 	fingerprints mapset.Set[int64]
+	labelColumns mapset.Set[string]
 }
 
 func (a *TracesStatsAccumulator) Add(row map[string]any) {
+	// Track label column names for label_name_map
+	for key := range row {
+		if isLabelColumn(key) {
+			a.labelColumns.Add(key)
+		}
+	}
+
 	// Track timestamp range
 	if startTime, ok := row["chq_timestamp"].(int64); ok {
 		if !a.first {
@@ -81,10 +90,13 @@ func (a *TracesStatsAccumulator) Add(row map[string]any) {
 }
 
 func (a *TracesStatsAccumulator) Finalize() any {
+	labelNameMap := buildLabelNameMap(a.labelColumns)
+
 	return TracesFileStats{
 		FirstTS:      a.firstTS,
 		LastTS:       a.lastTS,
 		Fingerprints: a.fingerprints.ToSlice(),
+		LabelNameMap: labelNameMap,
 	}
 }
 
@@ -93,4 +105,5 @@ type TracesFileStats struct {
 	FirstTS      int64   // Earliest start time
 	LastTS       int64   // Latest start time
 	Fingerprints []int64 // Fingerprints of spans in this file
+	LabelNameMap []byte  // JSON map of label column names to dotted names
 }

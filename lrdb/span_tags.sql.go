@@ -13,15 +13,16 @@ import (
 
 const listSpanTags = `-- name: ListSpanTags :many
 SELECT DISTINCT key::text AS tag_key
-FROM lrdb_exemplar_traces,
-    LATERAL jsonb_object_keys(exemplar) AS key
+FROM trace_seg,
+     LATERAL jsonb_object_keys(label_name_map) AS key
 WHERE organization_id = $1
-  AND key ~ '^(chq_|resource_|scope_|span_|attr_)'
+  AND label_name_map IS NOT NULL
 ORDER BY tag_key
 `
 
-// Extract tag keys from flat exemplar format for spans
-// Only return keys that start with chq_, resource_, scope_, span_, or attr_
+// Extract tag keys from label_name_map in trace_seg table
+// Returns all keys from label_name_map (for v2 APIs)
+// Handler code can filter by non-empty values for v1 legacy API support
 func (q *Queries) ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]string, error) {
 	rows, err := q.db.Query(ctx, listSpanTags, organizationID)
 	if err != nil {

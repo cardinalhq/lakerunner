@@ -129,10 +129,7 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	tags, err := q.mdb.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
-		OrganizationID: orgUUID,
-		MetricName:     metric,
-	})
+	tags, err := q.mdb.ListPromMetricTags(ctx, orgUUID)
 	if err != nil {
 		slog.Error("ListPromMetricTags failed", slog.Any("error", err))
 		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)

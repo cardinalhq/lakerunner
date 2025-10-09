@@ -640,6 +640,7 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 			Compacted:      false,
 			Fingerprints:   metadata.Fingerprints,
 			SortVersion:    lrdb.CurrentMetricSortVersion,
+			LabelNameMap:   metadata.LabelNameMap,
 		}
 
 		segmentParams = append(segmentParams, params)

@@ -10,7 +10,8 @@ INSERT INTO trace_seg (
   created_by,
   fingerprints,
   published,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   @organization_id,
@@ -23,7 +24,8 @@ VALUES (
   @created_by,
   @fingerprints::bigint[],
   @published,
-  @compacted
+  @compacted,
+  @label_name_map
 );
 
 -- name: batchInsertTraceSegsDirect :batchexec
@@ -38,7 +40,8 @@ INSERT INTO trace_seg (
   created_by,
   fingerprints,
   published,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   @organization_id,
@@ -51,7 +54,8 @@ VALUES (
   @created_by,
   @fingerprints::bigint[],
   @published,
-  @compacted
+  @compacted,
+  @label_name_map
 );
 
 -- name: GetTraceSeg :one
@@ -97,3 +101,13 @@ WHERE
   AND s.fingerprints && @fingerprints::BIGINT[]
   AND t.fp            = ANY(@fingerprints::BIGINT[])
   AND ts_range && int8range(@s, @e, '[)');
+
+-- name: GetTraceLabelNameMaps :many
+SELECT
+    segment_id,
+    label_name_map
+FROM trace_seg
+WHERE organization_id = @organization_id
+  AND dateint = @dateint
+  AND segment_id = ANY(@segment_ids::BIGINT[])
+  AND label_name_map IS NOT NULL;
