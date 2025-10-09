@@ -134,6 +134,7 @@ type LrdbExemplarLog struct {
 	Exemplar            map[string]any `json:"exemplar"`
 	Fingerprint         int64          `json:"fingerprint"`
 	RelatedFingerprints []int64        `json:"related_fingerprints"`
+	Source              ExemplarSource `json:"source"`
 }
 
 type LrdbExemplarMetric struct {
@@ -144,6 +145,7 @@ type LrdbExemplarMetric struct {
 	Exemplar            map[string]any `json:"exemplar"`
 	MetricName          string         `json:"metric_name"`
 	MetricType          string         `json:"metric_type"`
+	Source              ExemplarSource `json:"source"`
 }
 
 type LrdbExemplarTrace struct {
@@ -155,6 +157,7 @@ type LrdbExemplarTrace struct {
 	Fingerprint         int64          `json:"fingerprint"`
 	SpanName            string         `json:"span_name"`
 	SpanKind            int32          `json:"span_kind"`
+	Source              ExemplarSource `json:"source"`
 }
 
 type LrdbServiceIdentifier struct {

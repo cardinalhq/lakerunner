@@ -5,11 +5,12 @@
 -- an existing record, not changing it to the new one.
 -- The return value is a boolean indicating if the record is new.
 INSERT INTO lrdb_exemplar_logs
-            ( organization_id,  service_identifier_id,  fingerprint,  exemplar)
-VALUES      (@organization_id, @service_identifier_id, @fingerprint, @exemplar)
+            ( organization_id,  service_identifier_id,  fingerprint,  exemplar,  source)
+VALUES      (@organization_id, @service_identifier_id, @fingerprint, @exemplar, @source)
 ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
 DO UPDATE SET
   exemplar   = EXCLUDED.exemplar,
+  source     = EXCLUDED.source,
   updated_at = now(),
   related_fingerprints = CASE
     WHEN @old_fingerprint::BIGINT != 0

@@ -132,6 +132,7 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, r
 			Fingerprint:         fingerprint,
 			OldFingerprint:      oldFingerprint,
 			Exemplar:            exemplarMap,
+			Source:              lrdb.ExemplarSourceLakerunner,
 		}
 		records = append(records, record)
 	}
@@ -234,6 +235,7 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID uuid.UUID
 			MetricName:          metricName,
 			MetricType:          metricType,
 			Exemplar:            exemplarMap,
+			Source:              lrdb.ExemplarSourceLakerunner,
 		}
 		records = append(records, record)
 	}
@@ -342,6 +344,7 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID uuid.UUID,
 			Exemplar:            exemplarMap,
 			SpanName:            spanName,
 			SpanKind:            convertSpanKindToInt32(spanKind),
+			Source:              lrdb.ExemplarSourceLakerunner,
 		}
 		records = append(records, record)
 	}
