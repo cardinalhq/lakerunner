@@ -28,28 +28,7 @@ var (
 	fullValueDimensions = fingerprint.FullValueDimensions
 )
 
-// computeFingerprint combines fieldName and trigram and hashes them.
+// computeFingerprint wraps the fingerprint package function for convenience
 func computeFingerprint(fieldName, trigram string) int64 {
-	s := fieldName + ":" + trigram
-	return computeHash(s)
-}
-
-func computeHash(str string) int64 {
-	var h int64
-	length := len(str)
-	i := 0
-
-	for i+3 < length {
-		h = 31*31*31*31*h +
-			31*31*31*int64(str[i]) +
-			31*31*int64(str[i+1]) +
-			31*int64(str[i+2]) +
-			int64(str[i+3])
-		i += 4
-	}
-	for ; i < length; i++ {
-		h = 31*h + int64(str[i])
-	}
-
-	return h
+	return fingerprint.ComputeFingerprint(fieldName, trigram)
 }

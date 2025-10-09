@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 )
 
 func TestComputeHash(t *testing.T) {
@@ -90,8 +92,8 @@ func TestComputeHash(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := computeHash(tt.input)
-			assert.Equal(t, tt.expect, got, "computeHash(%q) = %d; want %d", tt.input, got, tt.expect)
+			got := fingerprint.ComputeHash(tt.input)
+			assert.Equal(t, tt.expect, got, "ComputeHash(%q) = %d; want %d", tt.input, got, tt.expect)
 		})
 	}
 }
@@ -107,19 +109,19 @@ func TestComputeFingerprint(t *testing.T) {
 			name:      "simple case",
 			fieldName: "metric_name",
 			trigram:   "foo",
-			expected:  computeHash("metric_name:foo"),
+			expected:  fingerprint.ComputeHash("metric_name:foo"),
 		},
 		{
 			name:      "exists regex",
 			fieldName: "log_message",
 			trigram:   existsRegex,
-			expected:  computeHash("log_message:.*"),
+			expected:  fingerprint.ComputeHash("log_message:.*"),
 		},
 		{
 			name:      "telemetry type",
 			fieldName: "chq_telemetry_type",
 			trigram:   "log",
-			expected:  computeHash("chq_telemetry_type:log"),
+			expected:  fingerprint.ComputeHash("chq_telemetry_type:log"),
 		},
 	}
 
