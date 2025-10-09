@@ -24,6 +24,7 @@ import (
 // isLabelColumn determines if a column should be included in the label name mapping.
 // This includes user-facing labels (resource.*, log.*, metric.*, span.*, etc.),
 // internal fields (_cardinalhq.*), and convenience columns (chq_, scope_).
+// Note: chq_ and scope_ columns do not have dotted equivalents and are stored with empty string values in the label name map.
 func isLabelColumn(columnName string) bool {
 	labelPrefixes := []string{
 		"_cardinalhq_",
