@@ -23,9 +23,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/cardinalhq/oteltools/pkg/dateutils"
+
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/promql"
-	"github.com/cardinalhq/oteltools/pkg/dateutils"
 )
 
 // handleTagsQuery handles the legacy /api/v1/tags/logs endpoint.
