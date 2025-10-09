@@ -172,7 +172,6 @@ func (q *QuerierService) EvaluateLogTagValuesQuery(
 		for _, leaf := range queryPlan.Leaves {
 			for _, dih := range dateIntHours {
 				segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery)
-				slog.Info("lookupLogsSegments", "dih", dih, "leaf", leaf, "found", len(segments))
 				if err != nil {
 					slog.Error("failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
 					return

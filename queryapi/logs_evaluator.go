@@ -74,7 +74,6 @@ func (q *QuerierService) EvaluateLogsQuery(
 		for _, leaf := range queryPlan.Leaves {
 			for _, dih := range dateIntHours {
 				segments, err := q.lookupLogsSegments(ctxAll, dih, leaf, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery)
-				slog.Info("lookupLogsSegments", "dih", dih, "leaf", leaf, "found", len(segments))
 				if err != nil {
 					slog.Error("failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
 					return
@@ -235,7 +234,15 @@ func (q *QuerierService) lookupLogsSegments(
 			continue
 		}
 		switch lm.Op {
-		case logql.MatchEq, logql.MatchRe:
+		case logql.MatchEq:
+			// For full-value dimensions with exact match, use the full value fingerprint
+			if slices.Contains(fullValueDimensions, label) {
+				addFullValueNode(label, val, fpsToFetch, &root)
+			} else {
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			}
+		case logql.MatchRe:
+			// Regex always uses trigrams (even for full-value dimensions)
 			addAndNodeFromPattern(label, val, fpsToFetch, &root)
 		default:
 			addExistsNode(label, fpsToFetch, &root)
@@ -252,14 +259,21 @@ func (q *QuerierService) lookupLogsSegments(
 			continue
 		}
 		switch lf.Op {
-		case logql.MatchEq, logql.MatchRe:
+		case logql.MatchEq:
+			// For full-value dimensions with exact match, use the full value fingerprint
+			if slices.Contains(fullValueDimensions, label) {
+				addFullValueNode(label, val, fpsToFetch, &root)
+			} else {
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			}
+		case logql.MatchRe:
+			// Regex always uses trigrams (even for full-value dimensions)
 			addAndNodeFromPattern(label, val, fpsToFetch, &root)
 		default:
 			addExistsNode(label, fpsToFetch, &root)
 		}
 	}
 
-	slog.Info("lookupLogsSegments", "dih", dih, "startTs", startTs, "endTs", endTs, "fps", len(fpsToFetch))
 	if len(fpsToFetch) == 0 {
 		addExistsNode(bodyField, fpsToFetch, &root)
 	}
@@ -280,10 +294,6 @@ func (q *QuerierService) lookupLogsSegments(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list log segments for query: %w", err)
-	}
-
-	if len(rows) == 0 {
-		slog.Info("lookupLogsSegments: no segments found", "dih", dih, "startTs", startTs, "endTs", endTs, slog.Any("fps", fpsToFetch))
 	}
 
 	fpToSegments := make(map[int64][]SegmentInfo, len(rows))
@@ -328,7 +338,23 @@ func addExistsNode(label string, fps map[int64]struct{}, root **TrigramQuery) {
 		fieldName: label,
 		Trigram:   []string{existsRegex},
 	}
-	slog.Info("Adding exists node", "label", label, "fp", fp)
+	*root = &TrigramQuery{Op: index.QAnd, Sub: []*TrigramQuery{*root, tq}}
+}
+
+func addFullValueNode(label, value string, fps map[int64]struct{}, root **TrigramQuery) {
+	// For full-value dimensions, we index both the exists fingerprint and the exact value
+	// Add both fingerprints to the query
+	existsFp := computeFingerprint(label, existsRegex)
+	valueFp := computeFingerprint(label, value)
+	fps[existsFp] = struct{}{}
+	fps[valueFp] = struct{}{}
+
+	// Create a query node that requires both fingerprints (AND)
+	tq := &TrigramQuery{
+		Op:        index.QAnd,
+		fieldName: label,
+		Trigram:   []string{existsRegex, value},
+	}
 	*root = &TrigramQuery{Op: index.QAnd, Sub: []*TrigramQuery{*root, tq}}
 }
 

@@ -14,47 +14,21 @@
 
 package queryapi
 
+import (
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
+)
+
 const (
-	existsRegex = ".*"
+	existsRegex = fingerprint.ExistsRegex
 )
 
 var (
-	infraDimensions = []string{
-		"resource_k8s_namespace_name",
-		"resource_service_name",
-		"resource_file",
-	}
-	dimensionsToIndex = append([]string{
-		"chq_telemetry_type",
-		"metric_name",
-		"log_level",
-		//"log_message",
-		"span_trace_id",
-	}, infraDimensions...)
+	// Use fingerprint configuration as the single source of truth
+	dimensionsToIndex   = fingerprint.DimensionsToIndex
+	fullValueDimensions = fingerprint.FullValueDimensions
 )
 
-// computeFingerprint combines fieldName and trigram and hashes them.
+// computeFingerprint wraps the fingerprint package function for convenience
 func computeFingerprint(fieldName, trigram string) int64 {
-	s := fieldName + ":" + trigram
-	return computeHash(s)
-}
-
-func computeHash(str string) int64 {
-	var h int64
-	length := len(str)
-	i := 0
-
-	for i+3 < length {
-		h = 31*31*31*31*h +
-			31*31*31*int64(str[i]) +
-			31*31*int64(str[i+1]) +
-			31*int64(str[i+2]) +
-			int64(str[i+3])
-		i += 4
-	}
-	for ; i < length; i++ {
-		h = 31*h + int64(str[i])
-	}
-
-	return h
+	return fingerprint.ComputeFingerprint(fieldName, trigram)
 }

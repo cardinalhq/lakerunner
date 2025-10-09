@@ -162,3 +162,84 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 		t.Fatalf("lookup fingerprints mismatch: got %v want %v", gotFPs, wantedFPs)
 	}
 }
+
+func TestLookupLogsSegments_FullValueDimension_ExactMatch(t *testing.T) {
+	// Test that full-value dimensions like resource_file use exact value fingerprints
+	// instead of trigrams for exact matches
+	orgID := uuid.New()
+	dih := DateIntHours{DateInt: 20250101}
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2025, 1, 1, 2, 0, 0, 0, time.UTC)
+	startTs := start.UnixMilli()
+	endTs := end.UnixMilli()
+
+	filename := "example.com-app-99d2b09d-1645742295.44_2025-10-09-010545_controller"
+
+	// Exact match on resource_file (a full-value dimension)
+	leaf := logql.LogLeaf{
+		Matchers: []logql.LabelMatch{
+			{Label: "resource_file", Op: logql.MatchEq, Value: filename},
+		},
+	}
+
+	// Expected fingerprints for full-value dimension: exists + exact value
+	existsFP := computeFingerprint("resource_file", existsRegex)
+	valueFP := computeFingerprint("resource_file", filename)
+
+	var gotParams lrdb.ListLogSegmentsForQueryParams
+
+	fakeRows := []lrdb.ListLogSegmentsForQueryRow{
+		{
+			Fingerprint: existsFP,
+			InstanceNum: 1,
+			SegmentID:   101,
+			StartTs:     startTs,
+			EndTs:       endTs,
+		},
+		{
+			Fingerprint: valueFP,
+			InstanceNum: 1,
+			SegmentID:   101,
+			StartTs:     startTs,
+			EndTs:       endTs,
+		},
+	}
+
+	var lookup SegmentLookupFunc = func(ctx context.Context, p lrdb.ListLogSegmentsForQueryParams) ([]lrdb.ListLogSegmentsForQueryRow, error) {
+		gotParams = p
+		return fakeRows, nil
+	}
+
+	q := &QuerierService{}
+
+	segs, err := q.lookupLogsSegments(
+		context.Background(),
+		dih,
+		leaf,
+		startTs, endTs,
+		orgID,
+		lookup,
+	)
+	if err != nil {
+		t.Fatalf("lookupLogsSegments error: %v", err)
+	}
+
+	// Should query for both exists and exact value fingerprints
+	expectedFPs := []int64{existsFP, valueFP}
+	gotFPs := slices.Clone(gotParams.Fingerprints)
+	slices.Sort(gotFPs)
+	slices.Sort(expectedFPs)
+
+	if !slices.Equal(gotFPs, expectedFPs) {
+		t.Fatalf("fingerprints mismatch: got %v want %v", gotFPs, expectedFPs)
+	}
+
+	// Should find the segment that has both fingerprints
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 segment, got %d: %#v", len(segs), segs)
+	}
+
+	if segs[0].SegmentID != 101 {
+		t.Fatalf("wrong segment ID: got %d want 101", segs[0].SegmentID)
+	}
+}

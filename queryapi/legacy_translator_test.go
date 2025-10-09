@@ -177,3 +177,71 @@ func TestEscapeLogQLValue(t *testing.T) {
 		})
 	}
 }
+
+func TestEscapeRegexValue(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`simple-value`, `simple-value`},
+		{`value.with.dots`, `value\\.with\\.dots`},
+		{`value_with_underscores`, `value_with_underscores`},
+		{`chewy.com-abu-8qt6qskwan4-1692736963.994821_2025-09-24-074731_controller`, `chewy\\.com-abu-8qt6qskwan4-1692736963\\.994821_2025-09-24-074731_controller`},
+		{`special*chars?here`, `special\\*chars\\?here`},
+		{`brackets[test]`, `brackets\\[test\\]`},
+		{`parens(test)`, `parens\\(test\\)`},
+		{`braces{test}`, `braces\\{test\\}`},
+		{`caret^test`, `caret\\^test`},
+		{`dollar$test`, `dollar\\$test`},
+		{`pipe|test`, `pipe\\|test`},
+		{`backslash\test`, `backslash\\\test`},
+		{`plus+test`, `plus\\+test`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := escapeRegexValue(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestTranslateToLogQL_InOperatorWithSpecialChars(t *testing.T) {
+	baseExpr := BaseExpression{
+		Dataset: "logs",
+		Filter: BinaryClause{
+			Op: "and",
+			Q1: Filter{
+				K:  "resource.bucket.name",
+				V:  []string{"avxit-dev-s3-use2-datalake"},
+				Op: "eq",
+			},
+			Q2: Filter{
+				K:  "resource.file",
+				V:  []string{"chewy.com-abu-8qt6qskwan4-1692736963.994821_2025-09-24-074731_controller"},
+				Op: "in",
+			},
+		},
+	}
+
+	logql, _, err := TranslateToLogQL(baseExpr)
+	require.NoError(t, err)
+	// Single value in "in" operator should use exact match, not regex
+	assert.Equal(t, `{resource_bucket_name="avxit-dev-s3-use2-datalake",resource_file="chewy.com-abu-8qt6qskwan4-1692736963.994821_2025-09-24-074731_controller"}`, logql)
+}
+
+func TestTranslateToLogQL_InOperatorMultipleValues(t *testing.T) {
+	baseExpr := BaseExpression{
+		Dataset: "logs",
+		Filter: Filter{
+			K:  "resource.file",
+			V:  []string{"file1.log", "file2.log", "file.with.dots.log"},
+			Op: "in",
+		},
+	}
+
+	logql, _, err := TranslateToLogQL(baseExpr)
+	require.NoError(t, err)
+	// Multiple values should use regex with anchored OR pattern
+	assert.Equal(t, `{resource_file=~"^(file1\\.log|file2\\.log|file\\.with\\.dots\\.log)$"}`, logql)
+}

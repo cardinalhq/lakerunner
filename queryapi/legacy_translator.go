@@ -78,17 +78,23 @@ func filterToLogQL(clause QueryClause, ctx *TranslationContext) ([]string, []str
 			matchers = append(matchers, fmt.Sprintf(`%s="%s"`, normalized, escapedVal))
 
 		case "in":
-			// LogQL: label=~"^(val1|val2|val3)$" - anchored for exact match
 			if len(c.V) == 0 {
 				return nil, nil, fmt.Errorf("in operator requires at least one value")
 			}
-			// Escape each value and join with |
-			escaped := make([]string, len(c.V))
-			for i, v := range c.V {
-				escaped[i] = escapeRegexValue(v)
+			// Optimize single value to use exact match instead of regex
+			if len(c.V) == 1 {
+				escapedVal := escapeLogQLValue(c.V[0])
+				matchers = append(matchers, fmt.Sprintf(`%s="%s"`, normalized, escapedVal))
+			} else {
+				// LogQL: label=~"^(val1|val2|val3)$" - anchored for exact match
+				// Escape each value and join with |
+				escaped := make([]string, len(c.V))
+				for i, v := range c.V {
+					escaped[i] = escapeRegexValue(v)
+				}
+				pattern := "^(" + strings.Join(escaped, "|") + ")$"
+				matchers = append(matchers, fmt.Sprintf(`%s=~"%s"`, normalized, pattern))
 			}
-			pattern := "^(" + strings.Join(escaped, "|") + ")$"
-			matchers = append(matchers, fmt.Sprintf(`%s=~"%s"`, normalized, pattern))
 
 		case "contains":
 			// LogQL line filter: |~ "pattern"
@@ -164,9 +170,14 @@ func escapeLogQLValue(s string) string {
 }
 
 // escapeRegexValue escapes regex special characters for use in LogQL regex.
+// In LogQL, regex patterns are quoted strings, so backslashes need to be double-escaped.
 var regexEscapePattern = regexp.MustCompile(`([.+*?()\[\]{}^$|\\])`)
 
 func escapeRegexValue(s string) string {
-	// Escape regex special characters
-	return regexEscapePattern.ReplaceAllString(s, `\$1`)
+	// Escape regex special characters with double backslash for LogQL quoted strings
+	// In LogQL: label=~"pattern" - the pattern goes through string parsing then regex parsing
+	// So to match a literal '.', we need '\\.' which becomes '\.' after string parsing
+	return regexEscapePattern.ReplaceAllStringFunc(s, func(match string) string {
+		return `\\` + match
+	})
 }
