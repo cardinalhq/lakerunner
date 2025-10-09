@@ -16,15 +16,24 @@ SELECT DISTINCT key::text AS tag_key
 FROM log_seg,
      LATERAL jsonb_object_keys(label_name_map) AS key
 WHERE organization_id = $1
+  AND dateint >= $2
+  AND dateint <= $3
   AND label_name_map IS NOT NULL
 ORDER BY tag_key
 `
 
+type ListLogQLTagsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	StartDateint   int32     `json:"start_dateint"`
+	EndDateint     int32     `json:"end_dateint"`
+}
+
 // Extract tag keys from label_name_map in log_seg table
 // Returns all keys from label_name_map (for v2 APIs)
 // Handler code can filter by non-empty values for v1 legacy API support
-func (q *Queries) ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, listLogQLTags, organizationID)
+// Includes today's and yesterday's dateint for partition pruning
+func (q *Queries) ListLogQLTags(ctx context.Context, arg ListLogQLTagsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listLogQLTags, arg.OrganizationID, arg.StartDateint, arg.EndDateint)
 	if err != nil {
 		return nil, err
 	}

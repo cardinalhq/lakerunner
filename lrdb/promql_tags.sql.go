@@ -37,13 +37,17 @@ SELECT DISTINCT key::text AS tag_key
 FROM metric_seg,
      LATERAL jsonb_object_keys(label_name_map) AS key
 WHERE organization_id = $1
-  AND $2::BIGINT = ANY(fingerprints)
+  AND dateint >= $2
+  AND dateint <= $3
+  AND $4::BIGINT = ANY(fingerprints)
   AND label_name_map IS NOT NULL
 ORDER BY tag_key
 `
 
 type ListPromMetricTagsParams struct {
 	OrganizationID    uuid.UUID `json:"organization_id"`
+	StartDateint      int32     `json:"start_dateint"`
+	EndDateint        int32     `json:"end_dateint"`
 	MetricFingerprint int64     `json:"metric_fingerprint"`
 }
 
@@ -51,8 +55,14 @@ type ListPromMetricTagsParams struct {
 // Filters by metric fingerprint to return tags only for the requested metric
 // Returns underscored tag keys (for v2 APIs)
 // Legacy API uses denormalizer to convert to dotted names
+// Includes today's and yesterday's dateint for partition pruning
 func (q *Queries) ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listPromMetricTags, arg.OrganizationID, arg.MetricFingerprint)
+	rows, err := q.db.Query(ctx, listPromMetricTags,
+		arg.OrganizationID,
+		arg.StartDateint,
+		arg.EndDateint,
+		arg.MetricFingerprint,
+	)
 	if err != nil {
 		return nil, err
 	}

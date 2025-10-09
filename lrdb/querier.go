@@ -49,13 +49,15 @@ type Querier interface {
 	// Extract tag keys from label_name_map in log_seg table
 	// Returns all keys from label_name_map (for v2 APIs)
 	// Handler code can filter by non-empty values for v1 legacy API support
-	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
+	// Includes today's and yesterday's dateint for partition pruning
+	ListLogQLTags(ctx context.Context, arg ListLogQLTagsParams) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	// Extract tag keys from label_name_map in metric_seg table for a specific metric
 	// Filters by metric fingerprint to return tags only for the requested metric
 	// Returns underscored tag keys (for v2 APIs)
 	// Legacy API uses denormalizer to convert to dotted names
+	// Includes today's and yesterday's dateint for partition pruning
 	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error)
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
 	ListServiceMetrics(ctx context.Context, arg ListServiceMetricsParams) ([]string, error)
@@ -63,7 +65,8 @@ type Querier interface {
 	// Extract tag keys from label_name_map in trace_seg table
 	// Returns all keys from label_name_map (for v2 APIs)
 	// Handler code can filter by non-empty values for v1 legacy API support
-	ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
+	// Includes today's and yesterday's dateint for partition pruning
+	ListSpanTags(ctx context.Context, arg ListSpanTagsParams) ([]string, error)
 	ListTraceSegmentsForQuery(ctx context.Context, arg ListTraceSegmentsForQueryParams) ([]ListTraceSegmentsForQueryRow, error)
 	// Returns an estimate of the number of log segments, accounting for per-file overhead.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)

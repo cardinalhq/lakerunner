@@ -15,12 +15,14 @@
 package queryapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -114,7 +116,8 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	ctx := r.Context()
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 
 	mt, err := q.mdb.GetMetricType(ctx, lrdb.GetMetricTypeParams{
 		OrganizationID: orgUUID,
@@ -133,8 +136,16 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 	// Compute fingerprint for the metric name to filter segments
 	metricFingerprint := fingerprint.ComputeFingerprint("metric_name", metric)
 
+	// Calculate dateint for today and yesterday for partition pruning
+	now := time.Now().UTC()
+	todayDateint := int32(now.Year()*10000 + int(now.Month())*100 + now.Day())
+	yesterday := now.AddDate(0, 0, -1)
+	yesterdayDateint := int32(yesterday.Year()*10000 + int(yesterday.Month())*100 + yesterday.Day())
+
 	tags, err := q.mdb.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
 		OrganizationID:    orgUUID,
+		StartDateint:      yesterdayDateint,
+		EndDateint:        todayDateint,
 		MetricFingerprint: metricFingerprint,
 	})
 	if err != nil {

@@ -19,10 +19,13 @@ LIMIT 1;
 -- Filters by metric fingerprint to return tags only for the requested metric
 -- Returns underscored tag keys (for v2 APIs)
 -- Legacy API uses denormalizer to convert to dotted names
+-- Includes today's and yesterday's dateint for partition pruning
 SELECT DISTINCT key::text AS tag_key
 FROM metric_seg,
      LATERAL jsonb_object_keys(label_name_map) AS key
 WHERE organization_id = @organization_id
+  AND dateint >= @start_dateint
+  AND dateint <= @end_dateint
   AND @metric_fingerprint::BIGINT = ANY(fingerprints)
   AND label_name_map IS NOT NULL
 ORDER BY tag_key;
