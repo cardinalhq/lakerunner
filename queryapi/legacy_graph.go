@@ -35,6 +35,8 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 	// Parse request
 	var req GraphRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Error("Failed to parse legacy graph query request",
+			slog.String("error", err.Error()))
 		writeAPIError(w, http.StatusBadRequest, InvalidJSON, "invalid JSON: "+err.Error())
 		return
 	}
@@ -51,9 +53,19 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 	e := r.URL.Query().Get("e")
 	startTs, endTs, err := dateutils.ToStartEnd(s, e)
 	if err != nil {
+		slog.Error("Invalid time range in legacy graph query",
+			slog.String("start", s),
+			slog.String("end", e),
+			slog.String("error", err.Error()))
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid time range: "+err.Error())
 		return
 	}
+
+	slog.Info("Received legacy graph query request",
+		slog.String("orgID", orgID.String()),
+		slog.Int64("startTs", startTs),
+		slog.Int64("endTs", endTs),
+		slog.Int("expressionCount", len(req.BaseExpressions)))
 
 	// Setup SSE manually (without the envelope wrapper)
 	flusher, ok := w.(http.Flusher)
@@ -102,26 +114,44 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			continue // Skip non-returning expressions
 		}
 
+		slog.Info("Processing legacy graph query expression",
+			slog.String("exprID", exprID),
+			slog.String("dataset", baseExpr.Dataset),
+			slog.Int("limit", baseExpr.Limit),
+			slog.String("order", baseExpr.Order))
+
 		// Translate to LogQL
 		logqlQuery, _, err := TranslateToLogQL(baseExpr)
 		if err != nil {
+			slog.Error("Failed to translate legacy query to LogQL",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()),
+				slog.Any("baseExpr", baseExpr))
 			writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "translation failed: "+err.Error())
 			return
 		}
 
-		slog.Debug("Translated legacy query to LogQL",
+		slog.Info("Translated legacy query to LogQL",
 			slog.String("exprID", exprID),
 			slog.String("logql", logqlQuery))
 
 		// Parse and compile LogQL
 		logAst, err := logql.FromLogQL(logqlQuery)
 		if err != nil {
+			slog.Error("Failed to parse LogQL query",
+				slog.String("exprID", exprID),
+				slog.String("logql", logqlQuery),
+				slog.String("error", err.Error()))
 			writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid LogQL: "+err.Error())
 			return
 		}
 
 		lplan, err := logql.CompileLog(logAst)
 		if err != nil {
+			slog.Error("Failed to compile LogQL query",
+				slog.String("exprID", exprID),
+				slog.String("logql", logqlQuery),
+				slog.String("error", err.Error()))
 			writeAPIError(w, http.StatusUnprocessableEntity, ErrCompileError, "compilation error: "+err.Error())
 			return
 		}
@@ -141,6 +171,14 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			limit = 1000 // Default
 		}
 
+		slog.Info("Executing LogQL query",
+			slog.String("exprID", exprID),
+			slog.String("logql", logqlQuery),
+			slog.Int64("startTs", startTs),
+			slog.Int64("endTs", endTs),
+			slog.Bool("reverse", reverse),
+			slog.Int("limit", limit))
+
 		resultsCh, err := q.EvaluateLogsQuery(
 			r.Context(),
 			orgID,
@@ -152,6 +190,10 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			nil, // fields
 		)
 		if err != nil {
+			slog.Error("Failed to execute LogQL query",
+				slog.String("exprID", exprID),
+				slog.String("logql", logqlQuery),
+				slog.String("error", err.Error()))
 			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "query execution failed: "+err.Error())
 			return
 		}
