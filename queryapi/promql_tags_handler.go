@@ -135,7 +135,7 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 
 	tags, err := q.mdb.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
 		OrganizationID:    orgUUID,
-		MetricFingerprint: []int64{metricFingerprint},
+		MetricFingerprint: metricFingerprint,
 	})
 	if err != nil {
 		slog.Error("ListPromMetricTags failed", slog.Any("error", err))

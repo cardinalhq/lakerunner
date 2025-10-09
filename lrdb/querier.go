@@ -54,8 +54,8 @@ type Querier interface {
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	// Extract tag keys from label_name_map in metric_seg table for a specific metric
 	// Filters by metric fingerprint to return tags only for the requested metric
-	// Returns all keys from label_name_map (for v2 APIs)
-	// Handler code can filter by non-empty values for v1 legacy API support
+	// Returns underscored tag keys (for v2 APIs)
+	// Legacy API uses denormalizer to convert to dotted names
 	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error)
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
 	ListServiceMetrics(ctx context.Context, arg ListServiceMetricsParams) ([]string, error)
