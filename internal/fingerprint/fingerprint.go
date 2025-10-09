@@ -28,25 +28,23 @@ const (
 )
 
 var (
-	// InfraDimensions are infrastructure-related labels that should be indexed
-	InfraDimensions = []string{
+	// DimensionsToIndex are all dimensions that should have fingerprints generated
+	DimensionsToIndex = []string{
+		"chq_telemetry_type",
+		"log_level",
+		"metric_name",
+		"resource_file",
 		"resource_k8s_namespace_name",
 		"resource_service_name",
-		"resource_file",
-	}
-
-	// DimensionsToIndex are all dimensions that should have fingerprints generated
-	DimensionsToIndex = append([]string{
-		"chq_telemetry_type",
-		"metric_name",
-		"log_level",
-		//"log_message",
 		"span_trace_id",
-	}, InfraDimensions...)
+	}
 
 	// FullValueDimensions are dimensions that should be indexed with exact full values
 	// instead of trigrams. These support exact matching efficiently but not substring/regex.
-	FullValueDimensions = []string{"metric_name", "resource_file"}
+	FullValueDimensions = []string{
+		"metric_name",
+		"resource_file",
+	}
 )
 
 // ToFingerprints converts a map of tagName → slice of tagValues into a set of fingerprints.
@@ -54,14 +52,13 @@ func ToFingerprints(tagValuesByName map[string]mapset.Set[string]) mapset.Set[in
 	fingerprints := mapset.NewSet[int64]()
 
 	for tagName, values := range tagValuesByName {
+		fingerprints.Add(ComputeFingerprint(tagName, ExistsRegex))
+
 		if !slices.Contains(DimensionsToIndex, tagName) {
-			fp := ComputeFingerprint(tagName, ExistsRegex)
-			fingerprints.Add(fp)
 			continue
 		}
 
 		if slices.Contains(FullValueDimensions, tagName) {
-			fingerprints.Add(ComputeFingerprint(tagName, ExistsRegex))
 			for _, tagValue := range values.ToSlice() {
 				fingerprints.Add(ComputeFingerprint(tagName, tagValue))
 			}
@@ -99,11 +96,10 @@ func ToTrigrams(str string) []string {
 		i += size
 	}
 
-	res := make([]string, 0, len(ngrams)+1)
+	res := make([]string, 0, len(ngrams))
 	for ngram := range ngrams {
 		res = append(res, ngram)
 	}
-	res = append(res, ExistsRegex)
 	return res
 }
 
@@ -119,11 +115,7 @@ func ComputeHash(str string) int64 {
 	i := 0
 
 	for i+3 < length {
-		h = 31*31*31*31*h +
-			31*31*31*int64(str[i]) +
-			31*31*int64(str[i+1]) +
-			31*int64(str[i+2]) +
-			int64(str[i+3])
+		h = 31*31*31*31*h + 31*31*31*int64(str[i]) + 31*31*int64(str[i+1]) + 31*int64(str[i+2]) + int64(str[i+3])
 		i += 4
 	}
 	for ; i < length; i++ {
@@ -134,7 +126,7 @@ func ComputeHash(str string) int64 {
 }
 
 // GenerateRowFingerprints extracts field values from a row and generates comprehensive fingerprints
-func GenerateRowFingerprints(row map[string]interface{}) mapset.Set[int64] {
+func GenerateRowFingerprints(row map[string]any) mapset.Set[int64] {
 	tagValuesByName := make(map[string]mapset.Set[string])
 
 	// Extract values for each field in the row

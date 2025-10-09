@@ -104,25 +104,20 @@ func TestToTrigrams(t *testing.T) {
 		expected []string
 	}{
 		{
-			name:  "empty string",
-			input: "",
-			expected: []string{
-				ExistsRegex,
-			},
+			name:     "empty string",
+			input:    "",
+			expected: []string{},
 		},
 		{
-			name:  "short string less than 3",
-			input: "ab",
-			expected: []string{
-				ExistsRegex,
-			},
+			name:     "short string less than 3",
+			input:    "ab",
+			expected: []string{},
 		},
 		{
 			name:  "exactly 3 chars",
 			input: "abc",
 			expected: []string{
 				"abc",
-				ExistsRegex,
 			},
 		},
 		{
@@ -131,7 +126,6 @@ func TestToTrigrams(t *testing.T) {
 			expected: []string{
 				"abc",
 				"bcd",
-				ExistsRegex,
 			},
 		},
 		{
@@ -141,14 +135,12 @@ func TestToTrigrams(t *testing.T) {
 				"abc",
 				"bcd",
 				"cde",
-				ExistsRegex,
 			},
 		},
 		{
 			name:  "unicode string",
 			input: "a😀b",
 			expected: []string{
-				ExistsRegex,
 				"a😀b",
 			},
 		},
@@ -157,7 +149,6 @@ func TestToTrigrams(t *testing.T) {
 			input: "aaaaa",
 			expected: []string{
 				"aaa",
-				ExistsRegex,
 			},
 		},
 	}
@@ -186,7 +177,7 @@ func TestToFingerprints(t *testing.T) {
 			input: map[string]mapset.Set[string]{
 				"metric_name": mapset.NewSet("foo"),
 			},
-			expectedFingerp: mapset.NewSet[int64](
+			expectedFingerp: mapset.NewSet(
 				ComputeFingerprint("metric_name", "foo"),
 				ComputeFingerprint("metric_name", ExistsRegex),
 			),
