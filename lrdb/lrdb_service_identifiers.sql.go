@@ -51,9 +51,9 @@ INSERT INTO lrdb_service_identifiers
 
 type UpsertServiceIdentifierParams struct {
 	OrganizationID pgtype.UUID `json:"organization_id"`
-	ServiceName    pgtype.Text `json:"service_name"`
-	ClusterName    pgtype.Text `json:"cluster_name"`
-	Namespace      pgtype.Text `json:"namespace"`
+	ServiceName    *string     `json:"service_name"`
+	ClusterName    *string     `json:"cluster_name"`
+	Namespace      *string     `json:"namespace"`
 }
 
 type UpsertServiceIdentifierRow struct {

@@ -107,9 +107,9 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, r
 
 		params := lrdb.UpsertServiceIdentifierParams{
 			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
-			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
-			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
-			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
+			ServiceName:    &serviceName,
+			ClusterName:    &clusterName,
+			Namespace:      &namespaceName,
 		}
 
 		result, err := store.UpsertServiceIdentifier(ctx, params)
@@ -210,9 +210,9 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID uuid.UUID
 
 		params := lrdb.UpsertServiceIdentifierParams{
 			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
-			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
-			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
-			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
+			ServiceName:    &serviceName,
+			ClusterName:    &clusterName,
+			Namespace:      &namespaceName,
 		}
 
 		result, err := store.UpsertServiceIdentifier(ctx, params)
@@ -318,9 +318,9 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID uuid.UUID,
 
 		params := lrdb.UpsertServiceIdentifierParams{
 			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
-			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
-			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
-			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
+			ServiceName:    &serviceName,
+			ClusterName:    &clusterName,
+			Namespace:      &namespaceName,
 		}
 
 		result, err := store.UpsertServiceIdentifier(ctx, params)

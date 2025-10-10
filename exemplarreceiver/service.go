@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -31,7 +30,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -111,40 +109,54 @@ func (r *ReceiverService) handleExemplar(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	// Read raw JSON bytes
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to read request body: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// Unmarshal batch request
-	var batchReq ExemplarBatchRequest
-	if err := json.Unmarshal(body, &batchReq); err != nil {
-		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// Validate source
-	if batchReq.Source == "" {
-		http.Error(w, "source is required", http.StatusBadRequest)
-		return
-	}
-
-	// Validate exemplars array
-	if len(batchReq.Exemplars) == 0 {
-		http.Error(w, "exemplars array cannot be empty", http.StatusBadRequest)
-		return
-	}
-
 	// Process based on signal type
 	var response *ExemplarBatchResponse
+	var err error
 	switch signal {
 	case "logs":
+		var batchReq LogsBatchRequest
+		if err := json.NewDecoder(req.Body).Decode(&batchReq); err != nil {
+			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+		if batchReq.Source == "" {
+			http.Error(w, "source is required", http.StatusBadRequest)
+			return
+		}
+		if len(batchReq.Exemplars) == 0 {
+			http.Error(w, "exemplars array cannot be empty", http.StatusBadRequest)
+			return
+		}
 		response, err = r.processLogsBatch(req.Context(), orgID, batchReq.Source, batchReq.Exemplars)
 	case "metrics":
+		var batchReq MetricsBatchRequest
+		if err := json.NewDecoder(req.Body).Decode(&batchReq); err != nil {
+			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+		if batchReq.Source == "" {
+			http.Error(w, "source is required", http.StatusBadRequest)
+			return
+		}
+		if len(batchReq.Exemplars) == 0 {
+			http.Error(w, "exemplars array cannot be empty", http.StatusBadRequest)
+			return
+		}
 		response, err = r.processMetricsBatch(req.Context(), orgID, batchReq.Source, batchReq.Exemplars)
 	case "traces":
+		var batchReq TracesBatchRequest
+		if err := json.NewDecoder(req.Body).Decode(&batchReq); err != nil {
+			http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+		if batchReq.Source == "" {
+			http.Error(w, "source is required", http.StatusBadRequest)
+			return
+		}
+		if len(batchReq.Exemplars) == 0 {
+			http.Error(w, "exemplars array cannot be empty", http.StatusBadRequest)
+			return
+		}
 		response, err = r.processTracesBatch(req.Context(), orgID, batchReq.Source, batchReq.Exemplars)
 	default:
 		http.Error(w, fmt.Sprintf("unknown signal type: %s (must be logs, metrics, or traces)", signal), http.StatusBadRequest)
@@ -163,7 +175,7 @@ func (r *ReceiverService) handleExemplar(w http.ResponseWriter, req *http.Reques
 }
 
 // processLogsBatch processes a batch of logs exemplars
-func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID, source string, rawExemplars []map[string]interface{}) (*ExemplarBatchResponse, error) {
+func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID, source string, rawExemplars []LogsExemplar) (*ExemplarBatchResponse, error) {
 	response := &ExemplarBatchResponse{
 		Status: "ok",
 		Errors: []string{},
@@ -171,24 +183,10 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 
 	var records []lrdb.BatchUpsertExemplarLogsParams
 
-	for i, raw := range rawExemplars {
-		// Unmarshal to LogsExemplar to extract explicit fields
-		data, err := json.Marshal(raw)
-		if err != nil {
-			response.Failed++
-			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: failed to marshal: %v", i, err))
-			continue
-		}
-
-		var exemplar LogsExemplar
-		if err := json.Unmarshal(data, &exemplar); err != nil {
-			response.Failed++
-			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: invalid format: %v", i, err))
-			continue
-		}
+	for i, exemplar := range rawExemplars {
 
 		// Validate required fields
-		if exemplar.ServiceName == "" || exemplar.ClusterName == "" || exemplar.Namespace == "" {
+		if exemplar.ServiceName == nil || exemplar.ClusterName == nil || exemplar.Namespace == nil {
 			response.Failed++
 			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: service_name, cluster_name, and namespace are required", i))
 			continue
@@ -202,34 +200,20 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 			continue
 		}
 
-		// Convert to Row for fingerprinting
+		// Convert attributes to Row for fingerprinting
 		row := make(pipeline.Row)
-		for k, v := range exemplar.Data {
-			row[wkk.NewRowKey(k)] = v
+		for k, v := range exemplar.Attributes {
+			row[k] = v
 		}
 
 		// Always compute fingerprint server-side
 		fingerprint := computeLogsFingerprint(row)
 
-		// Check for old_fingerprint field (optional)
-		oldFingerprint := int64(0)
-		if v, ok := exemplar.Data["old_fingerprint"]; ok {
-			switch val := v.(type) {
-			case int64:
-				oldFingerprint = val
-			case float64:
-				oldFingerprint = int64(val)
-			case int:
-				oldFingerprint = int64(val)
-			}
-		}
-
 		records = append(records, lrdb.BatchUpsertExemplarLogsParams{
 			OrganizationID:      orgID,
 			ServiceIdentifierID: serviceIdentifierID,
 			Fingerprint:         fingerprint,
-			OldFingerprint:      oldFingerprint,
-			Exemplar:            exemplar.Data,
+			Exemplar:            pipeline.ToStringMap(exemplar.Attributes),
 			Source:              lrdb.ExemplarSource(source),
 		})
 	}
@@ -255,7 +239,7 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 }
 
 // processMetricsBatch processes a batch of metrics exemplars
-func (r *ReceiverService) processMetricsBatch(ctx context.Context, orgID uuid.UUID, source string, rawExemplars []map[string]interface{}) (*ExemplarBatchResponse, error) {
+func (r *ReceiverService) processMetricsBatch(ctx context.Context, orgID uuid.UUID, source string, rawExemplars []MetricsExemplar) (*ExemplarBatchResponse, error) {
 	response := &ExemplarBatchResponse{
 		Status: "ok",
 		Errors: []string{},
@@ -263,24 +247,10 @@ func (r *ReceiverService) processMetricsBatch(ctx context.Context, orgID uuid.UU
 
 	var records []lrdb.BatchUpsertExemplarMetricsParams
 
-	for i, raw := range rawExemplars {
-		// Unmarshal to MetricsExemplar to extract explicit fields
-		data, err := json.Marshal(raw)
-		if err != nil {
-			response.Failed++
-			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: failed to marshal: %v", i, err))
-			continue
-		}
-
-		var exemplar MetricsExemplar
-		if err := json.Unmarshal(data, &exemplar); err != nil {
-			response.Failed++
-			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: invalid format: %v", i, err))
-			continue
-		}
+	for i, exemplar := range rawExemplars {
 
 		// Validate required fields
-		if exemplar.ServiceName == "" || exemplar.ClusterName == "" || exemplar.Namespace == "" {
+		if exemplar.ServiceName == nil || exemplar.ClusterName == nil || exemplar.Namespace == nil {
 			response.Failed++
 			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: service_name, cluster_name, and namespace are required", i))
 			continue
@@ -305,7 +275,7 @@ func (r *ReceiverService) processMetricsBatch(ctx context.Context, orgID uuid.UU
 			ServiceIdentifierID: serviceIdentifierID,
 			MetricName:          exemplar.MetricName,
 			MetricType:          exemplar.MetricType,
-			Exemplar:            exemplar.Data,
+			Exemplar:            pipeline.ToStringMap(exemplar.Attributes),
 			Source:              lrdb.ExemplarSource(source),
 		})
 	}
@@ -331,7 +301,7 @@ func (r *ReceiverService) processMetricsBatch(ctx context.Context, orgID uuid.UU
 }
 
 // processTracesBatch processes a batch of traces exemplars
-func (r *ReceiverService) processTracesBatch(ctx context.Context, orgID uuid.UUID, source string, rawExemplars []map[string]interface{}) (*ExemplarBatchResponse, error) {
+func (r *ReceiverService) processTracesBatch(ctx context.Context, orgID uuid.UUID, source string, rawExemplars []TracesExemplar) (*ExemplarBatchResponse, error) {
 	response := &ExemplarBatchResponse{
 		Status: "ok",
 		Errors: []string{},
@@ -339,24 +309,10 @@ func (r *ReceiverService) processTracesBatch(ctx context.Context, orgID uuid.UUI
 
 	var records []lrdb.BatchUpsertExemplarTracesParams
 
-	for i, raw := range rawExemplars {
-		// Unmarshal to TracesExemplar to extract explicit fields
-		data, err := json.Marshal(raw)
-		if err != nil {
-			response.Failed++
-			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: failed to marshal: %v", i, err))
-			continue
-		}
-
-		var exemplar TracesExemplar
-		if err := json.Unmarshal(data, &exemplar); err != nil {
-			response.Failed++
-			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: invalid format: %v", i, err))
-			continue
-		}
+	for i, exemplar := range rawExemplars {
 
 		// Validate required fields
-		if exemplar.ServiceName == "" || exemplar.ClusterName == "" || exemplar.Namespace == "" {
+		if exemplar.ServiceName == nil || exemplar.ClusterName == nil || exemplar.Namespace == nil {
 			response.Failed++
 			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: service_name, cluster_name, and namespace are required", i))
 			continue
@@ -376,38 +332,33 @@ func (r *ReceiverService) processTracesBatch(ctx context.Context, orgID uuid.UUI
 			continue
 		}
 
-		// Convert to Row for fingerprinting
-		row := make(pipeline.Row)
-		for k, v := range exemplar.Data {
-			row[wkk.NewRowKey(k)] = v
-		}
-
-		// Convert span_kind to int32 if it's a string
+		// Convert span_kind to int32
 		spanKind := int32(0)
-		if exemplar.SpanKind != nil {
-			switch v := exemplar.SpanKind.(type) {
-			case int:
-				spanKind = int32(v)
-			case int32:
-				spanKind = v
-			case int64:
-				spanKind = int32(v)
-			case float64:
-				spanKind = int32(v)
-			case string:
-				// Convert string span kind to int32 if needed
-				row[wkk.NewRowKey("span_kind")] = v
+		if exemplar.SpanKind != "" {
+			switch exemplar.SpanKind {
+			case "0", "SPAN_KIND_UNSPECIFIED":
+				spanKind = 0
+			case "1", "SPAN_KIND_INTERNAL":
+				spanKind = 1
+			case "2", "SPAN_KIND_SERVER":
+				spanKind = 2
+			case "3", "SPAN_KIND_CLIENT":
+				spanKind = 3
+			case "4", "SPAN_KIND_PRODUCER":
+				spanKind = 4
+			case "5", "SPAN_KIND_CONSUMER":
+				spanKind = 5
 			}
 		}
 
 		// Always compute fingerprint server-side
-		fingerprint := computeTracesFingerprint(row)
+		fingerprint := computeTracesFingerprint(exemplar.Attributes)
 
 		records = append(records, lrdb.BatchUpsertExemplarTracesParams{
 			OrganizationID:      orgID,
 			ServiceIdentifierID: serviceIdentifierID,
 			Fingerprint:         fingerprint,
-			Exemplar:            exemplar.Data,
+			Exemplar:            pipeline.ToStringMap(exemplar.Attributes),
 			SpanName:            exemplar.SpanName,
 			SpanKind:            spanKind,
 			Source:              lrdb.ExemplarSource(source),
@@ -435,12 +386,12 @@ func (r *ReceiverService) processTracesBatch(ctx context.Context, orgID uuid.UUI
 }
 
 // upsertServiceIdentifier creates or updates a service identifier and returns its ID
-func (r *ReceiverService) upsertServiceIdentifier(ctx context.Context, orgID uuid.UUID, serviceName, clusterName, namespaceName string) (uuid.UUID, error) {
+func (r *ReceiverService) upsertServiceIdentifier(ctx context.Context, orgID uuid.UUID, serviceName, clusterName, namespaceName *string) (uuid.UUID, error) {
 	params := lrdb.UpsertServiceIdentifierParams{
 		OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
-		ServiceName:    pgtype.Text{String: serviceName, Valid: true},
-		ClusterName:    pgtype.Text{String: clusterName, Valid: true},
-		Namespace:      pgtype.Text{String: namespaceName, Valid: true},
+		ServiceName:    serviceName,
+		ClusterName:    clusterName,
+		Namespace:      namespaceName,
 	}
 
 	result, err := r.db.UpsertServiceIdentifier(ctx, params)

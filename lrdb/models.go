@@ -165,9 +165,9 @@ type LrdbServiceIdentifier struct {
 	CreatedAt      time.Time   `json:"created_at"`
 	UpdatedAt      time.Time   `json:"updated_at"`
 	OrganizationID pgtype.UUID `json:"organization_id"`
-	ServiceName    pgtype.Text `json:"service_name"`
-	ClusterName    pgtype.Text `json:"cluster_name"`
-	Namespace      pgtype.Text `json:"namespace"`
+	ServiceName    *string     `json:"service_name"`
+	ClusterName    *string     `json:"cluster_name"`
+	Namespace      *string     `json:"namespace"`
 }
 
 type MetricSeg struct {

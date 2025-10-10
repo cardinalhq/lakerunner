@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExemplarBatchRequest_Unmarshal(t *testing.T) {
+func TestLogsBatchRequest_Unmarshal(t *testing.T) {
 	jsonData := `{
 		"source": "datadog",
 		"exemplars": [
@@ -30,26 +30,32 @@ func TestExemplarBatchRequest_Unmarshal(t *testing.T) {
 				"service_name": "api-gateway",
 				"cluster_name": "prod-us-east",
 				"namespace": "production",
-				"message": "HTTP request failed",
-				"tags": ["error", "retry"]
+				"attributes": {
+					"message": "HTTP request failed",
+					"tags": ["error", "retry"]
+				}
 			},
 			{
 				"service_name": "checkout-service",
 				"cluster_name": "prod-eu-west",
 				"namespace": "production",
-				"message": "Payment processed"
+				"attributes": {
+					"message": "Payment processed"
+				}
 			}
 		]
 	}`
 
-	var req ExemplarBatchRequest
+	var req LogsBatchRequest
 	err := json.Unmarshal([]byte(jsonData), &req)
 	require.NoError(t, err)
 
 	assert.Equal(t, "datadog", req.Source)
 	assert.Len(t, req.Exemplars, 2)
-	assert.Equal(t, "api-gateway", req.Exemplars[0]["service_name"])
-	assert.Equal(t, "checkout-service", req.Exemplars[1]["service_name"])
+	require.NotNil(t, req.Exemplars[0].ServiceName)
+	assert.Equal(t, "api-gateway", *req.Exemplars[0].ServiceName)
+	require.NotNil(t, req.Exemplars[1].ServiceName)
+	assert.Equal(t, "checkout-service", *req.Exemplars[1].ServiceName)
 }
 
 func TestLogsExemplar_UnmarshalJSON(t *testing.T) {
@@ -64,18 +70,20 @@ func TestLogsExemplar_UnmarshalJSON(t *testing.T) {
 				"service_name": "api-gateway",
 				"cluster_name": "prod-us-east",
 				"namespace": "production",
-				"message": "HTTP request failed",
-				"tags": ["error", "retry"],
-				"host": "pod-xyz"
+				"attributes": {
+					"message": "HTTP request failed",
+					"tags": ["error", "retry"],
+					"host": "pod-xyz"
+				}
 			}`,
 			validate: func(t *testing.T, exemplar LogsExemplar) {
-				assert.Equal(t, "api-gateway", exemplar.ServiceName)
-				assert.Equal(t, "prod-us-east", exemplar.ClusterName)
-				assert.Equal(t, "production", exemplar.Namespace)
-				assert.Equal(t, "HTTP request failed", exemplar.Data["message"])
-				assert.Equal(t, "pod-xyz", exemplar.Data["host"])
-				// Verify explicit fields are also in Data (preserved)
-				assert.Equal(t, "api-gateway", exemplar.Data["service_name"])
+				require.NotNil(t, exemplar.ServiceName)
+				assert.Equal(t, "api-gateway", *exemplar.ServiceName)
+				require.NotNil(t, exemplar.ClusterName)
+				assert.Equal(t, "prod-us-east", *exemplar.ClusterName)
+				require.NotNil(t, exemplar.Namespace)
+				assert.Equal(t, "production", *exemplar.Namespace)
+				assert.Len(t, exemplar.Attributes, 3)
 			},
 		},
 		{
@@ -84,12 +92,15 @@ func TestLogsExemplar_UnmarshalJSON(t *testing.T) {
 				"service_name": "test-service",
 				"cluster_name": "test-cluster",
 				"namespace": "test-namespace",
-				"message": "Test message",
-				"old_fingerprint": 123456789
+				"attributes": {
+					"message": "Test message",
+					"old_fingerprint": 123456789
+				}
 			}`,
 			validate: func(t *testing.T, exemplar LogsExemplar) {
-				assert.Equal(t, "test-service", exemplar.ServiceName)
-				assert.Contains(t, exemplar.Data, "old_fingerprint")
+				require.NotNil(t, exemplar.ServiceName)
+				assert.Equal(t, "test-service", *exemplar.ServiceName)
+				assert.Len(t, exemplar.Attributes, 2)
 			},
 		},
 	}
@@ -111,26 +122,28 @@ func TestMetricsExemplar_UnmarshalJSON(t *testing.T) {
 		"namespace": "production",
 		"metric_name": "http_request_duration_seconds",
 		"metric_type": "histogram",
-		"labels": {
-			"method": "POST",
-			"endpoint": "/api/v1/checkout"
-		},
-		"value": 0.245
+		"attributes": {
+			"labels": {
+				"method": "POST",
+				"endpoint": "/api/v1/checkout"
+			},
+			"value": 0.245
+		}
 	}`
 
 	var exemplar MetricsExemplar
 	err := json.Unmarshal([]byte(jsonData), &exemplar)
 	require.NoError(t, err)
 
-	assert.Equal(t, "checkout-service", exemplar.ServiceName)
-	assert.Equal(t, "prod-eu-west", exemplar.ClusterName)
-	assert.Equal(t, "production", exemplar.Namespace)
+	require.NotNil(t, exemplar.ServiceName)
+	assert.Equal(t, "checkout-service", *exemplar.ServiceName)
+	require.NotNil(t, exemplar.ClusterName)
+	assert.Equal(t, "prod-eu-west", *exemplar.ClusterName)
+	require.NotNil(t, exemplar.Namespace)
+	assert.Equal(t, "production", *exemplar.Namespace)
 	assert.Equal(t, "http_request_duration_seconds", exemplar.MetricName)
 	assert.Equal(t, "histogram", exemplar.MetricType)
-	assert.Equal(t, 0.245, exemplar.Data["value"])
-	// Verify explicit fields are also in Data
-	assert.Equal(t, "http_request_duration_seconds", exemplar.Data["metric_name"])
-	assert.Equal(t, "histogram", exemplar.Data["metric_type"])
+	assert.Len(t, exemplar.Attributes, 2)
 }
 
 func TestTracesExemplar_UnmarshalJSON(t *testing.T) {
@@ -140,37 +153,47 @@ func TestTracesExemplar_UnmarshalJSON(t *testing.T) {
 		validate func(t *testing.T, exemplar TracesExemplar)
 	}{
 		{
-			name: "traces exemplar with int span_kind",
-			jsonData: `{
-				"service_name": "payment-processor",
-				"cluster_name": "prod-us-west",
-				"namespace": "production",
-				"span_name": "process_payment",
-				"span_kind": 2,
-				"trace_id": "abc123",
-				"duration_ms": 145.23
-			}`,
-			validate: func(t *testing.T, exemplar TracesExemplar) {
-				assert.Equal(t, "payment-processor", exemplar.ServiceName)
-				assert.Equal(t, "prod-us-west", exemplar.ClusterName)
-				assert.Equal(t, "production", exemplar.Namespace)
-				assert.Equal(t, "process_payment", exemplar.SpanName)
-				assert.Equal(t, float64(2), exemplar.SpanKind) // JSON unmarshals numbers as float64
-				assert.Equal(t, "abc123", exemplar.Data["trace_id"])
-			},
-		},
-		{
 			name: "traces exemplar with string span_kind",
 			jsonData: `{
 				"service_name": "payment-processor",
 				"cluster_name": "prod-us-west",
 				"namespace": "production",
 				"span_name": "process_payment",
-				"span_kind": "SPAN_KIND_SERVER",
-				"trace_id": "abc123"
+				"span_kind": "2",
+				"attributes": {
+					"trace_id": "abc123",
+					"duration_ms": 145.23
+				}
 			}`,
 			validate: func(t *testing.T, exemplar TracesExemplar) {
+				require.NotNil(t, exemplar.ServiceName)
+				assert.Equal(t, "payment-processor", *exemplar.ServiceName)
+				require.NotNil(t, exemplar.ClusterName)
+				assert.Equal(t, "prod-us-west", *exemplar.ClusterName)
+				require.NotNil(t, exemplar.Namespace)
+				assert.Equal(t, "production", *exemplar.Namespace)
+				assert.Equal(t, "process_payment", exemplar.SpanName)
+				assert.Equal(t, "2", exemplar.SpanKind)
+				assert.Len(t, exemplar.Attributes, 2)
+			},
+		},
+		{
+			name: "traces exemplar with named span_kind",
+			jsonData: `{
+				"service_name": "payment-processor",
+				"cluster_name": "prod-us-west",
+				"namespace": "production",
+				"span_name": "process_payment",
+				"span_kind": "SPAN_KIND_SERVER",
+				"attributes": {
+					"trace_id": "abc123"
+				}
+			}`,
+			validate: func(t *testing.T, exemplar TracesExemplar) {
+				require.NotNil(t, exemplar.ServiceName)
+				assert.Equal(t, "payment-processor", *exemplar.ServiceName)
 				assert.Equal(t, "SPAN_KIND_SERVER", exemplar.SpanKind)
+				assert.Len(t, exemplar.Attributes, 1)
 			},
 		},
 	}

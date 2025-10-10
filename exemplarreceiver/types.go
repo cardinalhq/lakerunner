@@ -14,134 +14,54 @@
 
 package exemplarreceiver
 
-import "encoding/json"
+import (
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+)
 
-// ExemplarBatchRequest represents a batch of exemplars from a single source
-type ExemplarBatchRequest struct {
-	Source    string                   `json:"source"`
-	Exemplars []map[string]interface{} `json:"exemplars"`
+// LogsBatchRequest represents a batch of logs exemplars from a single source
+type LogsBatchRequest struct {
+	Source    string         `json:"source"`
+	Exemplars []LogsExemplar `json:"exemplars"`
+}
+
+// MetricsBatchRequest represents a batch of metrics exemplars from a single source
+type MetricsBatchRequest struct {
+	Source    string            `json:"source"`
+	Exemplars []MetricsExemplar `json:"exemplars"`
+}
+
+// TracesBatchRequest represents a batch of traces exemplars from a single source
+type TracesBatchRequest struct {
+	Source    string           `json:"source"`
+	Exemplars []TracesExemplar `json:"exemplars"`
 }
 
 // LogsExemplar represents a single logs exemplar with explicit fingerprinting fields
 type LogsExemplar struct {
-	ServiceName  string                 `json:"service_name"`
-	ClusterName  string                 `json:"cluster_name"`
-	Namespace    string                 `json:"namespace"`
-	Data         map[string]interface{} `json:"-"` // Everything else
-	OriginalData map[string]interface{} `json:"-"` // Original unmarshaled data
+	ServiceName *string      `json:"service_name"`
+	ClusterName *string      `json:"cluster_name"`
+	Namespace   *string      `json:"namespace"`
+	Attributes  pipeline.Row `json:"attributes"`
 }
 
 // MetricsExemplar represents a single metrics exemplar with explicit fingerprinting fields
 type MetricsExemplar struct {
-	ServiceName  string                 `json:"service_name"`
-	ClusterName  string                 `json:"cluster_name"`
-	Namespace    string                 `json:"namespace"`
-	MetricName   string                 `json:"metric_name"`
-	MetricType   string                 `json:"metric_type"`
-	Data         map[string]interface{} `json:"-"` // Everything else
-	OriginalData map[string]interface{} `json:"-"` // Original unmarshaled data
+	ServiceName *string      `json:"service_name"`
+	ClusterName *string      `json:"cluster_name"`
+	Namespace   *string      `json:"namespace"`
+	MetricName  string       `json:"metric_name"`
+	MetricType  string       `json:"metric_type"`
+	Attributes  pipeline.Row `json:"attributes"`
 }
 
 // TracesExemplar represents a single traces exemplar with explicit fingerprinting fields
 type TracesExemplar struct {
-	ServiceName  string                 `json:"service_name"`
-	ClusterName  string                 `json:"cluster_name"`
-	Namespace    string                 `json:"namespace"`
-	SpanName     string                 `json:"span_name"`
-	SpanKind     interface{}            `json:"span_kind"` // Can be int or string
-	Data         map[string]interface{} `json:"-"`         // Everything else
-	OriginalData map[string]interface{} `json:"-"`         // Original unmarshaled data
-}
-
-// UnmarshalJSON implements custom unmarshaling for LogsExemplar
-func (e *LogsExemplar) UnmarshalJSON(data []byte) error {
-	// First unmarshal into a map to capture everything
-	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	e.OriginalData = raw
-
-	// Extract required fields
-	if v, ok := raw["service_name"].(string); ok {
-		e.ServiceName = v
-	}
-	if v, ok := raw["cluster_name"].(string); ok {
-		e.ClusterName = v
-	}
-	if v, ok := raw["namespace"].(string); ok {
-		e.Namespace = v
-	}
-
-	// Store everything (including duplicates) in Data for JSONB storage
-	e.Data = raw
-
-	return nil
-}
-
-// UnmarshalJSON implements custom unmarshaling for MetricsExemplar
-func (e *MetricsExemplar) UnmarshalJSON(data []byte) error {
-	// First unmarshal into a map to capture everything
-	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	e.OriginalData = raw
-
-	// Extract required fields
-	if v, ok := raw["service_name"].(string); ok {
-		e.ServiceName = v
-	}
-	if v, ok := raw["cluster_name"].(string); ok {
-		e.ClusterName = v
-	}
-	if v, ok := raw["namespace"].(string); ok {
-		e.Namespace = v
-	}
-	if v, ok := raw["metric_name"].(string); ok {
-		e.MetricName = v
-	}
-	if v, ok := raw["metric_type"].(string); ok {
-		e.MetricType = v
-	}
-
-	// Store everything (including duplicates) in Data for JSONB storage
-	e.Data = raw
-
-	return nil
-}
-
-// UnmarshalJSON implements custom unmarshaling for TracesExemplar
-func (e *TracesExemplar) UnmarshalJSON(data []byte) error {
-	// First unmarshal into a map to capture everything
-	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	e.OriginalData = raw
-
-	// Extract required fields
-	if v, ok := raw["service_name"].(string); ok {
-		e.ServiceName = v
-	}
-	if v, ok := raw["cluster_name"].(string); ok {
-		e.ClusterName = v
-	}
-	if v, ok := raw["namespace"].(string); ok {
-		e.Namespace = v
-	}
-	if v, ok := raw["span_name"].(string); ok {
-		e.SpanName = v
-	}
-	// span_kind can be int or string
-	if v, ok := raw["span_kind"]; ok {
-		e.SpanKind = v
-	}
-
-	// Store everything (including duplicates) in Data for JSONB storage
-	e.Data = raw
-
-	return nil
+	ServiceName *string      `json:"service_name"`
+	ClusterName *string      `json:"cluster_name"`
+	Namespace   *string      `json:"namespace"`
+	SpanName    string       `json:"span_name"`
+	SpanKind    string       `json:"span_kind"`
+	Attributes  pipeline.Row `json:"attributes"`
 }
 
 // ExemplarBatchResponse represents the response from a batch upsert operation
