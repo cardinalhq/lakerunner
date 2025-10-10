@@ -80,3 +80,213 @@ func TestCopyRow(t *testing.T) {
 	assert.Equal(t, 1, copied[wkk.NewRowKey("id")], "Copied row should not be affected by changes to original")
 	assert.Nil(t, copied[wkk.NewRowKey("new_field")], "Copied row should not have new fields added to original")
 }
+
+func TestRow_GetString(t *testing.T) {
+	tests := []struct {
+		name     string
+		row      Row
+		key      string
+		expected string
+	}{
+		{
+			name:     "string value",
+			row:      Row{wkk.NewRowKey("name"): "test_value"},
+			key:      "name",
+			expected: "test_value",
+		},
+		{
+			name:     "empty string",
+			row:      Row{wkk.NewRowKey("name"): ""},
+			key:      "name",
+			expected: "",
+		},
+		{
+			name:     "missing key",
+			row:      Row{wkk.NewRowKey("other"): "value"},
+			key:      "name",
+			expected: "",
+		},
+		{
+			name:     "int value (not a string)",
+			row:      Row{wkk.NewRowKey("id"): 123},
+			key:      "id",
+			expected: "",
+		},
+		{
+			name:     "float value (not a string)",
+			row:      Row{wkk.NewRowKey("value"): 42.5},
+			key:      "value",
+			expected: "",
+		},
+		{
+			name:     "nil value",
+			row:      Row{wkk.NewRowKey("nullable"): nil},
+			key:      "nullable",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.row.GetString(wkk.NewRowKey(tt.key))
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestRow_GetInt64(t *testing.T) {
+	tests := []struct {
+		name       string
+		row        Row
+		key        string
+		expected   int64
+		expectedOk bool
+	}{
+		{
+			name:       "int64 value",
+			row:        Row{wkk.NewRowKey("id"): int64(9223372036854775807)},
+			key:        "id",
+			expected:   9223372036854775807,
+			expectedOk: true,
+		},
+		{
+			name:       "int value",
+			row:        Row{wkk.NewRowKey("count"): 42},
+			key:        "count",
+			expected:   42,
+			expectedOk: true,
+		},
+		{
+			name:       "float64 value",
+			row:        Row{wkk.NewRowKey("value"): float64(123.9)},
+			key:        "value",
+			expected:   123,
+			expectedOk: true,
+		},
+		{
+			name:       "negative int64",
+			row:        Row{wkk.NewRowKey("negative"): int64(-999)},
+			key:        "negative",
+			expected:   -999,
+			expectedOk: true,
+		},
+		{
+			name:       "zero value",
+			row:        Row{wkk.NewRowKey("zero"): int64(0)},
+			key:        "zero",
+			expected:   0,
+			expectedOk: true,
+		},
+		{
+			name:       "missing key",
+			row:        Row{wkk.NewRowKey("other"): int64(123)},
+			key:        "missing",
+			expected:   0,
+			expectedOk: false,
+		},
+		{
+			name:       "string value (not convertible)",
+			row:        Row{wkk.NewRowKey("name"): "not_a_number"},
+			key:        "name",
+			expected:   0,
+			expectedOk: false,
+		},
+		{
+			name:       "nil value",
+			row:        Row{wkk.NewRowKey("nullable"): nil},
+			key:        "nullable",
+			expected:   0,
+			expectedOk: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := tt.row.GetInt64(wkk.NewRowKey(tt.key))
+			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.expectedOk, ok)
+		})
+	}
+}
+
+func TestRow_GetInt32(t *testing.T) {
+	tests := []struct {
+		name       string
+		row        Row
+		key        string
+		expected   int32
+		expectedOk bool
+	}{
+		{
+			name:       "int32 value",
+			row:        Row{wkk.NewRowKey("id"): int32(2147483647)},
+			key:        "id",
+			expected:   2147483647,
+			expectedOk: true,
+		},
+		{
+			name:       "int value",
+			row:        Row{wkk.NewRowKey("count"): 42},
+			key:        "count",
+			expected:   42,
+			expectedOk: true,
+		},
+		{
+			name:       "int64 value",
+			row:        Row{wkk.NewRowKey("big"): int64(1000)},
+			key:        "big",
+			expected:   1000,
+			expectedOk: true,
+		},
+		{
+			name:       "float64 value",
+			row:        Row{wkk.NewRowKey("value"): float64(123.9)},
+			key:        "value",
+			expected:   123,
+			expectedOk: true,
+		},
+		{
+			name:       "negative int32",
+			row:        Row{wkk.NewRowKey("negative"): int32(-999)},
+			key:        "negative",
+			expected:   -999,
+			expectedOk: true,
+		},
+		{
+			name:       "zero value",
+			row:        Row{wkk.NewRowKey("zero"): int32(0)},
+			key:        "zero",
+			expected:   0,
+			expectedOk: true,
+		},
+		{
+			name:       "missing key",
+			row:        Row{wkk.NewRowKey("other"): int32(123)},
+			key:        "missing",
+			expected:   0,
+			expectedOk: false,
+		},
+		{
+			name:       "string value (not convertible)",
+			row:        Row{wkk.NewRowKey("name"): "not_a_number"},
+			key:        "name",
+			expected:   0,
+			expectedOk: false,
+		},
+		{
+			name:       "nil value",
+			row:        Row{wkk.NewRowKey("nullable"): nil},
+			key:        "nullable",
+			expected:   0,
+			expectedOk: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := tt.row.GetInt32(wkk.NewRowKey(tt.key))
+			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.expectedOk, ok)
+		})
+	}
+}

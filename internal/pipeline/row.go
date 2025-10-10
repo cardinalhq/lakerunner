@@ -43,3 +43,48 @@ func ToStringMap(row Row) map[string]any {
 	}
 	return result
 }
+
+// GetString retrieves a string value from the Row.
+// Returns empty string if the key is not found or the value is not a string.
+func (r Row) GetString(key wkk.RowKey) string {
+	if val, ok := r[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
+// GetInt64 retrieves an int64 value from the Row.
+// Returns the value and true if found and convertible, or 0 and false otherwise.
+func (r Row) GetInt64(key wkk.RowKey) (int64, bool) {
+	if val, ok := r[key]; ok {
+		switch v := val.(type) {
+		case int64:
+			return v, true
+		case int:
+			return int64(v), true
+		case float64:
+			return int64(v), true
+		}
+	}
+	return 0, false
+}
+
+// GetInt32 retrieves an int32 value from the Row.
+// Returns the value and true if found and convertible, or 0 and false otherwise.
+func (r Row) GetInt32(key wkk.RowKey) (int32, bool) {
+	if val, ok := r[key]; ok {
+		switch v := val.(type) {
+		case int32:
+			return v, true
+		case int:
+			return int32(v), true
+		case int64:
+			return int32(v), true
+		case float64:
+			return int32(v), true
+		}
+	}
+	return 0, false
+}
