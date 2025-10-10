@@ -32,9 +32,17 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+// ExemplarStore defines the database operations needed by the receiver service
+type ExemplarStore interface {
+	BatchUpsertExemplarLogs(ctx context.Context, params []lrdb.BatchUpsertExemplarLogsParams) *lrdb.BatchUpsertExemplarLogsBatchResults
+	BatchUpsertExemplarMetrics(ctx context.Context, params []lrdb.BatchUpsertExemplarMetricsParams) *lrdb.BatchUpsertExemplarMetricsBatchResults
+	BatchUpsertExemplarTraces(ctx context.Context, params []lrdb.BatchUpsertExemplarTracesParams) *lrdb.BatchUpsertExemplarTracesBatchResults
+	UpsertServiceIdentifier(ctx context.Context, params lrdb.UpsertServiceIdentifierParams) (lrdb.UpsertServiceIdentifierRow, error)
+}
+
 // ReceiverService handles incoming exemplar data from external sources
 type ReceiverService struct {
-	db             lrdb.StoreFull
+	db             ExemplarStore
 	apiKeyProvider orgapikey.OrganizationAPIKeyProvider
 	port           int
 }
@@ -198,14 +206,11 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 			continue
 		}
 
-		// Convert attributes to Row for fingerprinting
-		row := make(pipeline.Row)
-		for k, v := range exemplar.Attributes {
-			row[k] = v
-		}
+		// Convert attributes to Row for fingerprinting, including message and level
+		row := pipeline.CopyRow(exemplar.Attributes)
 
 		// Always compute fingerprint server-side
-		fingerprint := computeLogsFingerprint(row)
+		fingerprint := computeLogsFingerprint(exemplar.Message, exemplar.Level, row)
 
 		records = append(records, lrdb.BatchUpsertExemplarLogsParams{
 			OrganizationID:      orgID,

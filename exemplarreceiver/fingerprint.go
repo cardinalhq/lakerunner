@@ -15,12 +15,30 @@
 package exemplarreceiver
 
 import (
+	"fmt"
+	"slices"
+
 	"github.com/cespare/xxhash/v2"
 
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
+
+// valueToString converts any value to its string representation for hashing
+func valueToString(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return val
+	case []byte:
+		return string(val)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
 
 // computeTracesFingerprint calculates a fingerprint for traces using the Row.
 // Uses the standard fingerprinter.CalculateSpanFingerprintFromRow function.
@@ -35,24 +53,32 @@ func computeTracesFingerprint(row pipeline.Row) int64 {
 	return fingerprinter.CalculateSpanFingerprintFromRow(row)
 }
 
-// computeLogsFingerprint calculates a simple fallback fingerprint for logs.
-// This is a basic hash of the message and is NOT using clustering-based fingerprinting.
-// Clients should provide the proper fingerprint when possible (via the "fingerprint" field).
-func computeLogsFingerprint(row pipeline.Row) int64 {
-	// Get the log message
-	message := row.GetString(wkk.NewRowKey("message"))
-	if message == "" {
-		message = row.GetString(wkk.NewRowKey("body"))
+// computeLogsFingerprint calculates a fingerprint for logs based on message and attributes.
+// TODO: Use the same log fingerprinting calculation as internal/oteltools/pkg/fingerprinter
+// which does proper tokenization-based clustering. The current implementation is a simple
+// hash of all key-value pairs and doesn't cluster similar log messages properly.
+func computeLogsFingerprint(message, level string, row pipeline.Row) int64 {
+	// Convert to string map for easier processing
+	stringMap := pipeline.ToStringMap(row)
+
+	// Collect and sort all keys for stable hashing
+	keys := make([]string, 0, len(stringMap))
+	for key := range stringMap {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+
+	h := xxhash.New()
+	_, _ = h.WriteString(message + ":" + level + ":")
+	for _, key := range keys {
+		value := valueToString(stringMap[key])
+		if value == "" {
+			continue
+		}
+		_, _ = h.WriteString(key + ":")
 	}
 
-	// For a fallback fingerprint, just hash the message
-	// Note: This doesn't do clustering like the proper log fingerprinting in internal/logcrunch
-	if message == "" {
-		return 0
-	}
-
-	// Use xxhash for consistency with trace fingerprinting
-	return int64(xxhash.Sum64String(message))
+	return int64(h.Sum64())
 }
 
 // spanKindToString converts a span kind integer to its string representation

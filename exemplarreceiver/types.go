@@ -41,6 +41,8 @@ type LogsExemplar struct {
 	ServiceName *string      `json:"service_name"`
 	ClusterName *string      `json:"cluster_name"`
 	Namespace   *string      `json:"namespace"`
+	Message     string       `json:"message"`
+	Level       string       `json:"level"`
 	Attributes  pipeline.Row `json:"attributes"`
 }
 
