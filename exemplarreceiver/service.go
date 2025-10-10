@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gorilla/mux"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
@@ -42,8 +41,8 @@ type ReceiverService struct {
 
 // NewReceiverService creates a new exemplar receiver service
 func NewReceiverService(db lrdb.StoreFull, apiKeyProvider orgapikey.OrganizationAPIKeyProvider) (*ReceiverService, error) {
-	port := 8091 // Default port
-	if portStr := os.Getenv("EXEMPLAR_RECEIVER_PORT"); portStr != "" {
+	port := 8080
+	if portStr := os.Getenv("LAKERUNNER_EXEMPLAR_RECEIVER_PORT"); portStr != "" {
 		if p, err := strconv.Atoi(portStr); err == nil {
 			port = p
 		}
@@ -58,14 +57,14 @@ func NewReceiverService(db lrdb.StoreFull, apiKeyProvider orgapikey.Organization
 
 // Run starts the HTTP server
 func (r *ReceiverService) Run(ctx context.Context) error {
-	router := mux.NewRouter()
-	router.HandleFunc("/api/v1/exemplar/{signal}", r.apiKeyMiddleware(r.handleExemplar)).Methods("POST")
-	router.HandleFunc("/healthz", r.healthCheck).Methods("GET")
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/exemplar/{signal}", r.apiKeyMiddleware(r.handleExemplar))
+	mux.HandleFunc("GET /healthz", r.healthCheck)
 
 	addr := fmt.Sprintf(":%d", r.port)
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           router,
+		Handler:           mux,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -99,8 +98,7 @@ func (r *ReceiverService) healthCheck(w http.ResponseWriter, _ *http.Request) {
 
 // handleExemplar processes incoming batch exemplar data
 func (r *ReceiverService) handleExemplar(w http.ResponseWriter, req *http.Request) {
-	vars := mux.Vars(req)
-	signal := vars["signal"]
+	signal := req.PathValue("signal")
 
 	// Get organization ID from context (set by middleware)
 	orgID, ok := GetOrgIDFromContext(req.Context())

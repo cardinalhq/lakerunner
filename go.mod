@@ -32,7 +32,6 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/google/codesearch v1.2.0
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/mux v1.8.1
 	github.com/grafana/loki/v3 v3.5.3
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/jackc/pgx/v5 v5.7.5
@@ -344,6 +343,7 @@ require (
 	github.com/goreleaser/fileglob v1.3.0 // indirect
 	github.com/goreleaser/goreleaser/v2 v2.9.0 // indirect
 	github.com/goreleaser/nfpm/v2 v2.41.3 // indirect
+	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect
 	github.com/gostaticanalysis/comment v1.5.0 // indirect
