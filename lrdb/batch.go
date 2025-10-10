@@ -142,9 +142,10 @@ const batchUpsertExemplarLogs = `-- name: BatchUpsertExemplarLogs :batchone
 INSERT INTO lrdb_exemplar_logs
             ( organization_id,  service_identifier_id,  fingerprint,  exemplar,  source)
 VALUES      ($1, $2, $3, $4, $5)
-ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint,  source)
+ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
 DO UPDATE SET
   exemplar   = EXCLUDED.exemplar,
+  source     = EXCLUDED.source,
   updated_at = now(),
   related_fingerprints = CASE
     WHEN $6::BIGINT != 0

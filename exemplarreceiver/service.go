@@ -194,6 +194,11 @@ func (r *ReceiverService) handleExemplar(w http.ResponseWriter, req *http.Reques
 
 // processLogsBatch processes a batch of logs exemplars
 func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID, source string, rawExemplars []LogsExemplar) (*ExemplarBatchResponse, error) {
+	slog.Info("Processing logs exemplar batch",
+		"organization_id", orgID,
+		"source", source,
+		"count", len(rawExemplars))
+
 	response := &ExemplarBatchResponse{
 		Status: "ok",
 		Errors: []string{},
@@ -227,8 +232,20 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 			// Drop the item if fingerprinting fails
 			response.Failed++
 			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: fingerprinting failed: %v", i, err))
+			slog.Warn("Fingerprinting failed, dropping exemplar",
+				"index", i,
+				"message", exemplar.Message,
+				"error", err)
 			continue
 		}
+
+		slog.Debug("Computed fingerprint for log exemplar",
+			"index", i,
+			"fingerprint", fingerprint,
+			"message", exemplar.Message,
+			"level", exemplar.Level,
+			"service_name", *exemplar.ServiceName,
+			"attributes_count", len(exemplar.Attributes))
 
 		records = append(records, lrdb.BatchUpsertExemplarLogsParams{
 			OrganizationID:      orgID,
@@ -240,8 +257,13 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 	}
 
 	if len(records) == 0 {
+		slog.Info("No valid records to insert after processing")
 		return response, nil
 	}
+
+	slog.Info("Inserting log exemplar records",
+		"count", len(records),
+		"organization_id", orgID)
 
 	// Batch upsert all records
 	batchResults := r.db.BatchUpsertExemplarLogs(ctx, records)
@@ -249,12 +271,28 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 		if err != nil {
 			response.Failed++
 			response.Errors = append(response.Errors, fmt.Sprintf("record %d: upsert failed: %v", i, err))
-			slog.Error("Failed to upsert exemplar log", "error", err, "index", i)
+			slog.Error("Failed to upsert exemplar log",
+				"error", err,
+				"index", i,
+				"organization_id", orgID,
+				"service_identifier_id", records[i].ServiceIdentifierID,
+				"fingerprint", records[i].Fingerprint)
 		} else {
 			response.Accepted++
-			slog.Debug("Upserted logs exemplar", "is_new", isNew, "index", i)
+			slog.Info("Successfully upserted logs exemplar",
+				"is_new", isNew,
+				"index", i,
+				"organization_id", records[i].OrganizationID,
+				"service_identifier_id", records[i].ServiceIdentifierID,
+				"fingerprint", records[i].Fingerprint,
+				"source", records[i].Source)
 		}
 	})
+
+	slog.Info("Completed processing logs exemplar batch",
+		"accepted", response.Accepted,
+		"failed", response.Failed,
+		"total", len(rawExemplars))
 
 	return response, nil
 }
