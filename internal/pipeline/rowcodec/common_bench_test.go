@@ -24,17 +24,17 @@ func createBenchmarkMap() map[string]any {
 	row := make(map[string]any, 100)
 
 	// 80 string fields (common for labels, metadata, etc.)
-	for i := 0; i < 80; i++ {
+	for i := range 80 {
 		row[fmt.Sprintf("string_field_%d", i)] = fmt.Sprintf("value_string_%d_with_some_longer_content", i)
 	}
 
 	// 15 float64 fields (metrics values)
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		row[fmt.Sprintf("float_field_%d", i)] = float64(i) * 3.14159265359
 	}
 
 	// 4 int64 fields (timestamps, counters)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		row[fmt.Sprintf("int_field_%d", i)] = int64(i * 1000000)
 	}
 
@@ -57,7 +57,7 @@ func createSmallMap() map[string]any {
 func createLargeMap() map[string]any {
 	row := make(map[string]any, 1000)
 
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		switch i % 4 {
 		case 0:
 			row[fmt.Sprintf("field_%d", i)] = fmt.Sprintf("string_value_%d", i)
@@ -66,7 +66,7 @@ func createLargeMap() map[string]any {
 		case 2:
 			row[fmt.Sprintf("field_%d", i)] = int64(i * 1000)
 		case 3:
-			row[fmt.Sprintf("field_%d", i)] = []byte(fmt.Sprintf("bytes_%d", i))
+			row[fmt.Sprintf("field_%d", i)] = fmt.Appendf(nil, "bytes_%d", i)
 		}
 	}
 

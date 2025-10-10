@@ -242,9 +242,10 @@ func TestRewrite_CountOverTime_ByLevel_JSON(t *testing.T) {
 	for _, a := range got {
 		switch a.bucket {
 		case 0:
-			if a.level == "INFO" {
+			switch a.level {
+			case "INFO":
 				b0Info += a.count
-			} else if a.level == "ERROR" {
+			case "ERROR":
 				b0Err += a.count
 			}
 		case 60000:
