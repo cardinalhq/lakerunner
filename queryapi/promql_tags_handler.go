@@ -24,11 +24,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/cardinalhq/oteltools/pkg/dateutils"
 )
 
 type promTagsReq struct {

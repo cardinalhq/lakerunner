@@ -18,58 +18,61 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestComputeTracesFingerprint(t *testing.T) {
 	tests := []struct {
 		name string
-		data map[string]any
+		data pipeline.Row
 	}{
 		{
 			name: "basic trace with span name",
-			data: map[string]any{
-				"service_name": "test-service",
-				"cluster_name": "prod",
-				"namespace":    "default",
-				"span_kind":    int32(2), // SERVER
-				"span_name":    "GET /api/users",
+			data: pipeline.Row{
+				wkk.NewRowKey("service_name"): "test-service",
+				wkk.NewRowKey("cluster_name"): "prod",
+				wkk.NewRowKey("namespace"):    "default",
+				wkk.NewRowKey("span_kind"):    int32(2), // SERVER
+				wkk.NewRowKey("span_name"):    "GET /api/users",
 			},
 		},
 		{
 			name: "HTTP trace",
-			data: map[string]any{
-				"service_name":        "test-service",
-				"cluster_name":        "prod",
-				"namespace":           "default",
-				"span_kind":           int32(2),
-				"http_request_method": "GET",
-				"url_template":        "/api/users/{id}",
+			data: pipeline.Row{
+				wkk.NewRowKey("service_name"):        "test-service",
+				wkk.NewRowKey("cluster_name"):        "prod",
+				wkk.NewRowKey("namespace"):           "default",
+				wkk.NewRowKey("span_kind"):           int32(2),
+				wkk.NewRowKey("http_request_method"): "GET",
+				wkk.NewRowKey("url_template"):        "/api/users/{id}",
 			},
 		},
 		{
 			name: "database trace",
-			data: map[string]any{
-				"service_name":      "test-service",
-				"cluster_name":      "prod",
-				"namespace":         "default",
-				"span_kind":         int32(3), // CLIENT
-				"db_system":         "postgresql",
-				"db_namespace":      "mydb",
-				"db_operation_name": "SELECT",
-				"server_address":    "localhost:5432",
-				"span_name":         "SELECT users",
+			data: pipeline.Row{
+				wkk.NewRowKey("service_name"):      "test-service",
+				wkk.NewRowKey("cluster_name"):      "prod",
+				wkk.NewRowKey("namespace"):         "default",
+				wkk.NewRowKey("span_kind"):         int32(3), // CLIENT
+				wkk.NewRowKey("db_system"):         "postgresql",
+				wkk.NewRowKey("db_namespace"):      "mydb",
+				wkk.NewRowKey("db_operation_name"): "SELECT",
+				wkk.NewRowKey("server_address"):    "localhost:5432",
+				wkk.NewRowKey("span_name"):         "SELECT users",
 			},
 		},
 		{
 			name: "messaging trace",
-			data: map[string]any{
-				"service_name":               "test-service",
-				"cluster_name":               "prod",
-				"namespace":                  "default",
-				"span_kind":                  int32(4), // PRODUCER
-				"messaging_system":           "kafka",
-				"messaging_operation_type":   "publish",
-				"messaging_destination_name": "user-events",
+			data: pipeline.Row{
+				wkk.NewRowKey("service_name"):               "test-service",
+				wkk.NewRowKey("cluster_name"):               "prod",
+				wkk.NewRowKey("namespace"):                  "default",
+				wkk.NewRowKey("span_kind"):                  int32(4), // PRODUCER
+				wkk.NewRowKey("messaging_system"):           "kafka",
+				wkk.NewRowKey("messaging_operation_type"):   "publish",
+				wkk.NewRowKey("messaging_destination_name"): "user-events",
 			},
 		},
 	}
@@ -88,12 +91,12 @@ func TestComputeTracesFingerprint(t *testing.T) {
 
 func TestComputeTracesFingerprintConsistency(t *testing.T) {
 	// Same data should always produce same fingerprint
-	data := map[string]any{
-		"service_name": "test-service",
-		"cluster_name": "prod",
-		"namespace":    "default",
-		"span_kind":    int32(2),
-		"span_name":    "GET /api/users",
+	data := pipeline.Row{
+		wkk.NewRowKey("service_name"): "test-service",
+		wkk.NewRowKey("cluster_name"): "prod",
+		wkk.NewRowKey("namespace"):    "default",
+		wkk.NewRowKey("span_kind"):    int32(2),
+		wkk.NewRowKey("span_name"):    "GET /api/users",
 	}
 
 	fp1 := computeTracesFingerprint(data)
@@ -104,11 +107,11 @@ func TestComputeTracesFingerprintConsistency(t *testing.T) {
 
 func TestComputeLogsFingerprintConsistency(t *testing.T) {
 	// Same data should always produce same fingerprint
-	data := map[string]any{
-		"service_name": "test-service",
-		"cluster_name": "prod",
-		"namespace":    "default",
-		"message":      "Error processing request",
+	data := pipeline.Row{
+		wkk.NewRowKey("service_name"): "test-service",
+		wkk.NewRowKey("cluster_name"): "prod",
+		wkk.NewRowKey("namespace"):    "default",
+		wkk.NewRowKey("message"):      "Error processing request",
 	}
 
 	fp1 := computeLogsFingerprint(data)
@@ -120,11 +123,11 @@ func TestComputeLogsFingerprintConsistency(t *testing.T) {
 
 func TestComputeLogsFingerprintWithBody(t *testing.T) {
 	// Test with "body" field instead of "message"
-	data := map[string]any{
-		"service_name": "test-service",
-		"cluster_name": "prod",
-		"namespace":    "default",
-		"body":         "Error processing request",
+	data := pipeline.Row{
+		wkk.NewRowKey("service_name"): "test-service",
+		wkk.NewRowKey("cluster_name"): "prod",
+		wkk.NewRowKey("namespace"):    "default",
+		wkk.NewRowKey("body"):         "Error processing request",
 	}
 
 	fp := computeLogsFingerprint(data)
@@ -155,8 +158,8 @@ func TestSpanKindToString(t *testing.T) {
 
 func TestComputeTracesFingerprintWithDefaults(t *testing.T) {
 	// Test with missing fields - should use defaults
-	data := map[string]any{
-		"span_name": "test-span",
+	data := pipeline.Row{
+		wkk.NewRowKey("span_name"): "test-span",
 	}
 
 	fp := computeTracesFingerprint(data)
@@ -165,8 +168,8 @@ func TestComputeTracesFingerprintWithDefaults(t *testing.T) {
 
 func TestComputeLogsFingerprintWithDefaults(t *testing.T) {
 	// Test with missing fields - should use defaults
-	data := map[string]any{
-		"message": "test message",
+	data := pipeline.Row{
+		wkk.NewRowKey("message"): "test message",
 	}
 
 	fp := computeLogsFingerprint(data)

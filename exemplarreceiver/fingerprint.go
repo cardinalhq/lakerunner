@@ -15,108 +15,44 @@
 package exemplarreceiver
 
 import (
-	"strings"
-
 	"github.com/cespare/xxhash/v2"
+
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-// computeTracesFingerprint calculates a fingerprint for traces based on incoming JSON data.
-// This follows the same logic as fingerprinter.CalculateSpanFingerprintFromRow but works with map[string]any.
-func computeTracesFingerprint(data map[string]any) int64 {
-	fingerprintAttributes := make([]string, 0)
-
-	// Extract resource-level attributes
-	clusterName := getStringFromMap(data, "cluster_name")
-	if clusterName == "" {
-		clusterName = "unknown"
-	}
-	namespaceName := getStringFromMap(data, "namespace")
-	if namespaceName == "" {
-		namespaceName = "unknown"
-	}
-	serviceName := getStringFromMap(data, "service_name")
-	if serviceName == "" {
-		serviceName = "unknown"
+// computeTracesFingerprint calculates a fingerprint for traces using the Row.
+// Uses the standard fingerprinter.CalculateSpanFingerprintFromRow function.
+func computeTracesFingerprint(row pipeline.Row) int64 {
+	// Handle span_kind conversion if it's numeric
+	if spanKindNum, ok := row.GetInt32(wkk.NewRowKey("span_kind")); ok {
+		spanKindStr := spanKindToString(spanKindNum)
+		row[wkk.NewRowKey("span_kind")] = spanKindStr
 	}
 
-	// Extract span kind (string or int32)
-	spanKindStr := getStringFromMap(data, "span_kind")
-	if spanKindStr == "" {
-		// Try to get as int32 and convert
-		spanKind := getInt32FromMap(data, "span_kind")
-		spanKindStr = spanKindToString(spanKind)
-	}
-
-	fingerprintAttributes = append(fingerprintAttributes, clusterName, namespaceName, serviceName, spanKindStr)
-
-	// Check messaging system first
-	messagingSystem := getStringFromMap(data, "messaging_system")
-	if messagingSystem != "" {
-		messagingOperationType := getStringFromMap(data, "messaging_operation_type")
-		messagingDestinationName := getStringFromMap(data, "messaging_destination_name")
-		fingerprintAttributes = append(fingerprintAttributes, messagingSystem, messagingOperationType, messagingDestinationName)
-		return toHash(fingerprintAttributes)
-	}
-
-	// Check database system
-	dbSystem := getStringFromMap(data, "db_system")
-	if dbSystem != "" {
-		dbNamespace := getStringFromMap(data, "db_namespace")
-		dbOperationName := getStringFromMap(data, "db_operation_name")
-		serverAddress := getStringFromMap(data, "server_address")
-		collectionName := getStringFromMap(data, "db_collection_name")
-		spanName := getStringFromMap(data, "span_name")
-
-		fingerprintAttributes = append(fingerprintAttributes, spanName, dbSystem, dbNamespace, dbOperationName, serverAddress, collectionName)
-		return toHash(fingerprintAttributes)
-	}
-
-	// Check HTTP request method
-	httpRequestMethod := getStringFromMap(data, "http_request_method")
-	if httpRequestMethod != "" {
-		httpUrlTemplate := getStringFromMap(data, "url_template")
-		fingerprintAttributes = append(fingerprintAttributes, httpRequestMethod, httpUrlTemplate)
-		return toHash(fingerprintAttributes)
-	}
-
-	// Default: use span name
-	sanitizedName := getStringFromMap(data, "span_name")
-	fingerprintAttributes = append(fingerprintAttributes, sanitizedName)
-
-	return toHash(fingerprintAttributes)
+	// Use the existing fingerprinting function directly
+	return fingerprinter.CalculateSpanFingerprintFromRow(row)
 }
 
-// computeLogsFingerprint calculates a simple fingerprint for logs based on the message.
-// For more sophisticated fingerprinting (clustering), the client should send the fingerprint.
-func computeLogsFingerprint(data map[string]any) int64 {
+// computeLogsFingerprint calculates a simple fallback fingerprint for logs.
+// This is a basic hash of the message and is NOT using clustering-based fingerprinting.
+// Clients should provide the proper fingerprint when possible (via the "fingerprint" field).
+func computeLogsFingerprint(row pipeline.Row) int64 {
 	// Get the log message
-	message := getStringFromMap(data, "message")
+	message := row.GetString(wkk.NewRowKey("message"))
 	if message == "" {
-		message = getStringFromMap(data, "body")
+		message = row.GetString(wkk.NewRowKey("body"))
 	}
 
-	// Include service context in fingerprint
-	clusterName := getStringFromMap(data, "cluster_name")
-	if clusterName == "" {
-		clusterName = "unknown"
-	}
-	namespaceName := getStringFromMap(data, "namespace")
-	if namespaceName == "" {
-		namespaceName = "unknown"
-	}
-	serviceName := getStringFromMap(data, "service_name")
-	if serviceName == "" {
-		serviceName = "unknown"
+	// For a fallback fingerprint, just hash the message
+	// Note: This doesn't do clustering like the proper log fingerprinting in internal/logcrunch
+	if message == "" {
+		return 0
 	}
 
-	// Create fingerprint from service context + message
-	fingerprintAttributes := []string{clusterName, namespaceName, serviceName, message}
-	return toHash(fingerprintAttributes)
-}
-
-// toHash converts a slice of strings into an int64 hash
-func toHash(attributes []string) int64 {
-	return int64(xxhash.Sum64String(strings.Join(attributes, "##")))
+	// Use xxhash for consistency with trace fingerprinting
+	return int64(xxhash.Sum64String(message))
 }
 
 // spanKindToString converts a span kind integer to its string representation

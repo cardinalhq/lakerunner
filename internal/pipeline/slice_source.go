@@ -14,7 +14,10 @@
 
 package pipeline
 
-import "io"
+import (
+	"io"
+	"maps"
+)
 
 // SliceSource is a tiny source for examples/tests.
 // Swap this with your Parquet reader that yields up to batchPool.sz rows each Next().
@@ -37,15 +40,10 @@ func (s *SliceSource) Next() (*Batch, error) {
 	}
 	b := globalBatchPool.Get()
 	batchCapacity := 1000 // default batch size
-	upper := s.pos + batchCapacity
-	if upper > len(s.data) {
-		upper = len(s.data)
-	}
+	upper := min(s.pos+batchCapacity, len(s.data))
 	for i := s.pos; i < upper; i++ {
 		row := b.AddRow()
-		for k, v := range s.data[i] {
-			row[k] = v
-		}
+		maps.Copy(row, s.data[i])
 	}
 	s.pos = upper
 	return b, nil

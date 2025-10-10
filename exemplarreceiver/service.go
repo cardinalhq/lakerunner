@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -29,6 +30,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -36,13 +39,11 @@ import (
 type ReceiverService struct {
 	db             lrdb.StoreFull
 	apiKeyProvider orgapikey.OrganizationAPIKeyProvider
-	jwtSecretKey   string
 	port           int
 }
 
 // NewReceiverService creates a new exemplar receiver service
 func NewReceiverService(db lrdb.StoreFull, apiKeyProvider orgapikey.OrganizationAPIKeyProvider) (*ReceiverService, error) {
-	jwtSecretKey := os.Getenv("TOKEN_HMAC256_KEY")
 	port := 8091 // Default port
 	if portStr := os.Getenv("EXEMPLAR_RECEIVER_PORT"); portStr != "" {
 		if p, err := strconv.Atoi(portStr); err == nil {
@@ -53,7 +54,6 @@ func NewReceiverService(db lrdb.StoreFull, apiKeyProvider orgapikey.Organization
 	return &ReceiverService{
 		db:             db,
 		apiKeyProvider: apiKeyProvider,
-		jwtSecretKey:   jwtSecretKey,
 		port:           port,
 	}, nil
 }
@@ -111,22 +111,28 @@ func (r *ReceiverService) handleExemplar(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	// Parse JSON body
-	var exemplarData map[string]any
-	if err := json.NewDecoder(req.Body).Decode(&exemplarData); err != nil {
+	// Read raw JSON bytes
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to read request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Unmarshal directly to Row
+	var row pipeline.Row
+	if err := row.Unmarshal(body); err != nil {
 		http.Error(w, fmt.Sprintf("invalid JSON: %v", err), http.StatusBadRequest)
 		return
 	}
 
 	// Process based on signal type
-	var err error
 	switch signal {
 	case "logs":
-		err = r.processLogsExemplar(req.Context(), orgID, exemplarData)
+		err = r.processLogsExemplar(req.Context(), orgID, row)
 	case "metrics":
-		err = r.processMetricsExemplar(req.Context(), orgID, exemplarData)
+		err = r.processMetricsExemplar(req.Context(), orgID, row)
 	case "traces":
-		err = r.processTracesExemplar(req.Context(), orgID, exemplarData)
+		err = r.processTracesExemplar(req.Context(), orgID, row)
 	default:
 		http.Error(w, fmt.Sprintf("unknown signal type: %s (must be logs, metrics, or traces)", signal), http.StatusBadRequest)
 		return
@@ -144,14 +150,17 @@ func (r *ReceiverService) handleExemplar(w http.ResponseWriter, req *http.Reques
 }
 
 // processLogsExemplar processes a logs exemplar
-func (r *ReceiverService) processLogsExemplar(ctx context.Context, orgID uuid.UUID, data map[string]any) error {
-	serviceName := getStringFromMap(data, "service_name")
-	clusterName := getStringFromMap(data, "cluster_name")
-	namespaceName := getStringFromMap(data, "namespace")
+func (r *ReceiverService) processLogsExemplar(ctx context.Context, orgID uuid.UUID, row pipeline.Row) error {
+	serviceName := row.GetString(wkk.NewRowKey("service_name"))
+	clusterName := row.GetString(wkk.NewRowKey("cluster_name"))
+	namespaceName := row.GetString(wkk.NewRowKey("namespace"))
 
-	// Compute fingerprint from the data
-	fingerprint := computeLogsFingerprint(data)
-	oldFingerprint := getInt64FromMap(data, "old_fingerprint")
+	// Prefer client-provided fingerprint, compute fallback if not provided
+	fingerprint, _ := row.GetInt64(wkk.NewRowKey("fingerprint"))
+	if fingerprint == 0 {
+		fingerprint = computeLogsFingerprint(row)
+	}
+	oldFingerprint, _ := row.GetInt64(wkk.NewRowKey("old_fingerprint"))
 
 	// Upsert service identifier
 	serviceIdentifierID, err := r.upsertServiceIdentifier(ctx, orgID, serviceName, clusterName, namespaceName)
@@ -159,11 +168,14 @@ func (r *ReceiverService) processLogsExemplar(ctx context.Context, orgID uuid.UU
 		return fmt.Errorf("failed to upsert service identifier: %w", err)
 	}
 
-	// Get source from data, default to external source
-	source := getStringFromMap(data, "source")
+	// Get source from row, default to external source
+	source := row.GetString(wkk.NewRowKey("source"))
 	if source == "" {
 		source = string(lrdb.ExemplarSourceDatadog)
 	}
+
+	// Convert Row to map[string]any for storage in JSONB
+	exemplarData := rowToMap(row)
 
 	// Prepare batch upsert params
 	records := []lrdb.BatchUpsertExemplarLogsParams{
@@ -172,7 +184,7 @@ func (r *ReceiverService) processLogsExemplar(ctx context.Context, orgID uuid.UU
 			ServiceIdentifierID: serviceIdentifierID,
 			Fingerprint:         fingerprint,
 			OldFingerprint:      oldFingerprint,
-			Exemplar:            data,
+			Exemplar:            exemplarData,
 			Source:              lrdb.ExemplarSource(source),
 		},
 	}
@@ -190,12 +202,12 @@ func (r *ReceiverService) processLogsExemplar(ctx context.Context, orgID uuid.UU
 }
 
 // processMetricsExemplar processes a metrics exemplar
-func (r *ReceiverService) processMetricsExemplar(ctx context.Context, orgID uuid.UUID, data map[string]any) error {
-	serviceName := getStringFromMap(data, "service_name")
-	clusterName := getStringFromMap(data, "cluster_name")
-	namespaceName := getStringFromMap(data, "namespace")
-	metricName := getStringFromMap(data, "metric_name")
-	metricType := getStringFromMap(data, "metric_type")
+func (r *ReceiverService) processMetricsExemplar(ctx context.Context, orgID uuid.UUID, row pipeline.Row) error {
+	serviceName := row.GetString(wkk.NewRowKey("service_name"))
+	clusterName := row.GetString(wkk.NewRowKey("cluster_name"))
+	namespaceName := row.GetString(wkk.NewRowKey("namespace"))
+	metricName := row.GetString(wkk.NewRowKey("metric_name"))
+	metricType := row.GetString(wkk.NewRowKey("metric_type"))
 
 	if metricName == "" || metricType == "" {
 		return fmt.Errorf("metric_name and metric_type are required")
@@ -207,11 +219,14 @@ func (r *ReceiverService) processMetricsExemplar(ctx context.Context, orgID uuid
 		return fmt.Errorf("failed to upsert service identifier: %w", err)
 	}
 
-	// Get source from data, default to external source
-	source := getStringFromMap(data, "source")
+	// Get source from row, default to external source
+	source := row.GetString(wkk.NewRowKey("source"))
 	if source == "" {
 		source = string(lrdb.ExemplarSourceDatadog)
 	}
+
+	// Convert Row to map[string]any for storage in JSONB
+	exemplarData := rowToMap(row)
 
 	// Prepare batch upsert params
 	records := []lrdb.BatchUpsertExemplarMetricsParams{
@@ -220,7 +235,7 @@ func (r *ReceiverService) processMetricsExemplar(ctx context.Context, orgID uuid
 			ServiceIdentifierID: serviceIdentifierID,
 			MetricName:          metricName,
 			MetricType:          metricType,
-			Exemplar:            data,
+			Exemplar:            exemplarData,
 			Source:              lrdb.ExemplarSource(source),
 		},
 	}
@@ -238,15 +253,15 @@ func (r *ReceiverService) processMetricsExemplar(ctx context.Context, orgID uuid
 }
 
 // processTracesExemplar processes a traces exemplar
-func (r *ReceiverService) processTracesExemplar(ctx context.Context, orgID uuid.UUID, data map[string]any) error {
-	serviceName := getStringFromMap(data, "service_name")
-	clusterName := getStringFromMap(data, "cluster_name")
-	namespaceName := getStringFromMap(data, "namespace")
-	spanName := getStringFromMap(data, "span_name")
-	spanKind := getInt32FromMap(data, "span_kind")
+func (r *ReceiverService) processTracesExemplar(ctx context.Context, orgID uuid.UUID, row pipeline.Row) error {
+	serviceName := row.GetString(wkk.NewRowKey("service_name"))
+	clusterName := row.GetString(wkk.NewRowKey("cluster_name"))
+	namespaceName := row.GetString(wkk.NewRowKey("namespace"))
+	spanName := row.GetString(wkk.NewRowKey("span_name"))
+	spanKind, _ := row.GetInt32(wkk.NewRowKey("span_kind"))
 
-	// Compute fingerprint from the data
-	fingerprint := computeTracesFingerprint(data)
+	// Compute fingerprint from the row
+	fingerprint := computeTracesFingerprint(row)
 
 	// Upsert service identifier
 	serviceIdentifierID, err := r.upsertServiceIdentifier(ctx, orgID, serviceName, clusterName, namespaceName)
@@ -254,11 +269,14 @@ func (r *ReceiverService) processTracesExemplar(ctx context.Context, orgID uuid.
 		return fmt.Errorf("failed to upsert service identifier: %w", err)
 	}
 
-	// Get source from data, default to external source
-	source := getStringFromMap(data, "source")
+	// Get source from row, default to external source
+	source := row.GetString(wkk.NewRowKey("source"))
 	if source == "" {
 		source = string(lrdb.ExemplarSourceDatadog)
 	}
+
+	// Convert Row to map[string]any for storage in JSONB
+	exemplarData := rowToMap(row)
 
 	// Prepare batch upsert params
 	records := []lrdb.BatchUpsertExemplarTracesParams{
@@ -266,7 +284,7 @@ func (r *ReceiverService) processTracesExemplar(ctx context.Context, orgID uuid.
 			OrganizationID:      orgID,
 			ServiceIdentifierID: serviceIdentifierID,
 			Fingerprint:         fingerprint,
-			Exemplar:            data,
+			Exemplar:            exemplarData,
 			SpanName:            spanName,
 			SpanKind:            spanKind,
 			Source:              lrdb.ExemplarSource(source),
@@ -302,50 +320,11 @@ func (r *ReceiverService) upsertServiceIdentifier(ctx context.Context, orgID uui
 	return result.ID, nil
 }
 
-// Helper functions to extract values from map
-func getStringFromMap(m map[string]any, key string) string {
-	if val, ok := m[key]; ok {
-		if str, ok := val.(string); ok {
-			return str
-		}
+// rowToMap converts a Row back to map[string]any for JSONB storage
+func rowToMap(row pipeline.Row) map[string]any {
+	result := make(map[string]any, len(row))
+	for k, v := range row {
+		result[wkk.RowKeyValue(k)] = v
 	}
-	return ""
-}
-
-func getInt64FromMap(m map[string]any, key string) int64 {
-	if val, ok := m[key]; ok {
-		switch v := val.(type) {
-		case int64:
-			return v
-		case int:
-			return int64(v)
-		case float64:
-			return int64(v)
-		case string:
-			if i, err := strconv.ParseInt(v, 10, 64); err == nil {
-				return i
-			}
-		}
-	}
-	return 0
-}
-
-func getInt32FromMap(m map[string]any, key string) int32 {
-	if val, ok := m[key]; ok {
-		switch v := val.(type) {
-		case int32:
-			return v
-		case int:
-			return int32(v)
-		case int64:
-			return int32(v)
-		case float64:
-			return int32(v)
-		case string:
-			if i, err := strconv.ParseInt(v, 10, 32); err == nil {
-				return int32(i)
-			}
-		}
-	}
-	return 0
+	return result
 }

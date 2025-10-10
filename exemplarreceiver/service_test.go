@@ -18,30 +18,33 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-func TestGetStringFromMap(t *testing.T) {
+func TestRowGetString(t *testing.T) {
 	tests := []struct {
 		name     string
-		m        map[string]any
+		row      pipeline.Row
 		key      string
 		expected string
 	}{
 		{
 			name:     "string value",
-			m:        map[string]any{"key": "value"},
+			row:      pipeline.Row{wkk.NewRowKey("key"): "value"},
 			key:      "key",
 			expected: "value",
 		},
 		{
 			name:     "missing key",
-			m:        map[string]any{},
+			row:      pipeline.Row{},
 			key:      "key",
 			expected: "",
 		},
 		{
 			name:     "non-string value",
-			m:        map[string]any{"key": 123},
+			row:      pipeline.Row{wkk.NewRowKey("key"): 123},
 			key:      "key",
 			expected: "",
 		},
@@ -49,120 +52,109 @@ func TestGetStringFromMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getStringFromMap(tt.m, tt.key)
+			result := tt.row.GetString(wkk.NewRowKey(tt.key))
 			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-func TestGetInt64FromMap(t *testing.T) {
+func TestRowGetInt64(t *testing.T) {
 	tests := []struct {
-		name     string
-		m        map[string]any
-		key      string
-		expected int64
+		name       string
+		row        pipeline.Row
+		key        string
+		expected   int64
+		expectedOk bool
 	}{
 		{
-			name:     "int64 value",
-			m:        map[string]any{"key": int64(123)},
-			key:      "key",
-			expected: 123,
+			name:       "int64 value",
+			row:        pipeline.Row{wkk.NewRowKey("key"): int64(123)},
+			key:        "key",
+			expected:   123,
+			expectedOk: true,
 		},
 		{
-			name:     "int value",
-			m:        map[string]any{"key": 123},
-			key:      "key",
-			expected: 123,
+			name:       "int value",
+			row:        pipeline.Row{wkk.NewRowKey("key"): 123},
+			key:        "key",
+			expected:   123,
+			expectedOk: true,
 		},
 		{
-			name:     "float64 value",
-			m:        map[string]any{"key": float64(123.5)},
-			key:      "key",
-			expected: 123,
+			name:       "float64 value",
+			row:        pipeline.Row{wkk.NewRowKey("key"): float64(123.5)},
+			key:        "key",
+			expected:   123,
+			expectedOk: true,
 		},
 		{
-			name:     "string value",
-			m:        map[string]any{"key": "123"},
-			key:      "key",
-			expected: 123,
-		},
-		{
-			name:     "missing key",
-			m:        map[string]any{},
-			key:      "key",
-			expected: 0,
-		},
-		{
-			name:     "invalid string",
-			m:        map[string]any{"key": "abc"},
-			key:      "key",
-			expected: 0,
+			name:       "missing key",
+			row:        pipeline.Row{},
+			key:        "key",
+			expected:   0,
+			expectedOk: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getInt64FromMap(tt.m, tt.key)
+			result, ok := tt.row.GetInt64(wkk.NewRowKey(tt.key))
 			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.expectedOk, ok)
 		})
 	}
 }
 
-func TestGetInt32FromMap(t *testing.T) {
+func TestRowGetInt32(t *testing.T) {
 	tests := []struct {
-		name     string
-		m        map[string]any
-		key      string
-		expected int32
+		name       string
+		row        pipeline.Row
+		key        string
+		expected   int32
+		expectedOk bool
 	}{
 		{
-			name:     "int32 value",
-			m:        map[string]any{"key": int32(123)},
-			key:      "key",
-			expected: 123,
+			name:       "int32 value",
+			row:        pipeline.Row{wkk.NewRowKey("key"): int32(123)},
+			key:        "key",
+			expected:   123,
+			expectedOk: true,
 		},
 		{
-			name:     "int value",
-			m:        map[string]any{"key": 123},
-			key:      "key",
-			expected: 123,
+			name:       "int value",
+			row:        pipeline.Row{wkk.NewRowKey("key"): 123},
+			key:        "key",
+			expected:   123,
+			expectedOk: true,
 		},
 		{
-			name:     "int64 value",
-			m:        map[string]any{"key": int64(123)},
-			key:      "key",
-			expected: 123,
+			name:       "int64 value",
+			row:        pipeline.Row{wkk.NewRowKey("key"): int64(123)},
+			key:        "key",
+			expected:   123,
+			expectedOk: true,
 		},
 		{
-			name:     "float64 value",
-			m:        map[string]any{"key": float64(123.5)},
-			key:      "key",
-			expected: 123,
+			name:       "float64 value",
+			row:        pipeline.Row{wkk.NewRowKey("key"): float64(123.5)},
+			key:        "key",
+			expected:   123,
+			expectedOk: true,
 		},
 		{
-			name:     "string value",
-			m:        map[string]any{"key": "123"},
-			key:      "key",
-			expected: 123,
-		},
-		{
-			name:     "missing key",
-			m:        map[string]any{},
-			key:      "key",
-			expected: 0,
-		},
-		{
-			name:     "invalid string",
-			m:        map[string]any{"key": "abc"},
-			key:      "key",
-			expected: 0,
+			name:       "missing key",
+			row:        pipeline.Row{},
+			key:        "key",
+			expected:   0,
+			expectedOk: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getInt32FromMap(tt.m, tt.key)
+			result, ok := tt.row.GetInt32(wkk.NewRowKey(tt.key))
 			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.expectedOk, ok)
 		})
 	}
 }
