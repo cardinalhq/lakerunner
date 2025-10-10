@@ -142,10 +142,9 @@ const batchUpsertExemplarLogs = `-- name: BatchUpsertExemplarLogs :batchone
 INSERT INTO lrdb_exemplar_logs
             ( organization_id,  service_identifier_id,  fingerprint,  exemplar,  source)
 VALUES      ($1, $2, $3, $4, $5)
-ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
+ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint,  source)
 DO UPDATE SET
   exemplar   = EXCLUDED.exemplar,
-  source     = EXCLUDED.source,
   updated_at = now(),
   related_fingerprints = CASE
     WHEN $6::BIGINT != 0
@@ -220,10 +219,9 @@ const batchUpsertExemplarMetrics = `-- name: BatchUpsertExemplarMetrics :batchon
 INSERT INTO lrdb_exemplar_metrics
             ( organization_id,  service_identifier_id,  metric_name,  metric_type,  exemplar,  source)
 VALUES      ($1, $2, $3, $4, $5, $6)
-ON CONFLICT ( organization_id,  service_identifier_id,  metric_name,  metric_type)
+ON CONFLICT ( organization_id,  service_identifier_id,  metric_name,  metric_type,  source)
 DO UPDATE SET
   exemplar = EXCLUDED.exemplar,
-  source = EXCLUDED.source,
   updated_at = now()
 RETURNING (created_at = updated_at) as is_new
 `
@@ -304,12 +302,12 @@ VALUES      ( $1
     ON CONFLICT ( organization_id
             , service_identifier_id
             , fingerprint
+            , source
             )
 DO UPDATE SET
            exemplar          = EXCLUDED.exemplar,
            span_name         = EXCLUDED.span_name,
            span_kind         = EXCLUDED.span_kind,
-           source            = EXCLUDED.source,
            updated_at        = now()
 RETURNING (created_at = updated_at) AS is_new
 `

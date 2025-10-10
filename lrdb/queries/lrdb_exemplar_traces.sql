@@ -19,12 +19,12 @@ VALUES      ( @organization_id
     ON CONFLICT ( organization_id
             , service_identifier_id
             , fingerprint
+            , source
             )
 DO UPDATE SET
            exemplar          = EXCLUDED.exemplar,
            span_name         = EXCLUDED.span_name,
            span_kind         = EXCLUDED.span_kind,
-           source            = EXCLUDED.source,
            updated_at        = now()
 RETURNING (created_at = updated_at) AS is_new;
 

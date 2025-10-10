@@ -7,10 +7,9 @@
 INSERT INTO lrdb_exemplar_logs
             ( organization_id,  service_identifier_id,  fingerprint,  exemplar,  source)
 VALUES      (@organization_id, @service_identifier_id, @fingerprint, @exemplar, @source)
-ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
+ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint,  source)
 DO UPDATE SET
   exemplar   = EXCLUDED.exemplar,
-  source     = EXCLUDED.source,
   updated_at = now(),
   related_fingerprints = CASE
     WHEN @old_fingerprint::BIGINT != 0
