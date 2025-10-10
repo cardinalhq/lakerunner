@@ -38,6 +38,10 @@ sql:
           - {db_type: "uuid", go_type: {import: "github.com/google/uuid", type: "UUID"}}
           - {db_type: "pg_catalog.float8", nullable: true, go_type: {type: "*float64"}}
           - {db_type: "pg_catalog.int8", nullable: true, go_type: {type: "*int64"}}
+          - {db_type: "text", nullable: true, go_type: {type: "*string"}}
           - {column: "log_seg.created_by", go_type: {type: "CreatedBy"}}
           - {column: "metric_seg.created_by", go_type: {type: "CreatedBy"}}
           - {column: "trace_seg.created_by", go_type: {type: "CreatedBy"}}
+          - {column: "lrdb_exemplar_logs.source", go_type: {type: "ExemplarSource"}}
+          - {column: "lrdb_exemplar_metrics.source", go_type: {type: "ExemplarSource"}}
+          - {column: "lrdb_exemplar_traces.source", go_type: {type: "ExemplarSource"}}

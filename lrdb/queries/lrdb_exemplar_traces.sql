@@ -6,6 +6,7 @@ INSERT INTO lrdb_exemplar_traces
 , exemplar
 , span_name
 , span_kind
+, source
 )
 VALUES      ( @organization_id
             , @service_identifier_id
@@ -13,10 +14,12 @@ VALUES      ( @organization_id
             , @exemplar
             , @span_name
             , @span_kind
+            , @source
             )
     ON CONFLICT ( organization_id
             , service_identifier_id
             , fingerprint
+            , source
             )
 DO UPDATE SET
            exemplar          = EXCLUDED.exemplar,

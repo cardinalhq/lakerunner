@@ -23,9 +23,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
+
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type spanTagsPayload struct {

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 // Codec defines the interface for encoding/decoding row data.
@@ -66,39 +66,21 @@ type Type string
 const (
 	// default type
 	TypeDefault Type = ""
-	// TypeBinary is the custom binary codec.
-	TypeBinary Type = "binary"
 	// TypeCBOR is the CBOR codec.
 	TypeCBOR Type = "cbor"
-	// TypeGOB is the GOB codec.
-	TypeGOB Type = "gob"
 )
-
-// NewBinary creates a new binary codec.
-func NewBinary() (Codec, error) {
-	return NewBinaryCodec()
-}
 
 // NewCBOR creates a new CBOR codec.
 func NewCBOR() (Codec, error) {
 	return NewCBORCodec()
 }
 
-// NewGOB creates a new GOB codec.
-func NewGOB() (Codec, error) {
-	return NewGOBCodec()
-}
-
 // New creates a new codec of the specified type.
 // TypeDefault uses CBOR for better performance (smaller files, less memory).
 func New(t Type) (Codec, error) {
 	switch t {
-	case TypeBinary:
-		return NewBinary()
 	case TypeCBOR, TypeDefault:
 		return NewCBOR()
-	case TypeGOB:
-		return NewGOB()
 	default:
 		return nil, fmt.Errorf("unknown codec type: %s", t)
 	}

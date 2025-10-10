@@ -24,9 +24,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 func processLogsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row, store LogIngestStore) error {
@@ -107,9 +107,9 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, r
 
 		params := lrdb.UpsertServiceIdentifierParams{
 			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
-			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
-			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
-			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
+			ServiceName:    &serviceName,
+			ClusterName:    &clusterName,
+			Namespace:      &namespaceName,
 		}
 
 		result, err := store.UpsertServiceIdentifier(ctx, params)
@@ -132,6 +132,7 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, r
 			Fingerprint:         fingerprint,
 			OldFingerprint:      oldFingerprint,
 			Exemplar:            exemplarMap,
+			Source:              lrdb.ExemplarSourceLakerunner,
 		}
 		records = append(records, record)
 	}
@@ -209,9 +210,9 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID uuid.UUID
 
 		params := lrdb.UpsertServiceIdentifierParams{
 			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
-			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
-			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
-			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
+			ServiceName:    &serviceName,
+			ClusterName:    &clusterName,
+			Namespace:      &namespaceName,
 		}
 
 		result, err := store.UpsertServiceIdentifier(ctx, params)
@@ -234,6 +235,7 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID uuid.UUID
 			MetricName:          metricName,
 			MetricType:          metricType,
 			Exemplar:            exemplarMap,
+			Source:              lrdb.ExemplarSourceLakerunner,
 		}
 		records = append(records, record)
 	}
@@ -316,9 +318,9 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID uuid.UUID,
 
 		params := lrdb.UpsertServiceIdentifierParams{
 			OrganizationID: pgtype.UUID{Bytes: organizationID, Valid: true},
-			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
-			ClusterName:    pgtype.Text{String: clusterName, Valid: true},
-			Namespace:      pgtype.Text{String: namespaceName, Valid: true},
+			ServiceName:    &serviceName,
+			ClusterName:    &clusterName,
+			Namespace:      &namespaceName,
 		}
 
 		result, err := store.UpsertServiceIdentifier(ctx, params)
@@ -342,6 +344,7 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID uuid.UUID,
 			Exemplar:            exemplarMap,
 			SpanName:            spanName,
 			SpanKind:            convertSpanKindToInt32(spanKind),
+			Source:              lrdb.ExemplarSourceLakerunner,
 		}
 		records = append(records, record)
 	}

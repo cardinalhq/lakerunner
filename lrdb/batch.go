@@ -140,16 +140,16 @@ func (b *BatchMarkMetricSegsRolledupBatchResults) Close() error {
 
 const batchUpsertExemplarLogs = `-- name: BatchUpsertExemplarLogs :batchone
 INSERT INTO lrdb_exemplar_logs
-            ( organization_id,  service_identifier_id,  fingerprint,  exemplar)
-VALUES      ($1, $2, $3, $4)
-ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
+            ( organization_id,  service_identifier_id,  fingerprint,  exemplar,  source)
+VALUES      ($1, $2, $3, $4, $5)
+ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint,  source)
 DO UPDATE SET
   exemplar   = EXCLUDED.exemplar,
   updated_at = now(),
   related_fingerprints = CASE
-    WHEN $5::BIGINT != 0
-      AND $3 != $5
-      THEN add_to_bigint_list(lrdb_exemplar_logs.related_fingerprints, $5, 100)
+    WHEN $6::BIGINT != 0
+      AND $3 != $6
+      THEN add_to_bigint_list(lrdb_exemplar_logs.related_fingerprints, $6, 100)
     ELSE lrdb_exemplar_logs.related_fingerprints
   END
 RETURNING (created_at = updated_at) as is_new
@@ -166,6 +166,7 @@ type BatchUpsertExemplarLogsParams struct {
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
 	Fingerprint         int64          `json:"fingerprint"`
 	Exemplar            map[string]any `json:"exemplar"`
+	Source              ExemplarSource `json:"source"`
 	OldFingerprint      int64          `json:"old_fingerprint"`
 }
 
@@ -182,6 +183,7 @@ func (q *Queries) BatchUpsertExemplarLogs(ctx context.Context, arg []BatchUpsert
 			a.ServiceIdentifierID,
 			a.Fingerprint,
 			a.Exemplar,
+			a.Source,
 			a.OldFingerprint,
 		}
 		batch.Queue(batchUpsertExemplarLogs, vals...)
@@ -215,9 +217,9 @@ func (b *BatchUpsertExemplarLogsBatchResults) Close() error {
 
 const batchUpsertExemplarMetrics = `-- name: BatchUpsertExemplarMetrics :batchone
 INSERT INTO lrdb_exemplar_metrics
-            ( organization_id,  service_identifier_id,  metric_name,  metric_type,  exemplar)
-VALUES      ($1, $2, $3, $4, $5)
-ON CONFLICT ( organization_id,  service_identifier_id,  metric_name,  metric_type)
+            ( organization_id,  service_identifier_id,  metric_name,  metric_type,  exemplar,  source)
+VALUES      ($1, $2, $3, $4, $5, $6)
+ON CONFLICT ( organization_id,  service_identifier_id,  metric_name,  metric_type,  source)
 DO UPDATE SET
   exemplar = EXCLUDED.exemplar,
   updated_at = now()
@@ -236,6 +238,7 @@ type BatchUpsertExemplarMetricsParams struct {
 	MetricName          string         `json:"metric_name"`
 	MetricType          string         `json:"metric_type"`
 	Exemplar            map[string]any `json:"exemplar"`
+	Source              ExemplarSource `json:"source"`
 }
 
 func (q *Queries) BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUpsertExemplarMetricsParams) *BatchUpsertExemplarMetricsBatchResults {
@@ -247,6 +250,7 @@ func (q *Queries) BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUps
 			a.MetricName,
 			a.MetricType,
 			a.Exemplar,
+			a.Source,
 		}
 		batch.Queue(batchUpsertExemplarMetrics, vals...)
 	}
@@ -285,6 +289,7 @@ INSERT INTO lrdb_exemplar_traces
 , exemplar
 , span_name
 , span_kind
+, source
 )
 VALUES      ( $1
             , $2
@@ -292,10 +297,12 @@ VALUES      ( $1
             , $4
             , $5
             , $6
+            , $7
             )
     ON CONFLICT ( organization_id
             , service_identifier_id
             , fingerprint
+            , source
             )
 DO UPDATE SET
            exemplar          = EXCLUDED.exemplar,
@@ -318,6 +325,7 @@ type BatchUpsertExemplarTracesParams struct {
 	Exemplar            map[string]any `json:"exemplar"`
 	SpanName            string         `json:"span_name"`
 	SpanKind            int32          `json:"span_kind"`
+	Source              ExemplarSource `json:"source"`
 }
 
 func (q *Queries) BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults {
@@ -330,6 +338,7 @@ func (q *Queries) BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpse
 			a.Exemplar,
 			a.SpanName,
 			a.SpanKind,
+			a.Source,
 		}
 		batch.Queue(batchUpsertExemplarTraces, vals...)
 	}

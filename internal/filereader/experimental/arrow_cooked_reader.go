@@ -30,8 +30,8 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // ArrowCookedReader reads parquet files using Apache Arrow and returns raw rows.

@@ -19,8 +19,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // Helper function to convert []map[string]any to *pipeline.Batch for testing

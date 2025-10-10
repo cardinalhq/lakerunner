@@ -168,7 +168,7 @@ func (k *KubernetesWorkerDiscovery) Start(ctx context.Context) error {
 	}
 
 	// Initial build
-	if err := k.rebuildWorkers(runCtx); err != nil {
+	if err := k.rebuildWorkers(); err != nil {
 		slog.Error("initial worker rebuild failed", "error", err)
 	}
 
@@ -202,9 +202,7 @@ func (k *KubernetesWorkerDiscovery) scheduleRebuild() {
 	}
 	k.debounceTimer = time.AfterFunc(k.debounceDelay, func() {
 		// Use a bounded context for the rebuild
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := k.rebuildWorkers(ctx); err != nil {
+		if err := k.rebuildWorkers(); err != nil {
 			slog.Error("worker rebuild failed", "error", err)
 			k.lastRebuildErr = err
 		} else {
@@ -213,7 +211,7 @@ func (k *KubernetesWorkerDiscovery) scheduleRebuild() {
 	})
 }
 
-func (k *KubernetesWorkerDiscovery) rebuildWorkers(ctx context.Context) error {
+func (k *KubernetesWorkerDiscovery) rebuildWorkers() error {
 	selector, err := labels.Parse(k.workerLabelSelector)
 	if err != nil {
 		return fmt.Errorf("invalid label selector %q: %w", k.workerLabelSelector, err)

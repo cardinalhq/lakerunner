@@ -22,12 +22,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
-	"github.com/cardinalhq/oteltools/pkg/dateutils"
 )
 
 // handleGraphQuery handles the legacy /api/v1/graph endpoint.

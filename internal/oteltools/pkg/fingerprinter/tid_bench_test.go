@@ -17,7 +17,7 @@ package fingerprinter
 import (
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 func BenchmarkComputeTID(b *testing.B) {

@@ -19,19 +19,20 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 func TestCalculateSpanFingerprintFromRow(t *testing.T) {
 	tests := []struct {
 		name     string
-		row      map[wkk.RowKey]any
+		row      pipeline.Row
 		expected int64 // We'll check that it's non-zero and consistent
 		desc     string
 	}{
 		{
 			name: "basic span with service info",
-			row: map[wkk.RowKey]any{
+			row: pipeline.Row{
 				wkk.RowKeyResourceK8sClusterName:   "test-cluster",
 				wkk.RowKeyResourceK8sNamespaceName: "test-namespace",
 				wkk.RowKeyResourceServiceName:      "test-service",
@@ -42,7 +43,7 @@ func TestCalculateSpanFingerprintFromRow(t *testing.T) {
 		},
 		{
 			name: "http span",
-			row: map[wkk.RowKey]any{
+			row: pipeline.Row{
 				wkk.RowKeyResourceK8sClusterName:   "prod-cluster",
 				wkk.RowKeyResourceK8sNamespaceName: "prod-namespace",
 				wkk.RowKeyResourceServiceName:      "api-service",
@@ -54,7 +55,7 @@ func TestCalculateSpanFingerprintFromRow(t *testing.T) {
 		},
 		{
 			name: "database span",
-			row: map[wkk.RowKey]any{
+			row: pipeline.Row{
 				wkk.RowKeyResourceK8sClusterName:   "prod-cluster",
 				wkk.RowKeyResourceK8sNamespaceName: "prod-namespace",
 				wkk.RowKeyResourceServiceName:      "db-service",
@@ -69,7 +70,7 @@ func TestCalculateSpanFingerprintFromRow(t *testing.T) {
 		},
 		{
 			name: "messaging span",
-			row: map[wkk.RowKey]any{
+			row: pipeline.Row{
 				wkk.RowKeyResourceK8sClusterName:       "prod-cluster",
 				wkk.RowKeyResourceK8sNamespaceName:     "prod-namespace",
 				wkk.RowKeyResourceServiceName:          "messaging-service",
@@ -82,7 +83,7 @@ func TestCalculateSpanFingerprintFromRow(t *testing.T) {
 		},
 		{
 			name: "span with missing resource attributes",
-			row: map[wkk.RowKey]any{
+			row: pipeline.Row{
 				wkk.RowKeySpanKind: "SPAN_KIND_INTERNAL",
 				wkk.RowKeySpanName: "processRequest",
 			},
@@ -106,7 +107,7 @@ func TestCalculateSpanFingerprintFromRow(t *testing.T) {
 
 func TestCalculateSpanFingerprintFromRow_Distinctness(t *testing.T) {
 	// Test that different span types produce different fingerprints
-	httpSpan := map[wkk.RowKey]any{
+	httpSpan := pipeline.Row{
 		wkk.RowKeyResourceK8sClusterName:   "cluster",
 		wkk.RowKeyResourceK8sNamespaceName: "namespace",
 		wkk.RowKeyResourceServiceName:      "service",
@@ -115,7 +116,7 @@ func TestCalculateSpanFingerprintFromRow_Distinctness(t *testing.T) {
 		wkk.RowKeyAttrURLTemplate:          "/api/users",
 	}
 
-	dbSpan := map[wkk.RowKey]any{
+	dbSpan := pipeline.Row{
 		wkk.RowKeyResourceK8sClusterName:   "cluster",
 		wkk.RowKeyResourceK8sNamespaceName: "namespace",
 		wkk.RowKeyResourceServiceName:      "service",
@@ -128,43 +129,4 @@ func TestCalculateSpanFingerprintFromRow_Distinctness(t *testing.T) {
 	dbFingerprint := CalculateSpanFingerprintFromRow(dbSpan)
 
 	assert.NotEqual(t, httpFingerprint, dbFingerprint, "HTTP and DB spans should have different fingerprints")
-}
-
-func TestGetStringFromRow(t *testing.T) {
-	tests := []struct {
-		name     string
-		row      map[wkk.RowKey]any
-		key      wkk.RowKey
-		expected string
-	}{
-		{
-			name: "existing string key",
-			row: map[wkk.RowKey]any{
-				wkk.NewRowKey("test_key"): "test_value",
-			},
-			key:      wkk.NewRowKey("test_key"),
-			expected: "test_value",
-		},
-		{
-			name:     "missing key",
-			row:      map[wkk.RowKey]any{},
-			key:      wkk.NewRowKey("missing_key"),
-			expected: "",
-		},
-		{
-			name: "non-string value",
-			row: map[wkk.RowKey]any{
-				wkk.NewRowKey("int_key"): 123,
-			},
-			key:      wkk.NewRowKey("int_key"),
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GetStringFromRow(tt.row, tt.key)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }

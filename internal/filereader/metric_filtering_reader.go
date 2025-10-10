@@ -19,8 +19,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // MetricFilteringReader wraps another reader and filters rows by metric name.

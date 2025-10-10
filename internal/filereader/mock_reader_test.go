@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 // Mock readers for testing the Next() interface

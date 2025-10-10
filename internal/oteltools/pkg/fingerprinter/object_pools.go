@@ -27,7 +27,7 @@ import (
 var (
 	// Pool for tokenSeq objects
 	tokenSeqPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return &tokenSeq{
 				items:    make([]string, 0, 16), // Pre-allocate some capacity
 				jsonKeys: make([]string, 0, 8),
@@ -37,42 +37,42 @@ var (
 
 	// Pool for string slices used in quoted strings processing
 	stringSlicePool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return make([]string, 0, 4)
 		},
 	}
 
 	// Pool for string builders
 	stringBuilderPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return &strings.Builder{}
 		},
 	}
 
 	// Pool for tokenizers (though they're cheap to create)
 	tokenizerPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return tokenizer.NewFingerprintTokenizer()
 		},
 	}
 
 	// Pool for map[string]struct{} used in token sets
 	stringSetPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return make(map[string]struct{}, 16)
 		},
 	}
 
 	// Pool for []*seqNode slices used in collectLeafers
 	seqNodeSlicePool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return make([]*seqNode, 0, 8)
 		},
 	}
 
 	// Pool for cluster structs
 	clusterPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return &cluster{}
 		},
 	}

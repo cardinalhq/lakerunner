@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 // UnifiedWriter is the main implementation of ParquetWriter that coordinates

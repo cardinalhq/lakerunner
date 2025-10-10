@@ -19,7 +19,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 var (
