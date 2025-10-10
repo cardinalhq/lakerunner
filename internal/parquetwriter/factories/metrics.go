@@ -75,22 +75,31 @@ type MetricsStatsProvider struct{}
 
 func (p *MetricsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &MetricsStatsAccumulator{
-		metricNames: mapset.NewSet[string](),
+		metricNames:  mapset.NewSet[string](),
+		labelColumns: mapset.NewSet[string](),
 	}
 }
 
 // MetricsStatsAccumulator collects metrics-specific statistics.
 type MetricsStatsAccumulator struct {
-	metricNames mapset.Set[string]
-	firstTS     int64
-	lastTS      int64
-	first       bool
+	metricNames  mapset.Set[string]
+	labelColumns mapset.Set[string]
+	firstTS      int64
+	lastTS       int64
+	first        bool
 }
 
 func (a *MetricsStatsAccumulator) Add(row map[string]any) {
 	// Track metric name for fingerprinting
 	if name, ok := row["metric_name"].(string); ok && name != "" {
 		a.metricNames.Add(name)
+	}
+
+	// Track label column names for label_name_map
+	for key := range row {
+		if isLabelColumn(key) {
+			a.labelColumns.Add(key)
+		}
 	}
 
 	// Track timestamp range
@@ -130,10 +139,14 @@ func (a *MetricsStatsAccumulator) Finalize() any {
 	fingerprints := fingerprintSet.ToSlice()
 	slices.Sort(fingerprints)
 
+	// Build label name map from collected columns
+	labelNameMap := buildLabelNameMap(a.labelColumns)
+
 	return MetricsFileStats{
 		FirstTS:      a.firstTS,
 		LastTS:       a.lastTS,
 		Fingerprints: fingerprints,
+		LabelNameMap: labelNameMap,
 	}
 }
 
@@ -142,6 +155,7 @@ type MetricsFileStats struct {
 	FirstTS      int64   // Earliest timestamp
 	LastTS       int64   // Latest timestamp
 	Fingerprints []int64 // Fingerprints for indexing
+	LabelNameMap []byte  // JSON map of label column names to dotted names
 }
 
 // ValidateMetricsRow checks that a row has the required fields for metrics processing.

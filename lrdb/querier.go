@@ -34,30 +34,39 @@ type Querier interface {
 	GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsParams) ([]GetLabelNameMapsRow, error)
 	GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error)
 	GetLogSegmentsForDownload(ctx context.Context, arg GetLogSegmentsForDownloadParams) ([]LogSeg, error)
+	GetMetricLabelNameMaps(ctx context.Context, arg GetMetricLabelNameMapsParams) ([]GetMetricLabelNameMapsRow, error)
 	// Retrieves metric pack estimates for EWMA calculations (backward compatibility)
 	GetMetricPackEstimates(ctx context.Context) ([]GetMetricPackEstimatesRow, error)
 	GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error)
 	GetMetricSegmentsForDownload(ctx context.Context, arg GetMetricSegmentsForDownloadParams) ([]MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
+	GetTraceLabelNameMaps(ctx context.Context, arg GetTraceLabelNameMapsParams) ([]GetTraceLabelNameMapsRow, error)
 	GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (TraceSeg, error)
 	GetTraceSegmentsForDownload(ctx context.Context, arg GetTraceSegmentsForDownloadParams) ([]TraceSeg, error)
 	InsertKafkaOffsets(ctx context.Context, arg InsertKafkaOffsetsParams) error
 	KafkaOffsetsAfter(ctx context.Context, arg KafkaOffsetsAfterParams) ([]int64, error)
-	// Extract tag keys from flat exemplar format
-	// Only return keys that start with chq_, resource_, scope_, log_, or attr_
-	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
+	// Extract tag keys from label_name_map in log_seg table
+	// Returns all keys from label_name_map (for v2 APIs)
+	// Handler code can filter by non-empty values for v1 legacy API support
+	// Includes today's and yesterday's dateint for partition pruning
+	ListLogQLTags(ctx context.Context, arg ListLogQLTagsParams) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
-	// Extract tag keys from flat exemplar format
-	// Only return keys that start with chq_, resource_, scope_, metric_, or attr_
+	// Extract tag keys from label_name_map in metric_seg table for a specific metric
+	// Filters by metric fingerprint to return tags only for the requested metric
+	// Returns underscored tag keys (for v2 APIs)
+	// Legacy API uses denormalizer to convert to dotted names
+	// Includes today's and yesterday's dateint for partition pruning
 	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error)
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
 	ListServiceMetrics(ctx context.Context, arg ListServiceMetricsParams) ([]string, error)
 	ListServiceNames(ctx context.Context, organizationID uuid.UUID) ([]string, error)
-	// Extract tag keys from flat exemplar format for spans
-	// Only return keys that start with chq_, resource_, scope_, span_, or attr_
-	ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
+	// Extract tag keys from label_name_map in trace_seg table
+	// Returns all keys from label_name_map (for v2 APIs)
+	// Handler code can filter by non-empty values for v1 legacy API support
+	// Includes today's and yesterday's dateint for partition pruning
+	ListSpanTags(ctx context.Context, arg ListSpanTagsParams) ([]string, error)
 	ListTraceSegmentsForQuery(ctx context.Context, arg ListTraceSegmentsForQueryParams) ([]ListTraceSegmentsForQueryRow, error)
 	// Returns an estimate of the number of log segments, accounting for per-file overhead.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
@@ -83,7 +92,6 @@ type Querier interface {
 	TraceSegmentCleanupBatchDelete(ctx context.Context, arg []TraceSegmentCleanupBatchDeleteParams) *TraceSegmentCleanupBatchDeleteBatchResults
 	TraceSegmentCleanupDelete(ctx context.Context, arg TraceSegmentCleanupDeleteParams) error
 	TraceSegmentCleanupGet(ctx context.Context, arg TraceSegmentCleanupGetParams) ([]TraceSegmentCleanupGetRow, error)
-	UpdateLogSegLabelNameMap(ctx context.Context, arg UpdateLogSegLabelNameMapParams) error
 	// Updates or inserts a single metric pack estimate (backward compatibility)
 	UpsertMetricPackEstimate(ctx context.Context, arg UpsertMetricPackEstimateParams) error
 	// Updates or inserts a single pack estimate for any signal type

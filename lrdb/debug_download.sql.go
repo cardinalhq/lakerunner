@@ -72,7 +72,7 @@ func (q *Queries) GetLogSegmentsForDownload(ctx context.Context, arg GetLogSegme
 }
 
 const getMetricSegmentsForDownload = `-- name: GetMetricSegmentsForDownload :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, fingerprints, sort_version, compacted
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, fingerprints, sort_version, compacted, label_name_map
 FROM metric_seg
 WHERE organization_id = $1
   AND dateint >= $2
@@ -125,6 +125,7 @@ func (q *Queries) GetMetricSegmentsForDownload(ctx context.Context, arg GetMetri
 			&i.Fingerprints,
 			&i.SortVersion,
 			&i.Compacted,
+			&i.LabelNameMap,
 		); err != nil {
 			return nil, err
 		}
@@ -137,7 +138,7 @@ func (q *Queries) GetMetricSegmentsForDownload(ctx context.Context, arg GetMetri
 }
 
 const getTraceSegmentsForDownload = `-- name: GetTraceSegmentsForDownload :many
-SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map
 FROM trace_seg
 WHERE organization_id = $1
   AND dateint >= $2
@@ -184,6 +185,7 @@ func (q *Queries) GetTraceSegmentsForDownload(ctx context.Context, arg GetTraceS
 			&i.CreatedAt,
 			&i.Compacted,
 			&i.Published,
+			&i.LabelNameMap,
 		); err != nil {
 			return nil, err
 		}

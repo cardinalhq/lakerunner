@@ -190,34 +190,6 @@ func (q *Queries) MarkLogSegsCompactedByKeys(ctx context.Context, arg MarkLogSeg
 	return err
 }
 
-const updateLogSegLabelNameMap = `-- name: UpdateLogSegLabelNameMap :exec
-UPDATE log_seg
-SET label_name_map = $1
-WHERE organization_id = $2
-  AND dateint = $3
-  AND segment_id = $4
-  AND instance_num = $5
-`
-
-type UpdateLogSegLabelNameMapParams struct {
-	LabelNameMap   []byte    `json:"label_name_map"`
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Dateint        int32     `json:"dateint"`
-	SegmentID      int64     `json:"segment_id"`
-	InstanceNum    int16     `json:"instance_num"`
-}
-
-func (q *Queries) UpdateLogSegLabelNameMap(ctx context.Context, arg UpdateLogSegLabelNameMapParams) error {
-	_, err := q.db.Exec(ctx, updateLogSegLabelNameMap,
-		arg.LabelNameMap,
-		arg.OrganizationID,
-		arg.Dateint,
-		arg.SegmentID,
-		arg.InstanceNum,
-	)
-	return err
-}
-
 const insertLogSegmentDirect = `-- name: insertLogSegmentDirect :exec
 INSERT INTO log_seg (
   organization_id,

@@ -111,11 +111,3 @@ WHERE organization_id = @organization_id
   AND dateint = @dateint
   AND segment_id = ANY(@segment_ids::BIGINT[])
   AND label_name_map IS NOT NULL;
-
--- name: UpdateLogSegLabelNameMap :exec
-UPDATE log_seg
-SET label_name_map = @label_name_map
-WHERE organization_id = @organization_id
-  AND dateint = @dateint
-  AND segment_id = @segment_id
-  AND instance_num = @instance_num;

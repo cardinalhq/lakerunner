@@ -34,23 +34,35 @@ func (q *Queries) GetMetricType(ctx context.Context, arg GetMetricTypeParams) (s
 
 const listPromMetricTags = `-- name: ListPromMetricTags :many
 SELECT DISTINCT key::text AS tag_key
-FROM lrdb_exemplar_metrics,
-     LATERAL jsonb_object_keys(exemplar) AS key
+FROM metric_seg,
+     LATERAL jsonb_object_keys(label_name_map) AS key
 WHERE organization_id = $1
-  AND metric_name = $2
-  AND key ~ '^(chq_|resource_|scope_|metric_|attr_)'
+  AND dateint >= $2
+  AND dateint <= $3
+  AND $4::BIGINT = ANY(fingerprints)
+  AND label_name_map IS NOT NULL
 ORDER BY tag_key
 `
 
 type ListPromMetricTagsParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	MetricName     string    `json:"metric_name"`
+	OrganizationID    uuid.UUID `json:"organization_id"`
+	StartDateint      int32     `json:"start_dateint"`
+	EndDateint        int32     `json:"end_dateint"`
+	MetricFingerprint int64     `json:"metric_fingerprint"`
 }
 
-// Extract tag keys from flat exemplar format
-// Only return keys that start with chq_, resource_, scope_, metric_, or attr_
+// Extract tag keys from label_name_map in metric_seg table for a specific metric
+// Filters by metric fingerprint to return tags only for the requested metric
+// Returns underscored tag keys (for v2 APIs)
+// Legacy API uses denormalizer to convert to dotted names
+// Includes today's and yesterday's dateint for partition pruning
 func (q *Queries) ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listPromMetricTags, arg.OrganizationID, arg.MetricName)
+	rows, err := q.db.Query(ctx, listPromMetricTags,
+		arg.OrganizationID,
+		arg.StartDateint,
+		arg.EndDateint,
+		arg.MetricFingerprint,
+	)
 	if err != nil {
 		return nil, err
 	}

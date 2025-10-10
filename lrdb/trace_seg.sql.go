@@ -11,8 +11,50 @@ import (
 	"github.com/google/uuid"
 )
 
+const getTraceLabelNameMaps = `-- name: GetTraceLabelNameMaps :many
+SELECT
+    segment_id,
+    label_name_map
+FROM trace_seg
+WHERE organization_id = $1
+  AND dateint = $2
+  AND segment_id = ANY($3::BIGINT[])
+  AND label_name_map IS NOT NULL
+`
+
+type GetTraceLabelNameMapsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+type GetTraceLabelNameMapsRow struct {
+	SegmentID    int64  `json:"segment_id"`
+	LabelNameMap []byte `json:"label_name_map"`
+}
+
+func (q *Queries) GetTraceLabelNameMaps(ctx context.Context, arg GetTraceLabelNameMapsParams) ([]GetTraceLabelNameMapsRow, error) {
+	rows, err := q.db.Query(ctx, getTraceLabelNameMaps, arg.OrganizationID, arg.Dateint, arg.SegmentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTraceLabelNameMapsRow
+	for rows.Next() {
+		var i GetTraceLabelNameMapsRow
+		if err := rows.Scan(&i.SegmentID, &i.LabelNameMap); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getTraceSeg = `-- name: GetTraceSeg :one
-SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map
 FROM trace_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -49,6 +91,7 @@ func (q *Queries) GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (Trace
 		&i.CreatedAt,
 		&i.Compacted,
 		&i.Published,
+		&i.LabelNameMap,
 	)
 	return i, err
 }
@@ -159,7 +202,8 @@ INSERT INTO trace_seg (
   created_by,
   fingerprints,
   published,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   $1,
@@ -172,7 +216,8 @@ VALUES (
   $9,
   $10::bigint[],
   $11,
-  $12
+  $12,
+  $13
 )
 `
 
@@ -189,6 +234,7 @@ type InsertTraceSegmentParams struct {
 	Fingerprints   []int64   `json:"fingerprints"`
 	Published      bool      `json:"published"`
 	Compacted      bool      `json:"compacted"`
+	LabelNameMap   []byte    `json:"label_name_map"`
 }
 
 func (q *Queries) insertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentParams) error {
@@ -205,6 +251,7 @@ func (q *Queries) insertTraceSegmentDirect(ctx context.Context, arg InsertTraceS
 		arg.Fingerprints,
 		arg.Published,
 		arg.Compacted,
+		arg.LabelNameMap,
 	)
 	return err
 }

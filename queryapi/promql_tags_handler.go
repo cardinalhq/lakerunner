@@ -15,19 +15,25 @@
 package queryapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/oteltools/pkg/dateutils"
 )
 
 type promTagsReq struct {
+	S      string `json:"s"`
+	E      string `json:"e"`
 	Metric string `json:"metric,omitempty"`
 }
 
@@ -113,7 +119,29 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	ctx := r.Context()
+	// Parse time range from request, or use defaults (yesterday to today)
+	var startDateint, endDateint int32
+	if req.S != "" && req.E != "" {
+		startTs, endTs, err := dateutils.ToStartEnd(req.S, req.E)
+		if err != nil {
+			http.Error(w, "invalid start/end time: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Convert timestamps to dateints for partition pruning
+		startTime := time.Unix(0, startTs*1e6).UTC()
+		endTime := time.Unix(0, endTs*1e6).UTC()
+		startDateint = int32(startTime.Year()*10000 + int(startTime.Month())*100 + startTime.Day())
+		endDateint = int32(endTime.Year()*10000 + int(endTime.Month())*100 + endTime.Day())
+	} else {
+		// Default to yesterday and today for partition pruning
+		now := time.Now().UTC()
+		endDateint = int32(now.Year()*10000 + int(now.Month())*100 + now.Day())
+		yesterday := now.AddDate(0, 0, -1)
+		startDateint = int32(yesterday.Year()*10000 + int(yesterday.Month())*100 + yesterday.Day())
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 
 	mt, err := q.mdb.GetMetricType(ctx, lrdb.GetMetricTypeParams{
 		OrganizationID: orgUUID,
@@ -129,9 +157,14 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Compute fingerprint for the metric name to filter segments
+	metricFingerprint := fingerprint.ComputeFingerprint("metric_name", metric)
+
 	tags, err := q.mdb.ListPromMetricTags(ctx, lrdb.ListPromMetricTagsParams{
-		OrganizationID: orgUUID,
-		MetricName:     metric,
+		OrganizationID:    orgUUID,
+		StartDateint:      startDateint,
+		EndDateint:        endDateint,
+		MetricFingerprint: metricFingerprint,
 	})
 	if err != nil {
 		slog.Error("ListPromMetricTags failed", slog.Any("error", err))

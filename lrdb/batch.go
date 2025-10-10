@@ -644,7 +644,8 @@ INSERT INTO trace_seg (
   created_by,
   fingerprints,
   published,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   $1,
@@ -657,7 +658,8 @@ VALUES (
   $9,
   $10::bigint[],
   $11,
-  $12
+  $12,
+  $13
 )
 `
 
@@ -680,6 +682,7 @@ type batchInsertTraceSegsDirectParams struct {
 	Fingerprints   []int64   `json:"fingerprints"`
 	Published      bool      `json:"published"`
 	Compacted      bool      `json:"compacted"`
+	LabelNameMap   []byte    `json:"label_name_map"`
 }
 
 func (q *Queries) batchInsertTraceSegsDirect(ctx context.Context, arg []batchInsertTraceSegsDirectParams) *batchInsertTraceSegsDirectBatchResults {
@@ -698,6 +701,7 @@ func (q *Queries) batchInsertTraceSegsDirect(ctx context.Context, arg []batchIns
 			a.Fingerprints,
 			a.Published,
 			a.Compacted,
+			a.LabelNameMap,
 		}
 		batch.Queue(batchInsertTraceSegsDirect, vals...)
 	}
@@ -741,7 +745,8 @@ INSERT INTO metric_seg (
   rolledup,
   fingerprints,
   sort_version,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   $1,
@@ -757,7 +762,8 @@ VALUES (
   $12,
   $13::bigint[],
   $14,
-  $15
+  $15,
+  $16
 )
 ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
 DO NOTHING
@@ -785,6 +791,7 @@ type InsertMetricSegsParams struct {
 	Fingerprints   []int64   `json:"fingerprints"`
 	SortVersion    int16     `json:"sort_version"`
 	Compacted      bool      `json:"compacted"`
+	LabelNameMap   []byte    `json:"label_name_map"`
 }
 
 func (q *Queries) insertMetricSegsDirect(ctx context.Context, arg []InsertMetricSegsParams) *insertMetricSegsDirectBatchResults {
@@ -806,6 +813,7 @@ func (q *Queries) insertMetricSegsDirect(ctx context.Context, arg []InsertMetric
 			a.Fingerprints,
 			a.SortVersion,
 			a.Compacted,
+			a.LabelNameMap,
 		}
 		batch.Queue(insertMetricSegsDirect, vals...)
 	}

@@ -3,24 +3,29 @@ SELECT DISTINCT
   metric_name,
   metric_type
 FROM lrdb_exemplar_metrics
-WHERE organization_id = $1
+WHERE organization_id = @organization_id
 ORDER BY metric_name;
 
 -- name: GetMetricType :one
 SELECT metric_type
 FROM lrdb_exemplar_metrics
-WHERE organization_id = $1
-  AND metric_name = $2
+WHERE organization_id = @organization_id
+  AND metric_name = @metric_name
 ORDER BY 1
 LIMIT 1;
 
 -- name: ListPromMetricTags :many
--- Extract tag keys from flat exemplar format
--- Only return keys that start with chq_, resource_, scope_, metric_, or attr_
+-- Extract tag keys from label_name_map in metric_seg table for a specific metric
+-- Filters by metric fingerprint to return tags only for the requested metric
+-- Returns underscored tag keys (for v2 APIs)
+-- Legacy API uses denormalizer to convert to dotted names
+-- Includes today's and yesterday's dateint for partition pruning
 SELECT DISTINCT key::text AS tag_key
-FROM lrdb_exemplar_metrics,
-     LATERAL jsonb_object_keys(exemplar) AS key
-WHERE organization_id = $1
-  AND metric_name = $2
-  AND key ~ '^(chq_|resource_|scope_|metric_|attr_)'
+FROM metric_seg,
+     LATERAL jsonb_object_keys(label_name_map) AS key
+WHERE organization_id = @organization_id
+  AND dateint >= @start_dateint
+  AND dateint <= @end_dateint
+  AND @metric_fingerprint::BIGINT = ANY(fingerprints)
+  AND label_name_map IS NOT NULL
 ORDER BY tag_key;

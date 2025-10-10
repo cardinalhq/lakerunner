@@ -458,8 +458,8 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 	fingerprint := computeFingerprint("metric_name", be.Metric)
 
 	rows, err := q.mdb.ListMetricSegmentsForQuery(ctx, lrdb.ListMetricSegmentsForQueryParams{
-		Int8range:      startTs,
-		Int8range_2:    endTs,
+		StartTs:        startTs,
+		EndTs:          endTs,
 		Dateint:        int32(dih.DateInt),
 		FrequencyMs:    int32(stepDuration.Milliseconds()),
 		OrganizationID: orgUUID,

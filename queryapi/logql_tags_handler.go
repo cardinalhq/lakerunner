@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
 )
@@ -84,7 +85,17 @@ func (q *QuerierService) handleListLogQLTags(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	tags, err := q.mdb.ListLogQLTags(ctx, p.OrgUUID)
+	// Calculate dateint for today and yesterday for partition pruning
+	now := time.Now().UTC()
+	todayDateint := int32(now.Year()*10000 + int(now.Month())*100 + now.Day())
+	yesterday := now.AddDate(0, 0, -1)
+	yesterdayDateint := int32(yesterday.Year()*10000 + int(yesterday.Month())*100 + yesterday.Day())
+
+	tags, err := q.mdb.ListLogQLTags(ctx, lrdb.ListLogQLTagsParams{
+		OrganizationID: p.OrgUUID,
+		StartDateint:   yesterdayDateint,
+		EndDateint:     todayDateint,
+	})
 	if err != nil {
 		slog.Error("ListLogQLTags failed", "org", p.OrgUUID, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

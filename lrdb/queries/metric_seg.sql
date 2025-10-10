@@ -13,7 +13,8 @@ INSERT INTO metric_seg (
   rolledup,
   fingerprints,
   sort_version,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   @organization_id,
@@ -29,7 +30,8 @@ VALUES (
   @rolledup,
   @fingerprints::bigint[],
   @sort_version,
-  @compacted
+  @compacted,
+  @label_name_map
 );
 
 -- name: GetMetricSegsByIds :many
@@ -57,7 +59,8 @@ INSERT INTO metric_seg (
   rolledup,
   fingerprints,
   sort_version,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   @organization_id,
@@ -73,7 +76,8 @@ VALUES (
   @rolledup,
   @fingerprints::bigint[],
   @sort_version,
-  @compacted
+  @compacted,
+  @label_name_map
 )
 ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
 DO NOTHING;
@@ -104,10 +108,10 @@ SELECT
     lower(ts_range)::bigint AS start_ts,
     (upper(ts_range) - 1)::bigint AS end_ts
 FROM metric_seg
-WHERE ts_range && int8range($1, $2, '[)')
-  AND dateint = $3
-  AND frequency_ms = $4
-  AND organization_id = $5
+WHERE ts_range && int8range(@start_ts, @end_ts, '[)')
+  AND dateint = @dateint
+  AND frequency_ms = @frequency_ms
+  AND organization_id = @organization_id
   AND fingerprints && @fingerprints::BIGINT[]
   AND published = true;
 
@@ -150,3 +154,14 @@ WHERE organization_id = @organization_id
   AND instance_num    = @instance_num
   AND segment_id      = ANY(@segment_ids::bigint[])
   AND rolledup        = false;
+
+-- name: GetMetricLabelNameMaps :many
+SELECT
+    segment_id,
+    label_name_map
+FROM metric_seg
+WHERE organization_id = @organization_id
+  AND dateint = @dateint
+  AND frequency_ms = @frequency_ms
+  AND segment_id = ANY(@segment_ids::BIGINT[])
+  AND label_name_map IS NOT NULL;

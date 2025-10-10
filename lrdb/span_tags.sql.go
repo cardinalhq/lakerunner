@@ -13,17 +13,27 @@ import (
 
 const listSpanTags = `-- name: ListSpanTags :many
 SELECT DISTINCT key::text AS tag_key
-FROM lrdb_exemplar_traces,
-    LATERAL jsonb_object_keys(exemplar) AS key
+FROM trace_seg,
+     LATERAL jsonb_object_keys(label_name_map) AS key
 WHERE organization_id = $1
-  AND key ~ '^(chq_|resource_|scope_|span_|attr_)'
+  AND dateint >= $2
+  AND dateint <= $3
+  AND label_name_map IS NOT NULL
 ORDER BY tag_key
 `
 
-// Extract tag keys from flat exemplar format for spans
-// Only return keys that start with chq_, resource_, scope_, span_, or attr_
-func (q *Queries) ListSpanTags(ctx context.Context, organizationID uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, listSpanTags, organizationID)
+type ListSpanTagsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	StartDateint   int32     `json:"start_dateint"`
+	EndDateint     int32     `json:"end_dateint"`
+}
+
+// Extract tag keys from label_name_map in trace_seg table
+// Returns all keys from label_name_map (for v2 APIs)
+// Handler code can filter by non-empty values for v1 legacy API support
+// Includes today's and yesterday's dateint for partition pruning
+func (q *Queries) ListSpanTags(ctx context.Context, arg ListSpanTagsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listSpanTags, arg.OrganizationID, arg.StartDateint, arg.EndDateint)
 	if err != nil {
 		return nil, err
 	}

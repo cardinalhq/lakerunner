@@ -1,9 +1,13 @@
 -- name: ListLogQLTags :many
--- Extract tag keys from flat exemplar format
--- Only return keys that start with chq_, resource_, scope_, log_, or attr_
+-- Extract tag keys from label_name_map in log_seg table
+-- Returns all keys from label_name_map (for v2 APIs)
+-- Handler code can filter by non-empty values for v1 legacy API support
+-- Includes today's and yesterday's dateint for partition pruning
 SELECT DISTINCT key::text AS tag_key
-FROM lrdb_exemplar_logs,
-     LATERAL jsonb_object_keys(exemplar) AS key
+FROM log_seg,
+     LATERAL jsonb_object_keys(label_name_map) AS key
 WHERE organization_id = @organization_id
-  AND key ~ '^(chq_|resource_|scope_|log_|attr_)'
+  AND dateint >= @start_dateint
+  AND dateint <= @end_dateint
+  AND label_name_map IS NOT NULL
 ORDER BY tag_key;

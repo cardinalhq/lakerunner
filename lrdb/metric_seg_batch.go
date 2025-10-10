@@ -68,6 +68,7 @@ func (q *Store) InsertMetricSegmentsBatch(
 					Rolledup:       params.Rolledup,
 					Fingerprints:   params.Fingerprints,
 					SortVersion:    params.SortVersion,
+					LabelNameMap:   params.LabelNameMap,
 				}
 			}
 

@@ -640,7 +640,13 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 			Compacted:      false,
 			Fingerprints:   metadata.Fingerprints,
 			SortVersion:    lrdb.CurrentMetricSortVersion,
+			LabelNameMap:   metadata.LabelNameMap,
 		}
+
+		ll.Debug("Created segment params",
+			slog.Int64("segmentID", segmentID),
+			slog.Bool("hasLabelNameMap", metadata.LabelNameMap != nil),
+			slog.Int("labelNameMapSize", len(metadata.LabelNameMap)))
 
 		segmentParams = append(segmentParams, params)
 		totalOutputRecords += result.RecordCount

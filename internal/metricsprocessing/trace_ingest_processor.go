@@ -678,7 +678,7 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 			slog.Int64("segmentID", segmentID),
 			slog.Int64("recordCount", validBin.result.RecordCount))
 
-		// Create segment parameters
+		// Create segment parameters using stats from parquet writer
 		segmentParam := lrdb.InsertTraceSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
 			SegmentID:      segmentID,
@@ -692,6 +692,7 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 			Fingerprints:   validBin.stats.Fingerprints,
 			Published:      true,
 			Compacted:      false,
+			LabelNameMap:   validBin.stats.LabelNameMap,
 		}
 
 		segmentParams = append(segmentParams, segmentParam)

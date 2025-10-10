@@ -11,8 +11,57 @@ import (
 	"github.com/google/uuid"
 )
 
+const getMetricLabelNameMaps = `-- name: GetMetricLabelNameMaps :many
+SELECT
+    segment_id,
+    label_name_map
+FROM metric_seg
+WHERE organization_id = $1
+  AND dateint = $2
+  AND frequency_ms = $3
+  AND segment_id = ANY($4::BIGINT[])
+  AND label_name_map IS NOT NULL
+`
+
+type GetMetricLabelNameMapsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+type GetMetricLabelNameMapsRow struct {
+	SegmentID    int64  `json:"segment_id"`
+	LabelNameMap []byte `json:"label_name_map"`
+}
+
+func (q *Queries) GetMetricLabelNameMaps(ctx context.Context, arg GetMetricLabelNameMapsParams) ([]GetMetricLabelNameMapsRow, error) {
+	rows, err := q.db.Query(ctx, getMetricLabelNameMaps,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.SegmentIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetMetricLabelNameMapsRow
+	for rows.Next() {
+		var i GetMetricLabelNameMapsRow
+		if err := rows.Scan(&i.SegmentID, &i.LabelNameMap); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMetricSeg = `-- name: GetMetricSeg :one
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, fingerprints, sort_version, compacted
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, fingerprints, sort_version, compacted, label_name_map
 FROM metric_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -55,12 +104,13 @@ func (q *Queries) GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (Met
 		&i.Fingerprints,
 		&i.SortVersion,
 		&i.Compacted,
+		&i.LabelNameMap,
 	)
 	return i, err
 }
 
 const getMetricSegsByIds = `-- name: GetMetricSegsByIds :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, fingerprints, sort_version, compacted
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, fingerprints, sort_version, compacted, label_name_map
 FROM metric_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -110,6 +160,7 @@ func (q *Queries) GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIds
 			&i.Fingerprints,
 			&i.SortVersion,
 			&i.Compacted,
+			&i.LabelNameMap,
 		); err != nil {
 			return nil, err
 		}
@@ -137,8 +188,8 @@ WHERE ts_range && int8range($1, $2, '[)')
 `
 
 type ListMetricSegmentsForQueryParams struct {
-	Int8range      int64     `json:"int8range"`
-	Int8range_2    int64     `json:"int8range_2"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
 	Dateint        int32     `json:"dateint"`
 	FrequencyMs    int32     `json:"frequency_ms"`
 	OrganizationID uuid.UUID `json:"organization_id"`
@@ -154,8 +205,8 @@ type ListMetricSegmentsForQueryRow struct {
 
 func (q *Queries) ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error) {
 	rows, err := q.db.Query(ctx, listMetricSegmentsForQuery,
-		arg.Int8range,
-		arg.Int8range_2,
+		arg.StartTs,
+		arg.EndTs,
 		arg.Dateint,
 		arg.FrequencyMs,
 		arg.OrganizationID,
@@ -259,7 +310,8 @@ INSERT INTO metric_seg (
   rolledup,
   fingerprints,
   sort_version,
-  compacted
+  compacted,
+  label_name_map
 )
 VALUES (
   $1,
@@ -275,7 +327,8 @@ VALUES (
   $12,
   $13::bigint[],
   $14,
-  $15
+  $15,
+  $16
 )
 `
 
@@ -295,6 +348,7 @@ type InsertMetricSegmentParams struct {
 	Fingerprints   []int64   `json:"fingerprints"`
 	SortVersion    int16     `json:"sort_version"`
 	Compacted      bool      `json:"compacted"`
+	LabelNameMap   []byte    `json:"label_name_map"`
 }
 
 func (q *Queries) insertMetricSegDirect(ctx context.Context, arg InsertMetricSegmentParams) error {
@@ -314,6 +368,7 @@ func (q *Queries) insertMetricSegDirect(ctx context.Context, arg InsertMetricSeg
 		arg.Fingerprints,
 		arg.SortVersion,
 		arg.Compacted,
+		arg.LabelNameMap,
 	)
 	return err
 }
