@@ -24,6 +24,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
 
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/translate"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -137,22 +138,15 @@ func toHash(fingerprintAttributes []string) int64 {
 	return int64(xxhash.Sum64String(strings.Join(fingerprintAttributes, "##")))
 }
 
-// GetStringFromRow retrieves a string value from a row map by RowKey.
+// GetStringFromRow retrieves a string value from a row by RowKey.
 // Returns empty string if the key is not found or the value is not a string.
-func GetStringFromRow(row map[wkk.RowKey]any, key wkk.RowKey) string {
-	val, exists := row[key]
-	if !exists {
-		return ""
-	}
-	if str, ok := val.(string); ok {
-		return str
-	}
-	return ""
+func GetStringFromRow(row pipeline.Row, key wkk.RowKey) string {
+	return row.GetString(key)
 }
 
-// CalculateSpanFingerprintFromRow calculates a span fingerprint from a row map.
+// CalculateSpanFingerprintFromRow calculates a span fingerprint from a row.
 // The row should contain resource attributes and span attributes with appropriate prefixes.
-func CalculateSpanFingerprintFromRow(row map[wkk.RowKey]any) int64 {
+func CalculateSpanFingerprintFromRow(row pipeline.Row) int64 {
 	fingerprintAttributes := make([]string, 0)
 
 	// Extract resource-level attributes
