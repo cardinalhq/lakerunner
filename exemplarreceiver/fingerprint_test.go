@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
@@ -115,8 +117,15 @@ func TestComputeLogsFingerprintConsistency(t *testing.T) {
 		wkk.NewRowKey("namespace"):    "default",
 	}
 
-	fp1 := computeLogsFingerprint(message, level, data)
-	fp2 := computeLogsFingerprint(message, level, data)
+	// Create test fixtures
+	tenantMgr := fingerprint.NewTenantManager(0.8)
+	fp := fingerprinter.NewFingerprinter()
+	orgID := "test-org-id"
+
+	fp1, err := computeLogsFingerprint(orgID, message, level, data, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
+	fp2, err := computeLogsFingerprint(orgID, message, level, data, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
 
 	assert.Equal(t, fp1, fp2, "fingerprints should be consistent")
 	assert.NotZero(t, fp1, "fingerprint should not be zero")
@@ -131,8 +140,15 @@ func TestComputeLogsFingerprintDifferentMessages(t *testing.T) {
 		wkk.NewRowKey("namespace"):    "default",
 	}
 
-	fp1 := computeLogsFingerprint("Error processing request", level, data)
-	fp2 := computeLogsFingerprint("Success processing request", level, data)
+	// Create test fixtures
+	tenantMgr := fingerprint.NewTenantManager(0.8)
+	fp := fingerprinter.NewFingerprinter()
+	orgID := "test-org-id"
+
+	fp1, err := computeLogsFingerprint(orgID, "Error processing request", level, data, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
+	fp2, err := computeLogsFingerprint(orgID, "Success processing request", level, data, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
 
 	assert.NotEqual(t, fp1, fp2, "different messages should produce different fingerprints")
 }
@@ -144,8 +160,15 @@ func TestComputeLogsFingerprintDifferentLevels(t *testing.T) {
 		wkk.NewRowKey("service_name"): "test-service",
 	}
 
-	fp1 := computeLogsFingerprint(message, "error", data)
-	fp2 := computeLogsFingerprint(message, "info", data)
+	// Create test fixtures
+	tenantMgr := fingerprint.NewTenantManager(0.8)
+	fp := fingerprinter.NewFingerprinter()
+	orgID := "test-org-id"
+
+	fp1, err := computeLogsFingerprint(orgID, message, "error", data, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
+	fp2, err := computeLogsFingerprint(orgID, message, "info", data, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
 
 	assert.NotEqual(t, fp1, fp2, "different levels should produce different fingerprints")
 }
@@ -188,8 +211,14 @@ func TestComputeLogsFingerprintEmptyAttributes(t *testing.T) {
 	level := "info"
 	data := pipeline.Row{}
 
-	fp := computeLogsFingerprint(message, level, data)
-	assert.NotZero(t, fp, "fingerprint should not be zero even with empty attributes")
+	// Create test fixtures
+	tenantMgr := fingerprint.NewTenantManager(0.8)
+	fp := fingerprinter.NewFingerprinter()
+	orgID := "test-org-id"
+
+	result, err := computeLogsFingerprint(orgID, message, level, data, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
+	assert.NotZero(t, result, "fingerprint should not be zero even with empty attributes")
 }
 
 func TestComputeLogsFingerprintWithAttributes(t *testing.T) {
@@ -225,14 +254,21 @@ func TestComputeLogsFingerprintWithAttributes(t *testing.T) {
 		},
 	}
 
+	// Create test fixtures
+	tenantMgr := fingerprint.NewTenantManager(0.8)
+	fp := fingerprinter.NewFingerprinter()
+	orgID := "test-org-id"
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fp := computeLogsFingerprint(tt.message, tt.level, tt.row)
+			result, err := computeLogsFingerprint(orgID, tt.message, tt.level, tt.row, tenantMgr, fp)
+			assert.NoError(t, err, "fingerprinting should not fail")
 			// All cases should produce a fingerprint
 			// Verify consistency
-			fp2 := computeLogsFingerprint(tt.message, tt.level, tt.row)
-			assert.Equal(t, fp, fp2, "fingerprint should be deterministic")
-			assert.NotZero(t, fp, "fingerprint should not be zero")
+			result2, err := computeLogsFingerprint(orgID, tt.message, tt.level, tt.row, tenantMgr, fp)
+			assert.NoError(t, err, "fingerprinting should not fail")
+			assert.Equal(t, result, result2, "fingerprint should be deterministic")
+			assert.NotZero(t, result, "fingerprint should not be zero")
 		})
 	}
 }
@@ -253,8 +289,15 @@ func TestComputeLogsFingerprintAttributeOrder(t *testing.T) {
 		wkk.NewRowKey("attr_b"): "value_b",
 	}
 
-	fp1 := computeLogsFingerprint(message, level, row1)
-	fp2 := computeLogsFingerprint(message, level, row2)
+	// Create test fixtures
+	tenantMgr := fingerprint.NewTenantManager(0.8)
+	fp := fingerprinter.NewFingerprinter()
+	orgID := "test-org-id"
+
+	fp1, err := computeLogsFingerprint(orgID, message, level, row1, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
+	fp2, err := computeLogsFingerprint(orgID, message, level, row2, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
 
 	assert.Equal(t, fp1, fp2, "attribute order should not affect fingerprint")
 }
@@ -271,8 +314,15 @@ func TestComputeLogsFingerprintDifferentAttributes(t *testing.T) {
 		wkk.NewRowKey("attr_b"): "value",
 	}
 
-	fp1 := computeLogsFingerprint(message, level, row1)
-	fp2 := computeLogsFingerprint(message, level, row2)
+	// Create test fixtures
+	tenantMgr := fingerprint.NewTenantManager(0.8)
+	fp := fingerprinter.NewFingerprinter()
+	orgID := "test-org-id"
+
+	fp1, err := computeLogsFingerprint(orgID, message, level, row1, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
+	fp2, err := computeLogsFingerprint(orgID, message, level, row2, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
 
 	assert.NotEqual(t, fp1, fp2, "different attribute keys should produce different fingerprints")
 }
@@ -289,8 +339,15 @@ func TestComputeLogsFingerprintSameKeysDifferentValues(t *testing.T) {
 		wkk.NewRowKey("attr"): "value_b",
 	}
 
-	fp1 := computeLogsFingerprint(message, level, row1)
-	fp2 := computeLogsFingerprint(message, level, row2)
+	// Create test fixtures
+	tenantMgr := fingerprint.NewTenantManager(0.8)
+	fp := fingerprinter.NewFingerprinter()
+	orgID := "test-org-id"
+
+	fp1, err := computeLogsFingerprint(orgID, message, level, row1, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
+	fp2, err := computeLogsFingerprint(orgID, message, level, row2, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
 
 	assert.Equal(t, fp1, fp2, "same keys with different values should produce same fingerprint")
 }
@@ -307,8 +364,15 @@ func TestComputeLogsFingerprintDifferentKeys(t *testing.T) {
 		wkk.NewRowKey("request_id"): "abc123",
 	}
 
-	fp1 := computeLogsFingerprint(message, level, row1)
-	fp2 := computeLogsFingerprint(message, level, row2)
+	// Create test fixtures
+	tenantMgr := fingerprint.NewTenantManager(0.8)
+	fp := fingerprinter.NewFingerprinter()
+	orgID := "test-org-id"
+
+	fp1, err := computeLogsFingerprint(orgID, message, level, row1, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
+	fp2, err := computeLogsFingerprint(orgID, message, level, row2, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
 
 	assert.NotEqual(t, fp1, fp2, "different sets of keys should produce different fingerprints")
 }
@@ -325,10 +389,17 @@ func TestComputeLogsFingerprintValueTypes(t *testing.T) {
 		wkk.NewRowKey("bytes_val"):  []byte("data"),
 	}
 
-	fp := computeLogsFingerprint(message, level, row)
-	assert.NotZero(t, fp, "fingerprint should handle different value types")
+	// Create test fixtures
+	tenantMgr := fingerprint.NewTenantManager(0.8)
+	fp := fingerprinter.NewFingerprinter()
+	orgID := "test-org-id"
+
+	result, err := computeLogsFingerprint(orgID, message, level, row, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
+	assert.NotZero(t, result, "fingerprint should handle different value types")
 
 	// Verify consistency with same types
-	fp2 := computeLogsFingerprint(message, level, row)
-	assert.Equal(t, fp, fp2, "fingerprint should be consistent with mixed types")
+	result2, err := computeLogsFingerprint(orgID, message, level, row, tenantMgr, fp)
+	assert.NoError(t, err, "fingerprinting should not fail")
+	assert.Equal(t, result, result2, "fingerprint should be consistent with mixed types")
 }

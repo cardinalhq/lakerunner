@@ -27,7 +27,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/pipeline"
 )
@@ -45,6 +47,8 @@ type ReceiverService struct {
 	db             ExemplarStore
 	apiKeyProvider orgapikey.OrganizationAPIKeyProvider
 	port           int
+	tenantManager  *fingerprint.TenantManager
+	fingerprinter  fingerprinter.Fingerprinter
 }
 
 // NewReceiverService creates a new exemplar receiver service
@@ -56,10 +60,18 @@ func NewReceiverService(db lrdb.StoreFull, apiKeyProvider orgapikey.Organization
 		}
 	}
 
+	// Initialize tenant manager with default threshold (0.8 is a reasonable default)
+	tenantManager := fingerprint.NewTenantManager(0.8)
+
+	// Initialize fingerprinter with default options
+	fp := fingerprinter.NewFingerprinter()
+
 	return &ReceiverService{
 		db:             db,
 		apiKeyProvider: apiKeyProvider,
 		port:           port,
+		tenantManager:  tenantManager,
+		fingerprinter:  fp,
 	}, nil
 }
 
@@ -209,8 +221,14 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 		// Convert attributes to Row for fingerprinting, including message and level
 		row := pipeline.CopyRow(exemplar.Attributes)
 
-		// Always compute fingerprint server-side
-		fingerprint := computeLogsFingerprint(exemplar.Message, exemplar.Level, row)
+		// Always compute fingerprint server-side using tenant-specific clustering
+		fingerprint, err := computeLogsFingerprint(orgID.String(), exemplar.Message, exemplar.Level, row, r.tenantManager, r.fingerprinter)
+		if err != nil {
+			// Drop the item if fingerprinting fails
+			response.Failed++
+			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: fingerprinting failed: %v", i, err))
+			continue
+		}
 
 		records = append(records, lrdb.BatchUpsertExemplarLogsParams{
 			OrganizationID:      orgID,
