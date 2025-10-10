@@ -71,7 +71,7 @@ func TestArrowRawReader_StringCopying(t *testing.T) {
 		b.Field(1).(*array.Int64Builder).Append(int64(i))
 	}
 
-	rec := b.NewRecord()
+	rec := b.NewRecordBatch()
 	defer rec.Release()
 
 	err = writer.Write(rec)
@@ -159,7 +159,7 @@ func TestArrowRawReader_BinaryCopying(t *testing.T) {
 		b.Field(1).(*array.Int64Builder).Append(int64(i))
 	}
 
-	rec := b.NewRecord()
+	rec := b.NewRecordBatch()
 	defer rec.Release()
 
 	err = writer.Write(rec)
@@ -244,7 +244,7 @@ func TestArrowRawReader_NestedStringCopying(t *testing.T) {
 	valueBuilder.Append("beta")
 	b.Field(1).(*array.Int64Builder).Append(2)
 
-	rec := b.NewRecord()
+	rec := b.NewRecordBatch()
 	defer rec.Release()
 
 	err = writer.Write(rec)
