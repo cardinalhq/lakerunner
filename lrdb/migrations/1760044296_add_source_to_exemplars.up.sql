@@ -7,3 +7,8 @@ ALTER TABLE lrdb_exemplar_traces ADD COLUMN source TEXT DEFAULT 'lakerunner';
 ALTER TABLE lrdb_exemplar_logs ALTER COLUMN source SET NOT NULL;
 ALTER TABLE lrdb_exemplar_metrics ALTER COLUMN source SET NOT NULL;
 ALTER TABLE lrdb_exemplar_traces ALTER COLUMN source SET NOT NULL;
+
+-- Drop the default so new inserts must explicitly provide a value
+ALTER TABLE lrdb_exemplar_logs ALTER COLUMN source DROP DEFAULT;
+ALTER TABLE lrdb_exemplar_metrics ALTER COLUMN source DROP DEFAULT;
+ALTER TABLE lrdb_exemplar_traces ALTER COLUMN source DROP DEFAULT;
