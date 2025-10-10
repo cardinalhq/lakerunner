@@ -16,6 +16,7 @@ package factories
 
 import (
 	"encoding/json"
+	"log/slog"
 	"strings"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -75,7 +76,9 @@ func underscoreToDotted(underscored string) string {
 // 1. For v2 APIs (LogQL/PromQL): All keys are used for tag queries
 // 2. For v1 legacy APIs: Only entries with non-empty values (dotted mappings) are used
 func buildLabelNameMap(columns mapset.Set[string]) []byte {
-	if columns.Cardinality() == 0 {
+	cardinality := columns.Cardinality()
+	if cardinality == 0 {
+		slog.Warn("buildLabelNameMap called with zero label columns - label_name_map will be NULL")
 		return nil
 	}
 
@@ -93,13 +96,20 @@ func buildLabelNameMap(columns mapset.Set[string]) []byte {
 	}
 
 	if len(mapping) == 0 {
+		slog.Error("buildLabelNameMap: no mappings created despite having columns",
+			slog.Int("cardinality", cardinality))
 		return nil
 	}
 
 	jsonBytes, err := json.Marshal(mapping)
 	if err != nil {
-		// This shouldn't happen with a simple map[string]string
+		slog.Error("buildLabelNameMap: failed to marshal mapping", slog.Any("error", err))
 		return nil
 	}
+
+	slog.Debug("buildLabelNameMap created mapping",
+		slog.Int("columnCount", cardinality),
+		slog.Int("mappingCount", len(mapping)))
+
 	return jsonBytes
 }
