@@ -168,10 +168,10 @@ func (r *ReceiverService) processLogsExemplar(ctx context.Context, orgID uuid.UU
 		return fmt.Errorf("failed to upsert service identifier: %w", err)
 	}
 
-	// Get source from row, default to external source
+	// Get source from row - required field
 	source := row.GetString(wkk.NewRowKey("source"))
 	if source == "" {
-		source = string(lrdb.ExemplarSourceDatadog)
+		return fmt.Errorf("source is required")
 	}
 
 	// Convert Row to map[string]any for storage in JSONB
@@ -219,10 +219,10 @@ func (r *ReceiverService) processMetricsExemplar(ctx context.Context, orgID uuid
 		return fmt.Errorf("failed to upsert service identifier: %w", err)
 	}
 
-	// Get source from row, default to external source
+	// Get source from row - required field
 	source := row.GetString(wkk.NewRowKey("source"))
 	if source == "" {
-		source = string(lrdb.ExemplarSourceDatadog)
+		return fmt.Errorf("source is required")
 	}
 
 	// Convert Row to map[string]any for storage in JSONB
@@ -269,10 +269,10 @@ func (r *ReceiverService) processTracesExemplar(ctx context.Context, orgID uuid.
 		return fmt.Errorf("failed to upsert service identifier: %w", err)
 	}
 
-	// Get source from row, default to external source
+	// Get source from row - required field
 	source := row.GetString(wkk.NewRowKey("source"))
 	if source == "" {
-		source = string(lrdb.ExemplarSourceDatadog)
+		return fmt.Errorf("source is required")
 	}
 
 	// Convert Row to map[string]any for storage in JSONB
