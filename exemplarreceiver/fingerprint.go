@@ -21,8 +21,8 @@ import (
 	"github.com/cespare/xxhash/v2"
 
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // valueToString converts any value to its string representation for hashing

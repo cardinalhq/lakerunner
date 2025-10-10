@@ -23,8 +23,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // LogTranslator adds resource metadata to log rows

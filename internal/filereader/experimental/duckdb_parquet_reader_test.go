@@ -28,8 +28,8 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // createTestMetricParquetFile creates a temporary metric Parquet file for testing

@@ -17,7 +17,7 @@ package filereader
 import (
 	"strings"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 func prefixAttributeRowKey(name, prefix string) wkk.RowKey {

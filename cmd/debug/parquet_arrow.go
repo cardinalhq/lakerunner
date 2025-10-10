@@ -27,7 +27,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 func getParquetArrowCatSubCmd() *cobra.Command {

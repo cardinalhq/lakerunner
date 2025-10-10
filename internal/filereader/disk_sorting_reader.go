@@ -24,8 +24,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/rowcodec"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/rowcodec"
 )
 
 // RowIndex represents a lightweight pointer to a binary-encoded row in the temp file.

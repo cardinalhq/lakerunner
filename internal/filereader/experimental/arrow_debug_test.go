@@ -24,7 +24,7 @@ import (
 	"testing"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // TestArrowReaderNullFieldHandling investigates the null field issue

@@ -21,8 +21,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // createMetricsCallback creates a callback function for metrics exemplars for a specific organization

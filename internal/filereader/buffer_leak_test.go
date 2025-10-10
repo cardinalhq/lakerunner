@@ -20,8 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // mockLeakTestReader is a simple reader for testing buffer leaks

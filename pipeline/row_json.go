@@ -17,7 +17,7 @@ package pipeline
 import (
 	"encoding/json"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // MarshalJSON implements json.Marshaler for Row

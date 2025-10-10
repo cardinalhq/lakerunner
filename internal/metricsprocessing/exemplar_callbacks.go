@@ -24,9 +24,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 func processLogsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row, store LogIngestStore) error {

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 // Codec defines the interface for encoding/decoding row data.

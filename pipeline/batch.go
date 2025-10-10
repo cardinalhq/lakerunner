@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	meter = otel.Meter("github.com/cardinalhq/lakerunner/internal/pipeline")
+	meter = otel.Meter("github.com/cardinalhq/lakerunner/pipeline")
 
 	bufferpoolGetsCounter metric.Int64Counter
 	bufferpoolPutsCounter metric.Int64Counter

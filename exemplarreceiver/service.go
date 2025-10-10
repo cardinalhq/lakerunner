@@ -28,8 +28,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 // ExemplarStore defines the database operations needed by the receiver service

@@ -20,8 +20,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // mockReaderForBenchmark provides controlled data for benchmarking

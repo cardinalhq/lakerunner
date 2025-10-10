@@ -28,8 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // mockDB implements the ExemplarStore interface for testing

@@ -19,7 +19,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // Pre-interned keys for TID computation

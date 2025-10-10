@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 type LRUCache struct {

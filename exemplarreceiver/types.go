@@ -15,7 +15,7 @@
 package exemplarreceiver
 
 import (
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 // LogsBatchRequest represents a batch of logs exemplars from a single source

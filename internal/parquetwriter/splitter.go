@@ -26,8 +26,8 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/schemabuilder"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/rowcodec"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/rowcodec"
 )
 
 // FileSplitter manages splitting data into multiple output files based on

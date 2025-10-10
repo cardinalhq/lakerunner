@@ -21,7 +21,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 // ParquetWriter defines the common interface for writing Parquet files

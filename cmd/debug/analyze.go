@@ -28,7 +28,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 func GetAnalyzeCmd() *cobra.Command {

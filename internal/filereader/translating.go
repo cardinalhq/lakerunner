@@ -22,7 +22,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 // TranslatingReader wraps another Reader and applies row transformations.

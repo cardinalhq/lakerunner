@@ -21,8 +21,8 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // CBORCodec holds the CBOR encoder/decoder configuration.

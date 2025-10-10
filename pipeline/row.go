@@ -17,7 +17,7 @@ package pipeline
 import (
 	"maps"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // Row represents a single data row as a map of RowKey to any value.

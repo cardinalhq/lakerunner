@@ -14,7 +14,7 @@
 
 package filereader
 
-import "github.com/cardinalhq/lakerunner/internal/pipeline"
+import "github.com/cardinalhq/lakerunner/pipeline"
 
 // SortKey represents a key that can be compared for sorting
 type SortKey interface {

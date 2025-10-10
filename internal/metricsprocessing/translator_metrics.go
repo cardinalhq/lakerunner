@@ -20,8 +20,8 @@ import (
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // MetricTranslator adds resource metadata to metric rows
