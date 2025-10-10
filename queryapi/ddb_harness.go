@@ -19,9 +19,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
+	"log/slog"
 	"reflect"
 	"sort"
 	"strings"
@@ -29,98 +28,59 @@ import (
 
 	_ "github.com/marcboeker/go-duckdb/v2"
 
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/logql"
-
-	"go.opentelemetry.io/collector/pdata/plog"
 )
 
-// IngestExemplarLogsJSONToDuckDB ingests a plog.Logs JSON exemplar into DuckDB.
+// IngestExemplarLogsJSONToDuckDB ingests a map[string]any exemplar into DuckDB.
 // It returns the number of rows inserted.
 func IngestExemplarLogsJSONToDuckDB(
 	ctx context.Context,
 	db *sql.DB,
 	tableName string,
-	exemplarJSON string,
+	exemplarData map[string]any,
 ) (int, error) {
-	var jUM plog.JSONUnmarshaler
-	logs, err := jUM.UnmarshalLogs([]byte(exemplarJSON))
-	if err != nil {
-		return 0, fmt.Errorf("exemplar JSON -> plog.Logs: %w", err)
-	}
-
-	var pM plog.ProtoMarshaler
-	payload, err := pM.MarshalLogs(logs)
-	if err != nil {
-		return 0, fmt.Errorf("plog.Logs -> proto: %w", err)
-	}
-
-	reader, err := filereader.NewIngestProtoLogsReader(
-		bytes.NewReader(payload),
-		filereader.ReaderOptions{BatchSize: 1000},
-	)
-	if err != nil {
-		return 0, fmt.Errorf("new ingest reader: %w", err)
-	}
-
 	if err := ensureBaseTable(ctx, db, tableName); err != nil {
+		slog.Error("Failed to create base table", "error", err)
 		return 0, err
 	}
 
 	existingCols, err := getExistingColumns(ctx, db, tableName)
 	if err != nil {
+		slog.Error("Failed to get existing columns", "error", err)
 		return 0, err
 	}
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
+		slog.Error("Failed to begin transaction", "error", err)
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }() // no-op if already committed
 
-	rowsInserted := 0
+	// Add a dummy fingerprint for test queries that expect it
+	if _, exists := exemplarData["chq_fingerprint"]; !exists {
+		exemplarData["chq_fingerprint"] = "test-fingerprint"
+	}
+	// Add timestamp if absent in exemplar
+	if _, exists := exemplarData["chq_timestamp"]; !exists {
+		exemplarData["chq_timestamp"] = time.Now().UnixMilli()
+	}
 
-	for {
-		batch, rerr := reader.Next(ctx)
-		if errors.Is(rerr, io.EOF) {
-			break
-		}
-		if rerr != nil {
-			return rowsInserted, fmt.Errorf("reader.Next: %w", rerr)
-		}
-		if batch == nil || batch.Len() == 0 {
-			continue
-		}
+	if err := ensureColumnsForRow(ctx, tx, tableName, exemplarData, existingCols); err != nil {
+		slog.Error("Failed to ensure columns for row", "error", err)
+		return 0, err
+	}
 
-		for i := 0; i < batch.Len(); i++ {
-			rowAny := batch.Get(i)
-
-			row := make(map[string]any, len(rowAny)+1)
-			for key, value := range rowAny {
-				row[string(key.Value())] = value
-			}
-
-			// Add a dummy fingerprint for test queries that expect it
-			// (Real ingestion adds this via fingerprintTenantManager)
-			if _, exists := row["chq_fingerprint"]; !exists {
-				row["chq_fingerprint"] = "test-fingerprint"
-			}
-
-			if err := ensureColumnsForRow(ctx, tx, tableName, row, existingCols); err != nil {
-				return rowsInserted, err
-			}
-
-			if _, err := insertRow(ctx, tx, tableName, row); err != nil {
-				return rowsInserted, err
-			}
-			rowsInserted++
-		}
+	if _, err := insertRow(ctx, tx, tableName, exemplarData); err != nil {
+		slog.Error("Failed to insert row", "error", err)
+		return 0, err
 	}
 
 	if err := tx.Commit(); err != nil {
-		return rowsInserted, fmt.Errorf("commit tx: %w", err)
+		slog.Error("Failed to commit transaction", "error", err)
+		return 0, fmt.Errorf("commit tx: %w", err)
 	}
-	return rowsInserted, nil
+	return 1, nil
 }
 
 func ensureBaseTable(ctx context.Context, db *sql.DB, table string) error {
@@ -386,7 +346,7 @@ type ValidateResult struct {
 	IsAggregate  bool        // whether query was aggregate path (PromQL rewrite)
 }
 
-func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON string, opts ...ValidateOption) (*ValidateResult, error) {
+func ValidateLogQLAgainstExemplar(ctx context.Context, query string, exemplarData map[string]any, opts ...ValidateOption) (*ValidateResult, error) {
 	cfg := validateConfig{
 		table:        "logs",
 		aggStep:      10 * time.Second,
@@ -421,7 +381,7 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON strin
 	}
 
 	// 3) Ingest exemplar rows
-	inserted, err := IngestExemplarLogsJSONToDuckDB(ctx, cfg.db, cfg.table, exemplarJSON)
+	inserted, err := IngestExemplarLogsJSONToDuckDB(ctx, cfg.db, cfg.table, exemplarData)
 	if err != nil {
 		return nil, fmt.Errorf("ingest exemplar: %w", err)
 	}

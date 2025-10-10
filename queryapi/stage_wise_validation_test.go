@@ -17,6 +17,7 @@ package queryapi
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -29,13 +30,28 @@ import (
 	"github.com/cardinalhq/lakerunner/logql"
 )
 
+// loadExemplarFromJSON loads a JSON file and returns it as map[string]any
+func loadExemplarFromJSON(filename string) (map[string]any, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	var exemplar map[string]any
+	if err := json.Unmarshal(data, &exemplar); err != nil {
+		return nil, err
+	}
+
+	return exemplar, nil
+}
+
 func TestStagewiseValidator_Accounting_PreLineFilter_ThenLineFormat_OK(t *testing.T) {
 	ctx := context.Background()
 
 	// 1) Load exemplar data that contains the @OrderResult payload.
-	b, err := os.ReadFile("testdata/exemplar2.json")
+	exemplarData, err := loadExemplarFromJSON("testdata/exemplar2.json")
 	if err != nil {
-		t.Fatalf("read exemplar2.json: %v", err)
+		t.Fatalf("load exemplar2.json: %v", err)
 	}
 
 	// 2) In-memory DuckDB + ingest
@@ -46,7 +62,7 @@ func TestStagewiseValidator_Accounting_PreLineFilter_ThenLineFormat_OK(t *testin
 	t.Cleanup(func() { _ = db.Close() })
 
 	const table = "logs_stagewise_lineformat_pre_ok"
-	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, exemplarData)
 	if err != nil {
 		t.Fatalf("ingest exemplar2: %v", err)
 	}
@@ -151,9 +167,9 @@ func TestStagewiseValidator_Accounting_CountOverTime_ByZipCode(t *testing.T) {
 	ctx := context.Background()
 
 	// 1) Load exemplar data that contains the @OrderResult payload referenced by the index(...)
-	b, err := os.ReadFile("testdata/exemplar2.json")
+	exemplarData, err := loadExemplarFromJSON("testdata/exemplar2.json")
 	if err != nil {
-		t.Fatalf("read exemplar2.json: %v", err)
+		t.Fatalf("load exemplar2.json: %v", err)
 	}
 
 	// 2) In-memory DuckDB + ingest
@@ -164,7 +180,7 @@ func TestStagewiseValidator_Accounting_CountOverTime_ByZipCode(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	const table = "logs_stagewise_zipcode_count"
-	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, exemplarData)
 	if err != nil {
 		t.Fatalf("ingest exemplar2: %v", err)
 	}
@@ -307,10 +323,10 @@ func TestStagewiseValidator_Accounting_CountOverTime_ByZipCode(t *testing.T) {
 func TestStagewiseValidator_InvalidLineFormatThenRegexp_NoCountry(t *testing.T) {
 	ctx := context.Background()
 
-	// 1) Load exemplar JSON with @OrderResult payload
-	b, err := os.ReadFile("testdata/exemplar2.json")
+	// 1) Load exemplar data with @OrderResult payload
+	exemplarData, err := loadExemplarFromJSON("testdata/exemplar2.json")
 	if err != nil {
-		t.Fatalf("read exemplar2: %v", err)
+		t.Fatalf("load exemplar2.json: %v", err)
 	}
 
 	// 2) Open in-memory DuckDB and ingest exemplar rows
@@ -322,7 +338,7 @@ func TestStagewiseValidator_InvalidLineFormatThenRegexp_NoCountry(t *testing.T) 
 
 	const table = "logs_stagewise_invalid"
 
-	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, exemplarData)
 	if err != nil {
 		t.Fatalf("ingest exemplar2: %v", err)
 	}
@@ -408,10 +424,10 @@ func TestStagewiseValidator_InvalidLineFormatThenRegexp_NoCountry(t *testing.T) 
 func TestStagewiseValidator_AggregateJsonUnwrap_GroupByCardType(t *testing.T) {
 	ctx := context.Background()
 
-	// 1) Load exemplar JSON (has revenue + cardType)
-	b, err := os.ReadFile("testdata/exemplar3.json")
+	// 1) Load exemplar data (has revenue + cardType)
+	exemplarData, err := loadExemplarFromJSON("testdata/exemplar3.json")
 	if err != nil {
-		t.Fatalf("read exemplar3: %v", err)
+		t.Fatalf("load exemplar3.json: %v", err)
 	}
 
 	// 2) Open in-memory DuckDB and ingest exemplar rows
@@ -423,7 +439,7 @@ func TestStagewiseValidator_AggregateJsonUnwrap_GroupByCardType(t *testing.T) {
 
 	const table = "logs_stagewise_agg_ok"
 
-	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, exemplarData)
 	if err != nil {
 		t.Fatalf("ingest exemplar3: %v", err)
 	}
@@ -445,7 +461,7 @@ func TestStagewiseValidator_AggregateJsonUnwrap_GroupByCardType(t *testing.T) {
 	//    - json revenue + json card_type
 	//    - unwrap revenue
 	//    - sum_over_time(...) by card_type
-	q := `sum by (card_type) (sum_over_time(({resource_service_name="segment", chq_fingerprint="test-fingerprint"} | json revenue="properties.revenue" | json card_type="properties.cardType" | unwrap revenue)[24h]))`
+	q := `sum by (card_type) (sum_over_time(({resource_service_name="segment", chq_fingerprint="-1205034819632174695"} | json revenue="properties.revenue" | json card_type="properties.cardType" | unwrap revenue)[24h]))`
 
 	ast, err := logql.FromLogQL(q)
 	if err != nil {
@@ -548,10 +564,10 @@ func TestStagewiseValidator_AggregateJsonUnwrap_GroupByCardType(t *testing.T) {
 func TestStagewiseValidator_Segment_SumOverTime_UnwrapRevenue_OK(t *testing.T) {
 	ctx := context.Background()
 
-	// 1) Load exemplar (has service.name=segment, userId, properties.revenue)
-	b, err := os.ReadFile("testdata/exemplar3.json")
+	// 1) Load exemplar data (has service.name=segment, userId, properties.revenue)
+	exemplarData, err := loadExemplarFromJSON("testdata/exemplar3.json")
 	if err != nil {
-		t.Fatalf("read exemplar3: %v", err)
+		t.Fatalf("load exemplar3.json: %v", err)
 	}
 
 	// 2) In-memory DuckDB + ingest
@@ -562,7 +578,7 @@ func TestStagewiseValidator_Segment_SumOverTime_UnwrapRevenue_OK(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	const table = "logs_stagewise_segment_revenue_ok"
-	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, exemplarData)
 	if err != nil {
 		t.Fatalf("ingest exemplar3: %v", err)
 	}
@@ -674,10 +690,10 @@ func TestStagewiseValidator_Segment_SumOverTime_UnwrapRevenue_OK(t *testing.T) {
 func TestStagewiseValidator_Kafka_ControllerID_InvalidRegexp(t *testing.T) {
 	ctx := context.Background()
 
-	// 1) Load exemplar JSON with the Kafka log line
-	b, err := os.ReadFile("testdata/exemplar4.json")
+	// 1) Load exemplar data with the Kafka log line
+	exemplarData, err := loadExemplarFromJSON("testdata/exemplar4.json")
 	if err != nil {
-		t.Fatalf("read exemplar4: %v", err)
+		t.Fatalf("load exemplar4.json: %v", err)
 	}
 
 	// 2) Open in-memory DuckDB and ingest exemplar rows
@@ -689,7 +705,7 @@ func TestStagewiseValidator_Kafka_ControllerID_InvalidRegexp(t *testing.T) {
 
 	const table = "logs_stagewise_kafka_controller"
 
-	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, exemplarData)
 	if err != nil {
 		t.Fatalf("ingest exemplar4: %v", err)
 	}
@@ -772,10 +788,10 @@ func TestStagewiseValidator_Kafka_ControllerID_InvalidRegexp(t *testing.T) {
 func TestStagewiseValidator_Accounting_LineFormatThenLineFilter_WA(t *testing.T) {
 	ctx := context.Background()
 
-	// 1) Load exemplar JSON
-	b, err := os.ReadFile("testdata/exemplar2.json")
+	// 1) Load exemplar data
+	exemplarData, err := loadExemplarFromJSON("testdata/exemplar2.json")
 	if err != nil {
-		t.Fatalf("read exemplar2.json: %v", err)
+		t.Fatalf("load exemplar2.json: %v", err)
 	}
 
 	// 2) In-memory DuckDB + ingest
@@ -786,7 +802,7 @@ func TestStagewiseValidator_Accounting_LineFormatThenLineFilter_WA(t *testing.T)
 	t.Cleanup(func() { _ = db.Close() })
 
 	const table = "logs_stagewise_accounting_lf"
-	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, exemplarData)
 	if err != nil {
 		t.Fatalf("ingest exemplar2: %v", err)
 	}
@@ -806,7 +822,7 @@ func TestStagewiseValidator_Accounting_LineFormatThenLineFilter_WA(t *testing.T)
 	// 4) Expression under test:
 	//    line_format rewrites the body to the @OrderResult JSON string, and
 	//    the contains filter ("WA") must run AFTER that rewrite.
-	q := `{resource_service_name="accounting", chq_fingerprint="test-fingerprint"} | line_format "{{ index . \"attr_@OrderResult\" }}" |= "WA"`
+	q := `{resource_service_name="accounting", chq_fingerprint="-1205034819632174695"} | line_format "{{ index . \"attr_@OrderResult\" }}" |= "WA"`
 
 	ast, err := logql.FromLogQL(q)
 	if err != nil {
