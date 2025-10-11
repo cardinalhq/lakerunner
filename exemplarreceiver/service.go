@@ -194,7 +194,7 @@ func (r *ReceiverService) handleExemplar(w http.ResponseWriter, req *http.Reques
 
 // processLogsBatch processes a batch of logs exemplars
 func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID, source string, rawExemplars []LogsExemplar) (*ExemplarBatchResponse, error) {
-	slog.Info("Processing logs exemplar batch",
+	slog.Debug("Processing logs exemplar batch",
 		"organization_id", orgID,
 		"source", source,
 		"count", len(rawExemplars))
