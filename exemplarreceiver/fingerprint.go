@@ -20,25 +20,11 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
-
-// valueToString converts any value to its string representation for hashing
-func valueToString(v any) string {
-	if v == nil {
-		return ""
-	}
-	switch val := v.(type) {
-	case string:
-		return val
-	case []byte:
-		return string(val)
-	default:
-		return fmt.Sprintf("%v", val)
-	}
-}
 
 // computeTracesFingerprint calculates a fingerprint for traces using the Row.
 // Uses the standard fingerprinter.CalculateSpanFingerprintFromRow function.
@@ -54,31 +40,43 @@ func computeTracesFingerprint(row pipeline.Row) int64 {
 }
 
 // computeLogsFingerprint calculates a fingerprint for logs based on message and attributes.
-// TODO: Use the same log fingerprinting calculation as internal/oteltools/pkg/fingerprinter
-// which does proper tokenization-based clustering. The current implementation is a simple
-// hash of all key-value pairs and doesn't cluster similar log messages properly.
-func computeLogsFingerprint(message, level string, row pipeline.Row) int64 {
-	// Convert to string map for easier processing
-	stringMap := pipeline.ToStringMap(row)
+// It uses the fingerprinter with per-organization clustering to properly group similar log messages.
+// Returns an error if fingerprinting fails, in which case the item should be dropped.
+func computeLogsFingerprint(organizationID string, message, level string, row pipeline.Row, tenantMgr *fingerprint.TenantManager, fp fingerprinter.Fingerprinter) (int64, error) {
+	// Get the tenant for this organization
+	tenant := tenantMgr.GetTenant(organizationID)
 
-	// Collect and sort all keys for stable hashing
-	keys := make([]string, 0, len(stringMap))
-	for key := range stringMap {
-		keys = append(keys, key)
+	// Get the cluster manager for this tenant
+	clusterManager := tenant.GetTrieClusterManager()
+
+	// Use the fingerprinter to get a fingerprint for the message body
+	messageFingerprint, _, err := fp.Fingerprint(message, clusterManager)
+	if err != nil {
+		// If fingerprinting fails, return error to drop the item
+		return 0, fmt.Errorf("failed to fingerprint message: %w", err)
+	}
+
+	// Collect and sort all keys for stable hashing (iterate directly over Row)
+	keys := make([]string, 0, len(row))
+	for key := range row {
+		keys = append(keys, wkk.RowKeyValue(key))
 	}
 	slices.Sort(keys)
 
+	// Hash the attribute keys (not values) to combine with message fingerprint
 	h := xxhash.New()
-	_, _ = h.WriteString(message + ":" + level + ":")
+	_, _ = h.WriteString(level + ":")
 	for _, key := range keys {
-		value := valueToString(stringMap[key])
-		if value == "" {
+		if key == "" {
 			continue
 		}
 		_, _ = h.WriteString(key + ":")
 	}
+	attributesHash := int64(h.Sum64())
 
-	return int64(h.Sum64())
+	// Combine message fingerprint with attributes hash
+	// XOR is a simple way to combine two hashes
+	return messageFingerprint ^ attributesHash, nil
 }
 
 // spanKindToString converts a span kind integer to its string representation

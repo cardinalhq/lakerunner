@@ -27,7 +27,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
+	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/pipeline"
 )
@@ -45,6 +47,8 @@ type ReceiverService struct {
 	db             ExemplarStore
 	apiKeyProvider orgapikey.OrganizationAPIKeyProvider
 	port           int
+	tenantManager  *fingerprint.TenantManager
+	fingerprinter  fingerprinter.Fingerprinter
 }
 
 // NewReceiverService creates a new exemplar receiver service
@@ -56,10 +60,18 @@ func NewReceiverService(db lrdb.StoreFull, apiKeyProvider orgapikey.Organization
 		}
 	}
 
+	// Initialize tenant manager with default threshold (0.8 is a reasonable default)
+	tenantManager := fingerprint.NewTenantManager(0.8)
+
+	// Initialize fingerprinter with default options
+	fp := fingerprinter.NewFingerprinter()
+
 	return &ReceiverService{
 		db:             db,
 		apiKeyProvider: apiKeyProvider,
 		port:           port,
+		tenantManager:  tenantManager,
+		fingerprinter:  fp,
 	}, nil
 }
 
@@ -182,6 +194,11 @@ func (r *ReceiverService) handleExemplar(w http.ResponseWriter, req *http.Reques
 
 // processLogsBatch processes a batch of logs exemplars
 func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID, source string, rawExemplars []LogsExemplar) (*ExemplarBatchResponse, error) {
+	slog.Debug("Processing logs exemplar batch",
+		"organization_id", orgID,
+		"source", source,
+		"count", len(rawExemplars))
+
 	response := &ExemplarBatchResponse{
 		Status: "ok",
 		Errors: []string{},
@@ -191,26 +208,62 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 
 	for i, exemplar := range rawExemplars {
 
-		// Validate required fields
-		if exemplar.ServiceName == nil || exemplar.ClusterName == nil || exemplar.Namespace == nil {
-			response.Failed++
-			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: service_name, cluster_name, and namespace are required", i))
-			continue
+		// Set missing required fields to "unknown"
+		unknownStr := "unknown"
+		serviceName := exemplar.ServiceName
+		if serviceName == nil {
+			serviceName = &unknownStr
+			slog.Debug("Exemplar missing service_name, using 'unknown'", "index", i)
+		}
+		clusterName := exemplar.ClusterName
+		if clusterName == nil {
+			clusterName = &unknownStr
+			slog.Debug("Exemplar missing cluster_name, using 'unknown'", "index", i)
+		}
+		namespace := exemplar.Namespace
+		if namespace == nil {
+			namespace = &unknownStr
+			slog.Debug("Exemplar missing namespace, using 'unknown'", "index", i)
 		}
 
 		// Upsert service identifier
-		serviceIdentifierID, err := r.upsertServiceIdentifier(ctx, orgID, exemplar.ServiceName, exemplar.ClusterName, exemplar.Namespace)
+		serviceIdentifierID, err := r.upsertServiceIdentifier(ctx, orgID, serviceName, clusterName, namespace)
 		if err != nil {
 			response.Failed++
-			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: failed to upsert service identifier: %v", i, err))
+			msg := fmt.Sprintf("exemplar %d: failed to upsert service identifier: %v", i, err)
+			response.Errors = append(response.Errors, msg)
+			slog.Warn("Failed to upsert service identifier",
+				"index", i,
+				"service_name", *serviceName,
+				"cluster_name", *clusterName,
+				"namespace", *namespace,
+				"error", err)
 			continue
 		}
 
 		// Convert attributes to Row for fingerprinting, including message and level
 		row := pipeline.CopyRow(exemplar.Attributes)
 
-		// Always compute fingerprint server-side
-		fingerprint := computeLogsFingerprint(exemplar.Message, exemplar.Level, row)
+		// Always compute fingerprint server-side using tenant-specific clustering
+		fingerprint, err := computeLogsFingerprint(orgID.String(), exemplar.Message, exemplar.Level, row, r.tenantManager, r.fingerprinter)
+		if err != nil {
+			// Drop the item if fingerprinting fails
+			response.Failed++
+			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: fingerprinting failed: %v", i, err))
+			slog.Warn("Fingerprinting failed, dropping exemplar",
+				"index", i,
+				"message", exemplar.Message,
+				"error", err)
+			continue
+		}
+
+		slog.Debug("Computed fingerprint for log exemplar",
+			"index", i,
+			"fingerprint", fingerprint,
+			"message", exemplar.Message,
+			"level", exemplar.Level,
+			"service_name", *serviceName,
+			"attributes_count", len(exemplar.Attributes))
 
 		records = append(records, lrdb.BatchUpsertExemplarLogsParams{
 			OrganizationID:      orgID,
@@ -222,8 +275,13 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 	}
 
 	if len(records) == 0 {
+		slog.Debug("No valid records to insert after processing")
 		return response, nil
 	}
+
+	slog.Debug("Inserting log exemplar records",
+		"count", len(records),
+		"organization_id", orgID)
 
 	// Batch upsert all records
 	batchResults := r.db.BatchUpsertExemplarLogs(ctx, records)
@@ -231,12 +289,28 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 		if err != nil {
 			response.Failed++
 			response.Errors = append(response.Errors, fmt.Sprintf("record %d: upsert failed: %v", i, err))
-			slog.Error("Failed to upsert exemplar log", "error", err, "index", i)
+			slog.Error("Failed to upsert exemplar log",
+				"error", err,
+				"index", i,
+				"organization_id", orgID,
+				"service_identifier_id", records[i].ServiceIdentifierID,
+				"fingerprint", records[i].Fingerprint)
 		} else {
 			response.Accepted++
-			slog.Debug("Upserted logs exemplar", "is_new", isNew, "index", i)
+			slog.Debug("Successfully upserted logs exemplar",
+				"is_new", isNew,
+				"index", i,
+				"organization_id", records[i].OrganizationID,
+				"service_identifier_id", records[i].ServiceIdentifierID,
+				"fingerprint", records[i].Fingerprint,
+				"source", records[i].Source)
 		}
 	})
+
+	slog.Debug("Completed processing logs exemplar batch",
+		"accepted", response.Accepted,
+		"failed", response.Failed,
+		"total", len(rawExemplars))
 
 	return response, nil
 }
@@ -252,21 +326,36 @@ func (r *ReceiverService) processMetricsBatch(ctx context.Context, orgID uuid.UU
 
 	for i, exemplar := range rawExemplars {
 
-		// Validate required fields
-		if exemplar.ServiceName == nil || exemplar.ClusterName == nil || exemplar.Namespace == nil {
-			response.Failed++
-			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: service_name, cluster_name, and namespace are required", i))
-			continue
+		// Set missing required fields to "unknown"
+		unknownStr := "unknown"
+		serviceName := exemplar.ServiceName
+		if serviceName == nil {
+			serviceName = &unknownStr
+			slog.Debug("Exemplar missing service_name, using 'unknown'", "index", i)
+		}
+		clusterName := exemplar.ClusterName
+		if clusterName == nil {
+			clusterName = &unknownStr
+			slog.Debug("Exemplar missing cluster_name, using 'unknown'", "index", i)
+		}
+		namespace := exemplar.Namespace
+		if namespace == nil {
+			namespace = &unknownStr
+			slog.Debug("Exemplar missing namespace, using 'unknown'", "index", i)
 		}
 
 		if exemplar.MetricName == "" || exemplar.MetricType == "" {
 			response.Failed++
 			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: metric_name and metric_type are required", i))
+			slog.Warn("Exemplar missing required metric fields",
+				"index", i,
+				"has_metric_name", exemplar.MetricName != "",
+				"has_metric_type", exemplar.MetricType != "")
 			continue
 		}
 
 		// Upsert service identifier
-		serviceIdentifierID, err := r.upsertServiceIdentifier(ctx, orgID, exemplar.ServiceName, exemplar.ClusterName, exemplar.Namespace)
+		serviceIdentifierID, err := r.upsertServiceIdentifier(ctx, orgID, serviceName, clusterName, namespace)
 		if err != nil {
 			response.Failed++
 			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: failed to upsert service identifier: %v", i, err))
@@ -314,21 +403,33 @@ func (r *ReceiverService) processTracesBatch(ctx context.Context, orgID uuid.UUI
 
 	for i, exemplar := range rawExemplars {
 
-		// Validate required fields
-		if exemplar.ServiceName == nil || exemplar.ClusterName == nil || exemplar.Namespace == nil {
-			response.Failed++
-			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: service_name, cluster_name, and namespace are required", i))
-			continue
+		// Set missing required fields to "unknown"
+		unknownStr := "unknown"
+		serviceName := exemplar.ServiceName
+		if serviceName == nil {
+			serviceName = &unknownStr
+			slog.Debug("Exemplar missing service_name, using 'unknown'", "index", i)
+		}
+		clusterName := exemplar.ClusterName
+		if clusterName == nil {
+			clusterName = &unknownStr
+			slog.Debug("Exemplar missing cluster_name, using 'unknown'", "index", i)
+		}
+		namespace := exemplar.Namespace
+		if namespace == nil {
+			namespace = &unknownStr
+			slog.Debug("Exemplar missing namespace, using 'unknown'", "index", i)
 		}
 
 		if exemplar.SpanName == "" {
 			response.Failed++
 			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: span_name is required", i))
+			slog.Warn("Exemplar missing required span_name", "index", i)
 			continue
 		}
 
 		// Upsert service identifier
-		serviceIdentifierID, err := r.upsertServiceIdentifier(ctx, orgID, exemplar.ServiceName, exemplar.ClusterName, exemplar.Namespace)
+		serviceIdentifierID, err := r.upsertServiceIdentifier(ctx, orgID, serviceName, clusterName, namespace)
 		if err != nil {
 			response.Failed++
 			response.Errors = append(response.Errors, fmt.Sprintf("exemplar %d: failed to upsert service identifier: %v", i, err))
