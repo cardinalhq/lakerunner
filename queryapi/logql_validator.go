@@ -53,14 +53,7 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	me, err := json.Marshal(req.Exemplar)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, InvalidJSON, "invalid exemplar: "+err.Error())
-		return
-	}
-	payload := string(me)
-
-	vr, err := ValidateLogQLAgainstExemplar(r.Context(), req.Query, payload)
+	vr, err := ValidateLogQLAgainstExemplar(r.Context(), req.Query, req.Exemplar)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ValidationFailed, "validation failed: "+err.Error())
 		return

@@ -17,7 +17,6 @@ package queryapi
 import (
 	"context"
 	"database/sql"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -28,10 +27,10 @@ import (
 func TestIngestExemplarLogsJSONToDuckDB_Smoke(t *testing.T) {
 	ctx := context.Background()
 
-	// 1) Load exemplar JSON
-	b, err := os.ReadFile("testdata/exemplar.json")
+	// 1) Load exemplar data from JSON file
+	exemplarData, err := loadExemplarFromJSON("testdata/exemplar.json")
 	if err != nil {
-		t.Fatalf("read exemplar: %v", err)
+		t.Fatalf("load exemplar.json: %v", err)
 	}
 
 	// 2) Open in-memory DuckDB and run ingest.
@@ -43,7 +42,7 @@ func TestIngestExemplarLogsJSONToDuckDB_Smoke(t *testing.T) {
 
 	const table = "logs_exemplar"
 
-	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	n, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, exemplarData)
 	if err != nil {
 		t.Fatalf("ingest exemplar: %v", err)
 	}
@@ -70,7 +69,7 @@ func TestIngestExemplarLogsJSONToDuckDB_Smoke(t *testing.T) {
 	}
 
 	// 5) Re-ingest same exemplar; should not error on ALTER, and row count should increase.
-	n2, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, string(b))
+	n2, err := IngestExemplarLogsJSONToDuckDB(ctx, db, table, exemplarData)
 	if err != nil {
 		t.Fatalf("re-ingest exemplar: %v", err)
 	}
@@ -98,9 +97,10 @@ func TestIngestExemplarLogsJSONToDuckDB_Smoke(t *testing.T) {
 func TestValidateLogQLAgainstExemplar_AggregateRateCounter(t *testing.T) {
 	ctx := context.Background()
 
-	b, err := os.ReadFile("testdata/exemplar1.json")
+	// 1) Load exemplar data from JSON file
+	exemplarData, err := loadExemplarFromJSON("testdata/exemplar1.json")
 	if err != nil {
-		t.Fatalf("read exemplar: %v", err)
+		t.Fatalf("load exemplar1.json: %v", err)
 	}
 
 	// 2) Open in-memory DuckDB so we can keep full control in the test.
@@ -124,7 +124,7 @@ func TestValidateLogQLAgainstExemplar_AggregateRateCounter(t *testing.T) {
 	res, err := ValidateLogQLAgainstExemplar(
 		ctx,
 		q,
-		string(b),
+		exemplarData,
 		WithDB(db),
 		WithTable(table),
 		WithAggStep(10*time.Second),
