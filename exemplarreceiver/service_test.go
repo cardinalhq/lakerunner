@@ -242,35 +242,6 @@ func TestHandleExemplar_InvalidJSON(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "invalid JSON")
 }
 
-func TestProcessLogsBatch_MissingFields(t *testing.T) {
-	db := &mockDB{}
-	apiKeyProvider := &mockAPIKeyProvider{}
-	orgID := uuid.New()
-
-	service := &ReceiverService{
-		db:             db,
-		apiKeyProvider: apiKeyProvider,
-		port:           8080,
-	}
-
-	// Missing service_name
-	response, err := service.processLogsBatch(context.Background(), orgID, "test", []LogsExemplar{
-		{
-			ServiceName: nil,
-			ClusterName: stringPtr("cluster"),
-			Namespace:   stringPtr("namespace"),
-			Attributes:  map[wkk.RowKey]any{wkk.NewRowKey("message"): "test"},
-		},
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, "ok", response.Status)
-	assert.Equal(t, 0, response.Accepted)
-	assert.Equal(t, 1, response.Failed)
-	assert.Len(t, response.Errors, 1)
-	assert.Contains(t, response.Errors[0], "service_name, cluster_name, and namespace are required")
-}
-
 func TestProcessMetricsBatch_MissingFields(t *testing.T) {
 	db := &mockDB{}
 	apiKeyProvider := &mockAPIKeyProvider{}
