@@ -275,11 +275,11 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 	}
 
 	if len(records) == 0 {
-		slog.Info("No valid records to insert after processing")
+		slog.Debug("No valid records to insert after processing")
 		return response, nil
 	}
 
-	slog.Info("Inserting log exemplar records",
+	slog.Debug("Inserting log exemplar records",
 		"count", len(records),
 		"organization_id", orgID)
 
@@ -297,7 +297,7 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 				"fingerprint", records[i].Fingerprint)
 		} else {
 			response.Accepted++
-			slog.Info("Successfully upserted logs exemplar",
+			slog.Debug("Successfully upserted logs exemplar",
 				"is_new", isNew,
 				"index", i,
 				"organization_id", records[i].OrganizationID,
@@ -307,7 +307,7 @@ func (r *ReceiverService) processLogsBatch(ctx context.Context, orgID uuid.UUID,
 		}
 	})
 
-	slog.Info("Completed processing logs exemplar batch",
+	slog.Debug("Completed processing logs exemplar batch",
 		"accepted", response.Accepted,
 		"failed", response.Failed,
 		"total", len(rawExemplars))
