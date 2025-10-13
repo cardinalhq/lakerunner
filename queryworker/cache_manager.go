@@ -37,7 +37,9 @@ import (
 )
 
 const (
-	ChannelBufferSize = 4096
+	// Reduced from 4096 to minimize memory overhead. The MergeSorted coordinator
+	// will buffer and apply backpressure as needed.
+	ChannelBufferSize = 128
 )
 
 // DownloadBatchFunc downloads ALL given paths to their target local paths.
@@ -174,16 +176,20 @@ func EvaluatePushDown[T promql.Timestamped](
 			append(segmentsByOrg[seg.OrganizationID][seg.InstanceNum], seg)
 	}
 	metadataCreationTime := time.Since(start)
-	slog.Info("Metadata Creation Time", "duration", metadataCreationTime.String())
+	slog.Debug("Metadata Creation Time", "duration", metadataCreationTime.String())
 	start = time.Now()
 
 	outs := make([]<-chan T, 0)
+
+	// Create a cancellable context for producers that MergeSorted can cancel when limit is reached
+	producerCtx, producerCancel := context.WithCancel(ctx)
 
 	// Build channels per (org, instance)
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
 			profile, err := w.getProfile(ctx, orgId, instanceNum)
 			if err != nil {
+				producerCancel()
 				return nil, err
 			}
 
@@ -228,13 +234,13 @@ func EvaluatePushDown[T promql.Timestamped](
 			w.mu.RLock()
 			numPresent := len(w.present)
 			w.mu.RUnlock()
-			slog.Info("Segment Stats",
+			slog.Debug("Segment Stats",
 				"numS3", len(s3URIs),
 				"numCached", len(cachedIDs),
 				"numPresent", numPresent)
 
 			// Stream uncached segments directly from S3 (one channel per glob).
-			s3Channels, err := streamFromS3(ctx, w, request,
+			s3Channels, err := streamFromS3(producerCtx, w, request,
 				profile.Bucket,
 				profile.Region,
 				profile.Endpoint,
@@ -244,6 +250,7 @@ func EvaluatePushDown[T promql.Timestamped](
 				userSQL,
 				mapper)
 			if err != nil {
+				producerCancel()
 				return nil, fmt.Errorf("stream from S3: %w", err)
 			}
 			outs = append(outs, s3Channels...)
@@ -254,15 +261,21 @@ func EvaluatePushDown[T promql.Timestamped](
 			}
 
 			// Stream cached segments from the cache.
-			cachedChannels := streamCached(ctx, w, request, cachedIDs, userSQL, mapper)
+			cachedChannels := streamCached(producerCtx, w, request, cachedIDs, userSQL, mapper)
 			outs = append(outs, cachedChannels...)
 		}
 	}
 	channelCreationTime := time.Since(start)
-	slog.Info("Channel Creation Time", "duration", channelCreationTime.String())
+	slog.Debug("Channel Creation Time", "duration", channelCreationTime.String())
 
 	// Merge all sources (cached + S3 batches) in timestamp order.
-	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
+	// Use smaller buffer for the final merge to reduce memory overhead
+	mergeBufferSize := 128
+	if request.Limit > 0 && request.Limit < mergeBufferSize {
+		mergeBufferSize = request.Limit // No need for large buffer if limit is small
+	}
+	// Pass the producer cancel function so MergeSorted can stop producers when limit is reached
+	return promql.MergeSorted(ctx, producerCancel, mergeBufferSize, request.Reverse, request.Limit, outs...), nil
 }
 
 func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
@@ -338,8 +351,13 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				if mErr != nil {
 					return
 				}
-				//ts := v.GetTimestamp()
-				out <- v
+				// Blocking send with context check - preserves data integrity.
+				// MergeSorted will drain the channel if it stops early (limit reached, etc.)
+				select {
+				case <-ctx.Done():
+					return
+				case out <- v:
+				}
 			}
 			_ = rows.Err()
 		}(cachedIDs, out)
@@ -369,7 +387,7 @@ func streamFromS3[T promql.Timestamped](
 	outs := make([]<-chan T, 0, len(batches))
 
 	for _, uris := range batches {
-		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
+		slog.Debug("Streaming from S3", slog.Int("uris", len(uris)))
 		out := make(chan T, ChannelBufferSize)
 		outs = append(outs, out)
 
@@ -428,7 +446,13 @@ func streamFromS3[T promql.Timestamped](
 					slog.Error("Row mapping failed", slog.Any("error", mErr))
 					return
 				}
-				out <- v
+				// Blocking send with context check - preserves data integrity.
+				// MergeSorted will drain the channel if it stops early (limit reached, etc.)
+				select {
+				case <-ctx.Done():
+					return
+				case out <- v:
+				}
 			}
 			if err := rows.Err(); err != nil {
 				slog.Error("Rows iteration error", slog.Any("error", err))
