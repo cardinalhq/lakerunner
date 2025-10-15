@@ -885,7 +885,6 @@ func getAWSCredsFromChainOrAssume(ctx context.Context, profile storageprofile.St
 
 // normalizeEndpoint removes scheme and determines USE_SSL similar to Scala.
 func normalizeEndpoint(endpoint, region string) (host string, useSSL bool) {
-	useSSL = true
 	e := strings.TrimSpace(endpoint)
 	if e == "" {
 		return fmt.Sprintf("s3.%s.amazonaws.com", strings.TrimSpace(region)), true
