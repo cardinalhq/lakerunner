@@ -138,7 +138,8 @@ func NewWorkerService(
 
 	// Create a single shared S3DB pool for all queries with metrics enabled
 	s3Pool, err := duckdbx.NewS3DB(
-		duckdbx.WithS3DBMetrics(10 * time.Second), // Poll memory metrics every 10 seconds
+		duckdbx.WithS3DBMetrics(10*time.Second),
+		duckdbx.WithConnectionMaxAge(30*time.Minute),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create shared S3DB pool: %w", err)

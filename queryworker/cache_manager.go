@@ -235,10 +235,7 @@ func EvaluatePushDown[T promql.Timestamped](
 
 			// Stream uncached segments directly from S3 (one channel per glob).
 			s3Channels, err := streamFromS3(ctx, w, request,
-				profile.Bucket,
-				profile.Region,
-				profile.Endpoint,
-				profile.CloudProvider,
+				profile,
 				s3URIs,
 				s3GlobSize,
 				userSQL,
@@ -351,10 +348,7 @@ func streamFromS3[T promql.Timestamped](
 	ctx context.Context,
 	w *CacheManager,
 	request queryapi.PushDownRequest,
-	bucket string,
-	region string,
-	endpoint string,
-	cloudProvider string,
+	profile storageprofile.StorageProfile,
 	s3URIs []string,
 	s3GlobSize int,
 	userSQL string,
@@ -389,12 +383,12 @@ func streamFromS3[T promql.Timestamped](
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
 			start := time.Now()
-			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, bucket, region, endpoint, cloudProvider)
+			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, profile)
 			connectionAcquireTime := time.Since(start)
-			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", bucket)
+			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", profile.Bucket)
 
 			if err != nil {
-				slog.Error("GetConnection failed", slog.String("bucket", bucket), slog.Any("error", err))
+				slog.Error("GetConnection failed", slog.String("bucket", profile.Bucket), slog.Any("error", err))
 				return
 			}
 			// Ensure rows close before releasing the connection
