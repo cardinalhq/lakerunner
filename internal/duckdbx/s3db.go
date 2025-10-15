@@ -846,14 +846,11 @@ func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig) 
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "CREATE OR REPLACE SECRET %s (\n", quoteIdent(secretName))
 	_, _ = fmt.Fprintf(&b, "  TYPE S3,\n")
+	_, _ = fmt.Fprintf(&b, "  PROVIDER credential_chain,\n")
+	_, _ = fmt.Fprintf(&b, "  REFRESH auto\n")
 	_, _ = fmt.Fprintf(&b, "  ENDPOINT '%s',\n", escapeSingle(config.Endpoint))
 	_, _ = fmt.Fprintf(&b, "  URL_STYLE '%s',\n", escapeSingle(config.URLStyle))
 	_, _ = fmt.Fprintf(&b, "  USE_SSL '%s',\n", escapeSingle(useSSLStr))
-	_, _ = fmt.Fprintf(&b, "  KEY_ID '%s',\n", escapeSingle(config.KeyID))
-	_, _ = fmt.Fprintf(&b, "  SECRET '%s',\n", escapeSingle(config.Secret))
-	if config.SessionToken != "" {
-		_, _ = fmt.Fprintf(&b, "  SESSION_TOKEN '%s',\n", escapeSingle(config.SessionToken))
-	}
 	_, _ = fmt.Fprintf(&b, "  REGION '%s',\n", escapeSingle(config.Region))
 	_, _ = fmt.Fprintf(&b, "  SCOPE 's3://%s'\n", escapeSingle(config.Bucket))
 	_, _ = fmt.Fprintf(&b, ");")
