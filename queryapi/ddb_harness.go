@@ -367,6 +367,15 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query string, exemplarDat
 	if err != nil {
 		return nil, fmt.Errorf("parse logql: %w", err)
 	}
+	if ast.LogSel != nil {
+		foundAtleastOneEq := false
+		for _, m := range ast.LogSel.Matchers {
+			foundAtleastOneEq = foundAtleastOneEq || m.Op == logql.MatchEq
+		}
+		if !foundAtleastOneEq {
+			return nil, fmt.Errorf("at least one equality matcher is required in selector")
+		}
+	}
 
 	// 2) Open DuckDB (in-memory default)
 	if cfg.db == nil {
