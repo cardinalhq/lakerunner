@@ -367,14 +367,9 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query string, exemplarDat
 	if err != nil {
 		return nil, fmt.Errorf("parse logql: %w", err)
 	}
-	if ast.LogSel != nil {
-		foundAtleastOneEq := false
-		for _, m := range ast.LogSel.Matchers {
-			foundAtleastOneEq = foundAtleastOneEq || m.Op == logql.MatchEq
-		}
-		if !foundAtleastOneEq {
-			return nil, fmt.Errorf("at least one equality matcher is required in selector")
-		}
+
+	if err := ValidateEqualityMatcherRequirement(ast); err != nil {
+		return nil, err
 	}
 
 	// 2) Open DuckDB (in-memory default)
@@ -487,6 +482,20 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query string, exemplarDat
 		Rows:         rows,
 		IsAggregate:  ast.IsAggregateExpr(), // keep this info; we validated the pipeline inside it
 	}, nil
+}
+
+// ValidateEqualityMatcherRequirement checks that the LogQL query has at least one equality matcher
+func ValidateEqualityMatcherRequirement(ast logql.LogAST) error {
+	if ast.LogSel != nil {
+		foundAtleastOneEq := false
+		for _, m := range ast.LogSel.Matchers {
+			foundAtleastOneEq = foundAtleastOneEq || m.Op == logql.MatchEq
+		}
+		if !foundAtleastOneEq {
+			return fmt.Errorf("at least one equality matcher is required in selector")
+		}
+	}
+	return nil
 }
 
 func minMaxTimestamp(ctx context.Context, db *sql.DB, table string) (int64, int64, error) {

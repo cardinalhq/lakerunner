@@ -42,12 +42,19 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if _, err := logql.FromLogQL(req.Query); err != nil {
+	ast, err := logql.FromLogQL(req.Query)
+	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid LogQL: "+err.Error())
 		return
 	}
 
-	// If no exemplar provided, just return valid (syntax check only)
+	// Validate equality matcher requirement (regardless of exemplar)
+	if err := ValidateEqualityMatcherRequirement(ast); err != nil {
+		writeAPIError(w, http.StatusBadRequest, ValidationFailed, err.Error())
+		return
+	}
+
+	// If no exemplar provided, return valid (syntax + equality matcher check only)
 	if len(req.Exemplar) == 0 {
 		_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: true})
 		return
