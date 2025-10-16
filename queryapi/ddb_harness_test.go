@@ -243,6 +243,18 @@ func TestEqualityMatcherValidation_UnitTest(t *testing.T) {
 			shouldFail:    true,
 			expectedError: "at least one equality matcher is required in selector",
 		},
+		{
+			name:          "nested regex-only matcher in aggregation should fail",
+			query:         `sum(count_over_time({resource_file_name=~".*viasat.*"} |~ "(?i)error|err|failed|failure"[1m]))`,
+			shouldFail:    true,
+			expectedError: "at least one equality matcher is required in selector",
+		},
+		{
+			name:          "nested equality matcher in aggregation should pass",
+			query:         `sum(count_over_time({resource_file_name="test.log"} |~ "(?i)error|err|failed|failure"[1m]))`,
+			shouldFail:    false,
+			expectedError: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -253,28 +265,22 @@ func TestEqualityMatcherValidation_UnitTest(t *testing.T) {
 				t.Fatalf("failed to parse query %q: %v", tt.query, err)
 			}
 
-			// Test the validation logic directly
-			if ast.LogSel != nil {
-				foundAtleastOneEq := false
-				for _, m := range ast.LogSel.Matchers {
-					foundAtleastOneEq = foundAtleastOneEq || m.Op == logql.MatchEq
-				}
-				if !foundAtleastOneEq {
-					if !tt.shouldFail {
-						t.Errorf("expected query %q to pass validation, but it failed", tt.query)
-					} else if tt.expectedError != "" {
-						// This is the expected behavior - validation should fail
-						t.Logf("✓ Query %q correctly failed validation as expected", tt.query)
-					}
+			// Test the validation logic using the actual function
+			validationErr := ValidateEqualityMatcherRequirement(ast)
+			if tt.shouldFail {
+				if validationErr == nil {
+					t.Errorf("expected query %q to fail validation, but it passed", tt.query)
+				} else if !strings.Contains(validationErr.Error(), tt.expectedError) {
+					t.Errorf("expected error containing %q, got: %s", tt.expectedError, validationErr.Error())
 				} else {
-					if tt.shouldFail {
-						t.Errorf("expected query %q to fail validation, but it passed", tt.query)
-					} else {
-						t.Logf("✓ Query %q correctly passed validation as expected", tt.query)
-					}
+					t.Logf("✓ Query %q correctly failed validation as expected: %s", tt.query, validationErr.Error())
 				}
 			} else {
-				t.Errorf("query %q should have a LogSel", tt.query)
+				if validationErr != nil {
+					t.Errorf("expected query %q to pass validation, but got error: %s", tt.query, validationErr.Error())
+				} else {
+					t.Logf("✓ Query %q correctly passed validation as expected", tt.query)
+				}
 			}
 		})
 	}
@@ -324,6 +330,20 @@ func TestHandleLogQLValidate_EqualityMatcherValidation(t *testing.T) {
 			exemplar:      map[string]any{},
 			expectedValid: false,
 			expectedError: "at least one equality matcher is required in selector",
+		},
+		{
+			name:          "nested regex-only matcher in aggregation without exemplar should fail",
+			query:         `sum(count_over_time({resource_file_name=~".*viasat.*"} |~ "(?i)error|err|failed|failure"[1m]))`,
+			exemplar:      nil,
+			expectedValid: false,
+			expectedError: "at least one equality matcher is required in selector",
+		},
+		{
+			name:          "nested equality matcher in aggregation without exemplar should pass",
+			query:         `sum(count_over_time({resource_file_name="test.log"} |~ "(?i)error|err|failed|failure"[1m]))`,
+			exemplar:      nil,
+			expectedValid: true,
+			expectedError: "",
 		},
 	}
 

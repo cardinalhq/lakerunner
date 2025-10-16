@@ -486,16 +486,67 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query string, exemplarDat
 
 // ValidateEqualityMatcherRequirement checks that the LogQL query has at least one equality matcher
 func ValidateEqualityMatcherRequirement(ast logql.LogAST) error {
-	if ast.LogSel != nil {
+	// Find all log selectors in the AST (including nested ones)
+	selectors := findAllLogSelectors(ast)
+
+	if len(selectors) == 0 {
+		return fmt.Errorf("no log selectors found in query")
+	}
+
+	// Check each selector for at least one equality matcher
+	for i, selector := range selectors {
 		foundAtleastOneEq := false
-		for _, m := range ast.LogSel.Matchers {
+		for _, m := range selector.Matchers {
 			foundAtleastOneEq = foundAtleastOneEq || m.Op == logql.MatchEq
 		}
 		if !foundAtleastOneEq {
-			return fmt.Errorf("at least one equality matcher is required in selector")
+			if len(selectors) == 1 {
+				return fmt.Errorf("at least one equality matcher is required in selector")
+			} else {
+				return fmt.Errorf("at least one equality matcher is required in selector %d", i+1)
+			}
 		}
 	}
+
 	return nil
+}
+
+// findAllLogSelectors recursively finds all log selectors in the AST
+func findAllLogSelectors(ast logql.LogAST) []logql.LogSelector {
+	var selectors []logql.LogSelector
+
+	switch ast.Kind {
+	case logql.KindLogSelector:
+		if ast.LogSel != nil {
+			selectors = append(selectors, *ast.LogSel)
+		}
+
+	case logql.KindLogRange:
+		if ast.LogRange != nil {
+			selectors = append(selectors, ast.LogRange.Selector)
+		}
+
+	case logql.KindRangeAgg:
+		if ast.RangeAgg != nil {
+			// RangeAgg wraps a LogRange, so we need to check its selector
+			selectors = append(selectors, ast.RangeAgg.Left.Selector)
+		}
+
+	case logql.KindVectorAgg:
+		if ast.VectorAgg != nil {
+			// VectorAgg wraps another expression, recurse into it
+			selectors = append(selectors, findAllLogSelectors(ast.VectorAgg.Left)...)
+		}
+
+	case logql.KindBinOp:
+		if ast.BinOp != nil {
+			// BinOp has LHS and RHS, recurse into both
+			selectors = append(selectors, findAllLogSelectors(ast.BinOp.LHS)...)
+			selectors = append(selectors, findAllLogSelectors(ast.BinOp.RHS)...)
+		}
+	}
+
+	return selectors
 }
 
 func minMaxTimestamp(ctx context.Context, db *sql.DB, table string) (int64, int64, error) {
