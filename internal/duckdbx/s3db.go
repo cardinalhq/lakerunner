@@ -19,6 +19,9 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -64,6 +67,9 @@ type S3DB struct {
 	metricsPeriod time.Duration
 	metricsCtx    context.Context
 	metricsCancel context.CancelFunc
+
+	// connection lifecycle
+	connMaxAge time.Duration // max lifetime for a pooled physical connection
 }
 
 type connectionPool struct {
@@ -77,8 +83,10 @@ type connectionPool struct {
 }
 
 type pooledConn struct {
-	db   *sql.DB
-	conn *sql.Conn
+	db       *sql.DB
+	conn     *sql.Conn
+	bornAt   time.Time
+	deadline time.Time
 }
 
 // s3DBConfig holds configuration options for S3DB
@@ -86,6 +94,7 @@ type s3DBConfig struct {
 	dbPath        *string
 	metricsPeriod time.Duration
 	metricsCtx    context.Context
+	connMaxAge    time.Duration
 }
 
 // S3DBOption is a functional option for configuring S3DB
@@ -118,6 +127,16 @@ func WithS3DBMetrics(period time.Duration) S3DBOption {
 func WithS3DBMetricsContext(ctx context.Context) S3DBOption {
 	return func(cfg *s3DBConfig) {
 		cfg.metricsCtx = ctx
+	}
+}
+
+// WithConnectionMaxAge sets the maximum lifetime for a pooled physical connection.
+func WithConnectionMaxAge(d time.Duration) S3DBOption {
+	return func(cfg *s3DBConfig) {
+		if d < time.Minute {
+			d = time.Minute
+		}
+		cfg.connMaxAge = d
 	}
 }
 
@@ -157,6 +176,12 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 	// All connections share the same database, so threads setting applies to the shared instance
 	threads := envIntClamp("DUCKDB_THREADS", total, 1, 256)
 
+	// connection TTL (default 25m; override by env or option)
+	connMaxAge := envDuration("DUCKDB_POOL_CONN_MAX_AGE", 25*time.Minute)
+	if cfg.connMaxAge > 0 {
+		connMaxAge = cfg.connMaxAge
+	}
+
 	slog.Info("duckdbx: single shared database",
 		"type", "file",
 		"dbPath", dbPath,
@@ -164,7 +189,9 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 		"tempDir", os.Getenv("DUCKDB_TEMP_DIRECTORY"),
 		"maxTempSize", os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
 		"poolSize", poolSize,
-		"threads", threads)
+		"threads", threads,
+		"connMaxAge", connMaxAge,
+	)
 
 	s3db := &S3DB{
 		dbPath:         dbPath,
@@ -175,6 +202,7 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 		poolSize:       poolSize,
 		threads:        threads,
 		metricsPeriod:  cfg.metricsPeriod,
+		connMaxAge:     connMaxAge,
 	}
 
 	s3db.pool = &connectionPool{
@@ -223,30 +251,53 @@ func (s *S3DB) GetDatabasePath() string {
 
 // GetConnection returns a connection for local database queries (no S3 authentication).
 func (s *S3DB) GetConnection(ctx context.Context) (*sql.Conn, func(), error) {
-	return s.pool.acquireLocal(ctx)
+	return s.pool.acquire(ctx, nil)
 }
 
 // GetConnectionForBucket returns a connection configured with S3 credentials for the specified bucket.
-func (s *S3DB) GetConnectionForBucket(ctx context.Context, bucket, region string, endpoint string, cloudProvider string) (*sql.Conn, func(), error) {
-	if bucket == "" {
+func (s *S3DB) GetConnectionForBucket(ctx context.Context, profile storageprofile.StorageProfile) (*sql.Conn, func(), error) {
+	if profile.Bucket == "" {
 		return nil, nil, fmt.Errorf("bucket is required")
 	}
-	return s.pool.acquireForBucket(ctx, bucket, region, endpoint, cloudProvider)
+	ensure := func(pc *pooledConn) error {
+		// Create/replace the secret for this bucket (idempotent)
+		return seedCloudSecretFromEnv(ctx, pc.conn, profile)
+	}
+	return s.pool.acquire(ctx, ensure)
 }
 
-// acquireLocal gets a connection for local database queries (no S3 authentication needed).
-func (p *connectionPool) acquireLocal(ctx context.Context) (*sql.Conn, func(), error) {
+// ---------- connectionPool implementation ----------
+
+func (p *connectionPool) acquire(ctx context.Context, ensure func(*pooledConn) error) (*sql.Conn, func(), error) {
 	// Ensure extensions are loaded and database is set up before any connection is used
 	if err := p.parent.ensureSetup(ctx); err != nil {
 		return nil, nil, err
 	}
 
+	// Fast-path: try to take one without blocking
 	select {
 	case pc := <-p.ch:
-		return pc.conn, func() { p.release(pc) }, nil
+		if p.isConnExpired(pc) {
+			p.destroy(pc)
+			// fall through to creation path below
+		} else {
+			if ensure != nil {
+				if err := ensure(pc); err != nil {
+					p.destroy(pc)
+					// try to create a fresh one
+					return p.createAndEnsure(ctx, ensure)
+				}
+			}
+			return pc.conn, func() { p.release(pc) }, nil
+		}
 	default:
 	}
 
+	// Try to create a new one if capacity allows
+	return p.createAndEnsure(ctx, ensure)
+}
+
+func (p *connectionPool) createAndEnsure(ctx context.Context, ensure func(*pooledConn) error) (*sql.Conn, func(), error) {
 	p.mu.Lock()
 	canCreate := p.cur < p.size
 	if canCreate {
@@ -255,128 +306,76 @@ func (p *connectionPool) acquireLocal(ctx context.Context) (*sql.Conn, func(), e
 	p.mu.Unlock()
 
 	if canCreate {
-		pc, err := p.newConnLocal(ctx)
+		pc, err := p.newConn(ctx)
 		if err != nil {
 			p.mu.Lock()
 			p.cur--
 			p.mu.Unlock()
 			return nil, nil, err
 		}
-		return pc.conn, func() { p.release(pc) }, nil
-	}
-
-	select {
-	case <-ctx.Done():
-		return nil, nil, ctx.Err()
-	case pc := <-p.ch:
-		return pc.conn, func() { p.release(pc) }, nil
-	}
-}
-
-// acquireForBucket gets a connection configured with S3 credentials for the specified bucket.
-func (p *connectionPool) acquireForBucket(ctx context.Context, bucket, region, endpoint string, cloudProvider string) (*sql.Conn, func(), error) {
-	// Ensure extensions are loaded and database is set up before any connection is used
-	if err := p.parent.ensureSetup(ctx); err != nil {
-		return nil, nil, err
-	}
-
-	// Helper function to ensure credentials are set for the bucket
-	ensureCredentials := func(conn *sql.Conn) error {
-		// Create/replace the secret for this bucket
-		// This is idempotent - CREATE OR REPLACE will update if needed
-		return seedCloudSecretFromEnv(ctx, conn, bucket, region, endpoint, cloudProvider)
-	}
-
-	select {
-	case pc := <-p.ch:
-		// Ensure credentials are configured for this specific bucket
-		if err := ensureCredentials(pc.conn); err != nil {
-			// If we can't set credentials, close this connection and try to create a new one
-			_ = pc.conn.Close()
-			_ = pc.db.Close()
-			p.mu.Lock()
-			p.cur--
-			p.mu.Unlock()
-			return nil, nil, err
-		}
-		return pc.conn, func() { p.release(pc) }, nil
-	default:
-	}
-
-	p.mu.Lock()
-	canCreate := p.cur < p.size
-	if canCreate {
-		p.cur++
-	}
-	p.mu.Unlock()
-
-	if canCreate {
-		pc, err := p.newConnForBucket(ctx, bucket, region, endpoint, cloudProvider)
-		if err != nil {
-			p.mu.Lock()
-			p.cur--
-			p.mu.Unlock()
-			return nil, nil, err
+		if ensure != nil {
+			if err := ensure(pc); err != nil {
+				p.destroy(pc)
+				return nil, nil, err
+			}
 		}
 		return pc.conn, func() { p.release(pc) }, nil
 	}
 
+	// Otherwise, wait for an available connection
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
 	case pc := <-p.ch:
-		// Ensure credentials are configured for this specific bucket
-		if err := ensureCredentials(pc.conn); err != nil {
-			// If we can't set credentials, close this connection and try again
-			_ = pc.conn.Close()
-			_ = pc.db.Close()
-			p.mu.Lock()
-			p.cur--
-			p.mu.Unlock()
-			return nil, nil, err
+		if p.isConnExpired(pc) {
+			p.destroy(pc)
+			// After destroying, capacity likely exists -> try create again
+			return p.createAndEnsure(ctx, ensure)
+		}
+		if ensure != nil {
+			if err := ensure(pc); err != nil {
+				p.destroy(pc)
+				// After destroy, capacity exists -> try create again
+				return p.createAndEnsure(ctx, ensure)
+			}
 		}
 		return pc.conn, func() { p.release(pc) }, nil
 	}
 }
 
 func (p *connectionPool) release(pc *pooledConn) {
-	// Return to pool
+	// Drop expired connections instead of pooling them
+	if p.isConnExpired(pc) {
+		p.destroy(pc)
+		return
+	}
+
 	select {
 	case p.ch <- pc:
 		// returned to pool
 	default:
 		// pool is full (shouldn't happen), close this connection
-		_ = pc.conn.Close()
-		_ = pc.db.Close()
-		p.mu.Lock()
-		p.cur--
-		p.mu.Unlock()
+		p.destroy(pc)
 	}
 }
 
-// newConnLocal creates a new connection for local database queries (no S3 authentication).
-func (p *connectionPool) newConnLocal(ctx context.Context) (*pooledConn, error) {
-	return p.newConn(ctx)
+func (p *connectionPool) destroy(pc *pooledConn) {
+	_ = pc.conn.Close()
+	_ = pc.db.Close()
+	p.mu.Lock()
+	p.cur--
+	p.mu.Unlock()
 }
 
-// newConnForBucket creates a new connection configured with S3 credentials for the specified bucket.
-func (p *connectionPool) newConnForBucket(ctx context.Context, bucket, region, endpoint string, cloudProvider string) (*pooledConn, error) {
-	pc, err := p.newConn(ctx)
-	if err != nil {
-		return nil, err
+func (p *connectionPool) isConnExpired(pc *pooledConn) bool {
+	if p.parent.connMaxAge <= 0 {
+		return false
 	}
-
-	if err := seedCloudSecretFromEnv(ctx, pc.conn, bucket, region, endpoint, cloudProvider); err != nil {
-		_ = pc.conn.Close()
-		_ = pc.db.Close()
-		return nil, err
-	}
-
-	return pc, nil
+	return time.Now().After(pc.deadline)
 }
 
 // newConn creates a new pooled connection with standard configuration.
-// This is the common implementation used by both newConnLocal and newConnForBucket.
+// This is the common implementation used by both local and bucket acquisitions.
 func (p *connectionPool) newConn(ctx context.Context) (*pooledConn, error) {
 	// Ensure extensions are installed and database-wide settings are applied (once)
 	if err := p.parent.ensureSetup(ctx); err != nil {
@@ -412,7 +411,6 @@ func (p *connectionPool) newConn(ctx context.Context) (*pooledConn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create connector: %w", err)
 	}
-	// Don't close the connector - it needs to stay open for the DB handle
 
 	// Open a database handle using the connector
 	db := sql.OpenDB(connector)
@@ -426,10 +424,14 @@ func (p *connectionPool) newConn(ctx context.Context) (*pooledConn, error) {
 		return nil, err
 	}
 
-	return &pooledConn{
-		conn: conn,
-		db:   db,
-	}, nil
+	now := time.Now()
+	pc := &pooledConn{
+		conn:     conn,
+		db:       db,
+		bornAt:   now,
+		deadline: now.Add(p.parent.connMaxAge),
+	}
+	return pc, nil
 }
 
 func (p *connectionPool) closeAll() {
@@ -443,6 +445,8 @@ func (p *connectionPool) closeAll() {
 		}
 	}
 }
+
+// ---------- S3DB setup & extensions ----------
 
 // ensureSetup runs once to configure the shared database instance and load extensions
 func (s *S3DB) ensureSetup(ctx context.Context) error {
@@ -588,25 +592,27 @@ func (c *connExecer) ExecContext(ctx context.Context, query string, args []drive
 	return result, err
 }
 
-// CREATE OR REPLACE SECRET for a bucket (serialized).
+// ---------- Secrets (AWS/Azure) ----------
+
+// CREATE OR REPLACE SECRET for a bucket/container (serialized).
 // Detects cloud provider and credentials source, then creates appropriate secret.
-func seedCloudSecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string, cloudProvider string) error {
+func seedCloudSecretFromEnv(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) error {
 	// Check for Azure credentials first
 	if hasAzureCredentials() {
-		return seedAzureSecretFromEnv(ctx, conn, bucket, region, endpoint)
+		return seedAzureSecretFromEnv(ctx, conn, profile)
 	}
 
 	// Determine if we should use AWS SDK credentials (real AWS) or env vars (S3-compatible)
 	// Real AWS is identified by: cloudProvider == "aws" AND no custom endpoint
-	useAWSSDK := cloudProvider == "aws" && endpoint == ""
+	useAWSSDK := profile.CloudProvider == "aws" && strings.TrimSpace(profile.Endpoint) == ""
 
 	if useAWSSDK {
-		// Use AWS SDK credential chain for real AWS (auto-refreshing credentials)
-		return seedS3SecretFromAWSSDK(ctx, conn, bucket, region, endpoint)
+		// Use AWS SDK credential chain or AssumeRole for real AWS
+		return seedS3SecretFromAWSSDK(ctx, conn, profile)
 	}
 
 	// Fall back to environment variables for S3-compatible systems (MinIO, LocalStack, etc.)
-	return seedS3SecretFromEnv(ctx, conn, bucket, region, endpoint)
+	return seedS3SecretFromEnv(ctx, conn, profile)
 }
 
 // Check if Azure credentials are available
@@ -616,19 +622,19 @@ func hasAzureCredentials() bool {
 }
 
 // CREATE OR REPLACE SECRET for Azure Blob Storage (serialized).
-func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, _ string, endpoint string) error {
+func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) error {
 	authType := os.Getenv("AZURE_AUTH_TYPE")
 	if authType == "" {
 		authType = "credential_chain" // Default to credential chain
 	}
 
 	// For Azure, storage account must be extracted from endpoint
-	if endpoint == "" {
+	if strings.TrimSpace(profile.Endpoint) == "" {
 		return fmt.Errorf("Azure storage profiles require an endpoint to extract storage account name")
 	}
 
-	storageAccount := extractStorageAccountFromEndpoint(endpoint)
-	secretName := "secret_" + strings.ReplaceAll(container, "-", "_")
+	storageAccount := extractStorageAccountFromEndpoint(profile.Endpoint)
+	secretName := "secret_" + strings.ReplaceAll(profile.Bucket, "-", "_")
 
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "CREATE OR REPLACE SECRET %s (\n", quoteIdent(secretName))
@@ -699,22 +705,22 @@ type S3SecretConfig struct {
 	UseSSL       bool
 }
 
-// seedS3SecretFromAWSSDK fetches S3 credentials from AWS SDK credential chain and creates a DuckDB secret.
-// This is used for real AWS (not S3-compatible systems) to get auto-refreshing credentials.
-func seedS3SecretFromAWSSDK(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
+// seedS3SecretFromAWSSDK fetches AWS credentials (default chain or AssumeRole) and creates a DuckDB secret.
+func seedS3SecretFromAWSSDK(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) error {
 	// Load AWS config (auto-refreshing credentials)
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return fmt.Errorf("load AWS config: %w", err)
 	}
 
-	// Retrieve current credentials
-	creds, err := cfg.Credentials.Retrieve(ctx)
+	// Retrieve current credentials (or AssumeRole if Role set)
+	creds, err := getAWSCredsFromChainOrAssume(ctx, profile)
 	if err != nil {
-		return fmt.Errorf("retrieve AWS credentials: %w", err)
+		return err
 	}
 
-	// Determine region and endpoint
+	// Determine region and endpoint without mutating profile
+	region := strings.TrimSpace(profile.Region)
 	if region == "" {
 		region = cfg.Region
 		if region == "" {
@@ -723,6 +729,7 @@ func seedS3SecretFromAWSSDK(ctx context.Context, conn *sql.Conn, bucket, region 
 	}
 
 	useSSL := true
+	endpoint := strings.TrimSpace(profile.Endpoint)
 	if endpoint == "" {
 		endpoint = fmt.Sprintf("s3.%s.amazonaws.com", region)
 	} else {
@@ -737,7 +744,7 @@ func seedS3SecretFromAWSSDK(ctx context.Context, conn *sql.Conn, bucket, region 
 
 	// Use the credentials to create DuckDB secret
 	secretConfig := S3SecretConfig{
-		Bucket:       bucket,
+		Bucket:       profile.Bucket,
 		Region:       region,
 		Endpoint:     endpoint,
 		KeyID:        creds.AccessKeyID,
@@ -747,11 +754,11 @@ func seedS3SecretFromAWSSDK(ctx context.Context, conn *sql.Conn, bucket, region 
 		UseSSL:       useSSL,
 	}
 
-	return createS3Secret(ctx, conn, secretConfig)
+	return createS3Secret(ctx, conn, secretConfig, profile)
 }
 
 // seedS3SecretFromEnv fetches S3 credentials from environment and creates a DuckDB secret.
-func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
+func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) error {
 	// Check for S3_ prefixed credentials first, then fall back to AWS_ prefix
 	keyID := os.Getenv("S3_ACCESS_KEY_ID")
 	if keyID == "" {
@@ -772,6 +779,7 @@ func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region str
 		session = os.Getenv("AWS_SESSION_TOKEN")
 	}
 
+	region := strings.TrimSpace(profile.Region)
 	if region == "" {
 		// Check S3_REGION first, then AWS_REGION, then AWS_DEFAULT_REGION
 		if r := os.Getenv("S3_REGION"); r != "" {
@@ -786,6 +794,7 @@ func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region str
 	}
 
 	useSSL := true
+	endpoint := strings.TrimSpace(profile.Endpoint)
 	if endpoint == "" {
 		endpoint = fmt.Sprintf("s3.%s.amazonaws.com", region)
 	} else {
@@ -807,8 +816,8 @@ func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region str
 		urlStyle = "path"
 	}
 
-	config := S3SecretConfig{
-		Bucket:       bucket,
+	secretConfig := S3SecretConfig{
+		Bucket:       profile.Bucket,
 		Region:       region,
 		Endpoint:     endpoint,
 		KeyID:        keyID,
@@ -818,52 +827,129 @@ func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region str
 		UseSSL:       useSSL,
 	}
 
-	return createS3Secret(ctx, conn, config)
+	return createS3Secret(ctx, conn, secretConfig, profile)
 }
 
-// createS3Secret creates or replaces an S3 secret in DuckDB with the given configuration.
-// This function is testable as it doesn't depend on environment variables.
-func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig) error {
-	if config.KeyID == "" || config.Secret == "" {
-		return fmt.Errorf("missing AWS credentials: KeyID and Secret are required")
+// chooseSTSRegion picks a region for STS calls. Prefer profile.Region, otherwise env/defaults.
+func chooseSTSRegion(ctx context.Context, profile storageprofile.StorageProfile) (string, error) {
+	if r := strings.TrimSpace(profile.Region); r != "" {
+		return r, nil
 	}
-	if config.Bucket == "" {
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err == nil && cfg.Region != "" {
+		return cfg.Region, nil
+	}
+	return "us-east-1", nil
+}
+
+// getAWSCredsFromChainOrAssume returns credentials using the default chain,
+// or assumes the provided role with externalId if profile.Role is non-empty.
+func getAWSCredsFromChainOrAssume(ctx context.Context, profile storageprofile.StorageProfile) (aws.Credentials, error) {
+	region, _ := chooseSTSRegion(ctx, profile)
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+	if err != nil {
+		return aws.Credentials{}, fmt.Errorf("load AWS config: %w", err)
+	}
+
+	roleArn := strings.TrimSpace(profile.Role)
+	if roleArn == "" {
+		creds, err := cfg.Credentials.Retrieve(ctx)
+		if err != nil {
+			return aws.Credentials{}, fmt.Errorf("retrieve default chain credentials: %w", err)
+		}
+		return creds, nil
+	}
+
+	// AssumeRole with externalId == organizationId (to match Scala)
+	extID := strings.TrimSpace(profile.OrganizationID.String())
+	stsClient := sts.NewFromConfig(cfg)
+	out, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
+		RoleArn:         &roleArn,
+		RoleSessionName: aws.String(fmt.Sprintf("CardinalHQ-%d", time.Now().Unix())),
+		ExternalId:      aws.String(extID),
+		DurationSeconds: aws.Int32(3600), // hour-long window as in Scala cache
+	})
+	if err != nil {
+		return aws.Credentials{}, fmt.Errorf("assume role %s: %w", roleArn, err)
+	}
+	c := out.Credentials
+	return aws.Credentials{
+		AccessKeyID:     aws.ToString(c.AccessKeyId),
+		SecretAccessKey: aws.ToString(c.SecretAccessKey),
+		SessionToken:    aws.ToString(c.SessionToken),
+		Source:          "AssumeRole",
+		CanExpire:       true,
+		Expires:         aws.ToTime(c.Expiration),
+	}, nil
+}
+
+// normalizeEndpoint removes scheme and determines USE_SSL similar to Scala.
+func normalizeEndpoint(endpoint, region string) (host string, useSSL bool) {
+	e := strings.TrimSpace(endpoint)
+	if e == "" {
+		return fmt.Sprintf("s3.%s.amazonaws.com", strings.TrimSpace(region)), true
+	}
+	if strings.HasPrefix(e, "http://") {
+		return strings.TrimPrefix(e, "http://"), false
+	}
+	if strings.HasPrefix(e, "https://") {
+		return strings.TrimPrefix(e, "https://"), true
+	}
+	return e, true
+}
+
+func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig, profile storageprofile.StorageProfile) error {
+	if strings.TrimSpace(config.Bucket) == "" {
 		return fmt.Errorf("bucket is required")
 	}
-	if config.Region == "" {
+	if strings.TrimSpace(config.Region) == "" {
 		config.Region = "us-east-1"
 	}
-	if config.URLStyle == "" {
+	if strings.TrimSpace(config.URLStyle) == "" {
 		config.URLStyle = "path"
 	}
 
+	endpointHost, useSSL := normalizeEndpoint(config.Endpoint, config.Region)
+
+	// Get fresh creds each time we create/replace the secret (aligning with Scala behavior)
+	awsCreds, err := getAWSCredsFromChainOrAssume(ctx, profile)
+	if err != nil {
+		return err
+	}
+	if awsCreds.AccessKeyID == "" || awsCreds.SecretAccessKey == "" {
+		return fmt.Errorf("missing AWS credentials from chain/assume-role")
+	}
+
+	// Build DuckDB SECRET DDL with explicit static creds (like Scala),
+	// NOT provider=credential_chain. (DuckDB will use these values directly.)
 	secretName := "secret_" + strings.ReplaceAll(config.Bucket, "-", "_")
 	useSSLStr := "false"
-	if config.UseSSL {
+	if useSSL {
 		useSSLStr = "true"
 	}
 
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "CREATE OR REPLACE SECRET %s (\n", quoteIdent(secretName))
 	_, _ = fmt.Fprintf(&b, "  TYPE S3,\n")
-	_, _ = fmt.Fprintf(&b, "  ENDPOINT '%s',\n", escapeSingle(config.Endpoint))
+	_, _ = fmt.Fprintf(&b, "  ENDPOINT '%s',\n", escapeSingle(endpointHost))
 	_, _ = fmt.Fprintf(&b, "  URL_STYLE '%s',\n", escapeSingle(config.URLStyle))
 	_, _ = fmt.Fprintf(&b, "  USE_SSL '%s',\n", escapeSingle(useSSLStr))
-	_, _ = fmt.Fprintf(&b, "  KEY_ID '%s',\n", escapeSingle(config.KeyID))
-	_, _ = fmt.Fprintf(&b, "  SECRET '%s',\n", escapeSingle(config.Secret))
-	if config.SessionToken != "" {
-		_, _ = fmt.Fprintf(&b, "  SESSION_TOKEN '%s',\n", escapeSingle(config.SessionToken))
+	_, _ = fmt.Fprintf(&b, "  KEY_ID '%s',\n", escapeSingle(awsCreds.AccessKeyID))
+	_, _ = fmt.Fprintf(&b, "  SECRET '%s',\n", escapeSingle(awsCreds.SecretAccessKey))
+	if awsCreds.SessionToken != "" {
+		_, _ = fmt.Fprintf(&b, "  SESSION_TOKEN '%s',\n", escapeSingle(awsCreds.SessionToken))
 	}
 	_, _ = fmt.Fprintf(&b, "  REGION '%s',\n", escapeSingle(config.Region))
 	_, _ = fmt.Fprintf(&b, "  SCOPE 's3://%s'\n", escapeSingle(config.Bucket))
 	_, _ = fmt.Fprintf(&b, ");")
 
 	duckdbDDLMu.Lock()
-	_, err := conn.ExecContext(ctx, b.String())
+	_, err = conn.ExecContext(ctx, b.String())
 	duckdbDDLMu.Unlock()
-
 	return err
 }
+
+// ---------- helpers & metrics ----------
 
 // discoverExtensionsPath attempts to find DuckDB extensions in the repository.
 // This is primarily for testing purposes when LAKERUNNER_EXTENSIONS_PATH is not set.
@@ -951,6 +1037,14 @@ func envIntClamp(name string, def, minv, maxv int) int {
 				return maxv
 			}
 			return iv
+		}
+	}
+	return def
+}
+func envDuration(name string, def time.Duration) time.Duration {
+	if v := os.Getenv(name); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return def

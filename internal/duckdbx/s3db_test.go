@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -159,7 +161,12 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 	}()
 
 	// Get first connection and create a secret (using a test bucket)
-	conn1, release1, err := s3db.GetConnectionForBucket(ctx, "test-bucket-1", "", "", "aws")
+	profile1 := storageprofile.StorageProfile{
+		Bucket:         "test-bucket-1",
+		CloudProvider:  "aws",
+		OrganizationID: uuid.New(),
+	}
+	conn1, release1, err := s3db.GetConnectionForBucket(ctx, profile1)
 	require.NoError(t, err)
 	defer release1()
 
@@ -181,7 +188,12 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 	require.True(t, found1, "secret should exist in first connection")
 
 	// Get second connection for a different bucket
-	conn2, release2, err := s3db.GetConnectionForBucket(ctx, "test-bucket-2", "", "", "aws")
+	profile2 := storageprofile.StorageProfile{
+		Bucket:         "test-bucket-2",
+		CloudProvider:  "aws",
+		OrganizationID: uuid.New(),
+	}
+	conn2, release2, err := s3db.GetConnectionForBucket(ctx, profile2)
 	require.NoError(t, err)
 	defer release2()
 
@@ -205,7 +217,7 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 
 	// Now get a third connection back to the first bucket
 	// It should reuse the existing secret (CREATE OR REPLACE)
-	conn3, release3, err := s3db.GetConnectionForBucket(ctx, "test-bucket-1", "", "", "aws")
+	conn3, release3, err := s3db.GetConnectionForBucket(ctx, profile1)
 	require.NoError(t, err)
 	defer release3()
 
@@ -336,6 +348,24 @@ func TestS3DB_ConcurrentAccess(t *testing.T) {
 func TestCreateS3Secret(t *testing.T) {
 	ctx := context.Background()
 
+	// Set test AWS credentials to avoid IMDS calls
+	oldKeyID := os.Getenv("AWS_ACCESS_KEY_ID")
+	oldSecret := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	_ = os.Setenv("AWS_ACCESS_KEY_ID", "TEST_ACCESS_KEY_ID")
+	_ = os.Setenv("AWS_SECRET_ACCESS_KEY", "TEST_SECRET_ACCESS_KEY")
+	defer func() {
+		if oldKeyID != "" {
+			_ = os.Setenv("AWS_ACCESS_KEY_ID", oldKeyID)
+		} else {
+			_ = os.Unsetenv("AWS_ACCESS_KEY_ID")
+		}
+		if oldSecret != "" {
+			_ = os.Setenv("AWS_SECRET_ACCESS_KEY", oldSecret)
+		} else {
+			_ = os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+		}
+	}()
+
 	// Create S3DB instance
 	s3db, err := NewS3DB()
 	require.NoError(t, err)
@@ -360,8 +390,14 @@ func TestCreateS3Secret(t *testing.T) {
 		URLStyle:     "path",
 		UseSSL:       true,
 	}
+	testProfile := storageprofile.StorageProfile{
+		Bucket:         "test-bucket-foo",
+		Region:         "us-west-2",
+		CloudProvider:  "aws",
+		OrganizationID: uuid.New(),
+	}
 
-	err = createS3Secret(ctx, conn1, testConfig)
+	err = createS3Secret(ctx, conn1, testConfig, testProfile)
 	require.NoError(t, err, "createS3Secret should succeed")
 
 	// Get second connection from the pool
@@ -398,7 +434,13 @@ func TestCreateS3Secret(t *testing.T) {
 		UseSSL:   false, // HTTP endpoint
 	}
 
-	err = createS3Secret(ctx, conn2, testConfig2)
+	testProfile2 := storageprofile.StorageProfile{
+		Bucket:         "test-bucket-bar",
+		Region:         "eu-west-1",
+		CloudProvider:  "aws",
+		OrganizationID: uuid.New(),
+	}
+	err = createS3Secret(ctx, conn2, testConfig2, testProfile2)
 	require.NoError(t, err, "createS3Secret with HTTP endpoint should succeed")
 
 	// Verify both secrets are visible in conn1 (after creating second in conn2)
@@ -423,6 +465,24 @@ func TestCreateS3Secret(t *testing.T) {
 func TestCreateS3SecretValidation(t *testing.T) {
 	ctx := context.Background()
 
+	// Set test AWS credentials to avoid IMDS calls
+	oldKeyID := os.Getenv("AWS_ACCESS_KEY_ID")
+	oldSecret := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	_ = os.Setenv("AWS_ACCESS_KEY_ID", "TEST_KEY_ID")
+	_ = os.Setenv("AWS_SECRET_ACCESS_KEY", "TEST_SECRET")
+	defer func() {
+		if oldKeyID != "" {
+			_ = os.Setenv("AWS_ACCESS_KEY_ID", oldKeyID)
+		} else {
+			_ = os.Unsetenv("AWS_ACCESS_KEY_ID")
+		}
+		if oldSecret != "" {
+			_ = os.Setenv("AWS_SECRET_ACCESS_KEY", oldSecret)
+		} else {
+			_ = os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+		}
+	}()
+
 	// Create S3DB instance
 	s3db, err := NewS3DB()
 	require.NoError(t, err)
@@ -436,30 +496,17 @@ func TestCreateS3SecretValidation(t *testing.T) {
 	require.NoError(t, err)
 	defer release()
 
-	// Test missing KeyID
+	// Test missing Bucket (credentials can come from environment now)
 	invalidConfig := S3SecretConfig{
-		Bucket: "test-bucket",
-		Secret: "SECRET_KEY",
-	}
-	err = createS3Secret(ctx, conn, invalidConfig)
-	require.Error(t, err, "should fail with missing KeyID")
-	require.Contains(t, err.Error(), "missing AWS credentials")
-
-	// Test missing Secret
-	invalidConfig = S3SecretConfig{
-		Bucket: "test-bucket",
-		KeyID:  "ACCESS_KEY",
-	}
-	err = createS3Secret(ctx, conn, invalidConfig)
-	require.Error(t, err, "should fail with missing Secret")
-	require.Contains(t, err.Error(), "missing AWS credentials")
-
-	// Test missing Bucket
-	invalidConfig = S3SecretConfig{
 		KeyID:  "ACCESS_KEY",
 		Secret: "SECRET_KEY",
 	}
-	err = createS3Secret(ctx, conn, invalidConfig)
+	testProfile := storageprofile.StorageProfile{
+		Bucket:         "",
+		CloudProvider:  "aws",
+		OrganizationID: uuid.New(),
+	}
+	err = createS3Secret(ctx, conn, invalidConfig, testProfile)
 	require.Error(t, err, "should fail with missing Bucket")
 	require.Contains(t, err.Error(), "bucket is required")
 
@@ -469,7 +516,12 @@ func TestCreateS3SecretValidation(t *testing.T) {
 		KeyID:  "MIN_ACCESS_KEY",
 		Secret: "MIN_SECRET_KEY",
 	}
-	err = createS3Secret(ctx, conn, minimalConfig)
+	minimalProfile := storageprofile.StorageProfile{
+		Bucket:         "minimal-bucket",
+		CloudProvider:  "aws",
+		OrganizationID: uuid.New(),
+	}
+	err = createS3Secret(ctx, conn, minimalConfig, minimalProfile)
 	require.NoError(t, err, "should succeed with minimal config")
 
 	// Verify the secret was created (we can't easily check the defaults from SQL)
@@ -485,6 +537,24 @@ func TestCreateS3SecretValidation(t *testing.T) {
 // This ensures that loading extensions on new connections doesn't break reused connections.
 func TestPooledConnectionReuse(t *testing.T) {
 	ctx := context.Background()
+
+	// Set test AWS credentials to avoid IMDS calls
+	oldKeyID := os.Getenv("AWS_ACCESS_KEY_ID")
+	oldSecret := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	_ = os.Setenv("AWS_ACCESS_KEY_ID", "REUSE_TEST_KEY")
+	_ = os.Setenv("AWS_SECRET_ACCESS_KEY", "REUSE_TEST_SECRET")
+	defer func() {
+		if oldKeyID != "" {
+			_ = os.Setenv("AWS_ACCESS_KEY_ID", oldKeyID)
+		} else {
+			_ = os.Unsetenv("AWS_ACCESS_KEY_ID")
+		}
+		if oldSecret != "" {
+			_ = os.Setenv("AWS_SECRET_ACCESS_KEY", oldSecret)
+		} else {
+			_ = os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+		}
+	}()
 
 	// Create S3DB instance with small pool to force reuse
 	oldPoolSize := os.Getenv("DUCKDB_S3_POOL_SIZE")
@@ -524,7 +594,13 @@ func TestPooledConnectionReuse(t *testing.T) {
 		URLStyle: "path",
 		UseSSL:   true,
 	}
-	err = createS3Secret(ctx, conn1, testConfig)
+	testProfile := storageprofile.StorageProfile{
+		Bucket:         "reuse-test-bucket",
+		Region:         "us-east-1",
+		CloudProvider:  "aws",
+		OrganizationID: uuid.New(),
+	}
+	err = createS3Secret(ctx, conn1, testConfig, testProfile)
 	require.NoError(t, err, "should be able to create S3 secret in first use")
 
 	// Return connection to pool
@@ -557,7 +633,13 @@ func TestPooledConnectionReuse(t *testing.T) {
 		URLStyle: "path",
 		UseSSL:   true,
 	}
-	err = createS3Secret(ctx, conn2, testConfig2)
+	testProfile2 := storageprofile.StorageProfile{
+		Bucket:         "reuse-test-bucket-2",
+		Region:         "eu-west-1",
+		CloudProvider:  "aws",
+		OrganizationID: uuid.New(),
+	}
+	err = createS3Secret(ctx, conn2, testConfig2, testProfile2)
 	require.NoError(t, err, "should be able to create new S3 secret in reused connection")
 
 	// Insert more data to verify connection is fully functional
@@ -610,7 +692,13 @@ func TestPooledConnectionReuseAcrossBuckets(t *testing.T) {
 	}()
 
 	// Get connection for bucket 1
-	conn1, release1, err := s3db.GetConnectionForBucket(ctx, "bucket-one", "us-east-1", "", "aws")
+	profileOne := storageprofile.StorageProfile{
+		Bucket:         "bucket-one",
+		Region:         "us-east-1",
+		CloudProvider:  "aws",
+		OrganizationID: uuid.New(),
+	}
+	conn1, release1, err := s3db.GetConnectionForBucket(ctx, profileOne)
 	require.NoError(t, err)
 
 	// Verify secret was created for bucket-one
@@ -631,7 +719,13 @@ func TestPooledConnectionReuseAcrossBuckets(t *testing.T) {
 	release1()
 
 	// Get connection for a different bucket (should reuse the same connection)
-	conn2, release2, err := s3db.GetConnectionForBucket(ctx, "bucket-two", "eu-west-1", "", "aws")
+	profileTwo := storageprofile.StorageProfile{
+		Bucket:         "bucket-two",
+		Region:         "eu-west-1",
+		CloudProvider:  "aws",
+		OrganizationID: uuid.New(),
+	}
+	conn2, release2, err := s3db.GetConnectionForBucket(ctx, profileTwo)
 	require.NoError(t, err)
 	defer release2()
 
