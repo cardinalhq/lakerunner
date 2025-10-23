@@ -39,8 +39,31 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Parse request body to get the filter
+	var req BaseExpression
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Error("Failed to parse legacy tags query request",
+			slog.String("error", err.Error()))
+		writeAPIError(w, http.StatusBadRequest, InvalidJSON, "invalid JSON: "+err.Error())
+		return
+	}
+
+	// Override dataset to "logs" if not set
+	if req.Dataset == "" {
+		req.Dataset = "logs"
+	}
+
+	// Validate dataset
+	if req.Dataset != "logs" {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "only 'logs' dataset is supported")
+		return
+	}
+
 	// Parse query parameters
 	limit := int64(100) // Default limit for tag discovery
+	if req.Limit > 0 {
+		limit = int64(req.Limit)
+	}
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if parsedLimit, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
 			limit = parsedLimit
@@ -60,19 +83,34 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		slog.Int64("endTs", endTs),
 		slog.Int64("limit", limit))
 
-	// Use a query that matches logs with any fingerprint (always exists)
-	// This avoids the empty matcher validation error
-	logqlQuery := "{chq_fingerprint=~\".+\"}"
+	// Translate the filter to LogQL, just like /api/v1/graph does
+	logqlQuery, _, err := TranslateToLogQL(req)
+	if err != nil {
+		slog.Error("Failed to translate legacy tags query to LogQL",
+			slog.String("error", err.Error()),
+			slog.Any("baseExpr", req))
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "translation failed: "+err.Error())
+		return
+	}
+
+	slog.Debug("Translated legacy tags query to LogQL",
+		slog.String("logql", logqlQuery))
 
 	// Parse and compile LogQL
 	logAst, err := logql.FromLogQL(logqlQuery)
 	if err != nil {
+		slog.Error("Failed to parse LogQL query",
+			slog.String("logql", logqlQuery),
+			slog.String("error", err.Error()))
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid LogQL: "+err.Error())
 		return
 	}
 
 	lplan, err := logql.CompileLog(logAst)
 	if err != nil {
+		slog.Error("Failed to compile LogQL query",
+			slog.String("logql", logqlQuery),
+			slog.String("error", err.Error()))
 		writeAPIError(w, http.StatusUnprocessableEntity, ErrCompileError, "compilation error: "+err.Error())
 		return
 	}
