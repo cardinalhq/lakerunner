@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/promql"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -168,11 +169,23 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			// Format as legacy response - just the tag value in the message field
+			// Extract the TagValue
+			tv, ok := res.(promql.TagValue)
+			if !ok {
+				slog.Error("expected TagValue", slog.Any("res", res))
+				continue
+			}
+
+			// Format message as an object with tagName as the key
+			message := map[string]interface{}{
+				tagName: tv.Value,
+			}
+
+			// Format as legacy response
 			event := map[string]interface{}{
 				"id":      "_",
 				"type":    "data",
-				"message": res,
+				"message": message,
 			}
 
 			// Write SSE event directly
