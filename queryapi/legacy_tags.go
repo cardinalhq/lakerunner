@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
@@ -30,7 +30,7 @@ import (
 )
 
 // handleTagsQuery handles the legacy /api/v1/tags/logs endpoint.
-// This endpoint returns sample log records to discover available tag names.
+// This endpoint returns distinct values for a specific tag name.
 func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request) {
 	// Get org from context
 	orgID, ok := GetOrgIDFromContext(r.Context())
@@ -39,14 +39,32 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Parse query parameters
-	limit := int64(100) // Default limit for tag discovery
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if parsedLimit, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
-			limit = parsedLimit
-		}
+	// Parse request body to get the filter
+	var req BaseExpression
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Error("Failed to parse legacy tags query request",
+			slog.String("error", err.Error()))
+		writeAPIError(w, http.StatusBadRequest, InvalidJSON, "invalid JSON: "+err.Error())
+		return
 	}
 
+	// Override dataset to "logs" if not set
+	if req.Dataset == "" {
+		req.Dataset = "logs"
+	}
+
+	// Validate dataset
+	if req.Dataset != "logs" {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "only 'logs' dataset is supported")
+		return
+	}
+
+	// Get the tag name from query parameters (optional)
+	// If provided: returns distinct VALUES for the specified tag that match the filter
+	// If not provided: returns distinct tag NAMES (field names) that match the filter
+	tagName := r.URL.Query().Get("tagName")
+
+	// Parse time range
 	s := r.URL.Query().Get("s")
 	e := r.URL.Query().Get("e")
 	startTs, endTs, err := dateutils.ToStartEnd(s, e)
@@ -55,26 +73,55 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	slog.Debug("Tags query",
-		slog.Int64("startTs", startTs),
-		slog.Int64("endTs", endTs),
-		slog.Int64("limit", limit))
+	if tagName != "" {
+		slog.Debug("Tags query - getting distinct values for tag",
+			slog.String("tagName", tagName),
+			slog.Int64("startTs", startTs),
+			slog.Int64("endTs", endTs))
+	} else {
+		slog.Debug("Tags query - getting all tag names",
+			slog.Int64("startTs", startTs),
+			slog.Int64("endTs", endTs))
+	}
 
-	// Use a query that matches logs with any fingerprint (always exists)
-	// This avoids the empty matcher validation error
-	logqlQuery := "{chq_fingerprint=~\".+\"}"
+	// Translate the filter to LogQL, just like /api/v1/graph does
+	logqlQuery, _, err := TranslateToLogQL(req)
+	if err != nil {
+		slog.Error("Failed to translate legacy tags query to LogQL",
+			slog.String("error", err.Error()),
+			slog.Any("baseExpr", req))
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "translation failed: "+err.Error())
+		return
+	}
+
+	slog.Debug("Translated legacy tags query to LogQL",
+		slog.String("logql", logqlQuery))
 
 	// Parse and compile LogQL
 	logAst, err := logql.FromLogQL(logqlQuery)
 	if err != nil {
+		slog.Error("Failed to parse LogQL query",
+			slog.String("logql", logqlQuery),
+			slog.String("error", err.Error()))
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid LogQL: "+err.Error())
 		return
 	}
 
 	lplan, err := logql.CompileLog(logAst)
 	if err != nil {
+		slog.Error("Failed to compile LogQL query",
+			slog.String("logql", logqlQuery),
+			slog.String("error", err.Error()))
 		writeAPIError(w, http.StatusUnprocessableEntity, ErrCompileError, "compilation error: "+err.Error())
 		return
+	}
+
+	// Set the tag name for tag value extraction (if provided)
+	// If tagName is empty, we'll be doing tag name discovery instead
+	if tagName != "" {
+		lplan.TagName = strings.ReplaceAll(tagName, ".", "_")
+	} else {
+		lplan.NeedTagNames = true
 	}
 
 	// Setup SSE manually (without the envelope wrapper)
@@ -106,71 +153,72 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		}
 	}()
 
-	// Execute query to get sample logs
-	resultsCh, err := q.EvaluateLogsQuery(
-		r.Context(),
-		orgID,
-		startTs,
-		endTs,
-		false, // not reversed
-		int(limit),
-		lplan,
-		nil, // fields
-	)
+	// Execute tag values query to get distinct values for the requested tag
+	resultsCh, err := q.EvaluateLogTagValuesQuery(r.Context(), orgID, startTs, endTs, lplan)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "query execution failed: "+err.Error())
 		return
 	}
 
-	// Pre-load label maps for denormalization
-	labelMaps, err := q.loadLabelMapsForTimeRange(r.Context(), orgID, startTs, endTs, lplan)
-	if err != nil {
-		slog.Warn("failed to load label name maps for tags query",
-			slog.String("error", err.Error()))
-	}
-	denormalizer := NewLabelDenormalizer(labelMaps)
+	// Stream tag value results
+	notify := r.Context().Done()
+	for {
+		select {
+		case <-notify:
+			slog.Info("client disconnected; stopping stream")
+			return
+		case res, more := <-resultsCh:
+			if !more {
+				// Send done event
+				doneEvent := NewLegacyDoneEvent("tags", "ok")
+				jsonData, _ := json.Marshal(doneEvent)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", jsonData)
+				flusher.Flush()
+				return
+			}
 
-	// Stream sample log records
-	for ts := range resultsCh {
-		exemplar, ok := ts.(promql.Exemplar)
-		if !ok {
-			continue
-		}
+			// If we're doing tag name discovery (tagName is empty), the result will be
+			// a comma-separated list of column names. Split and emit each separately.
+			var values []string
+			if tagName == "" {
+				// Tag names mode: split the comma-separated list
+				tv, ok := res.(promql.TagValue)
+				if !ok {
+					slog.Error("expected TagValue for tag names", slog.Any("res", res))
+					continue
+				}
+				values = strings.Split(tv.Value, ",")
+			} else {
+				// Tag values mode: emit single value
+				tv, ok := res.(promql.TagValue)
+				if !ok {
+					slog.Error("expected TagValue for tag values", slog.Any("res", res))
+					continue
+				}
+				values = []string{tv.Value}
+			}
 
-		// Extract segment_id for proper denormalization
-		segmentID := int64(0)
-		if sid, ok := exemplar.Tags["_segment_id"]; ok {
-			if sidInt, ok := sid.(int64); ok {
-				segmentID = sidInt
+			// Write each value as a separate SSE event
+			for _, val := range values {
+				// Format as legacy response - just the tag value in the message field
+				event := map[string]interface{}{
+					"id":      "_",
+					"type":    "data",
+					"message": val,
+				}
+
+				// Write SSE event directly
+				jsonData, err := json.Marshal(event)
+				if err != nil {
+					slog.Error("failed to marshal event", slog.String("error", err.Error()))
+					return
+				}
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", jsonData); err != nil {
+					slog.Error("failed to write SSE event", slog.String("error", err.Error()))
+					return
+				}
+				flusher.Flush()
 			}
 		}
-
-		// Denormalize tag names
-		denormalizedTags := denormalizer.DenormalizeMap(segmentID, exemplar.Tags)
-
-		// Format as legacy response
-		event := map[string]interface{}{
-			"id":      "_",
-			"type":    "data",
-			"message": denormalizedTags,
-		}
-
-		// Write SSE event directly
-		jsonData, err := json.Marshal(event)
-		if err != nil {
-			slog.Error("failed to marshal event", slog.String("error", err.Error()))
-			return
-		}
-		if _, err := fmt.Fprintf(w, "data: %s\n\n", jsonData); err != nil {
-			slog.Error("failed to write SSE event", slog.String("error", err.Error()))
-			return
-		}
-		flusher.Flush()
 	}
-
-	// Send done event
-	doneEvent := NewLegacyDoneEvent("tags", "ok")
-	jsonData, _ := json.Marshal(doneEvent)
-	_, _ = fmt.Fprintf(w, "data: %s\n\n", jsonData)
-	flusher.Flush()
 }

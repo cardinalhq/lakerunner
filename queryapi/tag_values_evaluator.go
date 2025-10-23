@@ -216,6 +216,7 @@ func (q *QuerierService) EvaluateLogTagValuesQuery(
 							OrganizationID: orgID,
 							LogLeaf:        &leaf,
 							TagName:        queryPlan.TagName,
+							NeedTagNames:   queryPlan.NeedTagNames,
 							StartTs:        group.StartTs,
 							EndTs:          group.EndTs,
 							Segments:       workerSegments,

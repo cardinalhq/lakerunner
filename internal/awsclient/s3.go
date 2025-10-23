@@ -207,7 +207,6 @@ func (m *Manager) GetS3(ctx context.Context, opts ...S3Option) (*S3Client, error
 	return &S3Client{Client: client, Tracer: m.tracer}, nil
 }
 
-// helper to bind your StorageProfile
 func (m *Manager) GetS3ForProfile(ctx context.Context, p storageprofile.StorageProfile) (*S3Client, error) {
 	var opts []S3Option
 	if p.Role != "" {

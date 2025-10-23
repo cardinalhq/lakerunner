@@ -111,6 +111,51 @@ func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
 	return sql
 }
 
+// ToWorkerSQLForTagNames generates SQL to return all tag names (column names) that have non-null values.
+// This is used for tag discovery to find which fields exist in the data matching the filter.
+func (be *LogLeaf) ToWorkerSQLForTagNames() string {
+	const baseRel = "{table}"       // replace upstream
+	const bodyCol = `"log_message"` // quoted column for message text
+	const tsCol = `"chq_timestamp"` // quoted column for event timestamp
+
+	var whereConds []string
+
+	// Add time range filter
+	whereConds = append(whereConds, fmt.Sprintf("%s >= {start} AND %s <= {end}", tsCol, tsCol))
+
+	// Apply selector matchers
+	if len(be.Matchers) > 0 {
+		mLfs := make([]LabelFilter, 0, len(be.Matchers))
+		for _, m := range be.Matchers {
+			mLfs = append(mLfs, LabelFilter{Label: m.Label, Op: m.Op, Value: m.Value})
+		}
+		mWhere := buildLabelFilterWhere(mLfs, nil) // nil resolver => use quoteIdent(label)
+		whereConds = append(whereConds, mWhere...)
+	}
+
+	// Apply line filters
+	lineWhere := buildLineFilterWhere(be.LineFilters, bodyCol)
+	whereConds = append(whereConds, lineWhere...)
+
+	// Apply label filters
+	if len(be.LabelFilters) > 0 {
+		lfWhere := buildLabelFilterWhere(be.LabelFilters, nil)
+		whereConds = append(whereConds, lfWhere...)
+	}
+
+	// Build the WHERE clause
+	var whereClause string
+	if len(whereConds) > 0 {
+		whereClause = " WHERE " + strings.Join(whereConds, " AND ")
+	}
+
+	// The query selects all columns from one matching row, then unpivots to get column names
+	// We use LIMIT 1 to get a sample row, then extract column names with non-null values
+	sql := "SELECT * FROM " + baseRel + whereClause + " LIMIT 1"
+
+	return sql
+}
+
 // buildTagValuesQueryWithParsers builds a complex query when the tag is extracted by parsers
 func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
 	const baseRel = "{table}"         // replace upstream
