@@ -22,6 +22,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// NOTE: These tests validate the filter translation logic for the /api/v1/tags/logs endpoint.
+// They do NOT test:
+// - The actual endpoint HTTP handler
+// - That distinct tag VALUES are returned (not full records)
+// - That the tagName parameter is correctly used
+// - The SSE streaming behavior
+//
+// Full integration testing would require:
+// - A real database with test data
+// - Running query workers
+// - Actual Parquet files to query
+//
+// What these tests DO validate:
+// - BaseExpression JSON parsing
+// - Filter structure parsing (nested AND/OR clauses)
+// - LogQL translation from legacy filter format
+// - That the filter is correctly converted to underscored label names
+
 func TestHandleTagsQuery_ParsesFilterCorrectly(t *testing.T) {
 	tests := []struct {
 		name          string

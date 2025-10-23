@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
@@ -57,10 +58,13 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Get the tag name from query parameters (optional)
-	// If provided: return distinct VALUES for that tag
-	// If not provided: return distinct tag NAMES (field names)
+	// Get the tag name from query parameters (required)
+	// Returns distinct VALUES for the specified tag that match the filter
 	tagName := r.URL.Query().Get("tagName")
+	if tagName == "" {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "missing required tagName parameter")
+		return
+	}
 
 	// Parse time range
 	s := r.URL.Query().Get("s")
@@ -71,16 +75,10 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if tagName != "" {
-		slog.Debug("Tags query - getting values for specific tag",
-			slog.String("tagName", tagName),
-			slog.Int64("startTs", startTs),
-			slog.Int64("endTs", endTs))
-	} else {
-		slog.Debug("Tags query - getting all tag names",
-			slog.Int64("startTs", startTs),
-			slog.Int64("endTs", endTs))
-	}
+	slog.Debug("Tags query - getting distinct values for tag",
+		slog.String("tagName", tagName),
+		slog.Int64("startTs", startTs),
+		slog.Int64("endTs", endTs))
 
 	// Translate the filter to LogQL, just like /api/v1/graph does
 	logqlQuery, _, err := TranslateToLogQL(req)
@@ -115,7 +113,7 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Set the tag name for tag value extraction
-	lplan.TagName = tagName
+	lplan.TagName = strings.ReplaceAll(tagName, ".", "_")
 
 	// Setup SSE manually (without the envelope wrapper)
 	flusher, ok := w.(http.Flusher)
