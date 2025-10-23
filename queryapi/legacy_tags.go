@@ -26,6 +26,7 @@ import (
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 
 	"github.com/cardinalhq/lakerunner/logql"
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 // handleTagsQuery handles the legacy /api/v1/tags/logs endpoint.
@@ -58,13 +59,10 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Get the tag name from query parameters (required)
-	// Returns distinct VALUES for the specified tag that match the filter
+	// Get the tag name from query parameters (optional)
+	// If provided: returns distinct VALUES for the specified tag that match the filter
+	// If not provided: returns distinct tag NAMES (field names) that match the filter
 	tagName := r.URL.Query().Get("tagName")
-	if tagName == "" {
-		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "missing required tagName parameter")
-		return
-	}
 
 	// Parse time range
 	s := r.URL.Query().Get("s")
@@ -75,10 +73,16 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	slog.Debug("Tags query - getting distinct values for tag",
-		slog.String("tagName", tagName),
-		slog.Int64("startTs", startTs),
-		slog.Int64("endTs", endTs))
+	if tagName != "" {
+		slog.Debug("Tags query - getting distinct values for tag",
+			slog.String("tagName", tagName),
+			slog.Int64("startTs", startTs),
+			slog.Int64("endTs", endTs))
+	} else {
+		slog.Debug("Tags query - getting all tag names",
+			slog.Int64("startTs", startTs),
+			slog.Int64("endTs", endTs))
+	}
 
 	// Translate the filter to LogQL, just like /api/v1/graph does
 	logqlQuery, _, err := TranslateToLogQL(req)
@@ -112,8 +116,13 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Set the tag name for tag value extraction
-	lplan.TagName = strings.ReplaceAll(tagName, ".", "_")
+	// Set the tag name for tag value extraction (if provided)
+	// If tagName is empty, we'll be doing tag name discovery instead
+	if tagName != "" {
+		lplan.TagName = strings.ReplaceAll(tagName, ".", "_")
+	} else {
+		lplan.NeedTagNames = true
+	}
 
 	// Setup SSE manually (without the envelope wrapper)
 	flusher, ok := w.(http.Flusher)
@@ -168,24 +177,48 @@ func (q *QuerierService) handleTagsQuery(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			// Format as legacy response - just the tag value in the message field
-			event := map[string]interface{}{
-				"id":      "_",
-				"type":    "data",
-				"message": res,
+			// If we're doing tag name discovery (tagName is empty), the result will be
+			// a comma-separated list of column names. Split and emit each separately.
+			var values []string
+			if tagName == "" {
+				// Tag names mode: split the comma-separated list
+				tv, ok := res.(promql.TagValue)
+				if !ok {
+					slog.Error("expected TagValue for tag names", slog.Any("res", res))
+					continue
+				}
+				values = strings.Split(tv.Value, ",")
+			} else {
+				// Tag values mode: emit single value
+				tv, ok := res.(promql.TagValue)
+				if !ok {
+					slog.Error("expected TagValue for tag values", slog.Any("res", res))
+					continue
+				}
+				values = []string{tv.Value}
 			}
 
-			// Write SSE event directly
-			jsonData, err := json.Marshal(event)
-			if err != nil {
-				slog.Error("failed to marshal event", slog.String("error", err.Error()))
-				return
+			// Write each value as a separate SSE event
+			for _, val := range values {
+				// Format as legacy response - just the tag value in the message field
+				event := map[string]interface{}{
+					"id":      "_",
+					"type":    "data",
+					"message": val,
+				}
+
+				// Write SSE event directly
+				jsonData, err := json.Marshal(event)
+				if err != nil {
+					slog.Error("failed to marshal event", slog.String("error", err.Error()))
+					return
+				}
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", jsonData); err != nil {
+					slog.Error("failed to write SSE event", slog.String("error", err.Error()))
+					return
+				}
+				flusher.Flush()
 			}
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", jsonData); err != nil {
-				slog.Error("failed to write SSE event", slog.String("error", err.Error()))
-				return
-			}
-			flusher.Flush()
 		}
 	}
 }

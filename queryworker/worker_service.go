@@ -279,6 +279,36 @@ func tagValuesMapper(request queryapi.PushDownRequest, cols []string, row *sql.R
 	return tagValue, nil
 }
 
+// tagNamesMapper extracts all column names that have non-null values from a result row.
+// This is used for tag name discovery (getting field names, not values).
+func tagNamesMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
+	vals := make([]interface{}, len(cols))
+	ptrs := make([]interface{}, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+
+	if err := row.Scan(ptrs...); err != nil {
+		slog.Error("failed to scan row", "err", err)
+		return promql.TagValue{}, fmt.Errorf("failed to scan row: %w", err)
+	}
+
+	// Collect all column names where the value is not null
+	var tagNames []string
+	for i, col := range cols {
+		if vals[i] != nil {
+			tagNames = append(tagNames, col)
+		}
+	}
+
+	// Return each tag name as a separate TagValue
+	// Note: This mapper will be called once per row, but we return multiple values
+	// We'll need to handle this specially in the worker logic
+	return promql.TagValue{
+		Value: strings.Join(tagNames, ","), // temporary: join with comma
+	}, nil
+}
+
 func asString(v any) string {
 	switch x := v.(type) {
 	case nil:
@@ -336,6 +366,16 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				globSize = ws.LogsGlobSize
 			}
 			isTagValuesQuery = true
+		} else if req.NeedTagNames {
+			workerSql = req.LogLeaf.ToWorkerSQLForTagNames()
+			if req.IsSpans {
+				cacheManager = ws.TracesCM
+				globSize = ws.TracesGlobSize
+			} else {
+				cacheManager = ws.LogsCM
+				globSize = ws.LogsGlobSize
+			}
+			isTagValuesQuery = true // reuse same handler path
 		} else {
 			if req.IsSpans {
 				workerSql = req.LogLeaf.ToSpansWorkerSQLWithLimit(req.Limit, req.ToOrderString(), req.Fields)
@@ -369,8 +409,14 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	workerSql = strings.ReplaceAll(workerSql, "{end}", fmt.Sprintf("%d", req.EndTs))
 
 	if isTagValuesQuery {
-		// Handle tag values query
-		tagValuesChannel, err := EvaluatePushDown(r.Context(), cacheManager, req, workerSql, globSize, tagValuesMapper)
+		// Choose the appropriate mapper based on whether we need tag names or tag values
+		mapper := tagValuesMapper
+		if req.NeedTagNames {
+			mapper = tagNamesMapper
+		}
+
+		// Handle tag values/names query
+		tagValuesChannel, err := EvaluatePushDown(r.Context(), cacheManager, req, workerSql, globSize, mapper)
 		if err != nil {
 			slog.Error("failed to query cache", "error", err)
 			http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
