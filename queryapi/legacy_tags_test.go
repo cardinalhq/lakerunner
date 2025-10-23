@@ -16,7 +16,6 @@ package queryapi
 
 import (
 	"encoding/json"
-	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,10 +24,9 @@ import (
 
 func TestHandleTagsQuery_ParsesFilterCorrectly(t *testing.T) {
 	tests := []struct {
-		name           string
-		requestBody    BaseExpression
-		expectedError  bool
-		expectedStatus int
+		name          string
+		requestBody   BaseExpression
+		expectedError bool
 	}{
 		{
 			name: "simple eq filter",
@@ -42,8 +40,7 @@ func TestHandleTagsQuery_ParsesFilterCorrectly(t *testing.T) {
 					Op: "eq",
 				},
 			},
-			expectedError:  false,
-			expectedStatus: http.StatusOK,
+			expectedError: false,
 		},
 		{
 			name: "complex nested filter",
@@ -65,8 +62,7 @@ func TestHandleTagsQuery_ParsesFilterCorrectly(t *testing.T) {
 					},
 				},
 			},
-			expectedError:  false,
-			expectedStatus: http.StatusOK,
+			expectedError: false,
 		},
 		{
 			name: "filter with contains in nested or clause",
@@ -95,8 +91,7 @@ func TestHandleTagsQuery_ParsesFilterCorrectly(t *testing.T) {
 					},
 				},
 			},
-			expectedError:  true, // OR is not supported yet
-			expectedStatus: http.StatusBadRequest,
+			expectedError: true, // OR is not supported yet
 		},
 	}
 
