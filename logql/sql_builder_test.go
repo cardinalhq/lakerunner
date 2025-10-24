@@ -1875,7 +1875,7 @@ func TestToWorkerSQL_CustomerIssue_ResourceFileTypeFilter(t *testing.T) {
 	if !strings.Contains(sql, `resource_file = 'vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-10-23-193952_dr-client-ingress-psf-gw'`) {
 		t.Fatalf("missing filter on resource_file:\n%s", sql)
 	}
-	if !strings.Contains(sql, `resource_file_type = 'avxgwstatesync123'`) {
+	if !strings.Contains(sql, `resource_file_type = 'avxgwstatesync'`) {
 		t.Fatalf("missing filter on resource_file_type:\n%s", sql)
 	}
 
