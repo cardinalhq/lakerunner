@@ -1806,3 +1806,95 @@ func TestToWorkerSQL_LineFormat_JSON_LabelFormat_ItemCount_WithFingerprint(t *te
 		t.Fatalf("item_count has unexpected type %T: %v", got, got)
 	}
 }
+
+// TestToWorkerSQL_CustomerIssue_ResourceFileTypeFilter tests that resource.file.type
+// filters are correctly applied in the generated SQL, reproducing the customer issue
+// where filtering for resource.file.type=avxgwstatesync returned cloudxcommands results.
+func TestToWorkerSQL_CustomerIssue_ResourceFileTypeFilter(t *testing.T) {
+	db := openDuckDB(t)
+	t.Cleanup(func() { mustDropTable(db, "logs") })
+
+	// Create logs table with resource.* fields
+	mustExec(t, db, `CREATE TABLE logs(
+		"chq_timestamp"         BIGINT,
+		"chq_id"                TEXT,
+		"log_level"             TEXT,
+		"log_message"           TEXT,
+		"chq_fingerprint"       BIGINT,
+		"resource_bucket_name"  TEXT,
+		"resource_file"         TEXT,
+		"resource_file_type"    TEXT
+	);`)
+
+	// Insert test data:
+	// - Row 1: matches all filters (avxgwstatesync)
+	// - Row 2: matches bucket and file but WRONG file_type (cloudxcommands)
+	// - Row 3: completely different data
+	mustExec(t, db, `INSERT INTO logs VALUES
+		(1000, 'id1', 'info', 'log from avxgwstatesync', 123,
+		 'avxit-dev-s3-use2-datalake',
+		 'vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-10-23-193952_dr-client-ingress-psf-gw',
+		 'avxgwstatesync'),
+		(2000, 'id2', 'info', 'log from cloudxcommands', 456,
+		 'avxit-dev-s3-use2-datalake',
+		 'vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-10-23-193952_dr-client-ingress-psf-gw',
+		 'cloudxcommands'),
+		(3000, 'id3', 'info', 'completely different log', 789,
+		 'other-bucket',
+		 'other-file',
+		 'othertype')`)
+
+	// The customer's query (translated to LogQL)
+	q := `{resource_bucket_name="avxit-dev-s3-use2-datalake",` +
+		`resource_file="vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-10-23-193952_dr-client-ingress-psf-gw",` +
+		`resource_file_type="avxgwstatesync"}`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	sql = replaceStartEnd(sql, 0, 10_000)
+
+	t.Logf("Generated SQL:\n%s", sql)
+
+	// Verify the SQL contains all three matchers
+	if !strings.Contains(sql, `resource_bucket_name = 'avxit-dev-s3-use2-datalake'`) {
+		t.Fatalf("missing filter on resource_bucket_name:\n%s", sql)
+	}
+	if !strings.Contains(sql, `resource_file = 'vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-10-23-193952_dr-client-ingress-psf-gw'`) {
+		t.Fatalf("missing filter on resource_file:\n%s", sql)
+	}
+	if !strings.Contains(sql, `resource_file_type = 'avxgwstatesync'`) {
+		t.Fatalf("missing filter on resource_file_type:\n%s", sql)
+	}
+
+	// Execute query
+	rows := queryAll(t, db, sql)
+
+	// Should return exactly 1 row (only the avxgwstatesync row)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 matching row, got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
+	}
+
+	// Verify it's the correct row
+	fileType := getString(rows[0]["resource_file_type"])
+	if fileType != "avxgwstatesync" {
+		t.Fatalf("wrong row returned: resource_file_type=%q, want \"avxgwstatesync\"", fileType)
+	}
+
+	message := getString(rows[0]["log_message"])
+	if message != "log from avxgwstatesync" {
+		t.Fatalf("wrong row returned: log_message=%q, want \"log from avxgwstatesync\"", message)
+	}
+}

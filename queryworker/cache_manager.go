@@ -381,6 +381,7 @@ func streamFromS3[T promql.Timestamped](
 			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+			slog.Info("Trying out S3 query", slog.String("sql", sqlReplaced))
 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
 			start := time.Now()
 			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, profile)

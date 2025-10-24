@@ -68,15 +68,17 @@ func TestHandleTagsQuery_ParsesFilterCorrectly(t *testing.T) {
 				Order:   "DESC",
 				Filter: BinaryClause{
 					Op: "and",
-					Q1: Filter{
-						K:  "resource.bucket.name",
-						V:  []string{"avxit-dev-s3-use2-datalake"},
-						Op: "eq",
-					},
-					Q2: Filter{
-						K:  "resource.file",
-						V:  []string{"mtb.com-abu-8aaf3300-1675268762.79_2025-10-23-113701_controller"},
-						Op: "in",
+					Clauses: []QueryClause{
+						Filter{
+							K:  "resource.bucket.name",
+							V:  []string{"avxit-dev-s3-use2-datalake"},
+							Op: "eq",
+						},
+						Filter{
+							K:  "resource.file",
+							V:  []string{"mtb.com-abu-8aaf3300-1675268762.79_2025-10-23-113701_controller"},
+							Op: "in",
+						},
 					},
 				},
 			},
@@ -89,22 +91,26 @@ func TestHandleTagsQuery_ParsesFilterCorrectly(t *testing.T) {
 				Limit:   1000,
 				Filter: BinaryClause{
 					Op: "and",
-					Q1: Filter{
-						K:  "resource.bucket.name",
-						V:  []string{"my-bucket"},
-						Op: "eq",
-					},
-					Q2: BinaryClause{
-						Op: "or",
-						Q1: Filter{
-							K:  "_cardinalhq.message",
-							V:  []string{"cloudxcommands"},
-							Op: "contains",
+					Clauses: []QueryClause{
+						Filter{
+							K:  "resource.bucket.name",
+							V:  []string{"my-bucket"},
+							Op: "eq",
 						},
-						Q2: Filter{
-							K:  "log.log_level",
-							V:  []string{"cloudxcommands"},
-							Op: "contains",
+						BinaryClause{
+							Op: "or",
+							Clauses: []QueryClause{
+								Filter{
+									K:  "_cardinalhq.message",
+									V:  []string{"cloudxcommands"},
+									Op: "contains",
+								},
+								Filter{
+									K:  "log.log_level",
+									V:  []string{"cloudxcommands"},
+									Op: "contains",
+								},
+							},
 						},
 					},
 				},
@@ -171,17 +177,18 @@ func TestHandleTagsQuery_RequestBodyParsing(t *testing.T) {
 	bc, ok := req.Filter.(BinaryClause)
 	require.True(t, ok, "expected BinaryClause")
 	assert.Equal(t, "and", bc.Op)
+	require.Len(t, bc.Clauses, 2)
 
-	// Verify Q1
-	f1, ok := bc.Q1.(Filter)
-	require.True(t, ok, "expected Filter for Q1")
+	// Verify Clause 1
+	f1, ok := bc.Clauses[0].(Filter)
+	require.True(t, ok, "expected Filter for Clause 1")
 	assert.Equal(t, "resource.bucket.name", f1.K)
 	assert.Equal(t, []string{"avxit-dev-s3-use2-datalake"}, f1.V)
 	assert.Equal(t, "eq", f1.Op)
 
-	// Verify Q2
-	f2, ok := bc.Q2.(Filter)
-	require.True(t, ok, "expected Filter for Q2")
+	// Verify Clause 2
+	f2, ok := bc.Clauses[1].(Filter)
+	require.True(t, ok, "expected Filter for Clause 2")
 	assert.Equal(t, "resource.file", f2.K)
 	assert.Equal(t, []string{"mtb.com-abu-8aaf3300-1675268762.79_2025-10-23-113701_controller"}, f2.V)
 	assert.Equal(t, "in", f2.Op)
