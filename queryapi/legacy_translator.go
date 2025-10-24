@@ -122,27 +122,24 @@ func filterToLogQL(clause QueryClause, ctx *TranslationContext) ([]string, []str
 		}
 
 	case BinaryClause:
-		m1, p1, err := filterToLogQL(c.Q1, ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		m2, p2, err := filterToLogQL(c.Q2, ctx)
-		if err != nil {
-			return nil, nil, err
-		}
+		// Handle N-way AND/OR by iterating through all clauses
+		for i, subClause := range c.Clauses {
+			m, p, err := filterToLogQL(subClause, ctx)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to process clause %d: %w", i+1, err)
+			}
 
-		// Handle AND: combine matchers and pipelines
-		if strings.ToLower(c.Op) == "and" {
-			matchers = append(matchers, m1...)
-			matchers = append(matchers, m2...)
-			pipeline = append(pipeline, p1...)
-			pipeline = append(pipeline, p2...)
-		} else if strings.ToLower(c.Op) == "or" {
-			// LogQL doesn't support OR in stream selectors
-			// This would require running multiple queries and merging results
-			return nil, nil, fmt.Errorf("OR operator not yet supported in LogQL translation")
-		} else {
-			return nil, nil, fmt.Errorf("unsupported binary operator: %s", c.Op)
+			// Handle AND: combine all matchers and pipelines
+			if strings.ToLower(c.Op) == "and" {
+				matchers = append(matchers, m...)
+				pipeline = append(pipeline, p...)
+			} else if strings.ToLower(c.Op) == "or" {
+				// LogQL doesn't support OR in stream selectors
+				// This would require running multiple queries and merging results
+				return nil, nil, fmt.Errorf("OR operator not yet supported in LogQL translation")
+			} else {
+				return nil, nil, fmt.Errorf("unsupported binary operator: %s", c.Op)
+			}
 		}
 	}
 

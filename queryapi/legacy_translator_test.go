@@ -91,15 +91,17 @@ func TestTranslateToLogQL_AndOperator(t *testing.T) {
 		Dataset: "logs",
 		Filter: BinaryClause{
 			Op: "and",
-			Q1: Filter{
-				K:  "resource.service.name",
-				V:  []string{"my-service"},
-				Op: "eq",
-			},
-			Q2: Filter{
-				K:  "log.level",
-				V:  []string{"error"},
-				Op: "eq",
+			Clauses: []QueryClause{
+				Filter{
+					K:  "resource.service.name",
+					V:  []string{"my-service"},
+					Op: "eq",
+				},
+				Filter{
+					K:  "log.level",
+					V:  []string{"error"},
+					Op: "eq",
+				},
 			},
 		},
 	}
@@ -211,15 +213,17 @@ func TestTranslateToLogQL_InOperatorWithSpecialChars(t *testing.T) {
 		Dataset: "logs",
 		Filter: BinaryClause{
 			Op: "and",
-			Q1: Filter{
-				K:  "resource.bucket.name",
-				V:  []string{"avxit-dev-s3-use2-datalake"},
-				Op: "eq",
-			},
-			Q2: Filter{
-				K:  "resource.file",
-				V:  []string{"chewy.com-abu-8qt6qskwan4-1692736963.994821_2025-09-24-074731_controller"},
-				Op: "in",
+			Clauses: []QueryClause{
+				Filter{
+					K:  "resource.bucket.name",
+					V:  []string{"avxit-dev-s3-use2-datalake"},
+					Op: "eq",
+				},
+				Filter{
+					K:  "resource.file",
+					V:  []string{"chewy.com-abu-8qt6qskwan4-1692736963.994821_2025-09-24-074731_controller"},
+					Op: "in",
+				},
 			},
 		},
 	}
@@ -253,19 +257,18 @@ func TestTranslateToLogQL_CustomerIssue_FileTypeFilter(t *testing.T) {
 		Dataset: "logs",
 		Filter: BinaryClause{
 			Op: "and",
-			Q1: Filter{
-				K:  "resource.bucket.name",
-				V:  []string{"avxit-dev-s3-use2-datalake"},
-				Op: "eq",
-			},
-			Q2: BinaryClause{
-				Op: "and",
-				Q1: Filter{
+			Clauses: []QueryClause{
+				Filter{
+					K:  "resource.bucket.name",
+					V:  []string{"avxit-dev-s3-use2-datalake"},
+					Op: "eq",
+				},
+				Filter{
 					K:  "resource.file",
 					V:  []string{"vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-10-23-193952_dr-client-ingress-psf-gw"},
 					Op: "in",
 				},
-				Q2: Filter{
+				Filter{
 					K:  "resource.file.type",
 					V:  []string{"avxgwstatesync"},
 					Op: "in",

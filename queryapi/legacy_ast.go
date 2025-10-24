@@ -51,11 +51,11 @@ type Filter struct {
 
 func (Filter) isQueryClause() {}
 
-// BinaryClause represents a boolean combination of two clauses.
+// BinaryClause represents a boolean combination of multiple clauses.
+// Despite the name, it can handle N-way AND/OR operations.
 type BinaryClause struct {
-	Q1 QueryClause `json:"q1"`
-	Q2 QueryClause `json:"q2"`
-	Op string      `json:"op"` // "and" or "or"
+	Clauses []QueryClause `json:"-"`  // Parsed from q1, q2, q3, ... qN
+	Op      string        `json:"op"` // "and" or "or"
 }
 
 func (BinaryClause) isQueryClause() {}
@@ -113,30 +113,56 @@ func unmarshalQueryClause(data json.RawMessage) (QueryClause, error) {
 }
 
 // UnmarshalJSON for BinaryClause to handle nested QueryClause interfaces.
+// Supports arbitrary number of sub-clauses: q1, q2, q3, ..., qN
 func (bc *BinaryClause) UnmarshalJSON(data []byte) error {
-	aux := &struct {
-		Q1 json.RawMessage `json:"q1"`
-		Q2 json.RawMessage `json:"q2"`
-		Op string          `json:"op"`
-	}{}
-
-	if err := json.Unmarshal(data, &aux); err != nil {
+	// First unmarshal into a map to find all qN keys
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
-	q1, err := unmarshalQueryClause(aux.Q1)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal q1: %w", err)
+	// Extract the operator
+	var opStruct struct {
+		Op string `json:"op"`
+	}
+	if err := json.Unmarshal(data, &opStruct); err != nil {
+		return err
+	}
+	bc.Op = opStruct.Op
+
+	// Find all qN keys and parse them in order
+	clauses := make(map[string]QueryClause)
+	maxN := 0
+
+	for key, rawClause := range raw {
+		if len(key) > 1 && key[0] == 'q' {
+			// Try to parse as qN where N is a number
+			var n int
+			if _, err := fmt.Sscanf(key, "q%d", &n); err == nil {
+				if n > maxN {
+					maxN = n
+				}
+				clause, err := unmarshalQueryClause(rawClause)
+				if err != nil {
+					return fmt.Errorf("failed to unmarshal %s: %w", key, err)
+				}
+				clauses[key] = clause
+			}
+		}
 	}
 
-	q2, err := unmarshalQueryClause(aux.Q2)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal q2: %w", err)
+	// Build ordered list of clauses from q1, q2, q3, ...
+	bc.Clauses = make([]QueryClause, 0, maxN)
+	for i := 1; i <= maxN; i++ {
+		key := fmt.Sprintf("q%d", i)
+		if clause, ok := clauses[key]; ok {
+			bc.Clauses = append(bc.Clauses, clause)
+		}
 	}
 
-	bc.Q1 = q1
-	bc.Q2 = q2
-	bc.Op = aux.Op
+	if len(bc.Clauses) == 0 {
+		return fmt.Errorf("BinaryClause must have at least one sub-clause")
+	}
 
 	return nil
 }
