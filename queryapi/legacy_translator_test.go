@@ -245,3 +245,41 @@ func TestTranslateToLogQL_InOperatorMultipleValues(t *testing.T) {
 	// Multiple values should use regex with anchored OR pattern
 	assert.Equal(t, `{resource_file=~"^(file1\\.log|file2\\.log|file\\.with\\.dots\\.log)$"}`, logql)
 }
+
+func TestTranslateToLogQL_CustomerIssue_FileTypeFilter(t *testing.T) {
+	// Reproduces customer issue where filtering for resource.file.type=avxgwstatesync
+	// was returning results with cloudxcommands
+	baseExpr := BaseExpression{
+		Dataset: "logs",
+		Filter: BinaryClause{
+			Op: "and",
+			Q1: Filter{
+				K:  "resource.bucket.name",
+				V:  []string{"avxit-dev-s3-use2-datalake"},
+				Op: "eq",
+			},
+			Q2: BinaryClause{
+				Op: "and",
+				Q1: Filter{
+					K:  "resource.file",
+					V:  []string{"vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-10-23-193952_dr-client-ingress-psf-gw"},
+					Op: "in",
+				},
+				Q2: Filter{
+					K:  "resource.file.type",
+					V:  []string{"avxgwstatesync"},
+					Op: "in",
+				},
+			},
+		},
+	}
+
+	logql, _, err := TranslateToLogQL(baseExpr)
+	require.NoError(t, err)
+
+	// Expected: all three filters should be in the stream selector
+	// Single values in "in" operator should use exact match
+	assert.Contains(t, logql, `resource_bucket_name="avxit-dev-s3-use2-datalake"`)
+	assert.Contains(t, logql, `resource_file="vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-10-23-193952_dr-client-ingress-psf-gw"`)
+	assert.Contains(t, logql, `resource_file_type="avxgwstatesync"`)
+}
