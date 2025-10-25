@@ -163,6 +163,14 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			slog.Int64("startTs", startTs),
 			slog.Int64("endTs", endTs))
 
+		// Load label maps once for both queries
+		labelMaps, err := q.loadLabelMapsForTimeRange(r.Context(), orgID, startTs, endTs, timeseriesPlan)
+		if err != nil {
+			slog.Warn("failed to load label name maps, using fallback denormalization",
+				slog.String("error", err.Error()))
+		}
+		denormalizer := NewLabelDenormalizer(labelMaps)
+
 		// For timeseries, we don't need to limit or reverse since we're getting aggregated counts
 		timeseriesResultsCh, err := q.EvaluateLogsQuery(
 			r.Context(),
@@ -186,38 +194,14 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 		// Stream timeseries results
 		timeseriesCount := 0
 		for ts := range timeseriesResultsCh {
-			exemplar, ok := ts.(promql.Exemplar)
+			sketchInput, ok := ts.(promql.SketchInput)
 			if !ok {
 				slog.Error("unexpected type in timeseries resultsCh; expected promql.Exemplar",
 					slog.String("exprID", exprID))
 				continue
 			}
 
-			// Extract segment_id from tags if available
-			segmentID := int64(0)
-			if sid, ok := exemplar.Tags["_segment_id"]; ok {
-				if sidInt, ok := sid.(int64); ok {
-					segmentID = sidInt
-				}
-			}
-
-			// Extract the count value from tags (count_over_time returns value in tags)
-			count := 0.0
-			if val, ok := exemplar.Tags["value"]; ok {
-				if valFloat, ok := val.(float64); ok {
-					count = valFloat
-				}
-			}
-
-			// Load label maps for denormalization (if not already loaded)
-			labelMaps, err := q.loadLabelMapsForTimeRange(r.Context(), orgID, startTs, endTs, timeseriesPlan)
-			if err != nil {
-				slog.Warn("failed to load label name maps for timeseries, using fallback denormalization",
-					slog.String("error", err.Error()))
-			}
-			denormalizer := NewLabelDenormalizer(labelMaps)
-
-			event := ToLegacyTimeseriesEvent(exprID, segmentID, ts.GetTimestamp(), count, exemplar.Tags, denormalizer)
+			event := ToLegacyTimeseriesEvent(exprID, ts.GetTimestamp(), sketchInput.SketchTags.Agg["count"])
 
 			if err := writeSSE(event); err != nil {
 				slog.Error("failed to write timeseries SSE event", slog.String("error", err.Error()))
@@ -266,13 +250,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		// Pre-load label name maps for the query time range
-		labelMaps, err := q.loadLabelMapsForTimeRange(r.Context(), orgID, startTs, endTs, lplan)
-		if err != nil {
-			slog.Warn("failed to load label name maps, using fallback denormalization",
-				slog.String("error", err.Error()))
-		}
-		denormalizer := NewLabelDenormalizer(labelMaps)
+		// Reuse denormalizer from timeseries query (label maps already loaded)
 
 		// Execute query
 		reverse := baseExpr.Order == "DESC"
