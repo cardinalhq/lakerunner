@@ -120,7 +120,117 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			slog.Int("limit", baseExpr.Limit),
 			slog.String("order", baseExpr.Order))
 
-		// Translate to LogQL
+		// First, execute timeseries query with count_over_time
+		timeseriesQuery, _, err := TranslateToLogQLWithTimeseries(baseExpr, startTs, endTs)
+		if err != nil {
+			slog.Error("Failed to translate legacy query to LogQL with timeseries",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()),
+				slog.Any("baseExpr", baseExpr))
+			writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "timeseries translation failed: "+err.Error())
+			return
+		}
+
+		slog.Info("Translated legacy query to LogQL with timeseries",
+			slog.String("exprID", exprID),
+			slog.String("logql", timeseriesQuery))
+
+		// Parse and compile timeseries LogQL
+		timeseriesAst, err := logql.FromLogQL(timeseriesQuery)
+		if err != nil {
+			slog.Error("Failed to parse timeseries LogQL query",
+				slog.String("exprID", exprID),
+				slog.String("logql", timeseriesQuery),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid timeseries LogQL: "+err.Error())
+			return
+		}
+
+		timeseriesPlan, err := logql.CompileLog(timeseriesAst)
+		if err != nil {
+			slog.Error("Failed to compile timeseries LogQL query",
+				slog.String("exprID", exprID),
+				slog.String("logql", timeseriesQuery),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusUnprocessableEntity, ErrCompileError, "timeseries compilation error: "+err.Error())
+			return
+		}
+
+		// Execute timeseries query
+		slog.Info("Executing timeseries LogQL query",
+			slog.String("exprID", exprID),
+			slog.String("logql", timeseriesQuery),
+			slog.Int64("startTs", startTs),
+			slog.Int64("endTs", endTs))
+
+		// For timeseries, we don't need to limit or reverse since we're getting aggregated counts
+		timeseriesResultsCh, err := q.EvaluateLogsQuery(
+			r.Context(),
+			orgID,
+			startTs,
+			endTs,
+			false, // no reverse for timeseries
+			10000, // higher limit for timeseries points
+			timeseriesPlan,
+			nil, // fields
+		)
+		if err != nil {
+			slog.Error("Failed to execute timeseries LogQL query",
+				slog.String("exprID", exprID),
+				slog.String("logql", timeseriesQuery),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "timeseries query execution failed: "+err.Error())
+			return
+		}
+
+		// Stream timeseries results
+		timeseriesCount := 0
+		for ts := range timeseriesResultsCh {
+			exemplar, ok := ts.(promql.Exemplar)
+			if !ok {
+				slog.Error("unexpected type in timeseries resultsCh; expected promql.Exemplar",
+					slog.String("exprID", exprID))
+				continue
+			}
+
+			// Extract segment_id from tags if available
+			segmentID := int64(0)
+			if sid, ok := exemplar.Tags["_segment_id"]; ok {
+				if sidInt, ok := sid.(int64); ok {
+					segmentID = sidInt
+				}
+			}
+
+			// Extract the count value from tags (count_over_time returns value in tags)
+			count := 0.0
+			if val, ok := exemplar.Tags["value"]; ok {
+				if valFloat, ok := val.(float64); ok {
+					count = valFloat
+				}
+			}
+
+			// Load label maps for denormalization (if not already loaded)
+			labelMaps, err := q.loadLabelMapsForTimeRange(r.Context(), orgID, startTs, endTs, timeseriesPlan)
+			if err != nil {
+				slog.Warn("failed to load label name maps for timeseries, using fallback denormalization",
+					slog.String("error", err.Error()))
+			}
+			denormalizer := NewLabelDenormalizer(labelMaps)
+
+			event := ToLegacyTimeseriesEvent(exprID, segmentID, ts.GetTimestamp(), count, exemplar.Tags, denormalizer)
+
+			if err := writeSSE(event); err != nil {
+				slog.Error("failed to write timeseries SSE event", slog.String("error", err.Error()))
+				return
+			}
+			timeseriesCount++
+		}
+
+		slog.Info("Completed streaming timeseries events for expression",
+			slog.String("exprID", exprID),
+			slog.Int("timeseriesCount", timeseriesCount))
+
+		// Now execute raw events query
 		logqlQuery, _, err := TranslateToLogQL(baseExpr)
 		if err != nil {
 			slog.Error("Failed to translate legacy query to LogQL",
@@ -131,7 +241,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		slog.Info("Translated legacy query to LogQL",
+		slog.Info("Translated legacy query to LogQL for raw events",
 			slog.String("exprID", exprID),
 			slog.String("logql", logqlQuery))
 

@@ -25,6 +25,34 @@ type TranslationContext struct {
 	QueryLabels map[string]string // underscored → dotted
 }
 
+// getIntervalForTimeRange calculates the appropriate time interval for count_over_time
+// based on the time range duration.
+func getIntervalForTimeRange(startTs, endTs int64) string {
+	// Convert to milliseconds
+	startMs := startTs * 1000
+	endMs := endTs * 1000
+
+	oneHourish := int64(1 * 65 * 60 * 1000)
+	twelveHours := int64(12 * 60 * 60 * 1000)
+	oneDay := int64(24 * 60 * 60 * 1000)
+	threeDays := int64(3 * 24 * 60 * 60 * 1000)
+
+	diff := endMs - startMs
+	if diff <= oneHourish {
+		return "10s"
+	}
+	if diff <= twelveHours {
+		return "1m"
+	}
+	if diff <= oneDay {
+		return "5m"
+	}
+	if diff <= threeDays {
+		return "20m"
+	}
+	return "1h"
+}
+
 // TranslateToLogQL converts a legacy BaseExpression to a LogQL query string.
 func TranslateToLogQL(baseExpr BaseExpression) (string, *TranslationContext, error) {
 	// Validate dataset
@@ -56,6 +84,22 @@ func TranslateToLogQL(baseExpr BaseExpression) (string, *TranslationContext, err
 	}
 
 	return logql, ctx, nil
+}
+
+// TranslateToLogQLWithTimeseries wraps the base LogQL query with count_over_time
+// for timeseries aggregation.
+func TranslateToLogQLWithTimeseries(baseExpr BaseExpression, startTs, endTs int64) (string, *TranslationContext, error) {
+	baseQuery, ctx, err := TranslateToLogQL(baseExpr)
+	if err != nil {
+		return "", nil, err
+	}
+
+	interval := getIntervalForTimeRange(startTs, endTs)
+
+	// Wrap with count_over_time: count_over_time({...}[interval])
+	timeseriesQuery := fmt.Sprintf("count_over_time(%s[%s])", baseQuery, interval)
+
+	return timeseriesQuery, ctx, nil
 }
 
 // filterToLogQL converts a QueryClause to LogQL matchers and pipeline operations.
