@@ -63,15 +63,24 @@ func ToLegacySSEEvent(
 // ToLegacyTimeseriesEvent converts a timeseries aggregation result to a legacy SSE event format.
 func ToLegacyTimeseriesEvent(
 	queryID string,
+	segmentID int64,
 	timestamp int64,
 	count float64,
+	tags map[string]any,
+	denormalizer *LabelDenormalizer,
 ) LegacyEvent {
+	dottedTags := denormalizer.DenormalizeMap(segmentID, tags)
+
+	// Add timestamp to tags for legacy API compatibility
+	dottedTags["_cardinalhq.timestamp"] = timestamp
+
 	return LegacyEvent{
 		ID:   queryID,
 		Type: "timeseries",
 		Message: LegacyMessage{
 			Timestamp: timestamp,
 			Value:     count,
+			Tags:      dottedTags,
 		},
 	}
 }

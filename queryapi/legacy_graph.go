@@ -146,7 +146,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		timeseriesPlan, err := logql.CompileLog(timeseriesAst)
+		lplan, err := logql.CompileLog(timeseriesAst)
 		if err != nil {
 			slog.Error("Failed to compile timeseries LogQL query",
 				slog.String("exprID", exprID),
@@ -156,58 +156,89 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			return
 		}
 
+		// Rewrite LogQL to PromQL for aggregation
+		rr, err := promql.RewriteToPromQL(lplan.Root)
+		if err != nil {
+			slog.Error("Failed to rewrite timeseries query to PromQL",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusNotImplemented, ErrRewriteUnsupported, "cannot rewrite to PromQL: "+err.Error())
+			return
+		}
+
+		promExpr, err := promql.FromPromQL(rr.PromQL)
+		if err != nil {
+			slog.Error("Failed to parse rewritten PromQL",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "cannot parse rewritten PromQL: "+err.Error())
+			return
+		}
+
+		plan, err := promql.Compile(promExpr)
+		if err != nil {
+			slog.Error("Failed to compile PromQL plan",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "cannot compile rewritten PromQL: "+err.Error())
+			return
+		}
+		plan.AttachLogLeaves(rr)
+
 		// Execute timeseries query
-		slog.Info("Executing timeseries LogQL query",
+		slog.Info("Executing timeseries metrics query",
 			slog.String("exprID", exprID),
 			slog.String("logql", timeseriesQuery),
+			slog.String("promql", rr.PromQL),
 			slog.Int64("startTs", startTs),
 			slog.Int64("endTs", endTs))
 
+		evalResultsCh, err := q.EvaluateMetricsQuery(
+			r.Context(),
+			orgID,
+			startTs,
+			endTs,
+			plan,
+		)
+		if err != nil {
+			slog.Error("Failed to execute timeseries metrics query",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "timeseries query execution failed: "+err.Error())
+			return
+		}
+
 		// Load label maps once for both queries
-		labelMaps, err := q.loadLabelMapsForTimeRange(r.Context(), orgID, startTs, endTs, timeseriesPlan)
+		labelMaps, err := q.loadLabelMapsForTimeRange(r.Context(), orgID, startTs, endTs, lplan)
 		if err != nil {
 			slog.Warn("failed to load label name maps, using fallback denormalization",
 				slog.String("error", err.Error()))
 		}
 		denormalizer := NewLabelDenormalizer(labelMaps)
 
-		// For timeseries, we don't need to limit or reverse since we're getting aggregated counts
-		timeseriesResultsCh, err := q.EvaluateLogsQuery(
-			r.Context(),
-			orgID,
-			startTs,
-			endTs,
-			false, // no reverse for timeseries
-			10000, // higher limit for timeseries points
-			timeseriesPlan,
-			nil, // fields
-		)
-		if err != nil {
-			slog.Error("Failed to execute timeseries LogQL query",
-				slog.String("exprID", exprID),
-				slog.String("logql", timeseriesQuery),
-				slog.String("error", err.Error()))
-			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "timeseries query execution failed: "+err.Error())
-			return
-		}
-
 		// Stream timeseries results
 		timeseriesCount := 0
-		for ts := range timeseriesResultsCh {
-			sketchInput, ok := ts.(promql.SketchInput)
-			if !ok {
-				slog.Error("unexpected type in timeseries resultsCh; expected promql.Exemplar",
-					slog.String("exprID", exprID))
-				continue
-			}
+		for evalResults := range evalResultsCh {
+			for _, evalResult := range evalResults {
+				// Extract the count value
+				count := evalResult.Value.Num
 
-			event := ToLegacyTimeseriesEvent(exprID, ts.GetTimestamp(), sketchInput.SketchTags.Agg["count"])
+				// Extract segment_id from tags if available
+				segmentID := int64(0)
+				if sid, ok := evalResult.Tags["_segment_id"]; ok {
+					if sidInt, ok := sid.(int64); ok {
+						segmentID = sidInt
+					}
+				}
 
-			if err := writeSSE(event); err != nil {
-				slog.Error("failed to write timeseries SSE event", slog.String("error", err.Error()))
-				return
+				event := ToLegacyTimeseriesEvent(exprID, segmentID, evalResult.Timestamp, count, evalResult.Tags, denormalizer)
+
+				if err := writeSSE(event); err != nil {
+					slog.Error("failed to write timeseries SSE event", slog.String("error", err.Error()))
+					return
+				}
+				timeseriesCount++
 			}
-			timeseriesCount++
 		}
 
 		slog.Info("Completed streaming timeseries events for expression",
@@ -240,7 +271,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		lplan, err := logql.CompileLog(logAst)
+		rawPlan, err := logql.CompileLog(logAst)
 		if err != nil {
 			slog.Error("Failed to compile LogQL query",
 				slog.String("exprID", exprID),
@@ -274,7 +305,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			endTs,
 			reverse,
 			limit,
-			lplan,
+			rawPlan,
 			nil, // fields
 		)
 		if err != nil {
