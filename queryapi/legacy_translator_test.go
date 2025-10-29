@@ -66,9 +66,8 @@ func TestTranslateToLogQL_ContainsOperator(t *testing.T) {
 
 	logql, _, err := TranslateToLogQL(baseExpr)
 	require.NoError(t, err)
-	// Contains creates a line filter for text search in log messages
-	// Note: empty {} because contains is a pipeline operation, not a stream selector
-	assert.Equal(t, `{} |~ "error occurred"`, logql)
+	// Contains creates a label matcher with substring match: label=~".*value.*"
+	assert.Equal(t, `{chq_message=~".*error occurred.*"}`, logql)
 }
 
 func TestTranslateToLogQL_RegexOperator(t *testing.T) {
@@ -251,8 +250,8 @@ func TestTranslateToLogQL_InOperatorMultipleValues(t *testing.T) {
 }
 
 func TestTranslateToLogQL_CustomerIssue_FileTypeFilter(t *testing.T) {
-	// Reproduces customer issue where filtering for resource.file.type=avxgwstatesync
-	// was returning results with cloudxcommands
+	// Reproduces issue where filtering for resource.file.type with exact value
+	// should use exact match when single value in "in" operator
 	baseExpr := BaseExpression{
 		Dataset: "logs",
 		Filter: BinaryClause{
@@ -260,17 +259,17 @@ func TestTranslateToLogQL_CustomerIssue_FileTypeFilter(t *testing.T) {
 			Clauses: []QueryClause{
 				Filter{
 					K:  "resource.bucket.name",
-					V:  []string{"avxit-dev-s3-use2-datalake"},
+					V:  []string{"test-datalake-bucket"},
 					Op: "eq",
 				},
 				Filter{
 					K:  "resource.file",
-					V:  []string{"vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-10-23-193952_dr-client-ingress-psf-gw"},
+					V:  []string{"example.com-id-12345_2025-10-23-193952_server-name"},
 					Op: "in",
 				},
 				Filter{
 					K:  "resource.file.type",
-					V:  []string{"avxgwstatesync"},
+					V:  []string{"statesync"},
 					Op: "in",
 				},
 			},
@@ -282,7 +281,43 @@ func TestTranslateToLogQL_CustomerIssue_FileTypeFilter(t *testing.T) {
 
 	// Expected: all three filters should be in the stream selector
 	// Single values in "in" operator should use exact match
-	assert.Contains(t, logql, `resource_bucket_name="avxit-dev-s3-use2-datalake"`)
-	assert.Contains(t, logql, `resource_file="vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-10-23-193952_dr-client-ingress-psf-gw"`)
-	assert.Contains(t, logql, `resource_file_type="avxgwstatesync"`)
+	assert.Contains(t, logql, `resource_bucket_name="test-datalake-bucket"`)
+	assert.Contains(t, logql, `resource_file="example.com-id-12345_2025-10-23-193952_server-name"`)
+	assert.Contains(t, logql, `resource_file_type="statesync"`)
+}
+
+func TestTranslateToLogQL_ContainsOperator_FileType(t *testing.T) {
+	// Test contains operator at label level for resource.file.type
+	baseExpr := BaseExpression{
+		Dataset: "logs",
+		Filter: BinaryClause{
+			Op: "and",
+			Clauses: []QueryClause{
+				Filter{
+					K:  "resource.bucket.name",
+					V:  []string{"test-bucket"},
+					Op: "eq",
+				},
+				Filter{
+					K:  "resource.file",
+					V:  []string{"example-file-1234567890_2025-10-28-221611_server"},
+					Op: "in",
+				},
+				Filter{
+					K:  "resource.file.type",
+					V:  []string{"cmd"},
+					Op: "contains",
+				},
+			},
+		},
+	}
+
+	logql, _, err := TranslateToLogQL(baseExpr)
+	require.NoError(t, err)
+
+	// Expected: all three filters should be in the stream selector
+	// Contains should create a label matcher with substring match
+	assert.Contains(t, logql, `resource_bucket_name="test-bucket"`)
+	assert.Contains(t, logql, `resource_file="example-file-1234567890_2025-10-28-221611_server"`)
+	assert.Contains(t, logql, `resource_file_type=~".*cmd.*"`)
 }
