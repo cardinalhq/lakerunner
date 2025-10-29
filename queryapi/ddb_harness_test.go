@@ -24,8 +24,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/logql"
 	_ "github.com/marcboeker/go-duckdb/v2"
+
+	"github.com/cardinalhq/lakerunner/logql"
 )
 
 func TestIngestExemplarLogsJSONToDuckDB_Smoke(t *testing.T) {

@@ -19,9 +19,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -30,6 +27,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/marcboeker/go-duckdb/v2"
