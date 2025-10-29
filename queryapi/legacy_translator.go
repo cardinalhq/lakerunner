@@ -141,14 +141,14 @@ func filterToLogQL(clause QueryClause, ctx *TranslationContext) ([]string, []str
 			}
 
 		case "contains":
-			// LogQL line filter: |~ "pattern"
-			// Note: For contains, we add a pipeline filter. If this is the only filter,
-			// the stream selector will be empty, which is handled in TranslateToLogQL
+			// LogQL label matcher with substring match: label=~".*value.*"
 			if len(c.V) == 0 {
 				return nil, nil, fmt.Errorf("contains operator requires a value")
 			}
 			escapedVal := escapeRegexValue(c.V[0])
-			pipeline = append(pipeline, fmt.Sprintf(`|~ "%s"`, escapedVal))
+			// Create a regex pattern that matches if the label value contains the substring
+			pattern := ".*" + escapedVal + ".*"
+			matchers = append(matchers, fmt.Sprintf(`%s=~"%s"`, normalized, pattern))
 
 		case "regex":
 			if len(c.V) == 0 {
