@@ -27,17 +27,15 @@ type TranslationContext struct {
 
 // getIntervalForTimeRange calculates the appropriate time interval for count_over_time
 // based on the time range duration.
+// startTs and endTs are expected to be in milliseconds.
 func getIntervalForTimeRange(startTs, endTs int64) string {
-	// Convert to milliseconds
-	startMs := startTs * 1000
-	endMs := endTs * 1000
-
+	// Timestamps are already in milliseconds from dateutils.ToStartEnd
 	oneHourish := int64(1 * 65 * 60 * 1000)
 	twelveHours := int64(12 * 60 * 60 * 1000)
 	oneDay := int64(24 * 60 * 60 * 1000)
 	threeDays := int64(3 * 24 * 60 * 60 * 1000)
 
-	diff := endMs - startMs
+	diff := endTs - startTs
 	if diff <= oneHourish {
 		return "10s"
 	}

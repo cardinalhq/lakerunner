@@ -321,3 +321,74 @@ func TestTranslateToLogQL_ContainsOperator_FileType(t *testing.T) {
 	assert.Contains(t, logql, `resource_file="example-file-1234567890_2025-10-28-221611_server"`)
 	assert.Contains(t, logql, `resource_file_type=~".*cmd.*"`)
 }
+
+func TestGetIntervalForTimeRange(t *testing.T) {
+	tests := []struct {
+		name     string
+		startMs  int64
+		endMs    int64
+		expected string
+	}{
+		{
+			name:     "30 minutes - should use 10s interval",
+			startMs:  1761523200000, // some base time in ms
+			endMs:    1761525000000, // +30 minutes
+			expected: "10s",
+		},
+		{
+			name:     "1 hour - should use 10s interval",
+			startMs:  1761523200000,
+			endMs:    1761526800000, // +1 hour
+			expected: "10s",
+		},
+		{
+			name:     "6 hours - should use 1m interval",
+			startMs:  1761523200000,
+			endMs:    1761544800000, // +6 hours
+			expected: "1m",
+		},
+		{
+			name:     "12 hours - should use 1m interval",
+			startMs:  1761523200000,
+			endMs:    1761566400000, // +12 hours
+			expected: "1m",
+		},
+		{
+			name:     "19.3 hours (customer query) - should use 5m interval",
+			startMs:  1761523200000,
+			endMs:    1761592809368, // +19.3 hours (actual customer query)
+			expected: "5m",
+		},
+		{
+			name:     "24 hours - should use 5m interval",
+			startMs:  1761523200000,
+			endMs:    1761609600000, // +24 hours
+			expected: "5m",
+		},
+		{
+			name:     "2 days - should use 20m interval",
+			startMs:  1761523200000,
+			endMs:    1761696000000, // +2 days
+			expected: "20m",
+		},
+		{
+			name:     "3 days - should use 20m interval",
+			startMs:  1761523200000,
+			endMs:    1761782400000, // +3 days
+			expected: "20m",
+		},
+		{
+			name:     "7 days - should use 1h interval",
+			startMs:  1761523200000,
+			endMs:    1762128000000, // +7 days
+			expected: "1h",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getIntervalForTimeRange(tt.startMs, tt.endMs)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
