@@ -120,7 +120,132 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			slog.Int("limit", baseExpr.Limit),
 			slog.String("order", baseExpr.Order))
 
-		// Translate to LogQL
+		// First, execute timeseries query with count_over_time
+		timeseriesQuery, _, err := TranslateToLogQLWithTimeseries(baseExpr, startTs, endTs)
+		if err != nil {
+			slog.Error("Failed to translate legacy query to LogQL with timeseries",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()),
+				slog.Any("baseExpr", baseExpr))
+			writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "timeseries translation failed: "+err.Error())
+			return
+		}
+
+		slog.Info("Translated legacy query to LogQL with timeseries",
+			slog.String("exprID", exprID),
+			slog.String("logql", timeseriesQuery))
+
+		// Parse and compile timeseries LogQL
+		timeseriesAst, err := logql.FromLogQL(timeseriesQuery)
+		if err != nil {
+			slog.Error("Failed to parse timeseries LogQL query",
+				slog.String("exprID", exprID),
+				slog.String("logql", timeseriesQuery),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid timeseries LogQL: "+err.Error())
+			return
+		}
+
+		lplan, err := logql.CompileLog(timeseriesAst)
+		if err != nil {
+			slog.Error("Failed to compile timeseries LogQL query",
+				slog.String("exprID", exprID),
+				slog.String("logql", timeseriesQuery),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusUnprocessableEntity, ErrCompileError, "timeseries compilation error: "+err.Error())
+			return
+		}
+
+		// Rewrite LogQL to PromQL for aggregation
+		rr, err := promql.RewriteToPromQL(lplan.Root)
+		if err != nil {
+			slog.Error("Failed to rewrite timeseries query to PromQL",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusNotImplemented, ErrRewriteUnsupported, "cannot rewrite to PromQL: "+err.Error())
+			return
+		}
+
+		promExpr, err := promql.FromPromQL(rr.PromQL)
+		if err != nil {
+			slog.Error("Failed to parse rewritten PromQL",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "cannot parse rewritten PromQL: "+err.Error())
+			return
+		}
+
+		plan, err := promql.Compile(promExpr)
+		if err != nil {
+			slog.Error("Failed to compile PromQL plan",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "cannot compile rewritten PromQL: "+err.Error())
+			return
+		}
+		plan.AttachLogLeaves(rr)
+
+		// Execute timeseries query
+		slog.Info("Executing timeseries metrics query",
+			slog.String("exprID", exprID),
+			slog.String("logql", timeseriesQuery),
+			slog.String("promql", rr.PromQL),
+			slog.Int64("startTs", startTs),
+			slog.Int64("endTs", endTs))
+
+		evalResultsCh, err := q.EvaluateMetricsQuery(
+			r.Context(),
+			orgID,
+			startTs,
+			endTs,
+			plan,
+		)
+		if err != nil {
+			slog.Error("Failed to execute timeseries metrics query",
+				slog.String("exprID", exprID),
+				slog.String("error", err.Error()))
+			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "timeseries query execution failed: "+err.Error())
+			return
+		}
+
+		// Load label maps once for both queries
+		labelMaps, err := q.loadLabelMapsForTimeRange(r.Context(), orgID, startTs, endTs, lplan)
+		if err != nil {
+			slog.Warn("failed to load label name maps, using fallback denormalization",
+				slog.String("error", err.Error()))
+		}
+		denormalizer := NewLabelDenormalizer(labelMaps)
+
+		// Stream timeseries results
+		timeseriesCount := 0
+		for evalResults := range evalResultsCh {
+			for _, evalResult := range evalResults {
+				// Extract the count value
+				count := evalResult.Value.Num
+
+				// Extract segment_id from tags if available
+				segmentID := int64(0)
+				if sid, ok := evalResult.Tags["_segment_id"]; ok {
+					if sidInt, ok := sid.(int64); ok {
+						segmentID = sidInt
+					}
+				}
+
+				event := ToLegacyTimeseriesEvent(exprID, segmentID, evalResult.Timestamp, count, evalResult.Tags, denormalizer)
+
+				if err := writeSSE(event); err != nil {
+					slog.Error("failed to write timeseries SSE event", slog.String("error", err.Error()))
+					return
+				}
+				timeseriesCount++
+			}
+		}
+
+		slog.Info("Completed streaming timeseries events for expression",
+			slog.String("exprID", exprID),
+			slog.Int("timeseriesCount", timeseriesCount))
+
+		// Now execute raw events query
 		logqlQuery, _, err := TranslateToLogQL(baseExpr)
 		if err != nil {
 			slog.Error("Failed to translate legacy query to LogQL",
@@ -131,7 +256,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		slog.Info("Translated legacy query to LogQL",
+		slog.Info("Translated legacy query to LogQL for raw events",
 			slog.String("exprID", exprID),
 			slog.String("logql", logqlQuery))
 
@@ -146,7 +271,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		lplan, err := logql.CompileLog(logAst)
+		rawPlan, err := logql.CompileLog(logAst)
 		if err != nil {
 			slog.Error("Failed to compile LogQL query",
 				slog.String("exprID", exprID),
@@ -156,13 +281,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		// Pre-load label name maps for the query time range
-		labelMaps, err := q.loadLabelMapsForTimeRange(r.Context(), orgID, startTs, endTs, lplan)
-		if err != nil {
-			slog.Warn("failed to load label name maps, using fallback denormalization",
-				slog.String("error", err.Error()))
-		}
-		denormalizer := NewLabelDenormalizer(labelMaps)
+		// Reuse denormalizer from timeseries query (label maps already loaded)
 
 		// Execute query
 		reverse := baseExpr.Order == "DESC"
@@ -186,7 +305,7 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			endTs,
 			reverse,
 			limit,
-			lplan,
+			rawPlan,
 			nil, // fields
 		)
 		if err != nil {

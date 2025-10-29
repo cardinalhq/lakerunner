@@ -17,14 +17,14 @@ package queryapi
 // LegacyEvent represents a SSE event in the legacy API format.
 type LegacyEvent struct {
 	ID      string        `json:"id"`
-	Type    string        `json:"type"`
+	Type    string        `json:"type"` // "event" for raw logs, "timeseries" for aggregated counts
 	Message LegacyMessage `json:"message"`
 }
 
 // LegacyMessage represents the message payload in a legacy SSE event.
 type LegacyMessage struct {
 	Timestamp int64          `json:"timestamp"`
-	Value     float64        `json:"value"`
+	Value     float64        `json:"value"` // 1.0 for raw events, aggregated count for timeseries
 	Tags      map[string]any `json:"tags"`
 }
 
@@ -55,6 +55,31 @@ func ToLegacySSEEvent(
 		Message: LegacyMessage{
 			Timestamp: timestamp,
 			Value:     value,
+			Tags:      dottedTags,
+		},
+	}
+}
+
+// ToLegacyTimeseriesEvent converts a timeseries aggregation result to a legacy SSE event format.
+func ToLegacyTimeseriesEvent(
+	queryID string,
+	segmentID int64,
+	timestamp int64,
+	count float64,
+	tags map[string]any,
+	denormalizer *LabelDenormalizer,
+) LegacyEvent {
+	dottedTags := denormalizer.DenormalizeMap(segmentID, tags)
+
+	// Add timestamp to tags for legacy API compatibility
+	dottedTags["_cardinalhq.timestamp"] = timestamp
+
+	return LegacyEvent{
+		ID:   queryID,
+		Type: "timeseries",
+		Message: LegacyMessage{
+			Timestamp: timestamp,
+			Value:     count,
 			Tags:      dottedTags,
 		},
 	}
