@@ -368,6 +368,11 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	workerSql = strings.ReplaceAll(workerSql, "{start}", fmt.Sprintf("%d", req.StartTs))
 	workerSql = strings.ReplaceAll(workerSql, "{end}", fmt.Sprintf("%d", req.EndTs))
 
+	if cacheManager == nil {
+		http.Error(w, "cache manager not initialized for this query type", http.StatusInternalServerError)
+		return
+	}
+
 	if isTagValuesQuery {
 		// Handle tag values query
 		tagValuesChannel, err := EvaluatePushDown(r.Context(), cacheManager, req, workerSql, globSize, tagValuesMapper)
