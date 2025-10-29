@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"time"
 
@@ -222,6 +223,11 @@ func (q *QuerierService) handleGraphQuery(w http.ResponseWriter, r *http.Request
 			for _, evalResult := range evalResults {
 				// Extract the count value
 				count := evalResult.Value.Num
+
+				// Skip NaN values (JSON doesn't support NaN)
+				if math.IsNaN(count) {
+					continue
+				}
 
 				// Extract segment_id from tags if available
 				segmentID := int64(0)

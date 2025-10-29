@@ -18,11 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/promql"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/promql"
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 

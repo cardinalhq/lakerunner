@@ -21,9 +21,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 // Test that two connections from the pool share the same database state
