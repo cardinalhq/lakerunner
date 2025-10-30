@@ -250,8 +250,8 @@ func TestSkippingNaN_ClientPerspective(t *testing.T) {
 
 	// Timeseries with gaps due to NaN values
 	dataPoints := []struct {
-		timestamp int64
-		value     float64
+		timestamp  int64
+		value      float64
 		shouldEmit bool
 	}{
 		{timestamp: 1000, value: 10.0, shouldEmit: true},
