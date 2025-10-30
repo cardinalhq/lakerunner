@@ -322,6 +322,39 @@ func TestTranslateToLogQL_ContainsOperator_FileType(t *testing.T) {
 	assert.Contains(t, logql, `resource_file_type=~".*cmd.*"`)
 }
 
+func TestTranslateToLogQL_InOperatorThreeFileNames(t *testing.T) {
+	// Reproduces issue where multiple file names with dots in 'in' operator should be regex escaped
+	baseExpr := BaseExpression{
+		Dataset: "logs",
+		Filter: BinaryClause{
+			Op: "and",
+			Clauses: []QueryClause{
+				Filter{
+					K:  "resource.bucket.name",
+					V:  []string{"test-bucket"},
+					Op: "eq",
+				},
+				Filter{
+					K: "resource.file",
+					V: []string{
+						"example.com-1234567890.11_2025-10-29-170129_server-04",
+						"example.com-1234567890.11_2025-10-29-170129_controller",
+						"example.com-1234567890.11_2025-10-29-170129_server-03",
+					},
+					Op: "in",
+				},
+			},
+		},
+	}
+
+	logql, _, err := TranslateToLogQL(baseExpr)
+	require.NoError(t, err)
+
+	// Expected: bucket name should be exact match, file names should be regex OR with escaped dots
+	assert.Contains(t, logql, `resource_bucket_name="test-bucket"`)
+	assert.Contains(t, logql, `resource_file=~"^(example\\.com-1234567890\\.11_2025-10-29-170129_server-04|example\\.com-1234567890\\.11_2025-10-29-170129_controller|example\\.com-1234567890\\.11_2025-10-29-170129_server-03)$"`)
+}
+
 func TestGetIntervalForTimeRange(t *testing.T) {
 	tests := []struct {
 		name     string

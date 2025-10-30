@@ -242,8 +242,14 @@ func (q *QuerierService) lookupLogsSegments(
 				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			}
 		case logql.MatchRe:
-			// Regex always uses trigrams (even for full-value dimensions)
-			addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			// For full-value dimensions, we only index exact values, not trigrams
+			// So for regex matches, fall back to exists check and let DuckDB filter
+			if slices.Contains(fullValueDimensions, label) {
+				addExistsNode(label, fpsToFetch, &root)
+			} else {
+				// For non-full-value dimensions, use trigram matching
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)
 		}
@@ -267,8 +273,14 @@ func (q *QuerierService) lookupLogsSegments(
 				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			}
 		case logql.MatchRe:
-			// Regex always uses trigrams (even for full-value dimensions)
-			addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			// For full-value dimensions, we only index exact values, not trigrams
+			// So for regex matches, fall back to exists check and let DuckDB filter
+			if slices.Contains(fullValueDimensions, label) {
+				addExistsNode(label, fpsToFetch, &root)
+			} else {
+				// For non-full-value dimensions, use trigram matching
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)
 		}
