@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"math"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -242,10 +243,16 @@ func (q *QuerierService) lookupLogsSegments(
 				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			}
 		case logql.MatchRe:
-			// For full-value dimensions, we only index exact values, not trigrams
-			// So for regex matches, fall back to exists check and let DuckDB filter
+			// For full-value dimensions, check if this is a simple alternation (e.g., from 'in' operator)
+			// If so, convert to OR of exact matches instead of falling back to exists check
 			if slices.Contains(fullValueDimensions, label) {
-				addExistsNode(label, fpsToFetch, &root)
+				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
+					// Create OR of exact value matches
+					addOrNodeFromValues(label, values, fpsToFetch, &root)
+				} else {
+					// Fall back to exists check for complex regex patterns
+					addExistsNode(label, fpsToFetch, &root)
+				}
 			} else {
 				// For non-full-value dimensions, use trigram matching
 				addAndNodeFromPattern(label, val, fpsToFetch, &root)
@@ -273,10 +280,16 @@ func (q *QuerierService) lookupLogsSegments(
 				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			}
 		case logql.MatchRe:
-			// For full-value dimensions, we only index exact values, not trigrams
-			// So for regex matches, fall back to exists check and let DuckDB filter
+			// For full-value dimensions, check if this is a simple alternation (e.g., from 'in' operator)
+			// If so, convert to OR of exact matches instead of falling back to exists check
 			if slices.Contains(fullValueDimensions, label) {
-				addExistsNode(label, fpsToFetch, &root)
+				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
+					// Create OR of exact value matches
+					addOrNodeFromValues(label, values, fpsToFetch, &root)
+				} else {
+					// Fall back to exists check for complex regex patterns
+					addExistsNode(label, fpsToFetch, &root)
+				}
 			} else {
 				// For non-full-value dimensions, use trigram matching
 				addAndNodeFromPattern(label, val, fpsToFetch, &root)
@@ -555,4 +568,174 @@ func dedupeInt64(in []int64) []int64 {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// addOrNodeFromValues creates an OR query node for multiple exact values
+// This is used for optimizing regex patterns that are really just alternations (e.g., from 'in' operator)
+func addOrNodeFromValues(label string, values []string, fps map[int64]struct{}, root **TrigramQuery) {
+	if len(values) == 0 {
+		return
+	}
+
+	if len(values) == 1 {
+		// Single value, just use exact match
+		addFullValueNode(label, values[0], fps, root)
+		return
+	}
+
+	// Multiple values - create OR of exact matches
+	var orSubs []*TrigramQuery
+	for _, val := range values {
+		existsFp := computeFingerprint(label, existsRegex)
+		valueFp := computeFingerprint(label, val)
+		fps[existsFp] = struct{}{}
+		fps[valueFp] = struct{}{}
+
+		orSubs = append(orSubs, &TrigramQuery{
+			Op:        index.QAnd,
+			fieldName: label,
+			Trigram:   []string{existsRegex, val},
+		})
+	}
+
+	orNode := &TrigramQuery{
+		Op:  index.QOr,
+		Sub: orSubs,
+	}
+
+	*root = &TrigramQuery{Op: index.QAnd, Sub: []*TrigramQuery{*root, orNode}}
+}
+
+// tryExtractExactAlternates attempts to extract exact values from a simple alternation pattern
+// like ^(val1|val2|val3)$ by string parsing. Returns the unescaped values and true if successful.
+// Returns false for patterns with wildcards or other complex regex features.
+func tryExtractExactAlternates(pattern string) ([]string, bool) {
+	// Check if it matches the basic structure: ^(...)$
+	if !strings.HasPrefix(pattern, "^(") || !strings.HasSuffix(pattern, ")$") {
+		// Also try without parens: ^val$
+		if strings.HasPrefix(pattern, "^") && strings.HasSuffix(pattern, "$") {
+			inner := strings.TrimPrefix(pattern, "^")
+			inner = strings.TrimSuffix(inner, "$")
+			// Make sure it's just a literal (no regex metacharacters except escaped ones)
+			if isSimpleLiteral(inner) {
+				return []string{unescapeRegex(inner)}, true
+			}
+		}
+		return nil, false
+	}
+
+	// Extract the content between ^( and )$
+	inner := strings.TrimPrefix(pattern, "^(")
+	inner = strings.TrimSuffix(inner, ")$")
+
+	// Split by | at the top level (not inside nested parens/brackets)
+	parts := splitTopLevelPipe(inner)
+	if len(parts) == 0 {
+		return nil, false
+	}
+
+	// Check each part is a simple literal (only escaped metacharacters allowed)
+	var values []string
+	for _, part := range parts {
+		if !isSimpleLiteral(part) {
+			return nil, false
+		}
+		values = append(values, unescapeRegex(part))
+	}
+
+	return values, true
+}
+
+// splitTopLevelPipe splits on | but not inside nested ()[]{}
+func splitTopLevelPipe(s string) []string {
+	var parts []string
+	var current strings.Builder
+	depth := 0
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+
+		if escaped {
+			current.WriteByte(c)
+			escaped = false
+			continue
+		}
+
+		if c == '\\' {
+			current.WriteByte(c)
+			escaped = true
+			continue
+		}
+
+		if c == '(' || c == '[' || c == '{' {
+			depth++
+			current.WriteByte(c)
+			continue
+		}
+
+		if c == ')' || c == ']' || c == '}' {
+			depth--
+			current.WriteByte(c)
+			continue
+		}
+
+		if c == '|' && depth == 0 {
+			parts = append(parts, current.String())
+			current.Reset()
+			continue
+		}
+
+		current.WriteByte(c)
+	}
+
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+
+	return parts
+}
+
+// isSimpleLiteral checks if a string is just literals and escaped metacharacters.
+// Returns false if it contains unescaped regex metacharacters that change meaning.
+func isSimpleLiteral(s string) bool {
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+
+		if escaped {
+			escaped = false
+			continue
+		}
+
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+
+		// Check for unescaped regex metacharacters that aren't just literals
+		if strings.ContainsRune(".+*?()[]{}^$|", rune(c)) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// unescapeRegex unescapes common regex escapes like \. to .
+func unescapeRegex(s string) string {
+	var result strings.Builder
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if escaped {
+			result.WriteByte(c)
+			escaped = false
+		} else if c == '\\' {
+			escaped = true
+		} else {
+			result.WriteByte(c)
+		}
+	}
+	return result.String()
 }
