@@ -885,7 +885,9 @@ func getAWSCredsFromChainOrAssume(ctx context.Context, profile storageprofile.St
 	}, nil
 }
 
-// normalizeEndpoint removes scheme and determines USE_SSL similar to Scala.
+// normalizeEndpoint removes scheme prefix from endpoint and determines USE_SSL.
+// If endpoint starts with http://, returns false for useSSL.
+// If endpoint starts with https:// or has no scheme, returns true for useSSL.
 func normalizeEndpoint(endpoint, region string) (host string, useSSL bool) {
 	e := strings.TrimSpace(endpoint)
 	if e == "" {
@@ -896,10 +898,6 @@ func normalizeEndpoint(endpoint, region string) (host string, useSSL bool) {
 	}
 	if strings.HasPrefix(e, "https://") {
 		return strings.TrimPrefix(e, "https://"), true
-	}
-	// If endpoint contains port 80 or 8080, assume http (no SSL)
-	if strings.Contains(e, ":80") || strings.Contains(e, ":8080") {
-		return e, false
 	}
 	return e, true
 }
