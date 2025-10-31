@@ -935,7 +935,7 @@ func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig, 
 	_, _ = fmt.Fprintf(&b, "  TYPE S3,\n")
 	_, _ = fmt.Fprintf(&b, "  ENDPOINT '%s',\n", escapeSingle(endpointHost))
 	_, _ = fmt.Fprintf(&b, "  URL_STYLE '%s',\n", escapeSingle(config.URLStyle))
-	_, _ = fmt.Fprintf(&b, "  USE_SSL '%s',\n", escapeSingle(useSSLStr))
+	_, _ = fmt.Fprintf(&b, "  USE_SSL %s,\n", useSSLStr)
 	_, _ = fmt.Fprintf(&b, "  KEY_ID '%s',\n", escapeSingle(awsCreds.AccessKeyID))
 	_, _ = fmt.Fprintf(&b, "  SECRET '%s',\n", escapeSingle(awsCreds.SecretAccessKey))
 	if awsCreds.SessionToken != "" {
