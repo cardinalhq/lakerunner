@@ -347,6 +347,17 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				globSize = ws.LogsGlobSize
 			}
 		}
+	} else if req.LegacyLeaf != nil {
+		// Handle direct legacy AST queries
+		if req.TagName != "" {
+			workerSql = req.LegacyLeaf.ToWorkerSQLForTagValues(req.TagName)
+			isTagValuesQuery = true
+		} else {
+			workerSql = req.LegacyLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString(), req.Fields)
+		}
+		// Legacy queries are always for logs (not spans/traces)
+		cacheManager = ws.LogsCM
+		globSize = ws.LogsGlobSize
 	} else {
 		http.Error(w, "no leaf to evaluate", http.StatusBadRequest)
 		return
