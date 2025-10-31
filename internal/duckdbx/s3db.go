@@ -946,6 +946,7 @@ func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig, 
 	_, _ = fmt.Fprintf(&b, ");")
 
 	duckdbDDLMu.Lock()
+	slog.Info("Creating DuckDB secret", "sql", b.String())
 	_, err = conn.ExecContext(ctx, b.String())
 	duckdbDDLMu.Unlock()
 	return err
