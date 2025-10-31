@@ -912,6 +912,7 @@ func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig, 
 	}
 
 	endpointHost, useSSL := normalizeEndpoint(config.Endpoint, config.Region)
+	slog.Info("Endpoint normalization", "original", config.Endpoint, "normalized", endpointHost, "useSSL", useSSL)
 
 	// Get fresh creds each time we create/replace the secret (aligning with Scala behavior)
 	awsCreds, err := getAWSCredsFromChainOrAssume(ctx, profile)
