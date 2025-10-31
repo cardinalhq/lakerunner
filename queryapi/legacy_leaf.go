@@ -15,6 +15,7 @@
 package queryapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -24,6 +25,29 @@ import (
 // It contains the filter tree and can generate DuckDB SQL directly without going through LogQL.
 type LegacyLeaf struct {
 	Filter QueryClause `json:"filter"`
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for LegacyLeaf to handle the QueryClause interface.
+func (ll *LegacyLeaf) UnmarshalJSON(data []byte) error {
+	type Alias LegacyLeaf
+	aux := &struct {
+		Filter json.RawMessage `json:"filter"`
+		*Alias
+	}{
+		Alias: (*Alias)(ll),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	clause, err := unmarshalQueryClause(aux.Filter)
+	if err != nil {
+		return err
+	}
+	ll.Filter = clause
+
+	return nil
 }
 
 // ToWorkerSQLWithLimit generates DuckDB SQL for this legacy query.
