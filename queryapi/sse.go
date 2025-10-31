@@ -153,6 +153,12 @@ func mkRequest(ctx context.Context, request PushDownRequest, u string) (*http.Re
 				slog.Error("failed to close response body", "err", cerr)
 			}
 		}()
+		// Read the error response body for debugging
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr == nil && len(body) > 0 {
+			slog.Error("worker returned error", "status", resp.Status, "body", string(body))
+			return nil, fmt.Errorf("worker returned %s: %s", resp.Status, string(body))
+		}
 		return nil, fmt.Errorf("worker returned %s", resp.Status)
 	}
 	return resp, nil

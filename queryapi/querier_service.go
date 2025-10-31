@@ -35,11 +35,12 @@ type PushDownRequest struct {
 	Segments       []SegmentInfo `json:"segments"`
 
 	// dataset specific fields
-	BaseExpr *promql.BaseExpr `json:"baseExpr"`
-	LogLeaf  *logql.LogLeaf   `json:"logLeaf"`
-	Limit    int              `json:"limit"`
-	Reverse  bool             `json:"reverse"`
-	Fields   []string         `json:"fields,omitempty"`
+	BaseExpr   *promql.BaseExpr `json:"baseExpr"`
+	LogLeaf    *logql.LogLeaf   `json:"logLeaf"`
+	LegacyLeaf *LegacyLeaf      `json:"legacyLeaf,omitempty"` // Direct legacy AST query (bypasses LogQL)
+	Limit      int              `json:"limit"`
+	Reverse    bool             `json:"reverse"`
+	Fields     []string         `json:"fields,omitempty"`
 
 	TagName string `json:"tagName"` // Set this to a tag name to get distinct values for that tag
 	IsSpans bool   `json:"isSpans"` // Set this to true for spans queries

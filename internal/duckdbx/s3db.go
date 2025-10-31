@@ -885,21 +885,6 @@ func getAWSCredsFromChainOrAssume(ctx context.Context, profile storageprofile.St
 	}, nil
 }
 
-// normalizeEndpoint removes scheme and determines USE_SSL similar to Scala.
-func normalizeEndpoint(endpoint, region string) (host string, useSSL bool) {
-	e := strings.TrimSpace(endpoint)
-	if e == "" {
-		return fmt.Sprintf("s3.%s.amazonaws.com", strings.TrimSpace(region)), true
-	}
-	if strings.HasPrefix(e, "http://") {
-		return strings.TrimPrefix(e, "http://"), false
-	}
-	if strings.HasPrefix(e, "https://") {
-		return strings.TrimPrefix(e, "https://"), true
-	}
-	return e, true
-}
-
 func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig, profile storageprofile.StorageProfile) error {
 	if strings.TrimSpace(config.Bucket) == "" {
 		return fmt.Errorf("bucket is required")
@@ -911,7 +896,11 @@ func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig, 
 		config.URLStyle = "path"
 	}
 
-	endpointHost, useSSL := normalizeEndpoint(config.Endpoint, config.Region)
+	// Endpoint should already be normalized (scheme stripped) by caller
+	// UseSSL should already be set correctly by caller
+	endpointHost := config.Endpoint
+	useSSL := config.UseSSL
+	slog.Info("Creating S3 secret", "endpoint", endpointHost, "useSSL", useSSL)
 
 	// Get fresh creds each time we create/replace the secret (aligning with Scala behavior)
 	awsCreds, err := getAWSCredsFromChainOrAssume(ctx, profile)
@@ -935,7 +924,7 @@ func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig, 
 	_, _ = fmt.Fprintf(&b, "  TYPE S3,\n")
 	_, _ = fmt.Fprintf(&b, "  ENDPOINT '%s',\n", escapeSingle(endpointHost))
 	_, _ = fmt.Fprintf(&b, "  URL_STYLE '%s',\n", escapeSingle(config.URLStyle))
-	_, _ = fmt.Fprintf(&b, "  USE_SSL '%s',\n", escapeSingle(useSSLStr))
+	_, _ = fmt.Fprintf(&b, "  USE_SSL %s,\n", useSSLStr)
 	_, _ = fmt.Fprintf(&b, "  KEY_ID '%s',\n", escapeSingle(awsCreds.AccessKeyID))
 	_, _ = fmt.Fprintf(&b, "  SECRET '%s',\n", escapeSingle(awsCreds.SecretAccessKey))
 	if awsCreds.SessionToken != "" {
