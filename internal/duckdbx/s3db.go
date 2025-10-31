@@ -885,23 +885,6 @@ func getAWSCredsFromChainOrAssume(ctx context.Context, profile storageprofile.St
 	}, nil
 }
 
-// normalizeEndpoint removes scheme prefix from endpoint and determines USE_SSL.
-// If endpoint starts with http://, returns false for useSSL.
-// If endpoint starts with https:// or has no scheme, returns true for useSSL.
-func normalizeEndpoint(endpoint, region string) (host string, useSSL bool) {
-	e := strings.TrimSpace(endpoint)
-	if e == "" {
-		return fmt.Sprintf("s3.%s.amazonaws.com", strings.TrimSpace(region)), true
-	}
-	if strings.HasPrefix(e, "http://") {
-		return strings.TrimPrefix(e, "http://"), false
-	}
-	if strings.HasPrefix(e, "https://") {
-		return strings.TrimPrefix(e, "https://"), true
-	}
-	return e, true
-}
-
 func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig, profile storageprofile.StorageProfile) error {
 	if strings.TrimSpace(config.Bucket) == "" {
 		return fmt.Errorf("bucket is required")
