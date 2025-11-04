@@ -152,14 +152,11 @@ func filterToTrigramQuery(clause QueryClause, fps map[int64]struct{}, root **Tri
 			if len(c.V) == 0 {
 				return
 			}
-			// For full-value dimensions, fall back to exists check
-			// (contains doesn't work well with full-value indexing)
-			if slices.Contains(fullValueDimensions, label) {
-				addExistsNode(label, fps, root)
-			} else {
-				// Build regex pattern for substring match
+			if slices.Contains(dimensionsToIndex, label) {
 				pattern := ".*" + regexp.QuoteMeta(c.V[0]) + ".*"
 				addAndNodeFromPattern(label, pattern, fps, root)
+			} else {
+				addExistsNode(label, fps, root)
 			}
 
 		case "regex":
