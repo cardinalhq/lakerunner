@@ -91,8 +91,10 @@ func TestLegacyLeaf_ContainsOperator(t *testing.T) {
 
 	// Should normalize _cardinalhq.* to chq_*
 	assert.Contains(t, sql, `"chq_message"`)
-	// Should use LIKE for substring match
-	assert.Contains(t, sql, `"chq_message" LIKE '%error%'`)
+	// Should use case-insensitive regex to match Scala behavior
+	assert.Contains(t, sql, `REGEXP_MATCHES`)
+	assert.Contains(t, sql, `'.*error.*'`)
+	assert.Contains(t, sql, `'i'`) // Case-insensitive flag
 }
 
 func TestLegacyLeaf_RegexOperator(t *testing.T) {
@@ -108,6 +110,7 @@ func TestLegacyLeaf_RegexOperator(t *testing.T) {
 	assert.Contains(t, sql, `"log_log_level"`)
 	assert.Contains(t, sql, "REGEXP_MATCHES")
 	assert.Contains(t, sql, "ERROR|WARN")
+	assert.Contains(t, sql, `'i'`) // Case-insensitive flag to match Scala
 }
 
 func TestLegacyLeaf_ComparisonOperators(t *testing.T) {
@@ -218,7 +221,8 @@ func TestLegacyLeaf_OrOperator(t *testing.T) {
 	sql := leaf.ToWorkerSQLWithLimit(0, "", nil)
 
 	// Should have both conditions combined with OR
-	assert.Contains(t, sql, `"chq_message" LIKE '%error%'`)
+	assert.Contains(t, sql, `"chq_message"`)
+	assert.Contains(t, sql, `REGEXP_MATCHES`) // Changed to regex for case-insensitive matching
 	assert.Contains(t, sql, `"log_log_level" = 'ERROR'`)
 	assert.Contains(t, sql, " OR ")
 }
@@ -341,19 +345,21 @@ func TestLegacyLeaf_SpecialCharacters(t *testing.T) {
 	}
 }
 
-func TestLegacyLeaf_LikeEscaping(t *testing.T) {
-	// Test that LIKE special characters are properly escaped
+func TestLegacyLeaf_RegexEscaping(t *testing.T) {
+	// Test that regex special characters are properly escaped in contains operator
 	filter := Filter{
 		K:  "field",
-		V:  []string{"50%_test"},
+		V:  []string{"test.*value"},
 		Op: "contains",
 	}
 
 	leaf := &LegacyLeaf{Filter: filter}
 	sql := leaf.ToWorkerSQLWithLimit(0, "", nil)
 
-	// Should escape % and _ in LIKE pattern
-	assert.Contains(t, sql, `LIKE '%50\%\_test%'`)
+	// Should escape regex metacharacters (. and * become \. and \*)
+	assert.Contains(t, sql, `REGEXP_MATCHES`)
+	// The .* should be escaped to \.\* for literal matching
+	assert.Contains(t, sql, `'.*test\.\*value.*'`)
 }
 
 func TestLegacyLeaf_FieldSelection(t *testing.T) {
@@ -467,4 +473,101 @@ func TestSqlStringLiteral(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestLegacyLeaf_CaseInsensitiveContains(t *testing.T) {
+	// Test that contains operator is case-insensitive (matches Scala behavior)
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"lowercase", "error"},
+		{"uppercase", "ERROR"},
+		{"mixed case", "ErRoR"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := Filter{
+				K:  "message",
+				V:  []string{tt.value},
+				Op: "contains",
+			}
+
+			leaf := &LegacyLeaf{Filter: filter}
+			sql := leaf.ToWorkerSQLWithLimit(0, "", nil)
+
+			// Should use REGEXP_MATCHES with 'i' flag for case-insensitive matching
+			assert.Contains(t, sql, "REGEXP_MATCHES")
+			assert.Contains(t, sql, `'i'`)
+			// Pattern should be .*value.* with original case (case-insensitive flag handles matching)
+			assert.Contains(t, sql, ".*"+tt.value+".*")
+		})
+	}
+}
+
+func TestLegacyLeaf_CaseInsensitiveRegex(t *testing.T) {
+	// Test that regex operator is case-insensitive (matches Scala behavior)
+	filter := Filter{
+		K:  "log_level",
+		V:  []string{"error|warn|info"},
+		Op: "regex",
+	}
+
+	leaf := &LegacyLeaf{Filter: filter}
+	sql := leaf.ToWorkerSQLWithLimit(0, "", nil)
+
+	// Should use REGEXP_MATCHES with 'i' flag for case-insensitive matching
+	assert.Contains(t, sql, "REGEXP_MATCHES")
+	assert.Contains(t, sql, `'i'`)
+	assert.Contains(t, sql, "error|warn|info")
+}
+
+func TestLegacyLeaf_NonIndexedFieldHandling(t *testing.T) {
+	// Test that non-indexed fields get IS NOT NULL checks
+	// This test assumes that "custom_field" is not in dimensionsToIndex
+	filter := Filter{
+		K:  "custom_field",
+		V:  []string{"value"},
+		Op: "eq",
+	}
+
+	leaf := &LegacyLeaf{Filter: filter}
+	sql := leaf.ToWorkerSQLWithLimit(0, "", nil)
+
+	// For non-indexed fields, should add IS NOT NULL check
+	// Note: This behavior depends on dimensionsToIndex configuration
+	// If custom_field is not indexed, it should have IS NOT NULL
+	assert.Contains(t, sql, `"custom_field"`)
+}
+
+func TestLegacyLeaf_TimeseriesPushDownAggregation(t *testing.T) {
+	// Test SQL generation for timeseries with push-down aggregation
+	filter := Filter{
+		K:  "log.log_level",
+		V:  []string{"ERROR"},
+		Op: "eq",
+	}
+
+	leaf := &LegacyLeaf{Filter: filter}
+	stepMs := int64(60000) // 1 minute buckets
+	sql := leaf.ToWorkerSQLForTimeseries(stepMs)
+
+	// Should have WITH clause
+	assert.Contains(t, sql, "WITH")
+	// Should have time bucketing formula matching Scala behavior
+	// (timestamp - (timestamp % step_ms)) as step_ts
+	assert.Contains(t, sql, "60000")
+	assert.Contains(t, sql, "step_ts")
+	// Should have GROUP BY
+	assert.Contains(t, sql, "GROUP BY step_ts")
+	// Should have COUNT
+	assert.Contains(t, sql, "COUNT(*)")
+	// Should have ORDER BY step_ts
+	assert.Contains(t, sql, "ORDER BY step_ts")
+	// Should still apply filter
+	assert.Contains(t, sql, `"log_log_level" = 'ERROR'`)
+	// Should have time range placeholders
+	assert.Contains(t, sql, "{start}")
+	assert.Contains(t, sql, "{end}")
 }

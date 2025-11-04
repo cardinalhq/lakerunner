@@ -50,6 +50,54 @@ func (ll *LegacyLeaf) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ToWorkerSQLForTimeseries generates DuckDB SQL for timeseries aggregation with push-down.
+// This matches Scala's behavior by doing time bucketing and counting in SQL rather than client-side.
+// stepMs is the time bucket size in milliseconds.
+func (ll *LegacyLeaf) ToWorkerSQLForTimeseries(stepMs int64) string {
+	const baseRel = "{table}"
+	const tsCol = "\"chq_timestamp\""
+
+	// Build CTE pipeline similar to regular queries
+	var ctes []string
+	stageNum := 0
+
+	// Stage 0: SELECT * from base relation
+	ctes = append(ctes, fmt.Sprintf("s%d AS (SELECT * FROM %s)", stageNum, baseRel))
+	stageNum++
+
+	// Stage 1: Normalize fingerprint type to string
+	prevStage := fmt.Sprintf("s%d", stageNum-1)
+	ctes = append(ctes, fmt.Sprintf(
+		`s%d AS (SELECT %s.* REPLACE(CAST("chq_fingerprint" AS VARCHAR) AS "chq_fingerprint") FROM %s)`,
+		stageNum, prevStage, prevStage,
+	))
+	stageNum++
+
+	// Stage 2: Time window filter
+	prevStage = fmt.Sprintf("s%d", stageNum-1)
+	timePred := fmt.Sprintf("CAST(%s AS BIGINT) >= {start} AND CAST(%s AS BIGINT) < {end}", tsCol, tsCol)
+	ctes = append(ctes, fmt.Sprintf(
+		"s%d AS (SELECT %s.* FROM %s WHERE %s)",
+		stageNum, prevStage, prevStage, timePred,
+	))
+	stageNum++
+
+	// Stage 3+: Apply filter conditions
+	if ll.Filter != nil {
+		whereStages := ll.buildWhereStages(ll.Filter, &stageNum)
+		ctes = append(ctes, whereStages...)
+	}
+
+	// Final SELECT: time bucketing and aggregation
+	// Matches Scala behavior: (timestamp - (timestamp % step_ms)) as step_ts
+	prevStage = fmt.Sprintf("s%d", stageNum-1)
+	sql := "WITH\n  " + strings.Join(ctes, ",\n  ") +
+		fmt.Sprintf("\nSELECT (CAST(%s AS BIGINT) - (CAST(%s AS BIGINT) %% %d)) AS step_ts, COUNT(*) AS count FROM %s GROUP BY step_ts ORDER BY step_ts",
+			tsCol, tsCol, stepMs, prevStage)
+
+	return sql
+}
+
 // ToWorkerSQLWithLimit generates DuckDB SQL for this legacy query.
 // It follows the same CTE (Common Table Expression) pattern as LogLeaf.ToWorkerSQL.
 func (ll *LegacyLeaf) ToWorkerSQLWithLimit(limit int, order string, fields []string) string {
@@ -220,6 +268,11 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 
 	// Normalize label name (dots → underscores, handle _cardinalhq.* → chq_*)
 	colName := normalizeLabelName(filter.K)
+
+	// Check if field is indexed - if not indexed, we handle it differently
+	// Non-indexed fields might not exist in all segments, so we add IS NOT NULL checks
+	isIndexed := slices.Contains(dimensionsToIndex, colName)
+
 	quotedCol := quoteIdentifier(colName)
 
 	switch filter.Op {
@@ -227,61 +280,106 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 		if len(filter.V) == 0 {
 			return ""
 		}
-		return fmt.Sprintf("%s = %s", quotedCol, sqlStringLiteral(filter.V[0]))
+		cond := fmt.Sprintf("%s = %s", quotedCol, sqlStringLiteral(filter.V[0]))
+		// For non-indexed fields, add IS NOT NULL check to handle missing fields gracefully
+		if !isIndexed {
+			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
+		}
+		return cond
 
 	case "in":
 		if len(filter.V) == 0 {
 			return ""
 		}
+		var cond string
 		if len(filter.V) == 1 {
 			// Optimize single value to eq
-			return fmt.Sprintf("%s = %s", quotedCol, sqlStringLiteral(filter.V[0]))
+			cond = fmt.Sprintf("%s = %s", quotedCol, sqlStringLiteral(filter.V[0]))
+		} else {
+			// Multiple values: use IN
+			values := make([]string, len(filter.V))
+			for i, v := range filter.V {
+				values[i] = sqlStringLiteral(v)
+			}
+			cond = fmt.Sprintf("%s IN (%s)", quotedCol, strings.Join(values, ", "))
 		}
-		// Multiple values: use IN
-		values := make([]string, len(filter.V))
-		for i, v := range filter.V {
-			values[i] = sqlStringLiteral(v)
+		// For non-indexed fields, add IS NOT NULL check
+		if !isIndexed {
+			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
 		}
-		return fmt.Sprintf("%s IN (%s)", quotedCol, strings.Join(values, ", "))
+		return cond
 
 	case "contains":
 		if len(filter.V) == 0 {
 			return ""
 		}
-		// Use LIKE for substring match
-		pattern := "%" + escapeLikePattern(filter.V[0]) + "%"
-		return fmt.Sprintf("%s LIKE %s", quotedCol, sqlStringLiteral(pattern))
+		// Use case-insensitive regex to match Scala behavior
+		// Scala uses: regexp_matches(col, '.*val.*', 'i')
+		escapedValue := regexEscape(filter.V[0])
+		pattern := ".*" + escapedValue + ".*"
+		cond := fmt.Sprintf("REGEXP_MATCHES(%s, %s, 'i')", quotedCol, sqlStringLiteral(pattern))
+		// For non-indexed fields, add IS NOT NULL check
+		if !isIndexed {
+			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
+		}
+		return cond
 
 	case "regex":
 		if len(filter.V) == 0 {
 			return ""
 		}
-		// Use DuckDB's REGEXP_MATCHES function
-		return fmt.Sprintf("REGEXP_MATCHES(%s, %s)", quotedCol, sqlStringLiteral(filter.V[0]))
+		// Use DuckDB's REGEXP_MATCHES function with case-insensitive flag to match Scala behavior
+		// Scala uses: regexp_matches(col, pattern, 'i')
+		cond := fmt.Sprintf("REGEXP_MATCHES(%s, %s, 'i')", quotedCol, sqlStringLiteral(filter.V[0]))
+		// For non-indexed fields, add IS NOT NULL check
+		if !isIndexed {
+			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
+		}
+		return cond
 
 	case "gt":
 		if len(filter.V) == 0 {
 			return ""
 		}
-		return fmt.Sprintf("%s > %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
+		cond := fmt.Sprintf("%s > %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
+		// For non-indexed fields, add IS NOT NULL check
+		if !isIndexed {
+			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
+		}
+		return cond
 
 	case "gte":
 		if len(filter.V) == 0 {
 			return ""
 		}
-		return fmt.Sprintf("%s >= %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
+		cond := fmt.Sprintf("%s >= %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
+		// For non-indexed fields, add IS NOT NULL check
+		if !isIndexed {
+			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
+		}
+		return cond
 
 	case "lt":
 		if len(filter.V) == 0 {
 			return ""
 		}
-		return fmt.Sprintf("%s < %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
+		cond := fmt.Sprintf("%s < %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
+		// For non-indexed fields, add IS NOT NULL check
+		if !isIndexed {
+			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
+		}
+		return cond
 
 	case "lte":
 		if len(filter.V) == 0 {
 			return ""
 		}
-		return fmt.Sprintf("%s <= %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
+		cond := fmt.Sprintf("%s <= %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
+		// For non-indexed fields, add IS NOT NULL check
+		if !isIndexed {
+			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
+		}
+		return cond
 
 	default:
 		return ""
@@ -313,13 +411,15 @@ func sqlLiteral(value string, dataType string) string {
 	}
 }
 
-// escapeLikePattern escapes special characters in a LIKE pattern.
-func escapeLikePattern(s string) string {
-	// Escape LIKE special characters: % and _
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `%`, `\%`)
-	s = strings.ReplaceAll(s, `_`, `\_`)
-	return s
+// regexEscape escapes special regex characters for literal matching.
+func regexEscape(s string) string {
+	// Escape regex metacharacters for literal matching
+	specialChars := []string{`\`, `.`, `*`, `+`, `?`, `^`, `$`, `(`, `)`, `[`, `]`, `{`, `}`, `|`}
+	result := s
+	for _, char := range specialChars {
+		result = strings.ReplaceAll(result, char, `\`+char)
+	}
+	return result
 }
 
 // ToWorkerSQLForTagValues generates SQL to get distinct values for a specific tag/label.
