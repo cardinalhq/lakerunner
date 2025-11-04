@@ -309,3 +309,78 @@ func TestFilter_AllOperators(t *testing.T) {
 		})
 	}
 }
+
+func TestBinaryClause_NonNumericKeys(t *testing.T) {
+	// Test parsing BinaryClause with non-numeric keys like "qs3", "qsh1", etc.
+	// This is the actual pattern used in production queries
+	jsonData := []byte(`{
+		"q1": {
+			"k": "field1",
+			"v": ["value1"],
+			"op": "eq",
+			"dataType": "string",
+			"extracted": false,
+			"computed": false
+		},
+		"q2": {
+			"k": "field2",
+			"v": ["value2"],
+			"op": "eq",
+			"dataType": "string",
+			"extracted": false,
+			"computed": false
+		},
+		"qs3": {
+			"qsh1": {
+				"k": "field3",
+				"v": ["value3"],
+				"op": "contains",
+				"dataType": "string",
+				"extracted": false,
+				"computed": false
+			},
+			"qsh2": {
+				"k": "field4",
+				"v": ["value4"],
+				"op": "contains",
+				"dataType": "string",
+				"extracted": false,
+				"computed": false
+			},
+			"op": "or"
+		},
+		"op": "and"
+	}`)
+
+	var bc BinaryClause
+	err := json.Unmarshal(jsonData, &bc)
+	require.NoError(t, err)
+
+	// Should have 3 clauses: q1, q2, and qs3
+	assert.Equal(t, "and", bc.Op)
+	assert.Equal(t, 3, len(bc.Clauses), "Should parse all 3 clauses including qs3")
+
+	// First two should be Filters
+	filter1, ok := bc.Clauses[0].(Filter)
+	require.True(t, ok)
+	assert.Equal(t, "field1", filter1.K)
+
+	filter2, ok := bc.Clauses[1].(Filter)
+	require.True(t, ok)
+	assert.Equal(t, "field2", filter2.K)
+
+	// Third should be a nested BinaryClause (the OR clause)
+	nestedBC, ok := bc.Clauses[2].(BinaryClause)
+	require.True(t, ok, "qs3 should be parsed as a BinaryClause")
+	assert.Equal(t, "or", nestedBC.Op)
+	assert.Equal(t, 2, len(nestedBC.Clauses), "qs3 should have 2 sub-clauses")
+
+	// Verify the nested clauses
+	nestedFilter1, ok := nestedBC.Clauses[0].(Filter)
+	require.True(t, ok)
+	assert.Equal(t, "field3", nestedFilter1.K)
+
+	nestedFilter2, ok := nestedBC.Clauses[1].(Filter)
+	require.True(t, ok)
+	assert.Equal(t, "field4", nestedFilter2.K)
+}

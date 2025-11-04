@@ -91,15 +91,6 @@ func unmarshalQueryClause(data json.RawMessage) (QueryClause, error) {
 		return nil, err
 	}
 
-	// BinaryClause has "q1", "q2", and "op" fields
-	if _, hasQ1 := typeCheck["q1"]; hasQ1 {
-		var bc BinaryClause
-		if err := json.Unmarshal(data, &bc); err != nil {
-			return nil, err
-		}
-		return bc, nil
-	}
-
 	// Filter has "k", "v", and "op" fields
 	if _, hasK := typeCheck["k"]; hasK {
 		var f Filter
@@ -107,6 +98,24 @@ func unmarshalQueryClause(data json.RawMessage) (QueryClause, error) {
 			return nil, err
 		}
 		return f, nil
+	}
+
+	// BinaryClause has sub-clause keys starting with 'q' (like "q1", "q2", "qsh1", "qs3", etc.) and "op"
+	// Check if any key starts with 'q' (and is not "op" itself)
+	hasQKey := false
+	for key := range typeCheck {
+		if len(key) > 0 && key[0] == 'q' && key != "op" {
+			hasQKey = true
+			break
+		}
+	}
+
+	if hasQKey {
+		var bc BinaryClause
+		if err := json.Unmarshal(data, &bc); err != nil {
+			return nil, err
+		}
+		return bc, nil
 	}
 
 	return nil, fmt.Errorf("unknown QueryClause type")
@@ -130,33 +139,48 @@ func (bc *BinaryClause) UnmarshalJSON(data []byte) error {
 	}
 	bc.Op = opStruct.Op
 
-	// Find all qN keys and parse them in order
+	// Find all keys starting with 'q' and parse them
+	// This supports both numbered keys (q1, q2, q3) and other patterns (qs3, qsh1, etc.)
 	clauses := make(map[string]QueryClause)
+	var orderedKeys []string
 	maxN := 0
 
 	for key, rawClause := range raw {
-		if len(key) > 1 && key[0] == 'q' {
-			// Try to parse as qN where N is a number
+		if len(key) > 1 && key[0] == 'q' && key != "op" {
+			// Parse any key starting with 'q' (except "op")
+			clause, err := unmarshalQueryClause(rawClause)
+			if err != nil {
+				return fmt.Errorf("failed to unmarshal %s: %w", key, err)
+			}
+			clauses[key] = clause
+			orderedKeys = append(orderedKeys, key)
+
+			// Track numeric keys for backward compatibility
 			var n int
-			if _, err := fmt.Sscanf(key, "q%d", &n); err == nil {
-				if n > maxN {
-					maxN = n
-				}
-				clause, err := unmarshalQueryClause(rawClause)
-				if err != nil {
-					return fmt.Errorf("failed to unmarshal %s: %w", key, err)
-				}
-				clauses[key] = clause
+			if _, err := fmt.Sscanf(key, "q%d", &n); err == nil && n > maxN {
+				maxN = n
 			}
 		}
 	}
 
-	// Build ordered list of clauses from q1, q2, q3, ...
-	bc.Clauses = make([]QueryClause, 0, maxN)
+	// Build ordered list of clauses
+	// First try numeric order (q1, q2, q3, ...), then add any non-numeric keys
+	bc.Clauses = make([]QueryClause, 0, len(clauses))
+	usedKeys := make(map[string]bool)
+
+	// Add numeric keys in order
 	for i := 1; i <= maxN; i++ {
 		key := fmt.Sprintf("q%d", i)
 		if clause, ok := clauses[key]; ok {
 			bc.Clauses = append(bc.Clauses, clause)
+			usedKeys[key] = true
+		}
+	}
+
+	// Add non-numeric keys in the order they were encountered
+	for _, key := range orderedKeys {
+		if !usedKeys[key] {
+			bc.Clauses = append(bc.Clauses, clauses[key])
 		}
 	}
 
