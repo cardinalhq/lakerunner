@@ -90,8 +90,8 @@ func TestLegacyLeaf_ContainsOperator(t *testing.T) {
 	leaf := &LegacyLeaf{Filter: filter}
 	sql := leaf.ToWorkerSQLWithLimit(0, "", nil)
 
-	// Should normalize _cardinalhq.* to chq_*
-	assert.Contains(t, sql, `"chq_message"`)
+	// Should normalize _cardinalhq.message to log_message (backward compatibility)
+	assert.Contains(t, sql, `"log_message"`)
 	// Should use case-insensitive regex to match Scala behavior
 	assert.Contains(t, sql, `REGEXP_MATCHES`)
 	assert.Contains(t, sql, `'.*error.*'`)
@@ -222,7 +222,7 @@ func TestLegacyLeaf_OrOperator(t *testing.T) {
 	sql := leaf.ToWorkerSQLWithLimit(0, "", nil)
 
 	// Should have both conditions combined with OR
-	assert.Contains(t, sql, `"chq_message"`)
+	assert.Contains(t, sql, `"log_message"`) // _cardinalhq.message now maps to log_message
 	assert.Contains(t, sql, `REGEXP_MATCHES`) // Changed to regex for case-insensitive matching
 	assert.Contains(t, sql, `"log_log_level" = 'ERROR'`)
 	assert.Contains(t, sql, " OR ")
@@ -294,7 +294,7 @@ func TestLegacyLeaf_UserExampleQuery(t *testing.T) {
 	// Verify conditions
 	assert.Contains(t, sql, `"resource_bucket_name"`)
 	assert.Contains(t, sql, `"resource_file"`)
-	assert.Contains(t, sql, `"chq_message"`)
+	assert.Contains(t, sql, `"log_message"`) // _cardinalhq.message now maps to log_message for backward compat
 	assert.Contains(t, sql, `"log_log_level"`)
 	assert.Contains(t, sql, `"resource_file_type"`)
 	assert.Contains(t, sql, `"log_source"`)

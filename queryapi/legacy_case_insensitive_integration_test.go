@@ -45,7 +45,7 @@ func TestLegacyCaseInsensitiveCompoundOR(t *testing.T) {
 	_, err = db.ExecContext(ctx, `CREATE TABLE `+tableName+` (
 		chq_timestamp BIGINT,
 		chq_fingerprint VARCHAR,
-		chq_message VARCHAR,
+		log_message VARCHAR,
 		resource_bucket_name VARCHAR,
 		resource_file VARCHAR,
 		log_log_level VARCHAR,
@@ -60,7 +60,7 @@ func TestLegacyCaseInsensitiveCompoundOR(t *testing.T) {
 		{
 			"chq_timestamp":        1761816631865,
 			"chq_fingerprint":      "fp1",
-			"chq_message":          "Processing testCommand request", // lowercase
+			"log_message":          "Processing testCommand request", // lowercase
 			"resource_bucket_name": "test-bucket",
 			"resource_file":        "test-file-001.log",
 			"log_log_level":        "INFO",
@@ -70,7 +70,7 @@ func TestLegacyCaseInsensitiveCompoundOR(t *testing.T) {
 		{
 			"chq_timestamp":        1761816632000,
 			"chq_fingerprint":      "fp2",
-			"chq_message":          "Error in processing",
+			"log_message":          "Error in processing",
 			"resource_bucket_name": "test-bucket",
 			"resource_file":        "test-file-001.log",
 			"log_log_level":        "TestCommand executed", // mixed case in different field
@@ -80,7 +80,7 @@ func TestLegacyCaseInsensitiveCompoundOR(t *testing.T) {
 		{
 			"chq_timestamp":        1761816633000,
 			"chq_fingerprint":      "fp3",
-			"chq_message":          "Normal operation",
+			"log_message":          "Normal operation",
 			"resource_bucket_name": "test-bucket",
 			"resource_file":        "test-file-001.log",
 			"log_log_level":        "DEBUG",
@@ -90,7 +90,7 @@ func TestLegacyCaseInsensitiveCompoundOR(t *testing.T) {
 		{
 			"chq_timestamp":        1761816634000,
 			"chq_fingerprint":      "fp4",
-			"chq_message":          "Starting service",
+			"log_message":          "Starting service",
 			"resource_bucket_name": "test-bucket",
 			"resource_file":        "test-file-001.log",
 			"log_log_level":        "INFO",
@@ -101,7 +101,7 @@ func TestLegacyCaseInsensitiveCompoundOR(t *testing.T) {
 		{
 			"chq_timestamp":        1761816635000,
 			"chq_fingerprint":      "fp5",
-			"chq_message":          "Different message",
+			"log_message":          "Different message",
 			"resource_bucket_name": "other-bucket",
 			"resource_file":        "other-file.log",
 			"log_log_level":        "WARN",
@@ -112,7 +112,7 @@ func TestLegacyCaseInsensitiveCompoundOR(t *testing.T) {
 		{
 			"chq_timestamp":        1761816636000,
 			"chq_fingerprint":      "fp6",
-			"chq_message":          "Regular operation",
+			"log_message":          "Regular operation",
 			"resource_bucket_name": "test-bucket",
 			"resource_file":        "test-file-001.log",
 			"log_log_level":        "INFO",
