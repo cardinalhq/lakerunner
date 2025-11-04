@@ -50,6 +50,22 @@ func (ll *LegacyLeaf) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// MarshalJSON implements custom JSON marshaling for LegacyLeaf to handle the QueryClause interface.
+// The QueryClause interface will be marshaled as its concrete type (Filter or BinaryClause),
+// and workers will use unmarshalQueryClause to determine the type based on the fields present.
+func (ll *LegacyLeaf) MarshalJSON() ([]byte, error) {
+	// Marshal the filter field using its concrete type's JSON representation
+	filterJSON, err := json.Marshal(ll.Filter)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build the complete JSON structure
+	return json.Marshal(map[string]json.RawMessage{
+		"filter": filterJSON,
+	})
+}
+
 // ToWorkerSQLForTimeseries generates DuckDB SQL for timeseries aggregation with push-down.
 // This matches Scala's behavior by doing time bucketing and counting in SQL rather than client-side.
 // stepMs is the time bucket size in milliseconds.

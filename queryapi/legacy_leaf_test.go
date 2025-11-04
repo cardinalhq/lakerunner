@@ -15,6 +15,7 @@
 package queryapi
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -539,6 +540,74 @@ func TestLegacyLeaf_NonIndexedFieldHandling(t *testing.T) {
 	// Note: This behavior depends on dimensionsToIndex configuration
 	// If custom_field is not indexed, it should have IS NOT NULL
 	assert.Contains(t, sql, `"custom_field"`)
+}
+
+func TestLegacyLeaf_MarshalUnmarshalRoundTrip(t *testing.T) {
+	// Test that LegacyLeaf can be marshaled and unmarshaled correctly
+	// This is critical for sending queries from query-api to workers
+	tests := []struct {
+		name   string
+		filter QueryClause
+	}{
+		{
+			name: "simple filter",
+			filter: Filter{
+				K:  "log.log_level",
+				V:  []string{"ERROR"},
+				Op: "eq",
+			},
+		},
+		{
+			name: "binary clause with AND",
+			filter: BinaryClause{
+				Op: "and",
+				Clauses: []QueryClause{
+					Filter{K: "field1", V: []string{"value1"}, Op: "eq"},
+					Filter{K: "field2", V: []string{"value2"}, Op: "contains"},
+				},
+			},
+		},
+		{
+			name: "complex nested OR query",
+			filter: BinaryClause{
+				Op: "and",
+				Clauses: []QueryClause{
+					Filter{K: "resource.bucket.name", V: []string{"test-bucket"}, Op: "eq"},
+					BinaryClause{
+						Op: "or",
+						Clauses: []QueryClause{
+							Filter{K: "_cardinalhq.message", V: []string{"testcommand"}, Op: "contains"},
+							Filter{K: "log.log_level", V: []string{"testcommand"}, Op: "contains"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := &LegacyLeaf{Filter: tt.filter}
+
+			// Marshal to JSON
+			data, err := json.Marshal(original)
+			require.NoError(t, err)
+			t.Logf("Marshaled JSON: %s", string(data))
+
+			// Unmarshal back
+			var unmarshaled LegacyLeaf
+			err = json.Unmarshal(data, &unmarshaled)
+			require.NoError(t, err)
+
+			// Verify the filter is preserved
+			assert.NotNil(t, unmarshaled.Filter)
+
+			// Generate SQL from both to ensure they're equivalent
+			sqlOriginal := original.ToWorkerSQLWithLimit(100, "DESC", nil)
+			sqlUnmarshaled := unmarshaled.ToWorkerSQLWithLimit(100, "DESC", nil)
+			assert.Equal(t, sqlOriginal, sqlUnmarshaled, "SQL should be identical after round-trip")
+		})
+	}
 }
 
 func TestLegacyLeaf_TimeseriesPushDownAggregation(t *testing.T) {

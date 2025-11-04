@@ -166,3 +166,27 @@ func (bc *BinaryClause) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
+
+// MarshalJSON for BinaryClause to convert the Clauses slice back to q1, q2, q3... format.
+func (bc BinaryClause) MarshalJSON() ([]byte, error) {
+	// Build a map with op and q1, q2, q3, ... fields
+	result := make(map[string]json.RawMessage)
+
+	// Add the operator
+	opJSON, err := json.Marshal(bc.Op)
+	if err != nil {
+		return nil, err
+	}
+	result["op"] = opJSON
+
+	// Add each clause as q1, q2, q3, ...
+	for i, clause := range bc.Clauses {
+		clauseJSON, err := json.Marshal(clause)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal clause q%d: %w", i+1, err)
+		}
+		result[fmt.Sprintf("q%d", i+1)] = clauseJSON
+	}
+
+	return json.Marshal(result)
+}
