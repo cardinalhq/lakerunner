@@ -222,7 +222,7 @@ func TestLegacyLeaf_OrOperator(t *testing.T) {
 	sql := leaf.ToWorkerSQLWithLimit(0, "", nil)
 
 	// Should have both conditions combined with OR
-	assert.Contains(t, sql, `"log_message"`) // _cardinalhq.message now maps to log_message
+	assert.Contains(t, sql, `"log_message"`)  // _cardinalhq.message now maps to log_message
 	assert.Contains(t, sql, `REGEXP_MATCHES`) // Changed to regex for case-insensitive matching
 	assert.Contains(t, sql, `"log_log_level" = 'ERROR'`)
 	assert.Contains(t, sql, " OR ")

@@ -67,7 +67,8 @@ func TestTranslateToLogQL_ContainsOperator(t *testing.T) {
 	logql, _, err := TranslateToLogQL(baseExpr)
 	require.NoError(t, err)
 	// Contains creates a label matcher with substring match: label=~".*value.*"
-	assert.Equal(t, `{chq_message=~".*error occurred.*"}`, logql)
+	// _cardinalhq.message maps to log_message for backward compatibility
+	assert.Equal(t, `{log_message=~".*error occurred.*"}`, logql)
 }
 
 func TestTranslateToLogQL_RegexOperator(t *testing.T) {
@@ -147,7 +148,8 @@ func TestNormalizeLabelName(t *testing.T) {
 	}{
 		{"resource.service.name", "resource_service_name"},
 		{"_cardinalhq.fingerprint", "chq_fingerprint"},
-		{"_cardinalhq.level", "chq_level"},
+		{"_cardinalhq.level", "log_level"},     // Backward compatibility: maps to log_level
+		{"_cardinalhq.message", "log_message"}, // Backward compatibility: maps to log_message
 		{"log.level", "log_level"},
 		{"no_dots_here", "no_dots_here"},
 	}

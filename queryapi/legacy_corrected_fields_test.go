@@ -145,8 +145,8 @@ func TestLegacyCorrectedFieldNames(t *testing.T) {
 			BinaryClause{
 				Op: "or",
 				Clauses: []QueryClause{
-					Filter{K: "log.message", V: []string{"testcommand"}, Op: "contains"},      // CORRECTED
-					Filter{K: "log.level", V: []string{"testcommand"}, Op: "contains"},        // CORRECTED
+					Filter{K: "log.message", V: []string{"testcommand"}, Op: "contains"},        // CORRECTED
+					Filter{K: "log.level", V: []string{"testcommand"}, Op: "contains"},          // CORRECTED
 					Filter{K: "resource.file.type", V: []string{"testcommand"}, Op: "contains"}, // This was already correct
 				},
 			},
@@ -255,9 +255,9 @@ func TestLegacyIncorrectFieldNames(t *testing.T) {
 			BinaryClause{
 				Op: "or",
 				Clauses: []QueryClause{
-					Filter{K: "log.log_level", V: []string{"testcommand"}, Op: "contains"},       // WRONG - double log
-					Filter{K: "resource.file.type", V: []string{"testcommand"}, Op: "contains"},  // CORRECT
-					Filter{K: "log.source", V: []string{"testcommand"}, Op: "contains"},          // WRONG - doesn't exist
+					Filter{K: "log.log_level", V: []string{"testcommand"}, Op: "contains"},      // WRONG - double log
+					Filter{K: "resource.file.type", V: []string{"testcommand"}, Op: "contains"}, // CORRECT
+					Filter{K: "log.source", V: []string{"testcommand"}, Op: "contains"},         // WRONG - doesn't exist
 				},
 			},
 		},
@@ -397,9 +397,9 @@ func TestLegacyBackwardCompatibilityForCardinalhqMessage(t *testing.T) {
 // TestLegacyFieldMapping verifies the field name normalization logic.
 func TestLegacyFieldMapping(t *testing.T) {
 	tests := []struct {
-		dottedName   string
-		expectedCol  string
-		description  string
+		dottedName  string
+		expectedCol string
+		description string
 	}{
 		{"log.message", "log_message", "Standard log message field"},
 		{"log.level", "log_level", "Standard log level field"},
