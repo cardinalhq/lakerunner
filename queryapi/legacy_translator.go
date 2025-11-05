@@ -189,9 +189,18 @@ func filterToLogQL(clause QueryClause, ctx *TranslationContext) ([]string, []str
 }
 
 // normalizeLabelName converts dotted label names to underscored names.
-// Also handles the old _cardinalhq.* naming convention → chq_*
+// Also handles the old _cardinalhq.* naming convention → chq_* or log_*
 func normalizeLabelName(dotted string) string {
-	// Convert old _cardinalhq.* naming to chq_*
+	// Special cases: some _cardinalhq.* fields map to log_* (not chq_*)
+	// This maintains backward compatibility with old queries
+	switch dotted {
+	case "_cardinalhq.message":
+		return "log_message"
+	case "_cardinalhq.level":
+		return "log_level"
+	}
+
+	// Convert other _cardinalhq.* fields to chq_*
 	if strings.HasPrefix(dotted, "_cardinalhq.") {
 		rest := dotted[len("_cardinalhq."):]
 		dotted = "chq_" + rest
