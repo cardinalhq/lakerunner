@@ -62,13 +62,10 @@ func (q *QuerierService) EvaluateLogsQueryDirect(
 		// Partition by dateInt hours for storage listing.
 		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, reverse)
 
-		// Create LegacyLeaf for SQL generation
-		legacyLeaf := &LegacyLeaf{Filter: filter}
-
 	outer:
 		for _, dih := range dateIntHours {
 			// Use direct segment selection from legacy filter
-			segments, err := SelectSegmentsFromLegacyFilter(
+			segments, fpToSegments, err := SelectSegmentsFromLegacyFilter(
 				ctxAll, dih, filter, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery,
 			)
 			if err != nil {
@@ -78,6 +75,12 @@ func (q *QuerierService) EvaluateLogsQueryDirect(
 			if len(segments) == 0 {
 				continue
 			}
+
+			// Prune the filter to remove references to non-existent fields
+			prunedFilter := PruneFilterForMissingFields(filter, fpToSegments)
+
+			// Create LegacyLeaf for SQL generation with pruned filter
+			legacyLeaf := &LegacyLeaf{Filter: prunedFilter}
 
 			groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), reverse)
 			for _, group := range groups {

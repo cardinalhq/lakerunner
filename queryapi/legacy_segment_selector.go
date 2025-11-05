@@ -29,6 +29,7 @@ import (
 
 // SelectSegmentsFromLegacyFilter selects segments based on a legacy filter tree.
 // It bypasses LogQL and converts the filter directly to trigram queries.
+// Returns the matching segments and the fpToSegments map for filter pruning.
 func SelectSegmentsFromLegacyFilter(
 	ctx context.Context,
 	dih DateIntHours,
@@ -36,7 +37,7 @@ func SelectSegmentsFromLegacyFilter(
 	startTs, endTs int64,
 	orgID uuid.UUID,
 	lookupFunc SegmentLookupFunc,
-) ([]SegmentInfo, error) {
+) ([]SegmentInfo, map[int64][]SegmentInfo, error) {
 	root := &TrigramQuery{Op: index.QAll}
 	fpsToFetch := make(map[int64]struct{})
 
@@ -69,7 +70,7 @@ func SelectSegmentsFromLegacyFilter(
 		E:              endTs,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list log segments for query: %w", err)
+		return nil, nil, fmt.Errorf("list log segments for query: %w", err)
 	}
 
 	slog.Info("Legacy segment selector: database returned segments",
@@ -120,7 +121,7 @@ func SelectSegmentsFromLegacyFilter(
 	for s := range finalSet {
 		out = append(out, s)
 	}
-	return out, nil
+	return out, fpToSegments, nil
 }
 
 // buildTrigramQueryForClause builds a standalone trigram query for a single clause.
@@ -328,4 +329,81 @@ func filterToTrigramQuery(clause QueryClause, fps map[int64]struct{}, root **Tri
 			Sub: []*TrigramQuery{*root, branch},
 		}
 	}
+}
+
+// PruneFilterForMissingFields removes filter branches that reference fields whose
+// "exists" fingerprint is not present in the returned segments.
+// This prevents SQL errors when querying non-existent columns in OR clauses.
+func PruneFilterForMissingFields(filter QueryClause, fpToSegments map[int64][]SegmentInfo) QueryClause {
+	if filter == nil {
+		return nil
+	}
+
+	switch c := filter.(type) {
+	case Filter:
+		// Normalize the label name
+		label := normalizeLabelName(c.K)
+
+		// For non-indexed fields, check if the exists fingerprint is present
+		if !slices.Contains(dimensionsToIndex, label) {
+			existsFp := computeFingerprint(label, existsRegex)
+			// If the exists fingerprint is not in fpToSegments, this field doesn't exist in any segment
+			if _, exists := fpToSegments[existsFp]; !exists {
+				slog.Info("Pruning filter for non-existent field",
+					"field", c.K,
+					"normalized", label,
+					"exists_fp", existsFp)
+				return nil // Prune this filter
+			}
+		}
+		// Field exists or is indexed, keep the filter
+		return c
+
+	case BinaryClause:
+		if len(c.Clauses) == 0 {
+			return nil
+		}
+
+		// Recursively prune sub-clauses
+		var prunedClauses []QueryClause
+		for _, subClause := range c.Clauses {
+			pruned := PruneFilterForMissingFields(subClause, fpToSegments)
+			if pruned != nil {
+				prunedClauses = append(prunedClauses, pruned)
+			}
+		}
+
+		// Handle different operators
+		if c.Op == "or" {
+			// For OR: if all branches pruned, return nil; if only one left, return it directly
+			if len(prunedClauses) == 0 {
+				return nil
+			}
+			if len(prunedClauses) == 1 {
+				return prunedClauses[0]
+			}
+			return BinaryClause{Op: "or", Clauses: prunedClauses}
+		} else if c.Op == "and" {
+			// For AND: if ANY branch was pruned, the entire AND fails
+			// A pruned branch means a non-existent field was referenced, so nothing can match
+			if len(prunedClauses) < len(c.Clauses) {
+				slog.Info("AND clause has pruned branch - entire AND fails",
+					"original_count", len(c.Clauses),
+					"pruned_count", len(prunedClauses))
+				return nil
+			}
+			// All branches survived pruning
+			if len(prunedClauses) == 0 {
+				return nil
+			}
+			if len(prunedClauses) == 1 {
+				return prunedClauses[0]
+			}
+			return BinaryClause{Op: "and", Clauses: prunedClauses}
+		}
+
+		return BinaryClause{Op: c.Op, Clauses: prunedClauses}
+	}
+
+	return filter
 }

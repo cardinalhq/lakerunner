@@ -58,7 +58,7 @@ func (q *QuerierService) EvaluateTimeseriesQueryDirect(
 
 		for _, dih := range dateIntHours {
 			// Use direct segment selection from legacy filter
-			segments, err := SelectSegmentsFromLegacyFilter(
+			segments, fpToSegments, err := SelectSegmentsFromLegacyFilter(
 				ctxAll, dih, filter, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery,
 			)
 			if err != nil {
@@ -68,6 +68,9 @@ func (q *QuerierService) EvaluateTimeseriesQueryDirect(
 			if len(segments) == 0 {
 				continue
 			}
+
+			// Prune the filter to remove references to non-existent fields
+			prunedFilter := PruneFilterForMissingFields(filter, fpToSegments)
 
 			groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), false)
 			for _, group := range groups {
@@ -100,8 +103,8 @@ func (q *QuerierService) EvaluateTimeseriesQueryDirect(
 					workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
 				}
 
-				// Create LegacyLeaf for SQL generation
-				legacyLeaf := &LegacyLeaf{Filter: filter}
+				// Create LegacyLeaf for SQL generation with pruned filter
+				legacyLeaf := &LegacyLeaf{Filter: prunedFilter}
 
 				for worker, workerSegments := range workerGroups {
 					req := PushDownRequest{

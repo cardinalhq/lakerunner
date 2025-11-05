@@ -86,7 +86,7 @@ func TestSelectSegmentsFromLegacyFilter_SimpleOr(t *testing.T) {
 		return fakeRows, nil
 	}
 
-	segs, err := SelectSegmentsFromLegacyFilter(
+	segs, _, err := SelectSegmentsFromLegacyFilter(
 		context.Background(),
 		dih,
 		filter,
