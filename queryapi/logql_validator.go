@@ -23,8 +23,9 @@ import (
 )
 
 type logQLValidateRequest struct {
-	Query    string         `json:"query"`
-	Exemplar map[string]any `json:"exemplar,omitempty"`
+	Query           string         `json:"query"`
+	Exemplar        map[string]any `json:"exemplar,omitempty"`
+	StreamAttribute string         `json:"stream_attribute,omitempty"`
 }
 
 type logQLValidateResponse struct {
@@ -52,6 +53,14 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 	if err := ValidateEqualityMatcherRequirement(ast); err != nil {
 		writeAPIError(w, http.StatusBadRequest, ValidationFailed, err.Error())
 		return
+	}
+
+	// Validate stream attribute requirement if specified
+	if req.StreamAttribute != "" {
+		if err := ValidateStreamAttributeRequirement(ast, req.StreamAttribute); err != nil {
+			writeAPIError(w, http.StatusBadRequest, ValidationFailed, err.Error())
+			return
+		}
 	}
 
 	// If no exemplar provided, return valid (syntax + equality matcher check only)
