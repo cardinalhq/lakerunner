@@ -17,6 +17,7 @@ package queryapi
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 
@@ -54,6 +55,12 @@ func SelectSegmentsFromLegacyFilter(
 	}
 	slices.Sort(fpList)
 
+	slog.Info("Legacy segment selector: looking up fingerprints",
+		"count", len(fpList),
+		"fingerprints", fpList,
+		"dateint", dih.DateInt,
+		"org_id", orgID)
+
 	rows, err := lookupFunc(ctx, lrdb.ListLogSegmentsForQueryParams{
 		OrganizationID: orgID,
 		Dateint:        int32(dih.DateInt),
@@ -64,6 +71,9 @@ func SelectSegmentsFromLegacyFilter(
 	if err != nil {
 		return nil, fmt.Errorf("list log segments for query: %w", err)
 	}
+
+	slog.Info("Legacy segment selector: database returned segments",
+		"total_rows", len(rows))
 
 	// Group segments by fingerprint
 	fpToSegments := make(map[int64][]SegmentInfo, len(rows))
@@ -81,12 +91,30 @@ func SelectSegmentsFromLegacyFilter(
 		fpToSegments[row.Fingerprint] = append(fpToSegments[row.Fingerprint], seg)
 	}
 
-	// Debug: print query tree
-	// fmt.Printf("Query tree:\n%s", debugPrintTrigramQuery(root, 0))
-	// fmt.Printf("fpToSegments has %d entries\n", len(fpToSegments))
+	// Log segments grouped by fingerprint
+	for fp, segs := range fpToSegments {
+		segIDs := make([]int64, len(segs))
+		for i, s := range segs {
+			segIDs[i] = s.SegmentID
+		}
+		slog.Info("Legacy segment selector: fingerprint matches",
+			"fingerprint", fp,
+			"segment_count", len(segs),
+			"segment_ids", segIDs)
+	}
 
 	// Compute final set based on trigram query logic
 	finalSet := computeSegmentSet(root, fpToSegments)
+
+	finalSegIDs := make([]int64, 0, len(finalSet))
+	for s := range finalSet {
+		finalSegIDs = append(finalSegIDs, s.SegmentID)
+	}
+	slices.Sort(finalSegIDs)
+
+	slog.Info("Legacy segment selector: final segments after trigram query logic",
+		"final_count", len(finalSet),
+		"segment_ids", finalSegIDs)
 
 	out := make([]SegmentInfo, 0, len(finalSet))
 	for s := range finalSet {
