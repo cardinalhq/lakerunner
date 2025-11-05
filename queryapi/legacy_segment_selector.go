@@ -29,6 +29,7 @@ import (
 
 // SelectSegmentsFromLegacyFilter selects segments based on a legacy filter tree.
 // It bypasses LogQL and converts the filter directly to trigram queries.
+// Returns the matching segments and the fpToSegments map for filter pruning.
 func SelectSegmentsFromLegacyFilter(
 	ctx context.Context,
 	dih DateIntHours,
@@ -36,7 +37,7 @@ func SelectSegmentsFromLegacyFilter(
 	startTs, endTs int64,
 	orgID uuid.UUID,
 	lookupFunc SegmentLookupFunc,
-) ([]SegmentInfo, error) {
+) ([]SegmentInfo, map[int64][]SegmentInfo, error) {
 	root := &TrigramQuery{Op: index.QAll}
 	fpsToFetch := make(map[int64]struct{})
 
@@ -69,7 +70,7 @@ func SelectSegmentsFromLegacyFilter(
 		E:              endTs,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list log segments for query: %w", err)
+		return nil, nil, fmt.Errorf("list log segments for query: %w", err)
 	}
 
 	slog.Info("Legacy segment selector: database returned segments",
@@ -120,48 +121,86 @@ func SelectSegmentsFromLegacyFilter(
 	for s := range finalSet {
 		out = append(out, s)
 	}
-	return out, nil
+	return out, fpToSegments, nil
 }
 
-// filterToTrigramQuery recursively converts a legacy filter tree to trigram queries.
-func filterToTrigramQuery(clause QueryClause, fps map[int64]struct{}, root **TrigramQuery) {
+// buildTrigramQueryForClause builds a standalone trigram query for a single clause.
+// This is used for OR branches where each branch needs to be independent.
+// Returns nil if the clause produces no query.
+func buildTrigramQueryForClause(clause QueryClause, fps map[int64]struct{}) *TrigramQuery {
 	if clause == nil {
-		return
+		return nil
 	}
 
 	switch c := clause.(type) {
 	case Filter:
-		// Normalize label name (dots → underscores, _cardinalhq.* → chq_*)
 		label := normalizeLabelName(c.K)
 
 		// Check if this dimension is indexed
 		if !slices.Contains(dimensionsToIndex, label) {
-			addExistsNode(label, fps, root)
-			return
+			fp := computeFingerprint(label, existsRegex)
+			fps[fp] = struct{}{}
+			return &TrigramQuery{
+				Op:        index.QAnd,
+				fieldName: label,
+				Trigram:   []string{existsRegex},
+			}
 		}
 
 		switch c.Op {
 		case "eq":
 			if len(c.V) == 0 {
-				return
+				return nil
 			}
-			// For full-value dimensions with exact match, use the full value fingerprint
 			if slices.Contains(fullValueDimensions, label) {
-				addFullValueNode(label, c.V[0], fps, root)
+				existsFp := computeFingerprint(label, existsRegex)
+				valueFp := computeFingerprint(label, c.V[0])
+				fps[existsFp] = struct{}{}
+				fps[valueFp] = struct{}{}
+				return &TrigramQuery{
+					Op:        index.QAnd,
+					fieldName: label,
+					Trigram:   []string{existsRegex, c.V[0]},
+				}
 			} else {
-				// For non-full-value dimensions, use trigram matching
-				addAndNodeFromPattern(label, regexp.QuoteMeta(c.V[0]), fps, root)
+				pattern := regexp.QuoteMeta(c.V[0])
+				lt, fpsList := buildLabelTrigram(label, pattern)
+				for _, fp := range fpsList {
+					fps[fp] = struct{}{}
+				}
+				return fromIndexQuery(label, lt)
 			}
 
 		case "in":
 			if len(c.V) == 0 {
-				return
+				return nil
 			}
-			// For full-value dimensions, create OR of exact matches
 			if slices.Contains(fullValueDimensions, label) {
-				addOrNodeFromValues(label, c.V, fps, root)
+				if len(c.V) == 1 {
+					existsFp := computeFingerprint(label, existsRegex)
+					valueFp := computeFingerprint(label, c.V[0])
+					fps[existsFp] = struct{}{}
+					fps[valueFp] = struct{}{}
+					return &TrigramQuery{
+						Op:        index.QAnd,
+						fieldName: label,
+						Trigram:   []string{existsRegex, c.V[0]},
+					}
+				}
+				var orSubs []*TrigramQuery
+				for _, val := range c.V {
+					existsFp := computeFingerprint(label, existsRegex)
+					valueFp := computeFingerprint(label, val)
+					fps[existsFp] = struct{}{}
+					fps[valueFp] = struct{}{}
+					orSubs = append(orSubs, &TrigramQuery{
+						Op:        index.QAnd,
+						fieldName: label,
+						Trigram:   []string{existsRegex, val},
+					})
+				}
+				return &TrigramQuery{Op: index.QOr, Sub: orSubs}
 			} else {
-				// For non-full-value dimensions, create OR of trigram patterns
 				var orSubs []*TrigramQuery
 				for _, val := range c.V {
 					pattern := regexp.QuoteMeta(val)
@@ -169,77 +208,202 @@ func filterToTrigramQuery(clause QueryClause, fps map[int64]struct{}, root **Tri
 					for _, fp := range fpsList {
 						fps[fp] = struct{}{}
 					}
-					tq := fromIndexQuery(label, lt)
-					orSubs = append(orSubs, tq)
+					orSubs = append(orSubs, fromIndexQuery(label, lt))
 				}
-				if len(orSubs) > 0 {
-					*root = &TrigramQuery{
-						Op:  index.QAnd,
-						Sub: []*TrigramQuery{*root, {Op: index.QOr, Sub: orSubs}},
-					}
+				if len(orSubs) == 1 {
+					return orSubs[0]
 				}
+				return &TrigramQuery{Op: index.QOr, Sub: orSubs}
 			}
 
 		case "contains":
 			if len(c.V) == 0 {
-				return
+				return nil
 			}
-			if slices.Contains(dimensionsToIndex, label) {
-				pattern := ".*" + regexp.QuoteMeta(c.V[0]) + ".*"
-				addAndNodeFromPattern(label, pattern, fps, root)
+			if slices.Contains(fullValueDimensions, label) {
+				fp := computeFingerprint(label, existsRegex)
+				fps[fp] = struct{}{}
+				return &TrigramQuery{
+					Op:        index.QAnd,
+					fieldName: label,
+					Trigram:   []string{existsRegex},
+				}
 			} else {
-				addExistsNode(label, fps, root)
+				pattern := ".*" + regexp.QuoteMeta(c.V[0]) + ".*"
+				lt, fpsList := buildLabelTrigram(label, pattern)
+				for _, fp := range fpsList {
+					fps[fp] = struct{}{}
+				}
+				return fromIndexQuery(label, lt)
 			}
 
 		case "regex":
 			if len(c.V) == 0 {
-				return
+				return nil
 			}
-			// For full-value dimensions, fall back to exists check
 			if slices.Contains(fullValueDimensions, label) {
-				addExistsNode(label, fps, root)
+				fp := computeFingerprint(label, existsRegex)
+				fps[fp] = struct{}{}
+				return &TrigramQuery{
+					Op:        index.QAnd,
+					fieldName: label,
+					Trigram:   []string{existsRegex},
+				}
 			} else {
-				// Use the regex pattern directly
-				addAndNodeFromPattern(label, c.V[0], fps, root)
+				lt, fpsList := buildLabelTrigram(label, c.V[0])
+				for _, fp := range fpsList {
+					fps[fp] = struct{}{}
+				}
+				return fromIndexQuery(label, lt)
 			}
 
 		case "gt", "gte", "lt", "lte":
-			// Comparison operators can't be optimized with trigrams
-			// Fall back to exists check (filter will be applied in SQL)
-			addExistsNode(label, fps, root)
+			fp := computeFingerprint(label, existsRegex)
+			fps[fp] = struct{}{}
+			return &TrigramQuery{
+				Op:        index.QAnd,
+				fieldName: label,
+				Trigram:   []string{existsRegex},
+			}
 
 		default:
-			// Unknown operator, fall back to exists check
-			addExistsNode(label, fps, root)
+			fp := computeFingerprint(label, existsRegex)
+			fps[fp] = struct{}{}
+			return &TrigramQuery{
+				Op:        index.QAnd,
+				fieldName: label,
+				Trigram:   []string{existsRegex},
+			}
 		}
 
 	case BinaryClause:
 		if len(c.Clauses) == 0 {
-			return
+			return nil
 		}
 
-		op := c.Op
-		switch op {
-		case "and":
-			// For AND: combine all sub-clauses with AND
+		if c.Op == "and" {
+			// For AND: build each sub-clause and combine with AND
+			var andSubs []*TrigramQuery
 			for _, subClause := range c.Clauses {
-				filterToTrigramQuery(subClause, fps, root)
-			}
-		case "or":
-			// For OR: create OR node with all sub-clauses
-			var orSubs []*TrigramQuery
-			for _, subClause := range c.Clauses {
-				// Create a fresh root for each OR branch
-				branchRoot := &TrigramQuery{Op: index.QAll}
-				filterToTrigramQuery(subClause, fps, &branchRoot)
-				orSubs = append(orSubs, branchRoot)
-			}
-			if len(orSubs) > 0 {
-				*root = &TrigramQuery{
-					Op:  index.QAnd,
-					Sub: []*TrigramQuery{*root, {Op: index.QOr, Sub: orSubs}},
+				branch := buildTrigramQueryForClause(subClause, fps)
+				if branch != nil {
+					andSubs = append(andSubs, branch)
 				}
 			}
+			if len(andSubs) == 0 {
+				return nil
+			}
+			if len(andSubs) == 1 {
+				return andSubs[0]
+			}
+			return &TrigramQuery{Op: index.QAnd, Sub: andSubs}
+		} else if c.Op == "or" {
+			// For OR: build each sub-clause and combine with OR
+			var orSubs []*TrigramQuery
+			for _, subClause := range c.Clauses {
+				branch := buildTrigramQueryForClause(subClause, fps)
+				if branch != nil {
+					orSubs = append(orSubs, branch)
+				}
+			}
+			if len(orSubs) == 0 {
+				return nil
+			}
+			if len(orSubs) == 1 {
+				return orSubs[0]
+			}
+			return &TrigramQuery{Op: index.QOr, Sub: orSubs}
 		}
 	}
+
+	return nil
+}
+
+// filterToTrigramQuery recursively converts a legacy filter tree to trigram queries.
+// It ANDs the clause's query with the existing root.
+func filterToTrigramQuery(clause QueryClause, fps map[int64]struct{}, root **TrigramQuery) {
+	branch := buildTrigramQueryForClause(clause, fps)
+	if branch != nil {
+		*root = &TrigramQuery{
+			Op:  index.QAnd,
+			Sub: []*TrigramQuery{*root, branch},
+		}
+	}
+}
+
+// PruneFilterForMissingFields removes filter branches that reference fields whose
+// "exists" fingerprint is not present in the returned segments.
+// This prevents SQL errors when querying non-existent columns in OR clauses.
+func PruneFilterForMissingFields(filter QueryClause, fpToSegments map[int64][]SegmentInfo) QueryClause {
+	if filter == nil {
+		return nil
+	}
+
+	switch c := filter.(type) {
+	case Filter:
+		// Normalize the label name
+		label := normalizeLabelName(c.K)
+
+		// For non-indexed fields, check if the exists fingerprint is present
+		if !slices.Contains(dimensionsToIndex, label) {
+			existsFp := computeFingerprint(label, existsRegex)
+			// If the exists fingerprint is not in fpToSegments, this field doesn't exist in any segment
+			if _, exists := fpToSegments[existsFp]; !exists {
+				slog.Info("Pruning filter for non-existent field",
+					"field", c.K,
+					"normalized", label,
+					"exists_fp", existsFp)
+				return nil // Prune this filter
+			}
+		}
+		// Field exists or is indexed, keep the filter
+		return c
+
+	case BinaryClause:
+		if len(c.Clauses) == 0 {
+			return nil
+		}
+
+		// Recursively prune sub-clauses
+		var prunedClauses []QueryClause
+		for _, subClause := range c.Clauses {
+			pruned := PruneFilterForMissingFields(subClause, fpToSegments)
+			if pruned != nil {
+				prunedClauses = append(prunedClauses, pruned)
+			}
+		}
+
+		// Handle different operators
+		if c.Op == "or" {
+			// For OR: if all branches pruned, return nil; if only one left, return it directly
+			if len(prunedClauses) == 0 {
+				return nil
+			}
+			if len(prunedClauses) == 1 {
+				return prunedClauses[0]
+			}
+			return BinaryClause{Op: "or", Clauses: prunedClauses}
+		} else if c.Op == "and" {
+			// For AND: if ANY branch was pruned, the entire AND fails
+			// A pruned branch means a non-existent field was referenced, so nothing can match
+			if len(prunedClauses) < len(c.Clauses) {
+				slog.Info("AND clause has pruned branch - entire AND fails",
+					"original_count", len(c.Clauses),
+					"pruned_count", len(prunedClauses))
+				return nil
+			}
+			// All branches survived pruning
+			if len(prunedClauses) == 0 {
+				return nil
+			}
+			if len(prunedClauses) == 1 {
+				return prunedClauses[0]
+			}
+			return BinaryClause{Op: "and", Clauses: prunedClauses}
+		}
+
+		return BinaryClause{Op: c.Op, Clauses: prunedClauses}
+	}
+
+	return filter
 }

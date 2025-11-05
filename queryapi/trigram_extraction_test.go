@@ -24,34 +24,34 @@ import (
 // from various regex patterns
 func TestTrigramExtraction(t *testing.T) {
 	tests := []struct {
-		name            string
-		pattern         string
+		name             string
+		pattern          string
 		expectedTrigrams int
-		description     string
+		description      string
 	}{
 		{
-			name:            "contains_pattern_with_wildcards",
-			pattern:         ".*cloudxcommand.*",
+			name:             "contains_pattern_with_wildcards",
+			pattern:          ".*cloudxcommand.*",
 			expectedTrigrams: 11, // Codesearch extracts trigrams from the literal part!
-			description:     "Pattern with wildcards - codesearch extracts trigrams from literal portion",
+			description:      "Pattern with wildcards - codesearch extracts trigrams from literal portion",
 		},
 		{
-			name:            "exact_pattern_no_wildcards",
-			pattern:         "cloudxcommand",
+			name:             "exact_pattern_no_wildcards",
+			pattern:          "cloudxcommand",
 			expectedTrigrams: 11, // Should extract trigrams from the literal string
-			description:     "Exact pattern without wildcards - should extract trigrams",
+			description:      "Exact pattern without wildcards - should extract trigrams",
 		},
 		{
-			name:            "pattern_with_trailing_wildcard_only",
-			pattern:         "cloudxcommand.*",
+			name:             "pattern_with_trailing_wildcard_only",
+			pattern:          "cloudxcommand.*",
 			expectedTrigrams: 11, // Should still extract trigrams
-			description:     "Pattern with only trailing wildcard - can still extract trigrams",
+			description:      "Pattern with only trailing wildcard - can still extract trigrams",
 		},
 		{
-			name:            "short_string",
-			pattern:         ".*ab.*",
+			name:             "short_string",
+			pattern:          ".*ab.*",
 			expectedTrigrams: 0, // Too short for trigrams
-			description:     "String too short for trigrams",
+			description:      "String too short for trigrams",
 		},
 	}
 
@@ -125,10 +125,10 @@ func TestShortValueTrigramExtraction(t *testing.T) {
 		value            string
 		expectedMinGrams int
 	}{
-		{"test", 2},              // "tes" and "est"
-		{"cloudxcommand", 11},    // many trigrams
-		{"ab", 0},                // too short
-		{"abc", 1},               // exactly 3 chars = 1 trigram
+		{"test", 2},           // "tes" and "est"
+		{"cloudxcommand", 11}, // many trigrams
+		{"ab", 0},             // too short
+		{"abc", 1},            // exactly 3 chars = 1 trigram
 	}
 
 	for _, tt := range tests {
