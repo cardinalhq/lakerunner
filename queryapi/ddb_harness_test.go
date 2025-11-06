@@ -401,3 +401,192 @@ func TestHandleLogQLValidate_EqualityMatcherValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamAttributeValidation_UnitTest(t *testing.T) {
+	tests := []struct {
+		name            string
+		query           string
+		streamAttribute string
+		shouldFail      bool
+		expectedError   string
+	}{
+		{
+			name:            "stream attribute present as equality matcher should pass",
+			query:           `{resource_service_name="api", level="error"}`,
+			streamAttribute: "resource_service_name",
+			shouldFail:      false,
+			expectedError:   "",
+		},
+		{
+			name:            "stream attribute missing should fail",
+			query:           `{level="error"}`,
+			streamAttribute: "resource_service_name",
+			shouldFail:      true,
+			expectedError:   "stream attribute 'resource_service_name' must be present as an equality matcher in selector",
+		},
+		{
+			name:            "stream attribute as regex matcher should fail",
+			query:           `{resource_service_name=~"api.*", level="error"}`,
+			streamAttribute: "resource_service_name",
+			shouldFail:      true,
+			expectedError:   "stream attribute 'resource_service_name' must be present as an equality matcher in selector",
+		},
+		{
+			name:            "empty stream attribute should pass any query",
+			query:           `{level="error"}`,
+			streamAttribute: "",
+			shouldFail:      false,
+			expectedError:   "",
+		},
+		{
+			name:            "stream attribute in nested aggregation should pass",
+			query:           `sum(count_over_time({resource_service_name="api", level="error"}[1m]))`,
+			streamAttribute: "resource_service_name",
+			shouldFail:      false,
+			expectedError:   "",
+		},
+		{
+			name:            "stream attribute missing in nested aggregation should fail",
+			query:           `sum(count_over_time({level="error"}[1m]))`,
+			streamAttribute: "resource_service_name",
+			shouldFail:      true,
+			expectedError:   "stream attribute 'resource_service_name' must be present as an equality matcher in selector",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Parse the query to get the AST
+			ast, err := logql.FromLogQL(tt.query)
+			if err != nil {
+				t.Fatalf("failed to parse query %q: %v", tt.query, err)
+			}
+
+			// Test the validation logic using the actual function
+			validationErr := ValidateStreamAttributeRequirement(ast, tt.streamAttribute)
+			if tt.shouldFail {
+				if validationErr == nil {
+					t.Errorf("expected query %q to fail validation, but it passed", tt.query)
+				} else if !strings.Contains(validationErr.Error(), tt.expectedError) {
+					t.Errorf("expected error containing %q, got: %s", tt.expectedError, validationErr.Error())
+				} else {
+					t.Logf("✓ Query %q correctly failed validation as expected: %s", tt.query, validationErr.Error())
+				}
+			} else {
+				if validationErr != nil {
+					t.Errorf("expected query %q to pass validation, but got error: %s", tt.query, validationErr.Error())
+				} else {
+					t.Logf("✓ Query %q correctly passed validation as expected", tt.query)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleLogQLValidate_StreamAttributeValidation(t *testing.T) {
+	qs := &QuerierService{}
+
+	tests := []struct {
+		name            string
+		query           string
+		streamAttribute string
+		exemplar        map[string]any
+		expectedValid   bool
+		expectedError   string
+	}{
+		{
+			name:            "stream attribute present should pass",
+			query:           `{resource_service_name="api", level="error"}`,
+			streamAttribute: "resource_service_name",
+			exemplar:        nil,
+			expectedValid:   true,
+			expectedError:   "",
+		},
+		{
+			name:            "stream attribute missing should fail",
+			query:           `{level="error"}`,
+			streamAttribute: "resource_service_name",
+			exemplar:        nil,
+			expectedValid:   false,
+			expectedError:   "stream attribute 'resource_service_name' must be present as an equality matcher in selector",
+		},
+		{
+			name:            "stream attribute as regex should fail",
+			query:           `{resource_service_name=~"api.*", level="error"}`,
+			streamAttribute: "resource_service_name",
+			exemplar:        nil,
+			expectedValid:   false,
+			expectedError:   "stream attribute 'resource_service_name' must be present as an equality matcher in selector",
+		},
+		{
+			name:            "empty stream attribute should pass",
+			query:           `{level="error"}`,
+			streamAttribute: "",
+			exemplar:        nil,
+			expectedValid:   true,
+			expectedError:   "",
+		},
+		{
+			name:            "stream attribute with empty exemplar should pass",
+			query:           `{resource_service_name="api", level="error"}`,
+			streamAttribute: "resource_service_name",
+			exemplar:        map[string]any{},
+			expectedValid:   true,
+			expectedError:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create request body
+			reqBody := logQLValidateRequest{
+				Query:           tt.query,
+				StreamAttribute: tt.streamAttribute,
+				Exemplar:        tt.exemplar,
+			}
+			jsonBody, _ := json.Marshal(reqBody)
+
+			// Create HTTP request
+			req := httptest.NewRequest("POST", "/api/v1/logql/validate", bytes.NewReader(jsonBody))
+			req.Header.Set("Content-Type", "application/json")
+
+			// Create response recorder
+			w := httptest.NewRecorder()
+
+			// Call the handler
+			qs.handleLogQLValidate(w, req)
+
+			// Parse response - handle both success and error response types
+			responseBody := w.Body.Bytes()
+
+			if tt.expectedValid {
+				// For valid responses, expect logQLValidateResponse
+				var response logQLValidateResponse
+				if err := json.Unmarshal(responseBody, &response); err != nil {
+					t.Fatalf("Failed to parse success response JSON: %v", err)
+				}
+				if response.Valid != tt.expectedValid {
+					t.Errorf("Expected valid=%v, got valid=%v", tt.expectedValid, response.Valid)
+				}
+				if response.Error != "" {
+					t.Errorf("Expected no error, got: %s", response.Error)
+				}
+			} else {
+				// For invalid responses, expect APIError
+				var response APIError
+				if err := json.Unmarshal(responseBody, &response); err != nil {
+					t.Fatalf("Failed to parse error response JSON: %v", err)
+				}
+				if w.Code != 400 {
+					t.Errorf("Expected status 400, got %d", w.Code)
+				}
+				if response.Code != ValidationFailed {
+					t.Errorf("Expected code VALIDATION_FAILED, got %s", response.Code)
+				}
+				if !strings.Contains(response.Message, tt.expectedError) {
+					t.Errorf("Expected error containing %q, got: %s", tt.expectedError, response.Message)
+				}
+			}
+		})
+	}
+}

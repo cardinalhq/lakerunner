@@ -552,8 +552,8 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	mux.HandleFunc("/api/v1/spans/tagvalues", q.apiKeyMiddleware(q.handleGetSpanTagValues))
 	mux.HandleFunc("/api/v1/spans/query", q.apiKeyMiddleware(q.handleSpansQuery))
 
-	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
-	mux.HandleFunc("/api/v1/logql/validate", q.handleLogQLValidate)
+	mux.HandleFunc("/api/v1/promql/validate", q.apiKeyMiddleware(q.handlePromQLValidate))
+	mux.HandleFunc("/api/v1/logql/validate", q.apiKeyMiddleware(q.handleLogQLValidate))
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -549,6 +549,40 @@ func findAllLogSelectors(ast logql.LogAST) []logql.LogSelector {
 	return selectors
 }
 
+// ValidateStreamAttributeRequirement checks that the LogQL query has an equality matcher
+// for the specified stream attribute in all log selectors
+func ValidateStreamAttributeRequirement(ast logql.LogAST, streamAttribute string) error {
+	if streamAttribute == "" {
+		return nil
+	}
+
+	// Find all log selectors in the AST (including nested ones)
+	selectors := findAllLogSelectors(ast)
+
+	if len(selectors) == 0 {
+		return fmt.Errorf("no log selectors found in query")
+	}
+
+	// Check each selector for the required stream attribute equality matcher
+	for i, selector := range selectors {
+		foundAttribute := false
+		for _, m := range selector.Matchers {
+			if m.Label == streamAttribute && m.Op == logql.MatchEq {
+				foundAttribute = true
+				break
+			}
+		}
+		if !foundAttribute {
+			if len(selectors) == 1 {
+				return fmt.Errorf("stream attribute '%s' must be present as an equality matcher in selector", streamAttribute)
+			}
+			return fmt.Errorf("stream attribute '%s' must be present as an equality matcher in selector %d", streamAttribute, i+1)
+		}
+	}
+
+	return nil
+}
+
 func minMaxTimestamp(ctx context.Context, db *sql.DB, table string) (int64, int64, error) {
 	q := fmt.Sprintf(`SELECT MIN("%s"), MAX("%s") FROM %s`,
 		"chq_timestamp", "chq_timestamp", quoteIdent(table))
