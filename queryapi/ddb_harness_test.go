@@ -590,3 +590,84 @@ func TestHandleLogQLValidate_StreamAttributeValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRangeSelector(t *testing.T) {
+	tests := []struct {
+		name          string
+		query         string
+		expectedDur   time.Duration
+		expectedError string
+	}{
+		{
+			name:          "matching range selector",
+			query:         `rate({app="foo"}[5m])`,
+			expectedDur:   5 * time.Minute,
+			expectedError: "",
+		},
+		{
+			name:          "mismatched range selector - too short",
+			query:         `rate({app="foo"}[1m])`,
+			expectedDur:   5 * time.Minute,
+			expectedError: "range selector [1m] must match query duration 5m0s",
+		},
+		{
+			name:          "mismatched range selector - too long",
+			query:         `rate({app="foo"}[10m])`,
+			expectedDur:   5 * time.Minute,
+			expectedError: "range selector [10m] must match query duration 5m0s",
+		},
+		{
+			name:          "no range selector - should pass",
+			query:         `{app="foo"}`,
+			expectedDur:   5 * time.Minute,
+			expectedError: "",
+		},
+		{
+			name:          "multiple range selectors - all match",
+			query:         `sum(rate({app="foo"}[5m])) + sum(rate({app="bar"}[5m]))`,
+			expectedDur:   5 * time.Minute,
+			expectedError: "",
+		},
+		{
+			name:          "multiple range selectors - one mismatch",
+			query:         `sum(rate({app="foo"}[5m])) + sum(rate({app="bar"}[1m]))`,
+			expectedDur:   5 * time.Minute,
+			expectedError: "range selector 2 [1m] must match query duration 5m0s",
+		},
+		{
+			name:          "range selector with seconds",
+			query:         `count_over_time({app="test"}[30s])`,
+			expectedDur:   30 * time.Second,
+			expectedError: "",
+		},
+		{
+			name:          "range selector with hours",
+			query:         `rate({app="test"}[1h])`,
+			expectedDur:   time.Hour,
+			expectedError: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ast, err := logql.FromLogQL(tt.query)
+			if err != nil {
+				t.Fatalf("failed to parse query: %v", err)
+			}
+
+			err = ValidateRangeSelector(ast, tt.expectedDur)
+
+			if tt.expectedError == "" {
+				if err != nil {
+					t.Errorf("expected no error, got: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.expectedError)
+				} else if !strings.Contains(err.Error(), tt.expectedError) {
+					t.Errorf("expected error containing %q, got: %v", tt.expectedError, err)
+				}
+			}
+		})
+	}
+}

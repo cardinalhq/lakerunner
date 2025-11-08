@@ -583,6 +583,70 @@ func ValidateStreamAttributeRequirement(ast logql.LogAST, streamAttribute string
 	return nil
 }
 
+// findAllLogRanges recursively finds all log ranges in the AST
+func findAllLogRanges(ast logql.LogAST) []logql.LogRange {
+	var ranges []logql.LogRange
+
+	switch ast.Kind {
+	case logql.KindLogRange:
+		if ast.LogRange != nil {
+			ranges = append(ranges, *ast.LogRange)
+		}
+
+	case logql.KindRangeAgg:
+		if ast.RangeAgg != nil {
+			// RangeAgg wraps a LogRange
+			ranges = append(ranges, ast.RangeAgg.Left)
+		}
+
+	case logql.KindVectorAgg:
+		if ast.VectorAgg != nil {
+			// VectorAgg wraps another expression, recurse into it
+			ranges = append(ranges, findAllLogRanges(ast.VectorAgg.Left)...)
+		}
+
+	case logql.KindBinOp:
+		if ast.BinOp != nil {
+			// BinOp has LHS and RHS, recurse into both
+			ranges = append(ranges, findAllLogRanges(ast.BinOp.LHS)...)
+			ranges = append(ranges, findAllLogRanges(ast.BinOp.RHS)...)
+		}
+	}
+
+	return ranges
+}
+
+// ValidateRangeSelector checks that all range selectors in the LogQL query
+// match the expected duration calculated from the query time range
+func ValidateRangeSelector(ast logql.LogAST, expectedDur time.Duration) error {
+	ranges := findAllLogRanges(ast)
+
+	// If there are no ranges in the query, no validation needed
+	if len(ranges) == 0 {
+		return nil
+	}
+
+	for i, logRange := range ranges {
+		// Parse the range string (e.g., "5m") into time.Duration
+		rangeDur, err := time.ParseDuration(logRange.Range)
+		if err != nil {
+			return fmt.Errorf("invalid range syntax '%s': %w", logRange.Range, err)
+		}
+
+		if rangeDur != expectedDur {
+			// Format error message
+			if len(ranges) == 1 {
+				return fmt.Errorf("range selector [%s] must match query duration %s",
+					logRange.Range, expectedDur)
+			}
+			return fmt.Errorf("range selector %d [%s] must match query duration %s",
+				i+1, logRange.Range, expectedDur)
+		}
+	}
+
+	return nil
+}
+
 func minMaxTimestamp(ctx context.Context, db *sql.DB, table string) (int64, int64, error) {
 	q := fmt.Sprintf(`SELECT MIN("%s"), MAX("%s") FROM %s`,
 		"chq_timestamp", "chq_timestamp", quoteIdent(table))
