@@ -26,6 +26,8 @@ type logQLValidateRequest struct {
 	Query           string         `json:"query"`
 	Exemplar        map[string]any `json:"exemplar,omitempty"`
 	StreamAttribute string         `json:"stream_attribute,omitempty"`
+	Start           int64          `json:"start,omitempty"`
+	End             int64          `json:"end,omitempty"`
 }
 
 type logQLValidateResponse struct {
@@ -58,6 +60,15 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 	// Validate stream attribute requirement if specified
 	if req.StreamAttribute != "" {
 		if err := ValidateStreamAttributeRequirement(ast, req.StreamAttribute); err != nil {
+			writeAPIError(w, http.StatusBadRequest, ValidationFailed, err.Error())
+			return
+		}
+	}
+
+	// Validate range selector matches query duration if start/end provided
+	if req.Start != 0 && req.End != 0 {
+		dur := StepForQueryDuration(req.Start, req.End)
+		if err := ValidateRangeSelector(ast, dur); err != nil {
 			writeAPIError(w, http.StatusBadRequest, ValidationFailed, err.Error())
 			return
 		}
