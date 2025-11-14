@@ -321,6 +321,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 
 		go func(ids []int64, out chan<- T) {
 			defer close(out)
+			defer slog.Info("Cached query goroutine exiting", slog.Int("numSegments", len(ids)))
 
 			idLits := make([]string, len(ids))
 			for i, id := range ids {
@@ -396,9 +397,12 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				return
 			}
 
+			slog.Info("Starting row iteration for cached segments", slog.Int("numSegments", len(ids)))
+			rowCount := 0
 			for rows.Next() {
 				select {
 				case <-ctx.Done():
+					slog.Info("Context cancelled during cached row iteration", slog.Int("numSegments", len(ids)), slog.Int("rowsProcessed", rowCount))
 					return
 				default:
 				}
@@ -408,11 +412,16 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 					return
 				}
 				//ts := v.GetTimestamp()
+				slog.Info("Sending row to channel (cached)", slog.Int("numSegments", len(ids)), slog.Int("rowNum", rowCount))
 				out <- v
+				rowCount++
+				slog.Info("Row sent to channel (cached)", slog.Int("numSegments", len(ids)), slog.Int("rowNum", rowCount))
 			}
+			slog.Info("Row iteration completed for cached segments", slog.Int("numSegments", len(ids)), slog.Int("totalRows", rowCount))
 			if err := rows.Err(); err != nil {
 				slog.Error("Cached rows iteration error", slog.Any("error", err))
 			}
+			slog.Info("About to exit cached goroutine", slog.Int("numSegments", len(ids)), slog.Int("totalRows", rowCount))
 		}(cachedIDs, out)
 	}
 	return outs
@@ -445,6 +454,7 @@ func streamFromS3[T promql.Timestamped](
 
 		go func(out chan<- T) {
 			defer close(out)
+			defer slog.Info("S3 query goroutine exiting", slog.Int("numFiles", len(urisCopy)))
 
 			// Build read_parquet source
 			quoted := make([]string, len(urisCopy))
@@ -517,9 +527,12 @@ func streamFromS3[T promql.Timestamped](
 				return
 			}
 
+			slog.Info("Starting row iteration for S3", slog.Int("numFiles", len(urisCopy)))
+			rowCount := 0
 			for rows.Next() {
 				select {
 				case <-ctx.Done():
+					slog.Info("Context cancelled during row iteration", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsProcessed", rowCount))
 					return
 				default:
 				}
@@ -528,11 +541,16 @@ func streamFromS3[T promql.Timestamped](
 					slog.Error("Row mapping failed", slog.Any("error", mErr))
 					return
 				}
+				slog.Info("Sending row to channel", slog.Int("numFiles", len(urisCopy)), slog.Int("rowNum", rowCount))
 				out <- v
+				rowCount++
+				slog.Info("Row sent to channel", slog.Int("numFiles", len(urisCopy)), slog.Int("rowNum", rowCount))
 			}
+			slog.Info("Row iteration completed for S3", slog.Int("numFiles", len(urisCopy)), slog.Int("totalRows", rowCount))
 			if err := rows.Err(); err != nil {
 				slog.Error("Rows iteration error", slog.Any("error", err))
 			}
+			slog.Info("About to exit S3 goroutine", slog.Int("numFiles", len(urisCopy)), slog.Int("totalRows", rowCount))
 		}(out)
 	}
 
