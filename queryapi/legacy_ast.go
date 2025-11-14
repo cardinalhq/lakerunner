@@ -17,6 +17,7 @@ package queryapi
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // GraphRequest represents a legacy query API request.
@@ -177,11 +178,16 @@ func (bc *BinaryClause) UnmarshalJSON(data []byte) error {
 		}
 	}
 
-	// Add non-numeric keys in the order they were encountered
+	// Add non-numeric keys in sorted order for deterministic behavior
+	var nonNumericKeys []string
 	for _, key := range orderedKeys {
 		if !usedKeys[key] {
-			bc.Clauses = append(bc.Clauses, clauses[key])
+			nonNumericKeys = append(nonNumericKeys, key)
 		}
+	}
+	sort.Strings(nonNumericKeys)
+	for _, key := range nonNumericKeys {
+		bc.Clauses = append(bc.Clauses, clauses[key])
 	}
 
 	if len(bc.Clauses) == 0 {
