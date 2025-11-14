@@ -40,6 +40,29 @@ const (
 	ChannelBufferSize = 4096
 )
 
+// isMissingFingerprintError checks if the error is about a missing chq_fingerprint column.
+func isMissingFingerprintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "chq_fingerprint") &&
+		(strings.Contains(errStr, "not found") || strings.Contains(errStr, "Binder Error"))
+}
+
+// removeFingerprintNormalization removes the fingerprint normalization stage from SQL.
+// This handles cases where older Parquet files don't have the chq_fingerprint column.
+func removeFingerprintNormalization(sql string) string {
+	// The fingerprint normalization appears as:
+	// s1 AS (SELECT s0.* REPLACE(CAST("chq_fingerprint" AS VARCHAR) AS "chq_fingerprint") FROM s0)
+	// We replace the REPLACE clause with a simple SELECT *
+	modified := strings.ReplaceAll(sql,
+		`.* REPLACE(CAST("chq_fingerprint" AS VARCHAR) AS "chq_fingerprint")`,
+		`.*`)
+
+	return modified
+}
+
 // DownloadBatchFunc downloads ALL given paths to their target local paths.
 type DownloadBatchFunc func(ctx context.Context, storageProfile storageprofile.StorageProfile, keys []string) error
 
@@ -310,8 +333,25 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 
 			rows, err := conn.QueryContext(ctx, cacheSQL)
 			if err != nil {
-				slog.Error("Cached query failed", slog.Any("error", err), slog.String("sql", cacheSQL))
-				return
+				// Check if the error is due to missing chq_fingerprint column
+				if isMissingFingerprintError(err) {
+					slog.Warn("Cached segments missing chq_fingerprint column, retrying without normalization",
+						slog.Any("error", err),
+						slog.Int("numSegments", len(ids)))
+
+					// Retry with fingerprint normalization removed
+					modifiedSQL := removeFingerprintNormalization(cacheSQL)
+					rows, err = conn.QueryContext(ctx, modifiedSQL)
+					if err != nil {
+						slog.Error("Cached query failed even without fingerprint normalization",
+							slog.Any("error", err),
+							slog.String("sql", modifiedSQL))
+						return
+					}
+				} else {
+					slog.Error("Cached query failed", slog.Any("error", err), slog.String("sql", cacheSQL))
+					return
+				}
 			}
 			defer func(rows *sql.Rows) {
 				err := rows.Close()
@@ -401,8 +441,25 @@ func streamFromS3[T promql.Timestamped](
 
 			rows, err := conn.QueryContext(ctx, sqlReplaced)
 			if err != nil {
-				slog.Error("Query failed", slog.Any("error", err), "sql", sqlReplaced)
-				return
+				// Check if the error is due to missing chq_fingerprint column
+				if isMissingFingerprintError(err) {
+					slog.Warn("S3 segments missing chq_fingerprint column, retrying without normalization",
+						slog.Any("error", err),
+						slog.Int("numFiles", len(urisCopy)))
+
+					// Retry with fingerprint normalization removed
+					modifiedSQL := removeFingerprintNormalization(sqlReplaced)
+					rows, err = conn.QueryContext(ctx, modifiedSQL)
+					if err != nil {
+						slog.Error("S3 query failed even without fingerprint normalization",
+							slog.Any("error", err),
+							slog.String("sql", modifiedSQL))
+						return
+					}
+				} else {
+					slog.Error("Query failed", slog.Any("error", err), "sql", sqlReplaced)
+					return
+				}
 			}
 			defer func() {
 				if err := rows.Close(); err != nil {
