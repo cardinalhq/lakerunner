@@ -299,7 +299,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				cacheSQL = strings.Replace(cacheSQL, "AND true", "AND segment_id IN ("+inList+")", 1)
 			}
 
-			//slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
+			slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
 			// Get connection from shared pool for local queries
 			conn, release, err := w.sink.s3Pool.GetConnection(ctx)
 			if err != nil {
@@ -310,6 +310,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 
 			rows, err := conn.QueryContext(ctx, cacheSQL)
 			if err != nil {
+				slog.Error("Cached query failed", slog.Any("error", err), slog.String("sql", cacheSQL))
 				return
 			}
 			defer func(rows *sql.Rows) {
@@ -333,12 +334,15 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				}
 				v, mErr := mapper(request, cols, rows)
 				if mErr != nil {
+					slog.Error("Cached row mapping failed", slog.Any("error", mErr))
 					return
 				}
 				//ts := v.GetTimestamp()
 				out <- v
 			}
-			_ = rows.Err()
+			if err := rows.Err(); err != nil {
+				slog.Error("Cached rows iteration error", slog.Any("error", err))
+			}
 		}(cachedIDs, out)
 	}
 	return outs
