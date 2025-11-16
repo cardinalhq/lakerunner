@@ -602,10 +602,16 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.R
 	}
 
 	// Add standard resource fields
+	resourceFile := getResourceFile(t.ObjectID)
 	(*row)[wkk.RowKeyResourceBucketName] = t.Bucket
 	(*row)[wkk.RowKeyResourceFileName] = "./" + t.ObjectID
-	(*row)[wkk.RowKeyResourceFile] = getResourceFile(t.ObjectID)
+	(*row)[wkk.RowKeyResourceFile] = resourceFile
 	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.ObjectID)
+
+	// Extract customer domain if pattern matches
+	if customerDomain := helpers.ExtractCustomerDomain(resourceFile); customerDomain != "" {
+		(*row)[wkk.RowKeyResourceCustomerDomain] = customerDomain
+	}
 
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"

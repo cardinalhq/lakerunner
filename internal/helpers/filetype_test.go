@@ -49,3 +49,75 @@ func TestGetFileType(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractCustomerDomain(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		// Valid patterns (domain-hyphen-rest)
+		{
+			name:     "simple domain with hyphen",
+			input:    "example.com-abc-123456_2025-01-01-120000_server",
+			expected: "example.com",
+		},
+		{
+			name:     "subdomain pattern",
+			input:    "app.example.com-xyz-987654_2025-02-15-143000_controller",
+			expected: "app.example.com",
+		},
+		{
+			name:     "multi-level subdomain",
+			input:    "api.v2.example.org-def-555555_2025-03-20-100000_worker",
+			expected: "api.v2.example.org",
+		},
+		// Invalid patterns (no hyphen)
+		{
+			name:     "no hyphen",
+			input:    "example.com_abc_123456",
+			expected: "",
+		},
+		// Invalid patterns (no dot in prefix)
+		{
+			name:     "no dot before hyphen",
+			input:    "example-abc-123456_2025-01-01-120000_server",
+			expected: "",
+		},
+		{
+			name:     "only single word before hyphen",
+			input:    "server-abc-123456_2025-01-01-120000_instance",
+			expected: "",
+		},
+		// Edge cases
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "just hyphen",
+			input:    "-",
+			expected: "",
+		},
+		{
+			name:     "domain only without hyphen",
+			input:    "example.com",
+			expected: "",
+		},
+		{
+			name:     "hyphen at start",
+			input:    "-example.com",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractCustomerDomain(tt.input)
+			if got != tt.expected {
+				t.Errorf("ExtractCustomerDomain(%q) = %q; want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}

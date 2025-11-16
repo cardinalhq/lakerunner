@@ -35,3 +35,29 @@ func GetFileType(p string) string {
 	// strip out anything that isn't A–Z or a–z
 	return nonLetter.ReplaceAllString(fileName, "")
 }
+
+// ExtractCustomerDomain attempts to extract a customer domain from a resource file name.
+// It expects the pattern: domain.com-rest-of-stuff
+// Returns the domain part (before first hyphen) if it contains a dot, empty string otherwise.
+func ExtractCustomerDomain(resourceFile string) string {
+	if resourceFile == "" {
+		return ""
+	}
+
+	// Find the first hyphen
+	hyphenIdx := strings.Index(resourceFile, "-")
+	if hyphenIdx == -1 {
+		// No hyphen found - pattern doesn't match
+		return ""
+	}
+
+	// Extract the part before the first hyphen
+	potentialDomain := resourceFile[:hyphenIdx]
+
+	// Check if it looks like a domain (contains at least one dot)
+	if !strings.Contains(potentialDomain, ".") {
+		return ""
+	}
+
+	return potentialDomain
+}
