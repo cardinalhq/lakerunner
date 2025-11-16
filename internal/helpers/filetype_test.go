@@ -72,6 +72,22 @@ func TestExtractCustomerDomain(t *testing.T) {
 			input:    "api.v2.example.org-def-555555_2025-03-20-100000_worker",
 			expected: "api.v2.example.org",
 		},
+		// Hyphenated domains (Codex feedback case)
+		{
+			name:     "hyphenated domain name",
+			input:    "foo-bar.example.com-abc-123",
+			expected: "foo-bar.example.com",
+		},
+		{
+			name:     "multi-hyphen domain",
+			input:    "my-api-server.example.org-instance-001_2025-01-01",
+			expected: "my-api-server.example.org",
+		},
+		{
+			name:     "hyphenated subdomain",
+			input:    "app-v2.test-env.example.com_xyz_123",
+			expected: "app-v2.test-env.example.com",
+		},
 		// Valid patterns with underscore separator
 		{
 			name:     "domain with underscore",
@@ -94,19 +110,25 @@ func TestExtractCustomerDomain(t *testing.T) {
 			input:    "app.example.com",
 			expected: "app.example.com",
 		},
-		// Invalid patterns (no dot in prefix before separator)
+		// Multi-level TLDs
 		{
-			name:     "no dot before hyphen",
-			input:    "example-abc-123456_2025-01-01-120000_server",
+			name:     "co.uk TLD with separator",
+			input:    "example.co.uk-abc-123",
+			expected: "example.co.uk",
+		},
+		{
+			name:     "co.uk TLD without separator",
+			input:    "example.co.uk",
+			expected: "example.co.uk",
+		},
+		// Invalid patterns (no dot)
+		{
+			name:     "no dot at all with hyphen",
+			input:    "example-abc-123456",
 			expected: "",
 		},
 		{
-			name:     "only single word before hyphen",
-			input:    "server-abc-123456_2025-01-01-120000_instance",
-			expected: "",
-		},
-		{
-			name:     "no dot before underscore",
+			name:     "no dot at all with underscore",
 			input:    "example_abc_123456",
 			expected: "",
 		},
@@ -127,14 +149,9 @@ func TestExtractCustomerDomain(t *testing.T) {
 			expected: "",
 		},
 		{
-			name:     "separator at start with domain",
-			input:    "-example.com",
-			expected: "",
-		},
-		{
-			name:     "no dot at all",
-			input:    "examplecom-abc-123",
-			expected: "",
+			name:     "just a dot",
+			input:    ".",
+			expected: ".",
 		},
 	}
 
