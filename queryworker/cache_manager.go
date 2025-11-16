@@ -79,6 +79,54 @@ func removeFingerprintNormalization(sql string) string {
 	return modified
 }
 
+// executeQueryWithRetry executes a DuckDB query with automatic retry logic for missing fingerprint errors.
+// If the query fails due to a missing chq_fingerprint column, it retries with fingerprint normalization removed.
+func executeQueryWithRetry(ctx context.Context, conn *sql.Conn, query string, queryType string, numItems int) (*sql.Rows, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, QueryTimeout)
+	defer cancel()
+
+	slog.Info("Calling DuckDB QueryContext for "+queryType, slog.Int("numItems", numItems))
+	queryStart := time.Now()
+	rows, err := conn.QueryContext(queryCtx, query)
+	queryDuration := time.Since(queryStart)
+	slog.Info("DuckDB QueryContext returned for "+queryType,
+		slog.Duration("duration", queryDuration),
+		slog.Bool("hasError", err != nil))
+
+	if err != nil {
+		// Close rows from failed query if it exists
+		if rows != nil {
+			if closeErr := rows.Close(); closeErr != nil {
+				slog.Error("Error closing rows from failed query", slog.Any("error", closeErr))
+			}
+		}
+
+		if isMissingFingerprintError(err) {
+			slog.Warn(queryType+" segments missing chq_fingerprint column, retrying without normalization",
+				slog.Any("error", err),
+				slog.Int("numItems", numItems))
+
+			retryCtx, retryCancel := context.WithTimeout(ctx, QueryTimeout)
+			defer retryCancel()
+
+			modifiedSQL := removeFingerprintNormalization(query)
+			rows, err = conn.QueryContext(retryCtx, modifiedSQL)
+			if err != nil {
+				slog.Error(queryType+" query failed even without fingerprint normalization",
+					slog.Any("error", err),
+					slog.String("sql", modifiedSQL))
+				return nil, err
+			}
+			return rows, nil
+		}
+
+		slog.Error(queryType+" query failed", slog.Any("error", err), slog.String("sql", query))
+		return nil, err
+	}
+
+	return rows, nil
+}
+
 // DownloadBatchFunc downloads ALL given paths to their target local paths.
 type DownloadBatchFunc func(ctx context.Context, storageProfile storageprofile.StorageProfile, keys []string) error
 
@@ -347,48 +395,9 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 			}
 			defer release()
 
-			// Create a context with timeout to prevent DuckDB from hanging indefinitely
-			queryCtx, cancel := context.WithTimeout(ctx, QueryTimeout)
-			defer cancel()
-
-			slog.Info("Calling DuckDB QueryContext for cached segments", slog.Int("numSegments", len(ids)))
-			queryStart := time.Now()
-			rows, err := conn.QueryContext(queryCtx, cacheSQL)
-			queryDuration := time.Since(queryStart)
-			slog.Info("DuckDB QueryContext returned for cached segments",
-				slog.Duration("duration", queryDuration),
-				slog.Bool("hasError", err != nil))
-
+			rows, err := executeQueryWithRetry(ctx, conn, cacheSQL, "cached segments", len(ids))
 			if err != nil {
-				// Close rows from failed query if it exists
-				if rows != nil {
-					if closeErr := rows.Close(); closeErr != nil {
-						slog.Error("Error closing rows from failed query", slog.Any("error", closeErr))
-					}
-				}
-
-				// Check if the error is due to missing chq_fingerprint column
-				if isMissingFingerprintError(err) {
-					slog.Warn("Cached segments missing chq_fingerprint column, retrying without normalization",
-						slog.Any("error", err),
-						slog.Int("numSegments", len(ids)))
-
-					// Retry with fingerprint normalization removed using a fresh timeout
-					retryCtx, retryCancel := context.WithTimeout(ctx, QueryTimeout)
-					defer retryCancel()
-
-					modifiedSQL := removeFingerprintNormalization(cacheSQL)
-					rows, err = conn.QueryContext(retryCtx, modifiedSQL)
-					if err != nil {
-						slog.Error("Cached query failed even without fingerprint normalization",
-							slog.Any("error", err),
-							slog.String("sql", modifiedSQL))
-						return
-					}
-				} else {
-					slog.Error("Cached query failed", slog.Any("error", err), slog.String("sql", cacheSQL))
-					return
-				}
+				return
 			}
 			defer func(rows *sql.Rows) {
 				err := rows.Close()
@@ -480,48 +489,9 @@ func streamFromS3[T promql.Timestamped](
 			// Ensure rows close before releasing the connection
 			defer release()
 
-			// Create a context with timeout to prevent DuckDB from hanging indefinitely
-			queryCtx, cancel := context.WithTimeout(ctx, QueryTimeout)
-			defer cancel()
-
-			slog.Info("Calling DuckDB QueryContext for S3", slog.Int("numFiles", len(urisCopy)))
-			queryStart := time.Now()
-			rows, err := conn.QueryContext(queryCtx, sqlReplaced)
-			queryDuration := time.Since(queryStart)
-			slog.Info("DuckDB QueryContext returned for S3",
-				slog.Duration("duration", queryDuration),
-				slog.Bool("hasError", err != nil))
-
+			rows, err := executeQueryWithRetry(ctx, conn, sqlReplaced, "S3", len(urisCopy))
 			if err != nil {
-				// Close rows from failed query if it exists
-				if rows != nil {
-					if closeErr := rows.Close(); closeErr != nil {
-						slog.Error("Error closing rows from failed query", slog.Any("error", closeErr))
-					}
-				}
-
-				// Check if the error is due to missing chq_fingerprint column
-				if isMissingFingerprintError(err) {
-					slog.Warn("S3 segments missing chq_fingerprint column, retrying without normalization",
-						slog.Any("error", err),
-						slog.Int("numFiles", len(urisCopy)))
-
-					// Retry with fingerprint normalization removed using a fresh timeout
-					retryCtx, retryCancel := context.WithTimeout(ctx, QueryTimeout)
-					defer retryCancel()
-
-					modifiedSQL := removeFingerprintNormalization(sqlReplaced)
-					rows, err = conn.QueryContext(retryCtx, modifiedSQL)
-					if err != nil {
-						slog.Error("S3 query failed even without fingerprint normalization",
-							slog.Any("error", err),
-							slog.String("sql", modifiedSQL))
-						return
-					}
-				} else {
-					slog.Error("Query failed", slog.Any("error", err), "sql", sqlReplaced)
-					return
-				}
+				return
 			}
 			defer func() {
 				if err := rows.Close(); err != nil {
