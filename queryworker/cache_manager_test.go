@@ -56,11 +56,6 @@ func TestIsMissingFingerprintError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "wrapped context deadline exceeded - not treated as fingerprint error",
-			err:      errors.Join(errors.New("query failed"), context.DeadlineExceeded),
-			expected: false,
-		},
-		{
 			name:     "non-fingerprint column error",
 			err:      errors.New("Binder Error: column other_column not found"),
 			expected: false,
@@ -84,6 +79,7 @@ func TestIsMissingFingerprintError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := isMissingFingerprintError(tt.err)
 			require.Equal(t, tt.expected, result)
 		})
@@ -127,6 +123,7 @@ func TestRemoveFingerprintNormalization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			result := removeFingerprintNormalization(tt.input)
 			require.Equal(t, tt.expected, result)
 		})

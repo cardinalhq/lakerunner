@@ -80,34 +80,31 @@ func executeQueryWithRetry(ctx context.Context, conn *sql.Conn, query string, qu
 	queryCtx, cancel := context.WithTimeout(ctx, QueryTimeout)
 	defer cancel()
 
-	slog.Info("Calling DuckDB QueryContext for "+queryType, slog.Int("numItems", numItems))
+	slog.Info("Calling DuckDB QueryContext", slog.String("queryType", queryType), slog.Int("numItems", numItems))
 	queryStart := time.Now()
 	rows, err := conn.QueryContext(queryCtx, query)
 	queryDuration := time.Since(queryStart)
-	slog.Info("DuckDB QueryContext returned for "+queryType,
+	slog.Info("DuckDB QueryContext returned",
+		slog.String("queryType", queryType),
 		slog.Duration("duration", queryDuration),
 		slog.Bool("hasError", err != nil))
 
 	if err != nil {
-		// Close rows from failed query if it exists
-		if rows != nil {
-			if closeErr := rows.Close(); closeErr != nil {
-				slog.Error("Error closing rows from failed query", slog.Any("error", closeErr))
-			}
-		}
-
 		if isMissingFingerprintError(err) {
-			slog.Warn(queryType+" segments missing chq_fingerprint column, retrying without normalization",
+			slog.Warn("Segments missing chq_fingerprint column, retrying without normalization",
+				slog.String("queryType", queryType),
 				slog.Any("error", err),
 				slog.Int("numItems", numItems))
 
-			retryCtx, retryCancel := context.WithTimeout(ctx, QueryTimeout)
+			// Use a fresh context for retry to avoid inheriting deadline issues
+			retryCtx, retryCancel := context.WithTimeout(context.Background(), QueryTimeout)
 			defer retryCancel()
 
 			modifiedSQL := removeFingerprintNormalization(query)
 			rows, err = conn.QueryContext(retryCtx, modifiedSQL)
 			if err != nil {
-				slog.Error(queryType+" query failed even without fingerprint normalization",
+				slog.Error("Query failed even without fingerprint normalization",
+					slog.String("queryType", queryType),
 					slog.Any("error", err),
 					slog.String("sql", modifiedSQL))
 				return nil, err
@@ -115,7 +112,10 @@ func executeQueryWithRetry(ctx context.Context, conn *sql.Conn, query string, qu
 			return rows, nil
 		}
 
-		slog.Error(queryType+" query failed", slog.Any("error", err), slog.String("sql", query))
+		slog.Error("Query failed",
+			slog.String("queryType", queryType),
+			slog.Any("error", err),
+			slog.String("sql", query))
 		return nil, err
 	}
 
