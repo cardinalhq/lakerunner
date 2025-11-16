@@ -56,29 +56,45 @@ func TestExtractCustomerDomain(t *testing.T) {
 		input    string
 		expected string
 	}{
-		// Valid patterns (domain-hyphen-rest)
+		// Valid patterns with hyphen separator
 		{
 			name:     "simple domain with hyphen",
 			input:    "example.com-abc-123456_2025-01-01-120000_server",
 			expected: "example.com",
 		},
 		{
-			name:     "subdomain pattern",
+			name:     "subdomain pattern with hyphen",
 			input:    "app.example.com-xyz-987654_2025-02-15-143000_controller",
 			expected: "app.example.com",
 		},
 		{
-			name:     "multi-level subdomain",
+			name:     "multi-level subdomain with hyphen",
 			input:    "api.v2.example.org-def-555555_2025-03-20-100000_worker",
 			expected: "api.v2.example.org",
 		},
-		// Invalid patterns (no hyphen)
+		// Valid patterns with underscore separator
 		{
-			name:     "no hyphen",
-			input:    "example.com_abc_123456",
-			expected: "",
+			name:     "domain with underscore",
+			input:    "example.com_abc_123456_2025-01-01-120000_server",
+			expected: "example.com",
 		},
-		// Invalid patterns (no dot in prefix)
+		{
+			name:     "subdomain with underscore",
+			input:    "app.example.com_xyz_987654",
+			expected: "app.example.com",
+		},
+		// Domain only (no separator)
+		{
+			name:     "domain only without separator",
+			input:    "example.com",
+			expected: "example.com",
+		},
+		{
+			name:     "subdomain only without separator",
+			input:    "app.example.com",
+			expected: "app.example.com",
+		},
+		// Invalid patterns (no dot in prefix before separator)
 		{
 			name:     "no dot before hyphen",
 			input:    "example-abc-123456_2025-01-01-120000_server",
@@ -87,6 +103,11 @@ func TestExtractCustomerDomain(t *testing.T) {
 		{
 			name:     "only single word before hyphen",
 			input:    "server-abc-123456_2025-01-01-120000_instance",
+			expected: "",
+		},
+		{
+			name:     "no dot before underscore",
+			input:    "example_abc_123456",
 			expected: "",
 		},
 		// Edge cases
@@ -101,13 +122,18 @@ func TestExtractCustomerDomain(t *testing.T) {
 			expected: "",
 		},
 		{
-			name:     "domain only without hyphen",
-			input:    "example.com",
+			name:     "just underscore",
+			input:    "_",
 			expected: "",
 		},
 		{
-			name:     "hyphen at start",
+			name:     "separator at start with domain",
 			input:    "-example.com",
+			expected: "",
+		},
+		{
+			name:     "no dot at all",
+			input:    "examplecom-abc-123",
 			expected: "",
 		},
 	}
