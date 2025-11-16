@@ -360,6 +360,13 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				slog.Bool("hasError", err != nil))
 
 			if err != nil {
+				// Close rows from failed query if it exists
+				if rows != nil {
+					if closeErr := rows.Close(); closeErr != nil {
+						slog.Error("Error closing rows from failed query", slog.Any("error", closeErr))
+					}
+				}
+
 				// Check if the error is due to missing chq_fingerprint column
 				if isMissingFingerprintError(err) {
 					slog.Warn("Cached segments missing chq_fingerprint column, retrying without normalization",
@@ -486,6 +493,13 @@ func streamFromS3[T promql.Timestamped](
 				slog.Bool("hasError", err != nil))
 
 			if err != nil {
+				// Close rows from failed query if it exists
+				if rows != nil {
+					if closeErr := rows.Close(); closeErr != nil {
+						slog.Error("Error closing rows from failed query", slog.Any("error", closeErr))
+					}
+				}
+
 				// Check if the error is due to missing chq_fingerprint column
 				if isMissingFingerprintError(err) {
 					slog.Warn("S3 segments missing chq_fingerprint column, retrying without normalization",
