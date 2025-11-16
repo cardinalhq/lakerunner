@@ -58,7 +58,6 @@ func SelectSegmentsFromLegacyFilter(
 
 	slog.Info("Legacy segment selector: looking up fingerprints",
 		"count", len(fpList),
-		"fingerprints", fpList,
 		"dateint", dih.DateInt,
 		"org_id", orgID)
 
@@ -94,14 +93,9 @@ func SelectSegmentsFromLegacyFilter(
 
 	// Log segments grouped by fingerprint
 	for fp, segs := range fpToSegments {
-		segIDs := make([]int64, len(segs))
-		for i, s := range segs {
-			segIDs[i] = s.SegmentID
-		}
 		slog.Info("Legacy segment selector: fingerprint matches",
 			"fingerprint", fp,
-			"segment_count", len(segs),
-			"segment_ids", segIDs)
+			"segment_count", len(segs))
 	}
 
 	// Compute final set based on trigram query logic
@@ -114,8 +108,7 @@ func SelectSegmentsFromLegacyFilter(
 	slices.Sort(finalSegIDs)
 
 	slog.Info("Legacy segment selector: final segments after trigram query logic",
-		"final_count", len(finalSet),
-		"segment_ids", finalSegIDs)
+		"final_count", len(finalSet))
 
 	out := make([]SegmentInfo, 0, len(finalSet))
 	for s := range finalSet {
