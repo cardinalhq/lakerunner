@@ -43,7 +43,9 @@ const (
 )
 
 // isMissingFingerprintError checks if the error is about a missing chq_fingerprint column.
-// This includes explicit binder errors and context timeouts (which may indicate DuckDB hung on the column).
+// Only explicit column not found errors are treated as missing fingerprint issues.
+// Timeouts and other errors are not classified as fingerprint-related to avoid wasting
+// time on retries that won't fix the underlying issue.
 func isMissingFingerprintError(err error) bool {
 	if err == nil {
 		return false
@@ -53,13 +55,6 @@ func isMissingFingerprintError(err error) bool {
 	// Explicit column not found error
 	if strings.Contains(errStr, "chq_fingerprint") &&
 		(strings.Contains(errStr, "not found") || strings.Contains(errStr, "Binder Error")) {
-		return true
-	}
-
-	// Context deadline exceeded might indicate DuckDB hung on missing column during binding
-	// We'll retry without fingerprint normalization to see if that fixes it
-	if errors.Is(err, context.DeadlineExceeded) {
-		slog.Warn("Query timeout detected, will retry without fingerprint normalization")
 		return true
 	}
 

@@ -51,14 +51,14 @@ func TestIsMissingFingerprintError(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "context deadline exceeded",
+			name:     "context deadline exceeded - not treated as fingerprint error",
 			err:      context.DeadlineExceeded,
-			expected: true,
+			expected: false,
 		},
 		{
-			name:     "wrapped context deadline exceeded",
+			name:     "wrapped context deadline exceeded - not treated as fingerprint error",
 			err:      errors.Join(errors.New("query failed"), context.DeadlineExceeded),
-			expected: true,
+			expected: false,
 		},
 		{
 			name:     "non-fingerprint column error",
