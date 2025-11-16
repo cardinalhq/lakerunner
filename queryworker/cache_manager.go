@@ -38,8 +38,6 @@ import (
 
 const (
 	ChannelBufferSize = 4096
-	// QueryTimeout is the maximum time a single DuckDB query can run before being cancelled
-	QueryTimeout = 5 * time.Minute
 )
 
 // isMissingFingerprintError checks if the error is about a missing chq_fingerprint column.
@@ -76,13 +74,13 @@ func removeFingerprintNormalization(sql string) string {
 
 // executeQueryWithRetry executes a DuckDB query with automatic retry logic for missing fingerprint errors.
 // If the query fails due to a missing chq_fingerprint column, it retries with fingerprint normalization removed.
+// NOTE: This function uses the parent context directly (no separate timeout) because the returned *sql.Rows
+// object continues to use the context during row scanning. Creating a local timeout context and cancelling it
+// on function return causes "context canceled" errors during rows.Next()/rows.Scan().
 func executeQueryWithRetry(ctx context.Context, conn *sql.Conn, query string, queryType string, numItems int) (*sql.Rows, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, QueryTimeout)
-	defer cancel()
-
 	slog.Info("Calling DuckDB QueryContext", slog.String("queryType", queryType), slog.Int("numItems", numItems))
 	queryStart := time.Now()
-	rows, err := conn.QueryContext(queryCtx, query)
+	rows, err := conn.QueryContext(ctx, query)
 	queryDuration := time.Since(queryStart)
 	slog.Info("DuckDB QueryContext returned",
 		slog.String("queryType", queryType),
@@ -96,12 +94,8 @@ func executeQueryWithRetry(ctx context.Context, conn *sql.Conn, query string, qu
 				slog.Any("error", err),
 				slog.Int("numItems", numItems))
 
-			// Use a fresh context for retry to avoid inheriting deadline issues
-			retryCtx, retryCancel := context.WithTimeout(context.Background(), QueryTimeout)
-			defer retryCancel()
-
 			modifiedSQL := removeFingerprintNormalization(query)
-			rows, err = conn.QueryContext(retryCtx, modifiedSQL)
+			rows, err = conn.QueryContext(ctx, modifiedSQL)
 			if err != nil {
 				slog.Error("Query failed even without fingerprint normalization",
 					slog.String("queryType", queryType),
