@@ -34,6 +34,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func GetKafkaCmd() *cobra.Command {
@@ -45,6 +46,7 @@ func GetKafkaCmd() *cobra.Command {
 
 	cmd.AddCommand(getConsumerLagCmd())
 	cmd.AddCommand(getTailCmd())
+	cmd.AddCommand(getFlushConsumerCmd())
 
 	return cmd
 }
@@ -564,4 +566,205 @@ func outputMessageHuman(msg kafka.Message) {
 	}
 
 	fmt.Printf("Value:\n%s\n\n", string(msg.Value))
+}
+
+func getFlushConsumerCmd() *cobra.Command {
+	var consumerGroup string
+	var topic string
+	var dryRun bool
+	var cleanupTracking bool
+
+	cmd := &cobra.Command{
+		Use:   "flush-consumer",
+		Short: "Flush a Kafka consumer group to current high water marks",
+		Long: `Sets up skip entries in the database that will cause consumers to skip
+to the current high water marks for all partitions. This allows flushing
+the consumer without requiring a shutdown.
+
+Running consumers will periodically check for skip entries and will
+automatically jump to the specified offsets when found.
+
+Examples:
+  # Flush all topics for a consumer group
+  lakerunner debug kafka flush-consumer --group lakerunner.ingest.logs
+
+  # Flush a specific topic
+  lakerunner debug kafka flush-consumer --group lakerunner.ingest.logs --topic lakerunner.objstore.ingest.logs
+
+  # Dry run to see what would be flushed
+  lakerunner debug kafka flush-consumer --group lakerunner.ingest.logs --dry-run`,
+		RunE: func(c *cobra.Command, args []string) error {
+			if consumerGroup == "" {
+				return fmt.Errorf("--group is required")
+			}
+
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+
+			return flushConsumer(ctx, cfg, consumerGroup, topic, dryRun, cleanupTracking)
+		},
+	}
+
+	cmd.Flags().StringVar(&consumerGroup, "group", "", "Consumer group to flush (required)")
+	cmd.Flags().StringVar(&topic, "topic", "", "Specific topic to flush (optional, defaults to all topics for group)")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be flushed without making changes")
+	cmd.Flags().BoolVar(&cleanupTracking, "cleanup-tracking", false, "Also cleanup kafka_offset_tracker entries below skip offsets")
+	_ = cmd.MarkFlagRequired("group")
+
+	return cmd
+}
+
+func flushConsumer(ctx context.Context, cfg *config.Config, consumerGroup, topic string, dryRun, cleanupTracking bool) error {
+	factory := fly.NewFactory(&cfg.Kafka)
+	adminClient, err := fly.NewAdminClient(&cfg.Kafka)
+	if err != nil {
+		return fmt.Errorf("failed to create admin client: %w", err)
+	}
+
+	// Get all topics from service mappings
+	monitor, err := fly.NewConsumerLagMonitor(cfg, time.Minute)
+	if err != nil {
+		return fmt.Errorf("failed to create consumer lag monitor: %w", err)
+	}
+	serviceMappings := monitor.GetServiceMappings()
+
+	// Determine which topics to flush
+	var topicsToFlush []string
+	if topic != "" {
+		topicsToFlush = []string{topic}
+	} else {
+		// Get all topics for this consumer group from service mappings
+		topicSet := make(map[string]bool)
+		for _, mapping := range serviceMappings {
+			if mapping.ConsumerGroup == consumerGroup {
+				topicSet[mapping.Topic] = true
+			}
+		}
+		for t := range topicSet {
+			topicsToFlush = append(topicsToFlush, t)
+		}
+		sort.Strings(topicsToFlush)
+	}
+
+	if len(topicsToFlush) == 0 {
+		return fmt.Errorf("no topics found for consumer group %s", consumerGroup)
+	}
+
+	fmt.Printf("Flushing consumer group: %s\n", consumerGroup)
+	fmt.Printf("Topics to flush: %v\n", topicsToFlush)
+	fmt.Printf("Kafka brokers: %v\n", factory.GetConfig().Brokers)
+	if dryRun {
+		fmt.Print("\n*** DRY RUN - No changes will be made ***\n\n")
+	}
+	fmt.Println()
+
+	// Collect all skip entries
+	type skipEntry struct {
+		topic         string
+		partition     int
+		currentOffset int64
+		highWaterMark int64
+		lag           int64
+	}
+	var skipEntries []skipEntry
+
+	for _, t := range topicsToFlush {
+		lags, err := adminClient.GetConsumerGroupLag(ctx, t, consumerGroup)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to get lag for topic %s: %v\n", t, err)
+			continue
+		}
+
+		for _, lag := range lags {
+			skipEntries = append(skipEntries, skipEntry{
+				topic:         lag.Topic,
+				partition:     lag.Partition,
+				currentOffset: lag.CommittedOffset,
+				highWaterMark: lag.HighWaterMark,
+				lag:           lag.Lag,
+			})
+		}
+	}
+
+	if len(skipEntries) == 0 {
+		fmt.Println("No partitions found to flush")
+		return nil
+	}
+
+	// Print what we're going to do
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "TOPIC\tPARTITION\tCURRENT\tHWM\tLAG\tSKIP TO")
+	totalLag := int64(0)
+	for _, entry := range skipEntries {
+		currentStr := fmt.Sprintf("%d", entry.currentOffset)
+		if entry.currentOffset < 0 {
+			currentStr = "N/A"
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%d\t%d\n",
+			entry.topic,
+			entry.partition,
+			currentStr,
+			entry.highWaterMark,
+			entry.lag,
+			entry.highWaterMark)
+		totalLag += entry.lag
+	}
+	_ = w.Flush()
+	fmt.Printf("\nTotal messages to skip: %d\n", totalLag)
+
+	if dryRun {
+		fmt.Println("\nDry run complete. Use without --dry-run to apply changes.")
+		return nil
+	}
+
+	// Connect to database
+	store, err := lrdb.LRDBStoreForAdmin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to connect to LRDB: %w", err)
+	}
+	defer store.Close()
+
+	// Insert skip entries
+	fmt.Println("\nInserting skip entries...")
+	for _, entry := range skipEntries {
+		err := store.InsertKafkaOffsetSkip(ctx, lrdb.InsertKafkaOffsetSkipParams{
+			ConsumerGroup: consumerGroup,
+			Topic:         entry.topic,
+			PartitionID:   int32(entry.partition),
+			SkipToOffset:  entry.highWaterMark,
+			CreatedAt:     nil, // Use default (now())
+		})
+		if err != nil {
+			return fmt.Errorf("failed to insert skip entry for %s:%d: %w", entry.topic, entry.partition, err)
+		}
+		fmt.Printf("  Inserted skip entry: %s partition %d -> offset %d\n", entry.topic, entry.partition, entry.highWaterMark)
+	}
+
+	// Optionally cleanup old tracking entries
+	if cleanupTracking {
+		fmt.Println("\nCleaning up kafka_offset_tracker entries...")
+		for _, entry := range skipEntries {
+			rows, err := store.CleanupKafkaOffsets(ctx, lrdb.CleanupKafkaOffsetsParams{
+				ConsumerGroup: consumerGroup,
+				Topic:         entry.topic,
+				PartitionID:   int32(entry.partition),
+				MaxOffset:     entry.highWaterMark,
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup tracking for %s:%d: %v\n", entry.topic, entry.partition, err)
+				continue
+			}
+			if rows > 0 {
+				fmt.Printf("  Cleaned up %d tracking entries for %s partition %d\n", rows, entry.topic, entry.partition)
+			}
+		}
+	}
+
+	fmt.Println("\nFlush complete. Running consumers will pick up skip entries on their next check.")
+	return nil
 }

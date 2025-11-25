@@ -25,12 +25,17 @@ type Querier interface {
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
 	CallExpirePublishedByIngestCutoff(ctx context.Context, arg CallExpirePublishedByIngestCutoffParams) (int64, error)
 	CallFindOrgPartition(ctx context.Context, arg CallFindOrgPartitionParams) (string, error)
+	CleanupKafkaOffsetSkipsByAge(ctx context.Context, createdBefore time.Time) (int64, error)
 	CleanupKafkaOffsets(ctx context.Context, arg CleanupKafkaOffsetsParams) (int64, error)
 	CleanupKafkaOffsetsByAge(ctx context.Context, createdBefore time.Time) (int64, error)
+	DeleteKafkaOffsetSkip(ctx context.Context, arg DeleteKafkaOffsetSkipParams) error
+	DeleteKafkaOffsetSkipsForGroup(ctx context.Context, consumerGroup string) (int64, error)
 	// Retrieves all pack estimates for a specific signal type
 	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
 	// Retrieves all existing pack estimates for EWMA calculations across all signals
 	GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error)
+	GetKafkaOffsetSkips(ctx context.Context, arg GetKafkaOffsetSkipsParams) ([]GetKafkaOffsetSkipsRow, error)
+	GetKafkaOffsetSkipsForGroup(ctx context.Context, consumerGroup string) ([]GetKafkaOffsetSkipsForGroupRow, error)
 	GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsParams) ([]GetLabelNameMapsRow, error)
 	GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error)
 	GetLogSegmentsForDownload(ctx context.Context, arg GetLogSegmentsForDownloadParams) ([]LogSeg, error)
@@ -44,6 +49,7 @@ type Querier interface {
 	GetTraceLabelNameMaps(ctx context.Context, arg GetTraceLabelNameMapsParams) ([]GetTraceLabelNameMapsRow, error)
 	GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (TraceSeg, error)
 	GetTraceSegmentsForDownload(ctx context.Context, arg GetTraceSegmentsForDownloadParams) ([]TraceSeg, error)
+	InsertKafkaOffsetSkip(ctx context.Context, arg InsertKafkaOffsetSkipParams) error
 	InsertKafkaOffsets(ctx context.Context, arg InsertKafkaOffsetsParams) error
 	KafkaOffsetsAfter(ctx context.Context, arg KafkaOffsetsAfterParams) ([]int64, error)
 	// Extract tag keys from label_name_map in log_seg table

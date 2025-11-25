@@ -98,6 +98,15 @@ func (ns NullSignalEnum) Value() (driver.Value, error) {
 	return string(ns.SignalEnum), nil
 }
 
+type KafkaOffsetSkip struct {
+	ID            int64     `json:"id"`
+	ConsumerGroup string    `json:"consumer_group"`
+	Topic         string    `json:"topic"`
+	PartitionID   int32     `json:"partition_id"`
+	SkipToOffset  int64     `json:"skip_to_offset"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type KafkaOffsetTracker struct {
 	ID            int64     `json:"id"`
 	ConsumerGroup string    `json:"consumer_group"`

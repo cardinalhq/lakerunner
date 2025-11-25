@@ -111,6 +111,16 @@ func init() {
 				}
 			}()
 
+			// Start offset skip checker for live flushing support
+			topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsMetricsCompact)
+			consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsCompact)
+			stopSkipChecker, err := StartOffsetSkipChecker(ctx, cfg, mdb, consumerGroup, topic)
+			if err != nil {
+				slog.Warn("Failed to start offset skip checker", slog.Any("error", err))
+			} else {
+				defer stopSkipChecker()
+			}
+
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			if err := consumer.Run(ctx); err != nil {
