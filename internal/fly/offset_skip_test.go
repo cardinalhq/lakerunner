@@ -223,11 +223,13 @@ func (c *testableSkipChecker) checkAndApplySkips(ctx context.Context) bool {
 	}
 
 	// Delete the skip entries after successful commit
+	// Include skip_to_offset in the delete to avoid race with concurrent flush requests
 	for _, skip := range skips {
 		_ = c.store.DeleteKafkaOffsetSkip(ctx, lrdb.DeleteKafkaOffsetSkipParams{
 			ConsumerGroup: c.consumerGroup,
 			Topic:         c.topic,
 			PartitionID:   skip.PartitionID,
+			SkipToOffset:  skip.SkipToOffset,
 		})
 	}
 

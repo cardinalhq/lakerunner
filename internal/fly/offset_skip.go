@@ -143,11 +143,13 @@ func (c *OffsetSkipChecker) checkAndApplySkips(ctx context.Context) bool {
 	}
 
 	// Delete the skip entries after successful commit
+	// Include skip_to_offset in the delete to avoid race with concurrent flush requests
 	for _, skip := range skips {
 		if err := c.store.DeleteKafkaOffsetSkip(ctx, lrdb.DeleteKafkaOffsetSkipParams{
 			ConsumerGroup: c.consumerGroup,
 			Topic:         c.topic,
 			PartitionID:   skip.PartitionID,
+			SkipToOffset:  skip.SkipToOffset,
 		}); err != nil {
 			slog.Warn("Failed to delete skip entry after applying",
 				slog.String("consumerGroup", c.consumerGroup),

@@ -28,16 +28,23 @@ DELETE FROM kafka_offset_skip
 WHERE consumer_group = $1
   AND topic = $2
   AND partition_id = $3
+  AND skip_to_offset = $4
 `
 
 type DeleteKafkaOffsetSkipParams struct {
 	ConsumerGroup string `json:"consumer_group"`
 	Topic         string `json:"topic"`
 	PartitionID   int32  `json:"partition_id"`
+	SkipToOffset  int64  `json:"skip_to_offset"`
 }
 
 func (q *Queries) DeleteKafkaOffsetSkip(ctx context.Context, arg DeleteKafkaOffsetSkipParams) error {
-	_, err := q.db.Exec(ctx, deleteKafkaOffsetSkip, arg.ConsumerGroup, arg.Topic, arg.PartitionID)
+	_, err := q.db.Exec(ctx, deleteKafkaOffsetSkip,
+		arg.ConsumerGroup,
+		arg.Topic,
+		arg.PartitionID,
+		arg.SkipToOffset,
+	)
 	return err
 }
 

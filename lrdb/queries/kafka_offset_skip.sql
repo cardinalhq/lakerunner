@@ -32,7 +32,8 @@ WHERE consumer_group = @consumer_group;
 DELETE FROM kafka_offset_skip
 WHERE consumer_group = @consumer_group
   AND topic = @topic
-  AND partition_id = @partition_id;
+  AND partition_id = @partition_id
+  AND skip_to_offset = @skip_to_offset;
 
 -- name: DeleteKafkaOffsetSkipsForGroup :execrows
 DELETE FROM kafka_offset_skip
