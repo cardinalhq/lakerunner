@@ -49,3 +49,118 @@ func TestGetFileType(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractCustomerDomain(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		// Valid patterns with hyphen separator
+		{
+			name:     "simple domain with hyphen",
+			input:    "example.com-abc-123456_2025-01-01-120000_server",
+			expected: "example.com",
+		},
+		{
+			name:     "subdomain pattern with hyphen",
+			input:    "app.example.com-xyz-987654_2025-02-15-143000_controller",
+			expected: "app.example.com",
+		},
+		{
+			name:     "multi-level subdomain with hyphen",
+			input:    "api.v2.example.org-def-555555_2025-03-20-100000_worker",
+			expected: "api.v2.example.org",
+		},
+		// Hyphenated domains (Codex feedback case)
+		{
+			name:     "hyphenated domain name",
+			input:    "foo-bar.example.com-abc-123",
+			expected: "foo-bar.example.com",
+		},
+		{
+			name:     "multi-hyphen domain",
+			input:    "my-api-server.example.org-instance-001_2025-01-01",
+			expected: "my-api-server.example.org",
+		},
+		{
+			name:     "hyphenated subdomain",
+			input:    "app-v2.test-env.example.com_xyz_123",
+			expected: "app-v2.test-env.example.com",
+		},
+		// Valid patterns with underscore separator
+		{
+			name:     "domain with underscore",
+			input:    "example.com_abc_123456_2025-01-01-120000_server",
+			expected: "example.com",
+		},
+		{
+			name:     "subdomain with underscore",
+			input:    "app.example.com_xyz_987654",
+			expected: "app.example.com",
+		},
+		// Domain only (no separator)
+		{
+			name:     "domain only without separator",
+			input:    "example.com",
+			expected: "example.com",
+		},
+		{
+			name:     "subdomain only without separator",
+			input:    "app.example.com",
+			expected: "app.example.com",
+		},
+		// Multi-level TLDs
+		{
+			name:     "co.uk TLD with separator",
+			input:    "example.co.uk-abc-123",
+			expected: "example.co.uk",
+		},
+		{
+			name:     "co.uk TLD without separator",
+			input:    "example.co.uk",
+			expected: "example.co.uk",
+		},
+		// Invalid patterns (no dot)
+		{
+			name:     "no dot at all with hyphen",
+			input:    "example-abc-123456",
+			expected: "",
+		},
+		{
+			name:     "no dot at all with underscore",
+			input:    "example_abc_123456",
+			expected: "",
+		},
+		// Edge cases
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "just hyphen",
+			input:    "-",
+			expected: "",
+		},
+		{
+			name:     "just underscore",
+			input:    "_",
+			expected: "",
+		},
+		{
+			name:     "just a dot",
+			input:    ".",
+			expected: ".",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractCustomerDomain(tt.input)
+			if got != tt.expected {
+				t.Errorf("ExtractCustomerDomain(%q) = %q; want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}

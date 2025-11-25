@@ -52,10 +52,16 @@ func (t *LogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) err
 	}
 
 	// Only set the specific required fields - assume all other fields are properly set
+	resourceFile := getResourceFile(t.objectID)
 	(*row)[wkk.RowKeyResourceBucketName] = t.bucket
 	(*row)[wkk.RowKeyResourceFileName] = "./" + t.objectID
-	(*row)[wkk.RowKeyResourceFile] = getResourceFile(t.objectID)
+	(*row)[wkk.RowKeyResourceFile] = resourceFile
 	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.objectID)
+
+	// Extract customer domain if pattern matches
+	if customerDomain := helpers.ExtractCustomerDomain(resourceFile); customerDomain != "" {
+		(*row)[wkk.RowKeyResourceCustomerDomain] = customerDomain
+	}
 
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"

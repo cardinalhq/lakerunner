@@ -33,6 +33,7 @@ var (
 		"chq_telemetry_type",
 		"log_level",
 		"metric_name",
+		"resource_customer_domain",
 		"resource_file",
 		"resource_k8s_namespace_name",
 		"resource_service_name",

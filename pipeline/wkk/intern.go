@@ -174,6 +174,9 @@ var (
 	// RowKeyResourceFileType: "resource_file_type"
 	RowKeyResourceFileType = NewRowKey("resource_file_type")
 
+	// RowKeyResourceCustomerDomain: "resource_customer_domain"
+	RowKeyResourceCustomerDomain = NewRowKey("resource_customer_domain")
+
 	// Span field keys
 	// RowKeySpanTraceID: "span_trace_id"
 	RowKeySpanTraceID = NewRowKey("span_trace_id")
