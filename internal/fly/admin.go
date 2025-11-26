@@ -444,3 +444,83 @@ func (a *AdminClient) GetAllConsumerGroupLags(ctx context.Context, topics []stri
 
 	return result, nil
 }
+
+// PartitionOffset represents an offset for a specific partition
+type PartitionOffset struct {
+	Partition int
+	Offset    int64
+}
+
+// CommitConsumerGroupOffsets commits offsets for a consumer group
+func (a *AdminClient) CommitConsumerGroupOffsets(ctx context.Context, groupID, topic string, offsets []PartitionOffset) error {
+	if len(offsets) == 0 {
+		return nil
+	}
+
+	// Build the offset commit request
+	topicOffsets := make([]kafka.OffsetCommit, 0, len(offsets))
+	for _, po := range offsets {
+		topicOffsets = append(topicOffsets, kafka.OffsetCommit{
+			Partition: po.Partition,
+			Offset:    po.Offset,
+		})
+	}
+
+	req := &kafka.OffsetCommitRequest{
+		GroupID: groupID,
+		Topics: map[string][]kafka.OffsetCommit{
+			topic: topicOffsets,
+		},
+	}
+
+	resp, err := a.client.OffsetCommit(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to commit offsets: %w", err)
+	}
+
+	// Check for errors in the response
+	if topicResp, exists := resp.Topics[topic]; exists {
+		for _, partitionResp := range topicResp {
+			if partitionResp.Error != nil {
+				return fmt.Errorf("failed to commit offset for partition %d: %w", partitionResp.Partition, partitionResp.Error)
+			}
+		}
+	}
+
+	return nil
+}
+
+// GetTopicsForConsumerGroup returns the topics that a consumer group has offsets for
+func (a *AdminClient) GetTopicsForConsumerGroup(ctx context.Context, groupID string) ([]string, error) {
+	// Get metadata for all topics
+	resp, err := a.client.Metadata(ctx, &kafka.MetadataRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Kafka metadata: %w", err)
+	}
+
+	// Collect all non-internal topics
+	var topics []string
+	for _, t := range resp.Topics {
+		if t.Error == nil && !t.Internal {
+			topics = append(topics, t.Name)
+		}
+	}
+
+	// Check which topics this consumer group has offsets for
+	var result []string
+	for _, topic := range topics {
+		lags, err := a.GetConsumerGroupLag(ctx, topic, groupID)
+		if err != nil {
+			continue
+		}
+		// If any partition has a committed offset >= 0, the group has consumed from this topic
+		for _, lag := range lags {
+			if lag.CommittedOffset >= 0 {
+				result = append(result, topic)
+				break
+			}
+		}
+	}
+
+	return result, nil
+}
