@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -222,12 +223,18 @@ func (r *IngestProtoLogsReader) TotalRowsReturned() int64 {
 func parseProtoToOtelLogs(reader io.Reader) (*plog.Logs, error) {
 	unmarshaler := &plog.ProtoUnmarshaler{}
 
-	data, err := io.ReadAll(reader)
+	// Use bytes.Buffer with pre-allocated capacity to avoid exponential growth
+	// Typical gzip compression ratio for protobuf is 5-10x
+	// Start with reasonable capacity to handle small-medium files without reallocation
+	var buf bytes.Buffer
+	buf.Grow(128 * 1024) // Pre-allocate 128KB
+
+	_, err := io.Copy(&buf, reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read data: %w", err)
 	}
 
-	logs, err := unmarshaler.UnmarshalLogs(data)
+	logs, err := unmarshaler.UnmarshalLogs(buf.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal protobuf logs: %w", err)
 	}
