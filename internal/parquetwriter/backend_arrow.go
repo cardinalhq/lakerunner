@@ -103,7 +103,8 @@ func (b *ArrowBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch) er
 			if _, exists := b.columns[key]; !exists {
 				// New column discovered
 				if b.schemaFinalized {
-					return fmt.Errorf("cannot add new column %s after schema is finalized", wkk.RowKeyValue(key))
+					return fmt.Errorf("ARROW BACKEND SCHEMA EVOLUTION ERROR: Cannot add new column '%s' after schema finalized at row %d (chunk_size=%d). This is a known limitation - column appeared too late in the stream. Either increase chunk size or use go-parquet backend for highly heterogeneous schemas",
+						wkk.RowKeyValue(key), b.rowCount, b.chunkSize)
 				}
 
 				col, err := b.createColumn(key, value)
