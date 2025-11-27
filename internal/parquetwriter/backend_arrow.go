@@ -378,6 +378,17 @@ func (b *ArrowBackend) appendValue(col *ArrowColumnBuilder, value any) error {
 		default:
 			return fmt.Errorf("type mismatch: expected int64, got %T", value)
 		}
+	case *array.Uint64Builder:
+		switch v := value.(type) {
+		case uint64:
+			builder.Append(v)
+		case uint:
+			builder.Append(uint64(v))
+		case uint32:
+			builder.Append(uint64(v))
+		default:
+			return fmt.Errorf("type mismatch: expected uint64, got %T", value)
+		}
 	case *array.Float64Builder:
 		switch v := value.(type) {
 		case float64:
@@ -445,6 +456,8 @@ func inferArrowType(value any) arrow.DataType {
 		return arrow.FixedWidthTypes.Boolean
 	case int, int32, int64:
 		return arrow.PrimitiveTypes.Int64
+	case uint, uint32, uint64:
+		return arrow.PrimitiveTypes.Uint64
 	case float32, float64:
 		return arrow.PrimitiveTypes.Float64
 	case string:
