@@ -256,3 +256,403 @@ Memory optimizations are the key. Next targets:
 1. ✅ **DONE**: io.ReadAll buffer growth (+7.6%)
 2. **NEXT**: Protobuf unmarshal buffer pooling (13.56% memory)
 3. **LATER**: Attribute caching for CPU (but memory opts have better ROI)
+
+---
+
+### 6. Attribute Key Caching (REJECTED)
+
+**Target**: 10%+ improvement in CPU or memory
+
+**Baseline** (after Row pre-allocation):
+```
+Throughput: 73,955 logs/sec/core
+Memory:     30.77 MB allocs
+Allocations: 617,183 allocs/op
+```
+
+**Analysis**:
+- prefixAttributeRowKey called for every attribute in every log/metric/span
+- Common attributes (service.name, host.name, k8s.*) repeated across millions of records
+- Micro-benchmark showed huge isolated gains (+161% throughput, -87% memory)
+
+**Optimization Attempt #1**: Map-based cache for common attribute name+prefix combinations
+
+**Changes**:
+1. Created `attributeKeyCache` map with ~40 common OTEL attributes pre-populated
+2. Cache lookup at function start: `cacheKey := prefix + ":" + name`
+3. Return cached RowKey if found, else compute and return
+
+**Results** (Optimization #1):
+```
+Micro-benchmark:
+  Uncached: 11.8M attrs/sec, 440 B/op, 19 allocs/op  (1,613 ns/op)
+  Cached:   30.8M attrs/sec,  56 B/op,  3 allocs/op  (617 ns/op)
+  Isolated gain: +161% throughput, -87% memory, -87% allocs
+
+End-to-end:
+  Before: 73,955 logs/sec/core, 617,183 allocs/op
+  After:  70,925 logs/sec/core, 608,300 allocs/op
+  Result: -4.1% REGRESSION, -1.4% allocs
+```
+
+**Analysis**:
+- ❌ **-4.1% throughput REGRESSION** despite +161% isolated gain
+- Cache lookup overhead (string concat + map lookup) costs more than benefit
+- Cache key construction: `prefix + ":" + name` = ~25-30ns + 1 allocation PER CALL
+- Map lookup: ~5.6ns
+- Total cache overhead: ~30-35ns + 1 alloc for BOTH hits AND misses
+
+**Root Cause**:
+wkk.NewRowKey already uses `unique.Handle` for string interning! After first call to `NewRowKey("resource_service_name")`, subsequent calls return the SAME handle without allocation. Adding a cache LAYER on top of existing interning mechanism is counterproductive.
+
+**Verdict**: ❌ REJECT - Regression, cache overhead exceeds savings
+
+**Key Learning**:
+- Micro-benchmark showed +161% but end-to-end showed -4.1% regression
+- Adding abstraction layers on top of existing optimizations (unique.Handle) backfires
+- Cache lookup overhead applies to ALL calls, not just cache misses
+- Better approach: Extend wkk's pre-computed RowKey constants for common OTEL attributes
+
+**Alternative Approach** (not yet implemented):
+Instead of caching at runtime, pre-compute common RowKeys as constants in wkk package (like existing chq_* fields). Then modify buildLogRow to use direct assignments for known attributes:
+
+```go
+// Instead of:
+row[prefixAttributeRowKey(name, "resource")] = value
+
+// Use:
+if name == "service.name" {
+    row[wkk.RowKeyResourceServiceName] = value
+} else {
+    row[prefixAttributeRowKey(name, "resource")] = value
+}
+```
+
+This avoids:
+1. Function call overhead for common attributes
+2. Cache key construction
+3. Map lookup
+
+But adds code complexity and manual case handling. ROI unclear.
+
+---
+
+### 7. Map.Range Iteration Overhead (INVESTIGATION)
+
+**Target**: Understand if Map.Range itself is slow or if profiler attributes callback work to it
+
+**Hypothesis**: CPU profiler shows buildLogRow (45% CPU) with Map.Range at top of stack. This could mean:
+1. Map.Range iteration is slow (actual overhead)
+2. Profiler attributes callback work to Map.Range call site (accounting artifact)
+
+**Investigation**: Created micro-benchmarks to isolate Map.Range overhead
+
+**Results**:
+```
+Empty callback:       7.2 ns/attr (2.7B attrs/sec, 0 allocs)  - Pure iteration
+Type check only:     15.6 ns/attr (1.3B attrs/sec, 0 allocs)  - Iteration + v.Type()
+String extraction:   70.9 ns/attr (282M attrs/sec, 2 allocs)  - + Str()/AsString()
+Full callback:      740.5 ns/attr (27M attrs/sec, 22 allocs)  - Production workload
+```
+
+**Analysis**:
+- ✅ **Map.Range overhead is only 7.2ns/attr (1% of total callback time)**
+- ✅ **99% of "Map.Range CPU" is actually callback work** (prefixAttributeRowKey, map assignments, conversions)
+- ✅ Profiler attributes callback work to Map.Range call site (stack sampling artifact)
+
+**Breakdown of 740ns total per attribute**:
+- Map.Range iteration: ~7ns (1%)
+- Type check: ~8ns (1%)
+- String extraction: ~55ns (7%)
+- prefixAttributeRowKey: ~60ns (8%) [already optimized with fast paths]
+- Map key creation + assignment: ~600ns (81%) - **DOMINANT COST**
+
+**Real Bottleneck**:
+The expensive operations are:
+1. **Map assignments**: `row[key] = value` with string keys
+2. **Map growth**: As row grows from 0 → 20+ entries (we pre-allocate now)
+3. **String interning**: wkk.RowKey using unique.Handle (unavoidable, provides GC benefits)
+
+**Verdict**: ✅ Map.Range is NOT the bottleneck. No optimization needed.
+
+**Key Learning**:
+CPU profilers show where time is spent (call stack), not what's slow. A function at the top of the stack might just be calling expensive operations. Always micro-benchmark to isolate actual overhead vs. accounting artifacts.
+
+**Alternative APIs**:
+OTEL pcommon.Map API only exposes `Range(func(string, Value) bool)`. No alternative iteration methods exist. Even if they did, the callback work (map assignments, string operations) dominates, not iteration.
+
+---
+## PHASE 2: Fingerprinting Performance
+
+### Baseline: Read + Fingerprint
+
+**Target**: Measure fingerprinting overhead on top of optimized OTEL reading
+
+**Baseline** (after OTEL optimizations):
+```
+Pure Read (OTEL → Row):  73,955 logs/sec/core, 30.77 MB allocs
+Read + Fingerprint:       62,477 logs/sec/core, 31.62 MB allocs
+```
+
+**Fingerprinting Overhead**: -15.5% throughput, +2.8% memory
+- Cost per log: ~2.5 μs/log, ~280 bytes/log, ~28 allocs/log
+- This is REASONABLE given feature complexity (tokenization, trie clustering, Jaccard similarity)
+
+### 8. Fingerprinting - Lazy ToLower Evaluation
+
+**Target**: Reduce unnecessary string allocations in tokenization
+
+**Baseline**:
+```
+Read + Fingerprint: 62,477 logs/sec/core, 31.62 MB allocs, 701,584 allocs/op
+```
+
+**Analysis**:
+- Profiling showed `strings.ToLower()` called for ALL tokens (line 353)
+- Many tokens don't need lowercase: EOF, Error, QuotedString, etc.
+- Duplicate ToLower() call on line 378 for same literal
+- Waste: Computing lowercase for tokens that never use it
+
+**Optimization Attempt #1**: Lazy evaluation of ToLower
+
+**Changes**:
+1. Moved `lowerCaseLiteral` declaration from top to inside switch
+2. Only compute `strings.ToLower()` in cases that actually need it
+3. Eliminated duplicate ToLower() call (line 378 reused computed value)
+4. Skip ToLower() for tokens that don't need it (EOF, Error, QuotedString)
+
+**Results** (Optimization #1):
+```
+Micro-benchmark (fingerprinter_test.go):
+  PlainText:  2239 ns → 2160 ns (-3.5% time), 361 B → 345 B (-4.4% mem), 22 → 20 allocs (-9%)
+  NoJSON:     2211 ns → 2128 ns (-3.8% time), 360 B → 329 B (-8.6% mem), 24 → 21 allocs (-13%)
+
+End-to-end (Read + Fingerprint):
+  Throughput: 62,477 → 63,000 logs/sec/core (+0.8% avg across 3 runs)
+  Memory:     31.62 MB → 31.42 MB (-0.6%)
+  Allocations: 701,584 → 689,956 (-1.7%)
+```
+
+**Analysis**:
+- ✅ Micro-benchmark: -3.5% time, -9% allocs for plain text
+- ✅ Small but positive end-to-end gain (+0.8% throughput, -1.7% allocs)
+- ✅ Good code hygiene (avoid wasteful computation)
+- ⚠️ Marginal end-to-end impact due to external bottlenecks
+
+**Bottleneck Analysis**:
+From CPU/memory profiling:
+- SplitQuotedStrings: 23.5 MB (37% of tokenize memory) - **EXTERNAL CODE** (oteltools/stringutils)
+- cluster(): 140ms (41% of FP time) - algorithmic, expected (trie traversal + Jaccard)
+- Already extensive pooling: tokenSeq, stringBuilder, ragelScanner, etc.
+
+**Conclusion**:
+No obvious low-hanging fruit remaining in lakerunner code. Main bottlenecks in external library.
+
+**Verdict**: ✅ ACCEPT - Small gain, good hygiene, -1.7% allocs
+
+**Fingerprinting Final Performance**:
+- Read + Fingerprint: ~63,000 logs/sec/core
+- Overhead from pure read: -15.5% (reasonable for feature complexity)
+- Memory: 31.42 MB allocs
+- Allocations: 689,956 per run
+
+---
+
+## PHASE 3: Parquet Writing Performance
+
+### Baseline: Read + Fingerprint + Parquet Write
+
+**Target**: Measure Parquet writing overhead and identify optimization opportunities
+
+**Baseline** (3 runs, GOMAXPROCS=1):
+```
+Read + Fingerprint ONLY:         ~63,000 logs/sec/core,  31.4 MB allocs,  690K allocs/op
+Read + Fingerprint + Parquet:    ~11,500 logs/sec/core, 164.0 MB allocs, 1.94M allocs/op
+```
+
+**Parquet Writing Overhead**: **-82% throughput, +423% memory, +182% allocations**
+
+**CRITICAL FINDING**: Parquet writing is THE dominant bottleneck in the pipeline.
+- Fingerprinting overhead: -15.5% (manageable)
+- Parquet writing overhead: -82% (MASSIVE)
+
+### Profiling Analysis
+
+**CPU Profile Breakdown** (~270ms per iteration):
+
+1. **CBOR Encoding** (43% of CPU, 820ms):
+   - pipeline.Row → CBOR format → temp binary file
+   - File I/O syscalls for writes
+   - rowcodec.CBOREncoder.Encode
+
+2. **Parquet Conversion** (26% of CPU, 500ms):
+   - Schema building/finalization
+   - CBOR decoding from temp file (20% of CPU, 390ms)
+   - Parquet encoding (minimal, <5%)
+   - streamBinaryToParquet
+
+3. **File I/O Syscalls** (70% flat, overlaps above):
+   - Temp file operations: write, sync, reopen, read
+   - 1.33s cumulative syscall time
+
+**Memory Profile Breakdown** (1.22 GB for 4 iterations = ~305 MB/iter):
+
+Top Allocations:
+1. Fingerprinting: 220 MB (18%) - **EXPECTED**, already optimized
+2. Zstd compression: 128 MB (10%) - Parquet compression buffers (ensureHist)
+3. Schema deconstruct: 67 MB (5%) - parquet-go Schema.Deconstruct **PER ROW**
+4. Dynamic buffers: 64 MB (5%) - bytes.growSlice for CBOR/Parquet encoding
+5. CBOR parsing: 41 MB (3%) - decoder.parse from temp file
+6. String operations: 30 MB (2%) - strings.Builder.grow
+
+### Root Cause: Temp File Round-Trip Architecture
+
+**Current Flow**:
+```
+pipeline.Batch
+    ↓
+WriteBatchRows: Encode to CBOR → Write to temp file  (43% CPU, ~100MB allocs)
+    ↓
+Close/streamBinaryToParquet: Read temp file → Decode CBOR (20% CPU, ~50MB allocs)
+    ↓
+Convert map[string]any → Parquet (Schema.Deconstruct per row, 5% allocs)
+    ↓
+parquet.Writer.WriteRow
+```
+
+**Problems**:
+1. **Double encoding**: Rows encoded TWICE (CBOR + Parquet)
+2. **File I/O overhead**: Write to disk, sync, reopen, read back (70% syscalls)
+3. **Decode overhead**: CBOR decode adds 20% CPU + 41MB allocs
+4. **Schema overhead**: Schema.Deconstruct called **PER ROW** (5% allocs)
+5. **Memory churning**: Temp buffers allocated and discarded
+
+**Original Design Intent**:
+- Support dynamic schema evolution (unknown schema until all rows seen)
+- Buffer rows to build complete schema before writing Parquet
+- Handle heterogeneous sources with varying schemas
+
+**USER INSIGHT**:
+> "we HAVE read every row during the input phase, so in theory we could form the
+> overall schema at that time, rather than inside the writer"
+
+**Reality Check**:
+- ✅ All rows already processed during Read phase
+- ✅ Schema can be built incrementally as we read
+- ✅ Schema changes are incremental (new resource_ fields)
+- ❌ Buffering overhead FAR EXCEEDS schema evolution benefits
+
+### Optimization Opportunities
+
+**PRIORITY 1: ELIMINATE TEMP FILE ROUND-TRIP** 🎯 **BIGGEST WIN**
+
+**Impact**: -63% CPU time, ~150MB allocs saved
+
+**Approach A: Schema discovery during Read phase** ⭐ **RECOMMENDED**
+- Build schema incrementally as batches are read
+- Pass schema to Parquet writer at creation time
+- Write batches directly to Parquet (no CBOR intermediate)
+- **Trade-off**: Need to coordinate between reader and writer
+- **Expected**: +40-60% throughput, -30-40% memory
+
+**Approach B: In-memory buffering**
+- Keep pipeline.Batch pointers in memory (not CBOR-encoded)
+- Pass 1: Iterate batches, build schema
+- Pass 2: Iterate same batches, write Parquet directly
+- **Trade-off**: Memory pressure (keep batches in RAM)
+- **Expected**: +40-60% throughput, -30-40% memory
+
+**Approach C: Two-pass over source**
+- Pass 1: Read file, build schema only
+- Pass 2: Re-read file, write Parquet directly
+- **Trade-off**: Re-read overhead vs temp file overhead
+- **Expected**: +30-50% throughput (depends on read speed)
+
+**Approach D: Switch to Apache Arrow**
+- Arrow has native columnar in-memory format matching Parquet
+- Direct conversion to Parquet without intermediate encoding
+- **Trade-off**: C allocator (harder to measure, but lower GC pressure)
+- **Expected**: +200-300% throughput, variable memory
+- **User note**: Open to Arrow despite C allocator
+
+**PRIORITY 2: OPTIMIZE SCHEMA OPERATIONS**
+
+**Impact**: ~5% allocs, minor CPU improvement
+
+**Changes**:
+- Cache parquet.Schema per batch (not per row)
+- Reuse Schema.Deconstruct results within batch
+- Pre-compute schema for stable fields (chq_*, resource_*)
+
+**PRIORITY 3: POOL COMPRESSION BUFFERS**
+
+**Impact**: ~10% allocs (Zstd history buffers)
+
+**Changes**:
+- Pool compression history buffers with sync.Pool
+- Pre-allocate based on known row counts
+- Reuse across iterations
+
+**PRIORITY 4: OPTIMIZE FILE I/O** (if keeping temp files)
+
+**Impact**: Minor CPU, reduced syscall overhead
+
+**Changes**:
+- Use buffered I/O for temp files
+- Batch writes instead of per-row
+- Consider in-memory buffer (bytes.Buffer) instead of temp file
+
+### Recommendation
+
+**PROPOSED APPROACH**: Schema discovery during Read phase (Priority 1A)
+
+**Rationale**:
+- ✅ User confirmed: "we HAVE read every row during input phase"
+- ✅ Schema can be built incrementally as we read
+- ✅ No architectural changes to writer (just pass pre-built schema)
+- ✅ Eliminates ENTIRE temp file round-trip (biggest bottleneck)
+- ✅ Lower risk than Arrow (known approach, no C allocator)
+
+**Implementation Plan**:
+1. Add schema builder to reader phase (collect field names + types)
+2. Pass finalized schema to ParquetWriter at construction
+3. Modify WriteBatchRows to write directly (skip CBOR encoding)
+4. Remove streamBinaryToParquet (no longer needed)
+
+**Expected Gains**:
+- Conservative: +40-60% throughput (11.5K → 16-18K logs/sec)
+- Optimistic: +100-150% throughput (11.5K → 23-29K logs/sec) if removing all overhead
+- Memory: -30-40% (164MB → 100-115MB)
+
+**Alternative if insufficient**: Investigate Arrow (Priority 1D)
+- User open to C allocator trade-off
+- May achieve near-fingerprinting performance (~63K logs/sec)
+- Expected: +200-300% throughput
+
+**Target Performance**:
+- Conservative: 16-18K logs/sec (+40-60% from baseline)
+- Aggressive: 35-45K logs/sec (+200-300% from baseline)
+- Stretch goal: ~50-60K logs/sec (approaching fingerprint performance)
+
+### Status
+
+**Phase**: Investigation complete, awaiting implementation decision
+
+**Files Created**:
+- internal/perftest/parquet_bench_test.go - Comprehensive benchmarks
+- /tmp/PARQUET-PERFORMANCE-SUMMARY.txt - Full analysis
+- /tmp/parquet-profiling-analysis.txt - Profiling details
+- /tmp/parquet-baseline-summary.txt - Baseline measurements
+
+**Commit**: b62523a4 - "Add Parquet writing performance benchmark"
+
+**Next Steps**: User decision on optimization approach:
+1. Risk tolerance (schema-during-read vs Arrow)
+2. Performance requirements (conservative vs aggressive targets)
+3. Memory constraints (peak memory vs GC pressure trade-offs)
+
+**Key Insight**:
+The temp file round-trip was designed for schema flexibility, but the user's observation that "we HAVE read every row during input" unlocks a simpler optimization: build schema incrementally during Read phase, eliminating the entire buffering overhead.
+
+---
+
