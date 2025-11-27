@@ -84,15 +84,48 @@ BenchmarkPrefixAttributeRowKey_Batch             658.9  ns/op  240 B/op  10 allo
 
 ---
 
-### 3. Value.AsString Conversions
+### 3. Value.AsString Conversions (buildLogRow optimization)
 
 **Target**: 10%+ improvement in CPU or memory
 
-**Baseline**: TBD (micro-benchmark needed)
+**Baseline**:
+```
+String value AsString():     2.052 ns/op   0 B/op   0 allocs/op
+String value Str() direct:   0.581 ns/op   0 B/op   0 allocs/op  (-71.7% time)
+Int value AsString():       17.40  ns/op   5 B/op   1 allocs/op
 
-**Changes**: TBD
+Realistic (90% strings, 10% other types):
+  baseline_AsString:        40.62 ns/op   246M attrs/sec   4 B/op   1 allocs/op
+  optimized_fast_path:      34.02 ns/op   294M attrs/sec   4 B/op   1 allocs/op
+```
 
-**Results**: TBD
+**Analysis**:
+- Str() is 71.7% faster than AsString() for string values
+- Realistic workload: +19.4% throughput (246M → 294M attrs/sec)
+- Most OTEL attributes are strings (~90% in production)
+
+**Optimization Attempt #1**: Use Value.Str() fast path for string types
+
+**Changes**:
+1. Check `v.Type() == pcommon.ValueTypeStr` before conversion
+2. Use `v.Str()` for string values (zero-copy)
+3. Fall back to `v.AsString()` for int, bool, float types
+4. Applied to all three Map.Range iterations in buildLogRow
+
+**Results** (Optimization #1):
+```
+Micro-benchmark: +19.4% throughput (246M → 294M attrs/sec)
+End-to-end:      +3.2% total (66,243 → 68,385 logs/sec/core)
+```
+
+**Analysis**:
+- ✅ Micro-benchmark shows 19.4% improvement
+- ❌ Only +0.9% incremental improvement on top of prefixAttributeRowKey optimization
+- ❌ Combined optimizations: only +3.2% end-to-end (below 10% target)
+
+**Root Cause**: Map.Range iteration itself dominates CPU time. The OTEL library's map iteration overhead is the real bottleneck, not what we do inside the callback. We're optimizing 15-20% of CPU within a 45% bottleneck, but the iteration framework itself is immovable.
+
+**Verdict**: ⚠️ ACCEPT micro-optimization (19% isolated gain), but recognize we need architectural change to see significant end-to-end improvement. Can't optimize external library code (Map.Range).
 
 ---
 
@@ -110,16 +143,28 @@ BenchmarkPrefixAttributeRowKey_Batch             658.9  ns/op  240 B/op  10 allo
 
 ## Summary of Gains
 
-**After prefixAttributeRowKey optimization**:
-- Micro-benchmark: +43% throughput, -39% memory, -47% allocs
-- End-to-end: +2.3% throughput (66,243 → 67,754 logs/sec/core), -5.3% memory
+**After both optimizations** (prefixAttributeRowKey + Value.Str() fast path):
+- **End-to-end**: +3.2% throughput (66,243 → 68,385 logs/sec/core), -5.3% memory
+- **Micro-benchmarks**: +43% and +19% in isolation for individual components
+
+**Breakdown**:
+1. prefixAttributeRowKey: +43% isolated, +2.3% end-to-end
+2. Value.Str() fast path: +19.4% isolated, +0.9% end-to-end incremental
 
 **Key learnings**:
-1. Micro-optimizations show large isolated gains but smaller end-to-end impact
-2. Need to optimize the dominant bottleneck (buildLogRow at 45% CPU)
-3. prefixAttributeRowKey optimization is valuable but not the main problem
+1. ✅ Micro-optimizations work well in isolation (43%, 19% gains)
+2. ❌ Small end-to-end impact (+3.2% total) - below 10% target
+3. 🎯 **Root cause**: Map.Range iteration overhead in OTEL library (external, can't optimize)
+4. 💡 **Insight**: Optimizing WITHIN expensive operations has limited impact when the operation itself is expensive
 
-**Next steps**:
-1. Investigate buildLogRow - focus on Value.AsString() conversions (15% CPU, 2.42 GB)
-2. Hypothesis: Most OTEL attributes are strings; use Value.Str() fast path instead of AsString()
-3. Continue micro-benchmarking and compounding optimizations
+**Bottleneck Analysis**:
+- buildLogRow was 45% CPU, we optimized components within it (20% + 15% = 35% of that 45%)
+- But Map.Range iteration itself (external library) is the dominant cost
+- Our optimizations made the callback cheaper, but iterations still expensive
+
+**Path Forward**:
+Since micro-optimizations hit diminishing returns, need **architectural changes**:
+1. Reduce number of attribute iterations (batch processing, caching)
+2. Avoid Map.Range by using different OTEL API patterns
+3. Move to next bottleneck: io.ReadAll buffer growth (32.84% memory)
+4. Re-profile to see if bottleneck has shifted after optimizations
