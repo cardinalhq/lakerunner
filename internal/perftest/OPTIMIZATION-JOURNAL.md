@@ -656,3 +656,64 @@ The temp file round-trip was designed for schema flexibility, but the user's obs
 
 ---
 
+
+### Refined Recommendation Based on User Constraints
+
+**User Constraints Identified**:
+1. ❌ Cannot buffer large files (20-50MB) entirely in RAM
+2. ❌ Cannot read same file twice (doubles CPU/memory)
+3. ❌ File splitting happens in writer (can't determine schema during Read)
+4. ✅ Most files are <4MB, some are 20-50MB
+5. ✅ GC pain from CBOR spills (throw-away allocations, little reuse)
+6. ✅ Column statistics metadata could help query performance
+
+**REVISED RECOMMENDATION: Hybrid Memory/Disk Buffering** ⭐
+
+**Approach**: Keep pipeline.Batch refs in memory, spill to CBOR only when needed
+
+**Design**:
+```go
+WriteBatchRows(batch):
+  1. Keep reference to pipeline.Batch (no encoding)
+  2. Track buffered size
+  3. If size < 10MB threshold → append to []batches
+  4. If size > 10MB threshold → spill oldest batches to CBOR temp file
+  5. Continue schema evolution regardless of storage
+
+Close():
+  1. Write buffered batches directly to Parquet (no CBOR)
+  2. Write spilled batches from CBOR temp file (existing path)
+  3. Remove all-null columns
+```
+
+**Benefits**:
+- ✅ 90% of files (<4MB) avoid CBOR entirely
+- ✅ 10% of large files (>10MB) use hybrid approach
+- ✅ Eliminates GC pressure from throw-away CBOR buffers
+- ✅ Keeps existing file splitting logic
+- ✅ Maintains all-null column pruning
+- ✅ Graceful degradation for large files
+
+**Expected Gains**:
+- Small files (<4MB): +60-80% throughput, -40% memory
+- Large files (>10MB): +20-30% throughput (partial benefit)
+- Overall (90% small, 10% large): +50-70% throughput
+- GC pressure: -60% (eliminate most CBOR allocations)
+
+**Implementation Complexity**: Low (incremental change)
+**Risk**: Low (fallback to existing CBOR path)
+**Timeline**: 3-5 days (implement + test + benchmark)
+
+**SECONDARY: Column Statistics Metadata**
+
+Track min/max/null-count during Parquet write, store in segment table.
+- Orthogonal to write performance
+- Query optimization: +10-50% (pruning)
+- Minimal overhead
+
+**NOT PURSUED**:
+- ❌ Schema during Read phase (file splitting prevents this)
+- ❌ Two-pass reading (violates no-double-read constraint)
+- ❌ Full in-memory buffering (violates memory constraint)
+- ❌ Arrow library (complex migration, uncertain ROI given constraints)
+
