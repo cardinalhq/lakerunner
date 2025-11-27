@@ -122,7 +122,7 @@ func BenchmarkReadAndFingerprint(b *testing.B) {
 		totalLogsProcessed += logsRead
 		totalFingerprints += fingerprintsGenerated
 
-		reader.Close()
+		_ = reader.Close()
 
 		b.StopTimer()
 		sampler.Stop()

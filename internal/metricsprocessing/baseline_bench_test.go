@@ -71,8 +71,8 @@ func BenchmarkBaselineParquetRead(b *testing.B) {
 			pipeline.ReturnBatch(batch)
 		}
 
-		reader.Close()
-		file.Close()
+		_ = reader.Close()
+		_ = file.Close()
 
 		b.StopTimer()
 		sampler.Stop()
@@ -154,14 +154,14 @@ func BenchmarkBaselineMergeSort(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		stat, _ := file.Stat()
 		reader, err := filereader.NewCookedLogParquetReader(file, stat.Size(), 1000)
 		if err != nil {
 			b.Fatal(err)
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		readers = append(readers, reader)
 		totalRecords += records
@@ -198,7 +198,7 @@ func BenchmarkBaselineMergeSort(b *testing.B) {
 			pipeline.ReturnBatch(batch)
 		}
 
-		mergeReader.Close()
+		_ = mergeReader.Close()
 
 		b.StopTimer()
 		sampler.Stop()
@@ -339,8 +339,8 @@ func BenchmarkBaselineReadWritePipeline(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		reader.Close()
-		file.Close()
+		_ = reader.Close()
+		_ = file.Close()
 		timer.EndStage("close", 0, 0)
 
 		sampler.Stop()

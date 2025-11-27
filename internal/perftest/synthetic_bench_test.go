@@ -173,7 +173,7 @@ func benchmarkSynthetic(b *testing.B, backendType parquetwriter.BackendType, row
 		b.ReportMetric(float64(metadata.ColumnCount), "columns")
 		b.ReportMetric(float64(outputBuf.Len()), "output_bytes")
 
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 	}
 
 	close(done)

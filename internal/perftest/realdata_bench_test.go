@@ -74,7 +74,7 @@ func BenchmarkRealDataParquetRead(b *testing.B) {
 		// Use raw reader since the cooked files are DuckDB format
 		reader, err := filereader.NewParquetRawReader(file, stat.Size(), 1000)
 		if err != nil {
-			file.Close()
+			_ = file.Close()
 			b.Fatal(err)
 		}
 
@@ -94,8 +94,8 @@ func BenchmarkRealDataParquetRead(b *testing.B) {
 
 		totalLogsProcessed += logsRead
 
-		reader.Close()
-		file.Close()
+		_ = reader.Close()
+		_ = file.Close()
 
 		b.StopTimer()
 		sampler.Stop()
@@ -193,14 +193,14 @@ func BenchmarkRealDataMergeSort(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		stat, _ := file.Stat()
 		reader, err := filereader.NewCookedLogParquetReader(file, stat.Size(), 1000)
 		if err != nil {
 			b.Fatal(err)
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		readers = append(readers, reader)
 
@@ -222,7 +222,7 @@ func BenchmarkRealDataMergeSort(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer mergeReader.Close()
+	defer func() { _ = mergeReader.Close() }()
 
 	logsRead := int64(0)
 	for {
@@ -260,14 +260,14 @@ func countLogsInFile(tb testing.TB, filename string) (int64, int64) {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, _ := file.Stat()
 	reader, err := filereader.NewCookedLogParquetReader(file, stat.Size(), 1000)
 	if err != nil {
 		tb.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	var logs int64
 	for {
@@ -295,14 +295,14 @@ func loadBatchesFromFile(tb testing.TB, filename string) ([]*pipeline.Batch, int
 	if err != nil {
 		tb.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, _ := file.Stat()
 	reader, err := filereader.NewCookedLogParquetReader(file, stat.Size(), 1000)
 	if err != nil {
 		tb.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	var batches []*pipeline.Batch
 	var logs int64

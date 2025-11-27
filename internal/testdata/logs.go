@@ -33,17 +33,17 @@ func GenerateLogBatch(count int, startOffset int) *pipeline.Batch {
 		timestamp := baseTime + int64(logNum)*1000 // 1 second apart
 
 		row := pipeline.Row{
-			wkk.RowKeyCTimestamp:    timestamp,
-			wkk.RowKeyCMessage:      generateLogMessage(logNum),
-			wkk.RowKeyCLevel:        selectLogLevel(logNum),
-			wkk.RowKeyCService:      selectService(logNum),
-			wkk.RowKeyCHost:         fmt.Sprintf("host-%d", logNum%10),
-			wkk.RowKeyCContainer:    fmt.Sprintf("container-%d", logNum%5),
-			wkk.RowKeyCNamespace:    "default",
-			wkk.RowKeyCPod:          fmt.Sprintf("pod-%d", logNum%20),
-			wkk.RowKeyCCluster:      "test-cluster",
-			wkk.RowKeyCEnvironment:  "production",
-			wkk.RowKeyCFingerprint:  uint64(logNum % 100), // 100 unique fingerprints
+			wkk.RowKeyCTimestamp:                    timestamp,
+			wkk.RowKeyCMessage:                      generateLogMessage(logNum),
+			wkk.RowKeyCLevel:                        selectLogLevel(logNum),
+			wkk.NewRowKey("service_name"):           selectService(logNum),
+			wkk.NewRowKey("host_name"):              fmt.Sprintf("host-%d", logNum%10),
+			wkk.NewRowKey("container_name"):         fmt.Sprintf("container-%d", logNum%5),
+			wkk.NewRowKey("k8s_namespace_name"):     "default",
+			wkk.NewRowKey("k8s_pod_name"):           fmt.Sprintf("pod-%d", logNum%20),
+			wkk.NewRowKey("k8s_cluster_name"):       "test-cluster",
+			wkk.NewRowKey("deployment_environment"): "production",
+			wkk.RowKeyCFingerprint:                  uint64(logNum % 100), // 100 unique fingerprints
 		}
 
 		batch.AppendRow(row)

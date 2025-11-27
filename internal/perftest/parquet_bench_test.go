@@ -98,7 +98,7 @@ func BenchmarkReadFingerprintWrite(b *testing.B) {
 		// Create Parquet writer
 		writer, err := factories.NewLogsWriter(tmpDir, 100000)
 		if err != nil {
-			reader.Close()
+			_ = reader.Close()
 			b.Fatal(err)
 		}
 
@@ -111,7 +111,7 @@ func BenchmarkReadFingerprintWrite(b *testing.B) {
 				break
 			}
 			if err != nil {
-				reader.Close()
+				_ = reader.Close()
 				writer.Abort()
 				b.Fatal(err)
 			}
@@ -134,7 +134,7 @@ func BenchmarkReadFingerprintWrite(b *testing.B) {
 
 			// Write batch to Parquet
 			if err := writer.WriteBatch(batch); err != nil {
-				reader.Close()
+				_ = reader.Close()
 				writer.Abort()
 				b.Fatal(err)
 			}
@@ -145,11 +145,11 @@ func BenchmarkReadFingerprintWrite(b *testing.B) {
 		// Close writer and get results
 		results, err := writer.Close(ctx)
 		if err != nil {
-			reader.Close()
+			_ = reader.Close()
 			b.Fatal(err)
 		}
 
-		reader.Close()
+		_ = reader.Close()
 
 		b.StopTimer()
 		sampler.Stop()
@@ -221,13 +221,13 @@ func BenchmarkParquetWriteOnly(b *testing.B) {
 			break
 		}
 		if err != nil {
-			reader.Close()
+			_ = reader.Close()
 			b.Fatal(err)
 		}
 		batches = append(batches, batch)
 		totalLogs += int64(batch.Len())
 	}
-	reader.Close()
+	_ = reader.Close()
 
 	b.Logf("Pre-loaded %d batches (%d logs) for write-only test", len(batches), totalLogs)
 

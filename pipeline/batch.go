@@ -153,6 +153,7 @@ var globalBatchPool = newBatchPool(1000) // Default batch size
 //   - Scope attrs: 1-3
 //   - Log attrs: 3-15
 //   - Fixed fields: 4 (message, timestamp, tsns, level)
+//
 // Total typical: 15-25 entries. Pre-size to 20 to avoid map growth.
 var rowPool = sync.Pool{
 	New: func() any {

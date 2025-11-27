@@ -193,7 +193,7 @@ func (b *ArrowBackend) flushRecordBatch() error {
 	}
 
 	// Create record batch
-	recordBatch := array.NewRecord(b.schema, arrays, b.rowsSinceLastFlush)
+	recordBatch := array.NewRecordBatch(b.schema, arrays, b.rowsSinceLastFlush)
 	defer recordBatch.Release()
 
 	// Write to Parquet
@@ -287,8 +287,10 @@ func (b *ArrowBackend) Close(ctx context.Context, writer io.Writer) (*BackendMet
 		if err != nil {
 			return nil, fmt.Errorf("failed to open temp file for reading: %w", err)
 		}
-		defer tmpFile.Close()
-		defer os.Remove(b.tmpFilePath)
+		defer func() {
+			_ = tmpFile.Close()
+			_ = os.Remove(b.tmpFilePath)
+		}()
 
 		if _, err := io.Copy(writer, tmpFile); err != nil {
 			return nil, fmt.Errorf("failed to copy temp file to output: %w", err)
@@ -322,15 +324,15 @@ func (b *ArrowBackend) Abort() {
 	b.releaseColumns()
 
 	if b.parquetWriter != nil {
-		b.parquetWriter.Close()
+		_ = b.parquetWriter.Close()
 	}
 
 	if b.tmpFile != nil {
-		b.tmpFile.Close()
+		_ = b.tmpFile.Close()
 	}
 
 	if b.tmpFilePath != "" {
-		os.Remove(b.tmpFilePath)
+		_ = os.Remove(b.tmpFilePath)
 	}
 }
 

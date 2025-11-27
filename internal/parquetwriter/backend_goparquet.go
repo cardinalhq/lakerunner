@@ -94,7 +94,7 @@ func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch
 		}
 
 		// Track schema evolution
-		b.schemaBuilder.AddRow(rowMap)
+		_ = b.schemaBuilder.AddRow(rowMap)
 
 		// Encode to CBOR buffer
 		if err := b.encoder.Encode(rowMap); err != nil {
@@ -178,7 +178,7 @@ func (b *GoParquetBackend) streamBinaryToParquet(output io.Writer, schema *parqu
 	if err != nil {
 		return nil, fmt.Errorf("failed to reopen buffer file: %w", err)
 	}
-	defer bufferFile.Close()
+	defer func() { _ = bufferFile.Close() }()
 
 	// Create Parquet writer config
 	writerConfig, err := parquet.NewWriterConfig(schemabuilder.WriterOptions(b.config.TmpDir, schema)...)
@@ -188,7 +188,7 @@ func (b *GoParquetBackend) streamBinaryToParquet(output io.Writer, schema *parqu
 
 	// Create Parquet writer
 	writer := parquet.NewGenericWriter[map[string]any](output, writerConfig)
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 
 	// Decode and write rows
 	decoder := b.codec.NewDecoder(bufferFile)
@@ -239,8 +239,8 @@ func (b *GoParquetBackend) streamBinaryToParquet(output io.Writer, schema *parqu
 // cleanupBufferFile removes the temporary CBOR file.
 func (b *GoParquetBackend) cleanupBufferFile() {
 	if b.bufferFile != nil {
-		b.bufferFile.Close()
-		os.Remove(b.bufferFile.Name())
+		_ = b.bufferFile.Close()
+		_ = os.Remove(b.bufferFile.Name())
 		b.bufferFile = nil
 	}
 }

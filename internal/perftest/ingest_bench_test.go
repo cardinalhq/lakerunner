@@ -112,7 +112,7 @@ func BenchmarkPureIngestion(b *testing.B) {
 		totalLogsProcessed += logsRead
 		totalBytesDecompressed += bytesProcessed
 
-		reader.Close()
+		_ = reader.Close()
 
 		b.StopTimer()
 		sampler.Stop()
@@ -197,7 +197,7 @@ func BenchmarkPureIngestionMultiFile(b *testing.B) {
 				pipeline.ReturnBatch(batch)
 			}
 
-			reader.Close()
+			_ = reader.Close()
 		}
 
 		b.StopTimer()
@@ -252,6 +252,6 @@ func BenchmarkIngestionMemoryProfile(b *testing.B) {
 			pipeline.ReturnBatch(batch)
 		}
 
-		reader.Close()
+		_ = reader.Close()
 	}
 }
