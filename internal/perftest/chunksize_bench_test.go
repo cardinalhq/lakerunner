@@ -17,14 +17,13 @@ package perftest
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/internal/testdata"
 	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
@@ -33,59 +32,26 @@ import (
 //
 // Tests chunk sizes: 10K, 25K, 50K rows
 // Tests backends: go-parquet, arrow
-// Uses real 400K row dataset for realistic schema evolution patterns
+// Uses 400K rows of synthetic data for realistic schema evolution patterns
 func BenchmarkChunkSizeComparison(b *testing.B) {
-	// Find raw OTEL files
-	files, err := filepath.Glob(filepath.Join(testDataDir, "raw", "logs_*.binpb.gz"))
-	if err != nil || len(files) == 0 {
-		b.Skip("No raw test data found. Run: ./scripts/download-perf-testdata.sh raw 10")
-	}
-
-	// Use the largest file for testing
-	testFile := files[0]
-	for _, f := range files {
-		fInfo, _ := os.Stat(f)
-		testInfo, _ := os.Stat(testFile)
-		if fInfo.Size() > testInfo.Size() {
-			testFile = f
-		}
-	}
-
 	ctx := context.Background()
 
 	// Force single-core operation
 	oldMaxProcs := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(oldMaxProcs)
 
-	// Pre-load batches to exclude read overhead
-	options := filereader.ReaderOptions{
-		SignalType: filereader.SignalTypeLogs,
-		BatchSize:  1000,
-		OrgID:      "test-org",
-	}
-
-	reader, err := filereader.ReaderForFileWithOptions(testFile, options)
-	if err != nil {
-		b.Fatal(err)
-	}
+	// Generate 400K rows of synthetic data
+	numRows := 400000
+	batchSize := 1000
+	numBatches := numRows / batchSize
 
 	var batches []*pipeline.Batch
-	var totalLogs int64
-
-	for {
-		batch, err := reader.Next(ctx)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			_ = reader.Close()
-			b.Fatal(err)
-		}
+	for i := 0; i < numBatches; i++ {
+		batch := testdata.GenerateLogBatch(batchSize, i*batchSize)
 		batches = append(batches, batch)
-		totalLogs += int64(batch.Len())
 	}
-	_ = reader.Close()
 
+	totalLogs := int64(numRows)
 	b.Logf("Pre-loaded %d batches (%d logs) for chunk size tests", len(batches), totalLogs)
 
 	// Test configurations: backend x chunk size
@@ -127,6 +93,7 @@ func BenchmarkChunkSizeComparison(b *testing.B) {
 				}
 
 				var backend parquetwriter.ParquetBackend
+				var err error
 				if tc.backend == parquetwriter.BackendArrow {
 					backend, err = parquetwriter.NewArrowBackend(config)
 				} else {
@@ -182,43 +149,22 @@ func BenchmarkChunkSizeComparison(b *testing.B) {
 
 // BenchmarkChunkSizeMemoryProfile runs single iterations for memory profiling
 func BenchmarkChunkSizeMemoryProfile(b *testing.B) {
-	files, err := filepath.Glob(filepath.Join(testDataDir, "raw", "logs_*.binpb.gz"))
-	if err != nil || len(files) == 0 {
-		b.Skip("No raw test data found. Run: ./scripts/download-perf-testdata.sh raw 10")
-	}
-
-	testFile := files[0]
 	ctx := context.Background()
 
 	// Force single-core
 	oldMaxProcs := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(oldMaxProcs)
 
-	// Pre-load batches
-	options := filereader.ReaderOptions{
-		SignalType: filereader.SignalTypeLogs,
-		BatchSize:  1000,
-		OrgID:      "test-org",
-	}
-
-	reader, err := filereader.ReaderForFileWithOptions(testFile, options)
-	if err != nil {
-		b.Fatal(err)
-	}
+	// Generate 400K rows of synthetic data
+	numRows := 400000
+	batchSize := 1000
+	numBatches := numRows / batchSize
 
 	var batches []*pipeline.Batch
-	for {
-		batch, err := reader.Next(ctx)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			_ = reader.Close()
-			b.Fatal(err)
-		}
+	for i := 0; i < numBatches; i++ {
+		batch := testdata.GenerateLogBatch(batchSize, i*batchSize)
 		batches = append(batches, batch)
 	}
-	_ = reader.Close()
 
 	// Test Arrow with 50K chunk size
 	testCases := []struct {
