@@ -177,17 +177,59 @@ GC:         4 collections          (-33% GC cycles)
 
 ---
 
+### 5. Row Map Pre-allocation
+
+**Target**: 5-10% improvement in memory
+
+**Baseline** (after io.ReadAll):
+```
+Throughput: 73,610 logs/sec/core
+Memory:     31.07 MB allocs
+Allocations: 618,368 allocs/op
+```
+
+**Analysis**:
+- Row maps created with `make(Row)` (capacity 0)
+- Typical log has 15-25 attributes + fixed fields
+- Maps grow as entries added → internal reallocation
+- Pool reuses maps but growth still happens on first use
+
+**Optimization Attempt #1**: Pre-allocate Row capacity
+
+**Changes**:
+1. Changed `make(Row)` to `make(Row, 20)` in rowPool
+2. Capacity 20 chosen based on typical attribute count analysis
+3. Maps reused via pool maintain capacity across uses
+
+**Results** (Optimization #1):
+```
+Throughput: 73,955 logs/sec/core  (+0.5% vs previous)
+Memory:     30.77 MB allocs       (-1.0% memory)
+Allocations: 617,183 allocs/op   (-0.2%, -1,185 allocs)
+```
+
+**Analysis**:
+- ✅ Small but positive gain (+0.5% throughput, -1% memory)
+- ✅ Reduces map internal growth allocations
+- ✅ Simple change, no complexity added
+- ✅ ~300KB saved per benchmark run
+
+**Verdict**: ✅ ACCEPT - Incremental improvement, compounds with other opts
+
+---
+
 ## Summary of Gains
 
-**After all optimizations** (prefixAttributeRowKey + Value.Str() + io.ReadAll):
-- **End-to-end**: +11.1% throughput (66,243 → 73,610 logs/sec/core)
-- **Memory**: -18.4% (38 MB → 31 MB allocs)
+**After all optimizations** (prefixAttributeRowKey + Value.Str() + io.ReadAll + Row pre-alloc):
+- **End-to-end**: +11.6% throughput (66,243 → 73,955 logs/sec/core)
+- **Memory**: -19.0% (38 MB → 30.77 MB allocs)
 - **GC pressure**: -33% (6 → 4 collections)
 
 **Breakdown**:
 1. prefixAttributeRowKey: +43% isolated, +2.3% end-to-end
 2. Value.Str() fast path: +19.4% isolated, +0.9% end-to-end incremental
 3. io.ReadAll buffer: N/A isolated, **+7.6% end-to-end** ← BIGGEST WIN
+4. Row map pre-alloc: N/A isolated, +0.5% end-to-end incremental
 
 **Key learnings**:
 1. ✅ Micro-optimizations work well in isolation (43%, 19% gains)
@@ -202,12 +244,15 @@ GC:         4 collections          (-33% GC cycles)
 - GC pressure reduced (33% fewer collections) contributes to throughput gain
 
 **Why Memory Optimizations Win**:
+
 - Fewer allocations → less GC overhead → more CPU for actual work
 - io.ReadAll was pure waste (exponential growth for no reason)
 - Memory optimizations compound: less allocation + less GC + less CPU
 
 **Path Forward**:
+
 Memory optimizations are the key. Next targets:
+
 1. ✅ **DONE**: io.ReadAll buffer growth (+7.6%)
 2. **NEXT**: Protobuf unmarshal buffer pooling (13.56% memory)
 3. **LATER**: Attribute caching for CPU (but memory opts have better ROI)
