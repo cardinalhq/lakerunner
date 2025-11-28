@@ -44,6 +44,8 @@ type MetricFilteringReader struct {
 	rowsReturned int64
 }
 
+var _ Reader = (*MetricFilteringReader)(nil)
+
 // NewMetricFilteringReader creates a reader that filters for a specific metric name.
 // It starts a goroutine to read ahead from the source.
 func NewMetricFilteringReader(source Reader, metricName string) *MetricFilteringReader {

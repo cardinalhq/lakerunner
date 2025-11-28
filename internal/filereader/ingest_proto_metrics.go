@@ -61,7 +61,6 @@ type IngestProtoMetricsReader struct {
 }
 
 var _ Reader = (*IngestProtoMetricsReader)(nil)
-var _ Reader = (*IngestProtoMetricsReader)(nil)
 
 // NewIngestProtoMetricsReader creates a new IngestProtoMetricsReader for the given io.Reader.
 func NewIngestProtoMetricsReader(reader io.Reader, opts ReaderOptions) (*IngestProtoMetricsReader, error) {

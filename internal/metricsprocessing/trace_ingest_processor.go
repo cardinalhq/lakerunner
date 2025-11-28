@@ -171,6 +171,7 @@ type TraceDateintBinManager struct {
 	bins        map[int32]*TraceDateintBin // Key is dateint
 	tmpDir      string
 	rpfEstimate int64
+	schema      *filereader.ReaderSchema
 }
 
 // TraceIngestProcessor implements the Processor interface for raw trace ingestion
@@ -495,12 +496,16 @@ func (p *TraceIngestProcessor) createUnifiedTraceReader(ctx context.Context, rea
 func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*TraceDateintBin, error) {
 	ll := logctx.FromContext(ctx)
 
+	// Get schema from reader
+	schema := reader.GetSchema()
+
 	rpfEstimate := p.store.GetTraceEstimate(ctx, storageProfile.OrganizationID)
 
 	binManager := &TraceDateintBinManager{
 		bins:        make(map[int32]*TraceDateintBin),
 		tmpDir:      tmpDir,
 		rpfEstimate: rpfEstimate,
+		schema:      schema,
 	}
 
 	var totalRowsProcessed int64
@@ -598,7 +603,7 @@ func (manager *TraceDateintBinManager) getOrCreateBin(dateint int32) (*TraceDate
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewTracesWriter(manager.tmpDir, manager.rpfEstimate)
+	writer, err := factories.NewTracesWriter(manager.tmpDir, manager.schema, manager.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}

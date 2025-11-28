@@ -114,7 +114,6 @@ type MergesortReader struct {
 }
 
 var _ Reader = (*MergesortReader)(nil)
-var _ Reader = (*MergesortReader)(nil)
 
 // NewMergesortReader creates a new MergesortReader that merges rows from multiple readers
 // in sorted order using the new algorithm with active reader management.

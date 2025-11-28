@@ -56,6 +56,7 @@ type TimeBinManager struct {
 	bins        map[int64]*TimeBin // Key is start timestamp (60s aligned)
 	tmpDir      string
 	rpfEstimate int64
+	schema      *filereader.ReaderSchema
 }
 
 // MetricIngestProcessor implements the Processor interface for raw metric ingestion
@@ -438,6 +439,9 @@ func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers
 func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int64]*TimeBin, error) {
 	ll := logctx.FromContext(ctx)
 
+	// Get schema from reader
+	schema := reader.GetSchema()
+
 	// Get RPF estimate for this org/instance
 	rpfEstimate := p.store.GetMetricEstimate(ctx, storageProfile.OrganizationID, 10000) // 10 second blocks
 
@@ -446,6 +450,7 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 		bins:        make(map[int64]*TimeBin),
 		tmpDir:      tmpDir,
 		rpfEstimate: rpfEstimate,
+		schema:      schema,
 	}
 
 	var totalRowsProcessed int64
@@ -542,7 +547,7 @@ func (manager *TimeBinManager) getOrCreateBin(_ context.Context, binStartTs int6
 		return bin, nil
 	}
 
-	writer, err := factories.NewMetricsWriter(manager.tmpDir, manager.rpfEstimate)
+	writer, err := factories.NewMetricsWriter(manager.tmpDir, manager.schema, manager.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for time bin: %w", err)
 	}

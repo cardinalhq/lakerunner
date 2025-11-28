@@ -40,6 +40,8 @@ type JSONLinesReader struct {
 	batchSize int
 }
 
+var _ Reader = (*JSONLinesReader)(nil)
+
 // NewJSONLinesReader creates a new JSONLinesReader for the given io.ReadCloser.
 // The reader takes ownership of the closer and will close it when Close is called.
 func NewJSONLinesReader(reader io.ReadCloser, batchSize int) (*JSONLinesReader, error) {

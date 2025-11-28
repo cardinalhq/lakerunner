@@ -49,7 +49,6 @@ type ArrowRawReader struct {
 }
 
 var _ Reader = (*ArrowRawReader)(nil)
-var _ Reader = (*ArrowRawReader)(nil)
 
 // NewArrowRawReader creates an ArrowRawReader for the given parquet.ReaderAtSeeker.
 func NewArrowRawReader(ctx context.Context, reader parquet.ReaderAtSeeker, batchSize int) (*ArrowRawReader, error) {

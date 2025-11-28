@@ -36,6 +36,8 @@ type TranslatingReader struct {
 	batchSize  int
 }
 
+var _ Reader = (*TranslatingReader)(nil)
+
 // NewTranslatingReader creates a new TranslatingReader that applies the given
 // translator to each row returned by the underlying reader.
 //

@@ -24,9 +24,32 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
+
+// testSplitterSchema creates a schema matching the test batch columns
+func testSplitterSchema() *filereader.ReaderSchema {
+	schema := filereader.NewReaderSchema()
+	// Basic test fields
+	schema.AddColumn(wkk.NewRowKey("field1"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("field2"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("group"), filereader.DataTypeString, true)
+	// String conversion test fields
+	schema.AddColumn(wkk.NewRowKey("resource_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("resource_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("attr_value"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("regular_field"), filereader.DataTypeInt64, true)
+	// Fingerprint test fields
+	schema.AddColumn(wkk.NewRowKey("message"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("resource_service_name"), filereader.DataTypeString, true)
+	// Always-present fields
+	schema.AddColumn(wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_fingerprint"), filereader.DataTypeInt64, true)
+	return schema
+}
 
 // mockStatsProvider implements StatsProvider for testing
 type mockStatsProvider struct {
@@ -58,6 +81,7 @@ func (a *mockStatsAccumulator) Finalize() any {
 func TestNewFileSplitter(t *testing.T) {
 	config := WriterConfig{
 		TmpDir:         "/tmp",
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -78,6 +102,7 @@ func TestFileSplitterWriteBatchRows_NilBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -97,6 +122,7 @@ func TestFileSplitterWriteBatchRows_ClosedWriter(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -116,6 +142,7 @@ func TestFileSplitterWriteBatchRows_EmptyBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -138,6 +165,7 @@ func TestFileSplitterWriteBatchRows_SingleBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -192,6 +220,7 @@ func TestFileSplitterWriteBatchRows_WithStats(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 		StatsProvider:  statsProvider,
 	}
@@ -230,6 +259,7 @@ func TestFileSplitterWriteBatchRows_FileSplittingByRecordCount(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 2, // Split after 2 records
 	}
 
@@ -276,6 +306,7 @@ func TestFileSplitterWriteBatchRows_UnlimitedFileMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: NoRecordLimitPerFile, // Unlimited mode
 	}
 
@@ -316,6 +347,7 @@ func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 		GroupKeyFunc: func(row map[string]any) any {
 			return row["group"]
@@ -352,6 +384,7 @@ func TestFileSplitterClose_MultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -390,6 +423,7 @@ func TestFileSplitterAbort(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -432,6 +466,7 @@ func TestFileSplitterAbort_MultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -459,6 +494,7 @@ func TestFileSplitterEmptyFileHandling(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 1,
 	}
 
@@ -499,6 +535,7 @@ func TestFileSplitterTempFileCreation(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -545,6 +582,7 @@ func TestStringConversionForPrefixedFields(t *testing.T) {
 	t.Run("DefaultPrefixes", func(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:         tmpDir,
+			Schema:         testSplitterSchema(),
 			RecordsPerFile: 100,
 		}
 
@@ -575,6 +613,7 @@ func TestStringConversionForPrefixedFields(t *testing.T) {
 	t.Run("CustomPrefixes", func(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:                   tmpDir,
+			Schema:                   testSplitterSchema(),
 			RecordsPerFile:           100,
 			StringConversionPrefixes: []string{"custom_", "special_"},
 		}
@@ -596,6 +635,7 @@ func TestStringConversionForPrefixedFields(t *testing.T) {
 	t.Run("BatchProcessingWithConversion", func(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:         tmpDir,
+			Schema:         testSplitterSchema(),
 			RecordsPerFile: 100,
 		}
 
@@ -677,6 +717,7 @@ func TestFileSplitter_FingerprintStringToInt64Conversion(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: NoRecordLimitPerFile,
 	}
 
@@ -720,6 +761,7 @@ func TestFileSplitter_FingerprintConversionErrors(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: NoRecordLimitPerFile,
 	}
 

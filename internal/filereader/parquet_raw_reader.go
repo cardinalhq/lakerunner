@@ -44,7 +44,6 @@ type ParquetRawReader struct {
 }
 
 var _ Reader = (*ParquetRawReader)(nil)
-var _ Reader = (*ParquetRawReader)(nil)
 
 // NewParquetRawReader creates a new ParquetRawReader for the given io.ReaderAt.
 func NewParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*ParquetRawReader, error) {

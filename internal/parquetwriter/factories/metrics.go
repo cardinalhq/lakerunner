@@ -20,15 +20,18 @@ import (
 
 	mapset "github.com/deckarep/golang-set/v2"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
 
 // NewMetricsWriter creates a writer optimized for metrics data.
 // Metrics are ordered by metric name and grouped for efficient fingerprinting.
-func NewMetricsWriter(tmpdir string, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
+// The schema must be provided from the reader and cannot be nil.
+func NewMetricsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
 		TmpDir: tmpdir,
+		Schema: schema,
 
 		// Group by [metric name, TID] - don't split groups with same name+TID
 		GroupKeyFunc:  metricsGroupKeyFunc(),

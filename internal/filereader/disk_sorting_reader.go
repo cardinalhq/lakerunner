@@ -63,6 +63,8 @@ type DiskSortingReader struct {
 	sorted       bool
 }
 
+var _ Reader = (*DiskSortingReader)(nil)
+
 // NewDiskSortingReader creates a reader that uses disk-based sorting with custom binary encoding.
 //
 // Use this for large datasets that may not fit in memory. The temp file is automatically

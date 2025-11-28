@@ -64,6 +64,9 @@ func TestChunkSizeFileIdentity(t *testing.T) {
 		}
 		batches = append(batches, batch)
 	}
+
+	// Get schema from reader before closing
+	schema := reader.GetSchema()
 	_ = reader.Close()
 
 	t.Logf("Loaded %d batches for identity test", len(batches))
@@ -79,6 +82,7 @@ func TestChunkSizeFileIdentity(t *testing.T) {
 		config := parquetwriter.BackendConfig{
 			Type:      parquetwriter.BackendArrow,
 			TmpDir:    tmpDir,
+			Schema:    schema,
 			ChunkSize: chunkSize,
 			StringConversionPrefixes: []string{
 				"resource_",

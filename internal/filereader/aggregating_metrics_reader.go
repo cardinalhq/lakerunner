@@ -68,6 +68,8 @@ type AggregatingMetricsReader struct {
 	firstRowIndex int    // Index in firstRowBatch (-1 if already taken)
 }
 
+var _ Reader = (*AggregatingMetricsReader)(nil)
+
 // NewAggregatingMetricsReader creates a new AggregatingMetricsReader that aggregates metrics
 // with the same [metric_name, tid, truncated_timestamp] key.
 //

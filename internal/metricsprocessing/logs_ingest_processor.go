@@ -57,6 +57,7 @@ type DateintBinManager struct {
 	bins        map[int32]*DateintBin // Key is dateint
 	tmpDir      string
 	rpfEstimate int64
+	schema      *filereader.ReaderSchema
 }
 
 // LogIngestProcessor implements the Processor interface for raw log ingestion
@@ -383,10 +384,14 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	rpfEstimate := p.store.GetLogEstimate(ctx, storageProfile.OrganizationID)
 
 	// Create dateint bin manager
+	// Get schema from reader
+	schema := reader.GetSchema()
+
 	binManager := &DateintBinManager{
 		bins:        make(map[int32]*DateintBin),
 		tmpDir:      tmpDir,
 		rpfEstimate: rpfEstimate,
+		schema:      schema,
 	}
 
 	var totalRowsProcessed int64
@@ -489,7 +494,7 @@ func (manager *DateintBinManager) getOrCreateBin(_ context.Context, dateint int3
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewLogsWriter(manager.tmpDir, manager.rpfEstimate)
+	writer, err := factories.NewLogsWriter(manager.tmpDir, manager.schema, manager.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}

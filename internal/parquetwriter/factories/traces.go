@@ -17,14 +17,17 @@ package factories
 import (
 	mapset "github.com/deckarep/golang-set/v2"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
 
 // NewTracesWriter creates a writer optimized for traces data.
-func NewTracesWriter(tmpdir string, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
+// The schema must be provided from the reader and cannot be nil.
+func NewTracesWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
 		TmpDir: tmpdir,
+		Schema: schema,
 
 		// No grouping needed since slots are removed
 		GroupKeyFunc: func(row map[string]any) any {

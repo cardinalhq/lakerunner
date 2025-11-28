@@ -49,7 +49,6 @@ type IngestProtoTracesReader struct {
 }
 
 var _ Reader = (*IngestProtoTracesReader)(nil)
-var _ Reader = (*IngestProtoTracesReader)(nil)
 
 // NewProtoTracesReader creates a new ProtoTracesReader for the given io.Reader.
 // The caller is responsible for closing the underlying reader.

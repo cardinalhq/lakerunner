@@ -41,6 +41,8 @@ type CSVReader struct {
 	rowIndex  int
 }
 
+var _ Reader = (*CSVReader)(nil)
+
 // NewCSVReader creates a new CSVReader for the given io.ReadCloser.
 // The reader takes ownership of the closer and will close it when Close is called.
 func NewCSVReader(reader io.ReadCloser, batchSize int) (*CSVReader, error) {

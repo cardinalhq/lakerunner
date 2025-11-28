@@ -35,6 +35,8 @@ type SequentialReader struct {
 	batchSize    int
 }
 
+var _ Reader = (*SequentialReader)(nil)
+
 // NewSequentialReader creates a new SequentialReader that reads from the provided readers sequentially.
 // Readers will be closed when the SequentialReader is closed.
 func NewSequentialReader(readers []Reader, batchSize int) (*SequentialReader, error) {

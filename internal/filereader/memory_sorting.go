@@ -48,6 +48,8 @@ type MemorySortingReader struct {
 	sorted          bool
 }
 
+var _ Reader = (*MemorySortingReader)(nil)
+
 // rowWithKey pairs a row with its sort key for efficient sorting
 type rowWithKey struct {
 	row pipeline.Row
