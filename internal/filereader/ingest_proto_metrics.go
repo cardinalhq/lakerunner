@@ -55,9 +55,13 @@ type IngestProtoMetricsReader struct {
 	scopeIndex     int
 	metricIndex    int
 	datapointIndex int
+
+	// Schema extracted from all metrics
+	schema *ReaderSchema
 }
 
 var _ Reader = (*IngestProtoMetricsReader)(nil)
+var _ SchemafiedReader = (*IngestProtoMetricsReader)(nil)
 
 // NewIngestProtoMetricsReader creates a new IngestProtoMetricsReader for the given io.Reader.
 func NewIngestProtoMetricsReader(reader io.Reader, opts ReaderOptions) (*IngestProtoMetricsReader, error) {
@@ -81,10 +85,14 @@ func NewIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics, opts Reade
 		batchSize = 1000 // Default batch size
 	}
 
+	// Extract schema from all metrics (two-pass approach)
+	schema := extractSchemaFromOTELMetrics(metrics)
+
 	return &IngestProtoMetricsReader{
 		otelMetrics: metrics,
 		orgId:       opts.OrgID,
 		batchSize:   batchSize,
+		schema:      schema,
 	}, nil
 }
 
@@ -916,6 +924,11 @@ func (r *IngestProtoMetricsReader) Close() error {
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
 func (r *IngestProtoMetricsReader) TotalRowsReturned() int64 {
 	return r.rowCount
+}
+
+// GetSchema returns the schema extracted from the OTEL metrics.
+func (r *IngestProtoMetricsReader) GetSchema() *ReaderSchema {
+	return r.schema
 }
 
 func parseProtoToOtelMetrics(reader io.Reader) (*pmetric.Metrics, error) {

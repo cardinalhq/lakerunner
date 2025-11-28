@@ -43,7 +43,13 @@ type IngestProtoTracesReader struct {
 	scopeIndex    int
 	spanIndex     int
 	orgId         string
+
+	// Schema extracted from all traces
+	schema *ReaderSchema
 }
+
+var _ Reader = (*IngestProtoTracesReader)(nil)
+var _ SchemafiedReader = (*IngestProtoTracesReader)(nil)
 
 // NewProtoTracesReader creates a new ProtoTracesReader for the given io.Reader.
 // The caller is responsible for closing the underlying reader.
@@ -52,15 +58,19 @@ func NewProtoTracesReader(reader io.Reader, batchSize int) (*IngestProtoTracesRe
 		batchSize = 1000
 	}
 
-	protoReader := &IngestProtoTracesReader{
-		batchSize: batchSize,
-	}
-
 	traces, err := parseProtoToOtelTraces(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse proto to OTEL traces: %w", err)
 	}
-	protoReader.traces = traces
+
+	// Extract schema from all traces (two-pass approach)
+	schema := extractSchemaFromOTELTraces(traces)
+
+	protoReader := &IngestProtoTracesReader{
+		batchSize: batchSize,
+		traces:    traces,
+		schema:    schema,
+	}
 
 	return protoReader, nil
 }
@@ -72,16 +82,20 @@ func NewIngestProtoTracesReader(reader io.Reader, opts ReaderOptions) (*IngestPr
 		batchSize = 1000
 	}
 
-	protoReader := &IngestProtoTracesReader{
-		batchSize: batchSize,
-		orgId:     opts.OrgID,
-	}
-
 	traces, err := parseProtoToOtelTraces(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse proto to OTEL traces: %w", err)
 	}
-	protoReader.traces = traces
+
+	// Extract schema from all traces (two-pass approach)
+	schema := extractSchemaFromOTELTraces(traces)
+
+	protoReader := &IngestProtoTracesReader{
+		batchSize: batchSize,
+		orgId:     opts.OrgID,
+		traces:    traces,
+		schema:    schema,
+	}
 
 	return protoReader, nil
 }
@@ -153,6 +167,7 @@ func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context, row pipeline.
 
 				// Build row for this span
 				r.buildSpanRow(ctx, rs, ss, span, row)
+				normalizeRow(ctx, row, r.schema)
 
 				// Advance to next span
 				r.spanIndex++
@@ -175,24 +190,25 @@ func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context, row pipeline.
 }
 
 // buildSpanRow populates the provided row from a single span and its context.
+// Values are extracted with their native types based on OTEL value type.
 func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span, row pipeline.Row) {
-	// Add resource attributes with prefix
+	// Add resource attributes with prefix (preserve native types)
 	rs.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-		value := v.AsString()
+		value := otelValueToGoValue(v)
 		row[prefixAttributeRowKey(name, "resource")] = value
 		return true
 	})
 
-	// Add scope attributes with prefix
+	// Add scope attributes with prefix (preserve native types)
 	ss.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-		value := v.AsString()
+		value := otelValueToGoValue(v)
 		row[prefixAttributeRowKey(name, "scope")] = value
 		return true
 	})
 
-	// Add span attributes with prefix
+	// Add span attributes with prefix (preserve native types)
 	span.Attributes().Range(func(name string, v pcommon.Value) bool {
-		value := v.AsString()
+		value := otelValueToGoValue(v)
 		row[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
@@ -268,6 +284,11 @@ func (r *IngestProtoTracesReader) Close() error {
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
 func (r *IngestProtoTracesReader) TotalRowsReturned() int64 {
 	return r.rowCount
+}
+
+// GetSchema returns the schema extracted from the OTEL traces.
+func (r *IngestProtoTracesReader) GetSchema() *ReaderSchema {
+	return r.schema
 }
 
 func parseProtoToOtelTraces(reader io.Reader) (*ptrace.Traces, error) {

@@ -124,7 +124,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - ❌ Compaction: No
   - ❌ Rollup: No
 - **Notes**: Already sorts data during read; can extract schema during sort pass
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -142,7 +142,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - ❌ Compaction: No
   - ❌ Rollup: No
 - **Notes**: Eager loads entire file into memory already
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -160,7 +160,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - ❌ Compaction: No
   - ❌ Rollup: No
 - **Notes**: Already sorts data during read; can extract schema during sort pass
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
