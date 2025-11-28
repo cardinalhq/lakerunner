@@ -148,9 +148,16 @@ func (p *batchPool) stats() BatchPoolStats {
 var globalBatchPool = newBatchPool(1000) // Default batch size
 
 // rowPool provides memory-efficient Row map reuse
+// Pre-allocate capacity based on typical log attributes:
+//   - Resource attrs: 5-10 (service.name, host.name, k8s.pod.name, etc.)
+//   - Scope attrs: 1-3
+//   - Log attrs: 3-15
+//   - Fixed fields: 4 (message, timestamp, tsns, level)
+//
+// Total typical: 15-25 entries. Pre-size to 20 to avoid map growth.
 var rowPool = sync.Pool{
 	New: func() any {
-		return make(Row)
+		return make(Row, 20)
 	},
 }
 

@@ -84,7 +84,12 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID uuid.UUID, r
 		}
 
 		if fingerprint == 0 {
-			slog.Warn("Missing fingerprint")
+			// Check if message is empty - if so, this is expected
+			message := getRowString(row, wkk.RowKeyCMessage)
+			if message == "" {
+				continue
+			}
+			slog.Warn("Missing fingerprint and message is not empty")
 			continue
 		}
 
@@ -312,7 +317,12 @@ func processTracesExemplarsDirect(ctx context.Context, organizationID uuid.UUID,
 		}
 
 		if fingerprint == 0 {
-			slog.Warn("Missing fingerprint")
+			// Check if message is empty - if so, this is expected
+			message := getRowString(row, wkk.RowKeyCMessage)
+			if message == "" {
+				continue
+			}
+			slog.Warn("Missing fingerprint and message is not empty", "span_name", spanName)
 			continue
 		}
 

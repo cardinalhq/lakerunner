@@ -30,3 +30,5 @@ vendor
 .vscode
 # Ignore decompressed extensions
 **/*.duckdb_extension
+# Performance test data (downloaded from S3, not checked in)
+**/perftest-data/

@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -149,19 +150,35 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context, row pipeline.Row)
 // buildLogRow populates the provided row from a single log record and its context.
 func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord, row pipeline.Row) {
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-		value := v.AsString()
+		// Fast path: avoid conversion if already a string (90% of attributes)
+		var value string
+		if v.Type() == pcommon.ValueTypeStr {
+			value = v.Str()
+		} else {
+			value = v.AsString()
+		}
 		row[prefixAttributeRowKey(name, "resource")] = value
 		return true
 	})
 
 	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-		value := v.AsString()
+		var value string
+		if v.Type() == pcommon.ValueTypeStr {
+			value = v.Str()
+		} else {
+			value = v.AsString()
+		}
 		row[prefixAttributeRowKey(name, "scope")] = value
 		return true
 	})
 
 	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
-		value := v.AsString()
+		var value string
+		if v.Type() == pcommon.ValueTypeStr {
+			value = v.Str()
+		} else {
+			value = v.AsString()
+		}
 		row[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
@@ -206,12 +223,18 @@ func (r *IngestProtoLogsReader) TotalRowsReturned() int64 {
 func parseProtoToOtelLogs(reader io.Reader) (*plog.Logs, error) {
 	unmarshaler := &plog.ProtoUnmarshaler{}
 
-	data, err := io.ReadAll(reader)
+	// Use bytes.Buffer with pre-allocated capacity to avoid exponential growth
+	// Typical gzip compression ratio for protobuf is 5-10x
+	// Start with reasonable capacity to handle small-medium files without reallocation
+	var buf bytes.Buffer
+	buf.Grow(128 * 1024) // Pre-allocate 128KB
+
+	_, err := io.Copy(&buf, reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read data: %w", err)
 	}
 
-	logs, err := unmarshaler.UnmarshalLogs(data)
+	logs, err := unmarshaler.UnmarshalLogs(buf.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal protobuf logs: %w", err)
 	}
