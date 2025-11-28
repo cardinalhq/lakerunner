@@ -198,7 +198,7 @@ func analyzeMetric(ctx context.Context, files []string, metricName string, start
 	fmt.Printf("Creating readers for %d files...\n", len(files))
 
 	// Create readers for all files
-	var filteredReaders []filereader.Reader
+	var filteredReaders []filereader.SchemafiedReader
 	var openFiles []*os.File
 	var shouldCloseReaders = true // Track if we should close readers in defer
 	defer func() {
