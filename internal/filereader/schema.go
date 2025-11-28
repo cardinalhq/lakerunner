@@ -40,6 +40,7 @@ const (
 	DataTypeFloat64
 	DataTypeBool
 	DataTypeBytes
+	DataTypeAny // For complex types (list, struct, map) that are passed through as-is
 )
 
 func (dt DataType) String() string {
@@ -54,6 +55,8 @@ func (dt DataType) String() string {
 		return "bool"
 	case DataTypeBytes:
 		return "bytes"
+	case DataTypeAny:
+		return "any"
 	default:
 		return "unknown"
 	}
@@ -155,6 +158,11 @@ func promoteType(a, b DataType) DataType {
 	// Bool mixed with int64 or float64 → string
 	if a == DataTypeBool || b == DataTypeBool {
 		return DataTypeString
+	}
+
+	// Any mixed with anything → Any (preserve passthrough behavior)
+	if a == DataTypeAny || b == DataTypeAny {
+		return DataTypeAny
 	}
 
 	// Default to string for unknown combinations

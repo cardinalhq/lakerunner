@@ -38,14 +38,18 @@ import (
 // This reader provides raw parquet data without any opinionated transformations.
 // It handles NULL-type columns gracefully, unlike the parquet-go library.
 type ArrowRawReader struct {
-	pr        *file.Reader
-	fr        *pqarrow.FileReader
-	rr        pqarrow.RecordReader
-	batchSize int
-	rowCount  int64
-	closed    bool
-	exhausted bool
+	pr           *file.Reader
+	fr           *pqarrow.FileReader
+	rr           pqarrow.RecordReader
+	batchSize    int
+	rowCount     int64
+	closed       bool
+	exhausted    bool
+	readerSchema *ReaderSchema // our schema extracted from Arrow schema
 }
+
+var _ Reader = (*ArrowRawReader)(nil)
+var _ SchemafiedReader = (*ArrowRawReader)(nil)
 
 // NewArrowRawReader creates an ArrowRawReader for the given parquet.ReaderAtSeeker.
 func NewArrowRawReader(ctx context.Context, reader parquet.ReaderAtSeeker, batchSize int) (*ArrowRawReader, error) {
@@ -71,11 +75,20 @@ func NewArrowRawReader(ctx context.Context, reader parquet.ReaderAtSeeker, batch
 		return nil, fmt.Errorf("failed to create record reader: %w", err)
 	}
 
+	// Extract schema from Arrow metadata
+	arrowSchema, err := fr.Schema()
+	if err != nil {
+		_ = pf.Close()
+		return nil, fmt.Errorf("failed to get arrow schema: %w", err)
+	}
+	readerSchema := extractSchemaFromArrowSchema(arrowSchema)
+
 	return &ArrowRawReader{
-		pr:        pf,
-		fr:        fr,
-		rr:        rr,
-		batchSize: batchSize,
+		pr:           pf,
+		fr:           fr,
+		rr:           rr,
+		batchSize:    batchSize,
+		readerSchema: readerSchema,
 	}, nil
 }
 
@@ -123,14 +136,18 @@ func (r *ArrowRawReader) Next(ctx context.Context) (*Batch, error) {
 				}
 			}
 		}
+		// Apply schema normalization
+		if err := normalizeRow(ctx, br, r.readerSchema); err != nil {
+			return nil, fmt.Errorf("schema normalization failed: %w", err)
+		}
 	}
 
 	r.rowCount += int64(numRows)
 	return batch, nil
 }
 
-// GetSchema returns the schema of the parquet file.
-func (r *ArrowRawReader) GetSchema() (*arrow.Schema, error) {
+// GetArrowSchema returns the Arrow schema of the parquet file.
+func (r *ArrowRawReader) GetArrowSchema() (*arrow.Schema, error) {
 	if r.closed {
 		return nil, errors.New("reader is closed")
 	}
@@ -139,6 +156,11 @@ func (r *ArrowRawReader) GetSchema() (*arrow.Schema, error) {
 		return nil, fmt.Errorf("failed to get schema: %w", err)
 	}
 	return schema, nil
+}
+
+// GetSchema returns the schema extracted from the Arrow metadata.
+func (r *ArrowRawReader) GetSchema() *ReaderSchema {
+	return r.readerSchema
 }
 
 // Close releases resources associated with the reader.

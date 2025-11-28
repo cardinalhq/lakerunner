@@ -94,7 +94,7 @@ func runParquetArrowCat(filename string, limit int, translatorType string) error
 	}
 
 	// Print schema information
-	schema, err := ar.GetSchema()
+	schema, err := ar.GetArrowSchema()
 	if err != nil {
 		return fmt.Errorf("failed to get schema: %w", err)
 	}

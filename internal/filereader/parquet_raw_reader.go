@@ -40,7 +40,11 @@ type ParquetRawReader struct {
 	rowCount  int64
 	batchSize int
 	readBuf   []map[string]any // reusable buffer for reading parquet rows
+	schema    *ReaderSchema    // schema extracted from parquet metadata
 }
+
+var _ Reader = (*ParquetRawReader)(nil)
+var _ SchemafiedReader = (*ParquetRawReader)(nil)
 
 // NewParquetRawReader creates a new ParquetRawReader for the given io.ReaderAt.
 func NewParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*ParquetRawReader, error) {
@@ -59,6 +63,9 @@ func NewParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*Parque
 		batchSize = 1000
 	}
 
+	// Extract schema from parquet metadata
+	schema := extractSchemaFromParquetFile(pf)
+
 	// Pre-allocate reusable buffer for reading parquet rows
 	readBuf := make([]map[string]any, batchSize)
 	for i := range readBuf {
@@ -70,6 +77,7 @@ func NewParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*Parque
 		pfr:       pfr,
 		batchSize: batchSize,
 		readBuf:   readBuf,
+		schema:    schema,
 	}, nil
 }
 
@@ -112,6 +120,10 @@ func (r *ParquetRawReader) Next(ctx context.Context) (*Batch, error) {
 			fieldName := strings.ReplaceAll(k, ".", "_")
 			batchRow[wkk.NewRowKeyFromBytes([]byte(fieldName))] = v
 		}
+		// Apply schema normalization
+		if err := normalizeRow(ctx, batchRow, r.schema); err != nil {
+			return nil, fmt.Errorf("schema normalization failed: %w", err)
+		}
 	}
 
 	r.rowCount += int64(n)
@@ -148,4 +160,9 @@ func (r *ParquetRawReader) Close() error {
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
 func (r *ParquetRawReader) TotalRowsReturned() int64 {
 	return r.rowCount
+}
+
+// GetSchema returns the schema extracted from the parquet metadata.
+func (r *ParquetRawReader) GetSchema() *ReaderSchema {
+	return r.schema
 }
