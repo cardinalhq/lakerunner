@@ -104,7 +104,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - ❌ Compaction: No
   - ❌ Rollup: No
 - **Notes**: Could optimize by reading only header + first N rows for schema
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -120,7 +120,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - ❌ Compaction: No
   - ❌ Rollup: No
 - **Notes**: Schema can vary per row; need to scan all rows to find all possible columns
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -195,7 +195,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - `LogTranslator`: Adds `resource_bucket_name`, `resource_file_name`, etc.
   - `ParquetLogTranslator`: Minimal transforms for pre-cooked logs
   - `CSVLogTranslator`: Adds log-specific fields to CSV data
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -212,7 +212,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - ✅ Compaction: Logs (wraps ParquetRawReader/ArrowRawReader)
   - ❌ Rollup: No
 - **Schema Changes**: May add `_tsns` column
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -229,7 +229,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - ✅ Compaction: Metrics
   - ✅ Rollup: Metrics
 - **Schema Changes**: May add `_tsns` column
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -245,7 +245,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - ✅ Compaction: Traces
   - ❌ Rollup: No
 - **Schema Changes**: May add `_tsns` column
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -255,19 +255,22 @@ As we begin to convert the individual readers, we will change them to return a S
 - **File**: `internal/filereader/mergesort_reader.go`
 - **Transformations**:
   - Merges N sorted readers into single sorted stream
-  - **No row transformations** (pass-through)
-- **Schema Source**: 🔄 **Merge Child Schemas**
+  - Applies schema normalization to output rows (type conversion, null removal)
+- **Schema Source**: ✅ **Merge Child Schemas**
   - Union all column names from child readers
   - **Type Promotion Rules**:
     - If all children have same type for column → use that type
     - If types differ → promote to most general (int64 + string → string)
+    - Uses same `promoteType()` rules as in-file conflicts
     - Track `HasNonNull = any child has non-null`
+- **Schema Extraction**: Calls `GetSchema()` on each child reader (if SchemafiedReader), merges via `AddColumn()` which automatically promotes types
+- **Schema Normalization**: Only applies when merged schema has columns (backward compatible with non-schemafied readers)
 - **Used In**:
   - ✅ Ingestion: Logs, Metrics, Traces (multi-file ingestion)
   - ✅ Compaction: Logs, Metrics, Traces (multi-segment reads)
   - ✅ Rollup: Metrics
-- **Critical for Schema**: This is where type promotion happens!
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Critical for Schema**: This is where cross-reader type promotion happens!
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -295,7 +298,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - ✅ Ingestion: No
   - ✅ Compaction: Metrics (if `sort_version` mismatch)
   - ❌ Rollup: No
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -332,7 +335,7 @@ As we begin to convert the individual readers, we will change them to return a S
   - ✅ Ingestion: Metrics (optional)
   - ✅ Compaction: Metrics (optional)
   - ❌ Rollup: No
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 

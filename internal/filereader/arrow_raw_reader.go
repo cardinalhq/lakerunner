@@ -146,18 +146,6 @@ func (r *ArrowRawReader) Next(ctx context.Context) (*Batch, error) {
 	return batch, nil
 }
 
-// GetArrowSchema returns the Arrow schema of the parquet file.
-func (r *ArrowRawReader) GetArrowSchema() (*arrow.Schema, error) {
-	if r.closed {
-		return nil, errors.New("reader is closed")
-	}
-	schema, err := r.fr.Schema()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get schema: %w", err)
-	}
-	return schema, nil
-}
-
 // GetSchema returns the schema extracted from the Arrow metadata.
 func (r *ArrowRawReader) GetSchema() *ReaderSchema {
 	return r.readerSchema

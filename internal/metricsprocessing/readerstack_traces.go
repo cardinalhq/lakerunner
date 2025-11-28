@@ -32,7 +32,7 @@ import (
 )
 
 type traceReaderStackResult struct {
-	Readers         []filereader.Reader
+	Readers         []filereader.SchemafiedReader
 	Files           []*os.File
 	DownloadedFiles []string
 	HeadReader      filereader.Reader
@@ -48,7 +48,7 @@ func createTraceReaderStack(
 ) (*traceReaderStackResult, error) {
 	ll := logctx.FromContext(ctx)
 
-	var readers []filereader.Reader
+	var readers []filereader.SchemafiedReader
 	var files []*os.File
 	var downloadedFiles []string
 

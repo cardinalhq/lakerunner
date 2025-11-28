@@ -71,7 +71,8 @@ func (mt *mockTranslator) TranslateRow(_ context.Context, row *pipeline.Row) err
 func TestNewTranslatingReader(t *testing.T) {
 	mockReader := newMockReader("test", []pipeline.Row{
 		{wkk.NewRowKey("test"): "data"},
-	})
+	}, nil)
+
 	translator := newTestNoopTranslator()
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -94,7 +95,7 @@ func TestNewTranslatingReader_NilReader(t *testing.T) {
 }
 
 func TestNewTranslatingReader_NilTranslator(t *testing.T) {
-	mockReader := newMockReader("test", []pipeline.Row{{wkk.NewRowKey("test"): "data"}})
+	mockReader := newMockReader("test", []pipeline.Row{{wkk.NewRowKey("test"): "data"}}, nil)
 
 	_, err := NewTranslatingReader(mockReader, nil, 1000)
 	assert.Error(t, err)
@@ -108,7 +109,7 @@ func TestTranslatingReader_NoopTranslator(t *testing.T) {
 		{wkk.NewRowKey("name"): "Charlie", wkk.NewRowKey("age"): 35, wkk.NewRowKey("city"): "Chicago"},
 	}
 
-	mockReader := newMockReader("test", testData)
+	mockReader := newMockReader("test", testData, nil)
 	translator := NewNoopTranslator()
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -135,7 +136,7 @@ func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 	}
 
 	t.Run("NoopTranslator_SameReference", func(t *testing.T) {
-		mockReader := newMockReader("test", testData)
+		mockReader := newMockReader("test", testData, nil)
 		translator := NewNoopTranslator()
 
 		reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -152,7 +153,7 @@ func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 	})
 
 	t.Run("TagsTranslator_DifferentReference", func(t *testing.T) {
-		mockReader := newMockReader("test", testData)
+		mockReader := newMockReader("test", testData, nil)
 		translator := NewTagsTranslator(map[string]string{"tag": "test"})
 
 		reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -171,7 +172,7 @@ func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 	})
 
 	t.Run("TestNoopTranslator_DifferentReference", func(t *testing.T) {
-		mockReader := newMockReader("test", testData)
+		mockReader := newMockReader("test", testData, nil)
 		translator := newTestNoopTranslator()
 
 		reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -200,7 +201,7 @@ func TestTranslatingReader_TagsTranslator(t *testing.T) {
 		"version":     "1.2.3",
 	}
 
-	mockReader := newMockReader("test", testData)
+	mockReader := newMockReader("test", testData, nil)
 	translator := NewTagsTranslator(tags)
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -240,7 +241,7 @@ func TestTranslatingReader_ChainTranslator(t *testing.T) {
 
 	chainTranslator := NewChainTranslator(tagsTranslator, prefixTranslator)
 
-	mockReader := newMockReader("test", testData)
+	mockReader := newMockReader("test", testData, nil)
 	reader, err := NewTranslatingReader(mockReader, chainTranslator, 1000)
 	require.NoError(t, err)
 	defer func() { _ = reader.Close() }()
@@ -270,7 +271,7 @@ func TestTranslatingReader_TranslationError(t *testing.T) {
 		{wkk.NewRowKey("more"): "data"},
 	}
 
-	mockReader := newMockReader("test", testData)
+	mockReader := newMockReader("test", testData, nil)
 	translator := &mockTranslator{shouldError: true}
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -294,7 +295,7 @@ func TestTranslatingReader_PartialTranslationError(t *testing.T) {
 	// Create a translator that fails on the second row
 	translator := &conditionalErrorTranslator{failOnRow: 1}
 
-	mockReader := newMockReader("test", testData)
+	mockReader := newMockReader("test", testData, nil)
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
 	defer func() { _ = reader.Close() }()
@@ -315,7 +316,7 @@ func TestTranslatingReader_PartialTranslationError(t *testing.T) {
 func TestTranslatingReader_EmptySlice(t *testing.T) {
 	testData := []pipeline.Row{{wkk.NewRowKey("test"): "data"}}
 
-	mockReader := newMockReader("test", testData)
+	mockReader := newMockReader("test", testData, nil)
 	translator := newTestNoopTranslator()
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -339,7 +340,7 @@ func TestTranslatingReader_ReadBatched(t *testing.T) {
 	}
 
 	tags := map[string]string{"batch": "test"}
-	mockReader := newMockReader("test", testData)
+	mockReader := newMockReader("test", testData, nil)
 	translator := NewTagsTranslator(tags)
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -385,7 +386,7 @@ func TestTranslatingReader_TotalRowsReturned(t *testing.T) {
 		{wkk.NewRowKey("id"): 5, wkk.NewRowKey("value"): "e"},
 	}
 
-	mockReader := newMockReader("test", testData)
+	mockReader := newMockReader("test", testData, nil)
 	translator := NewTagsTranslator(map[string]string{"batch": "test"})
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -412,7 +413,7 @@ func TestTranslatingReader_TotalRowsReturned(t *testing.T) {
 func TestTranslatingReader_Close(t *testing.T) {
 	testData := []pipeline.Row{{wkk.NewRowKey("test"): "data"}}
 
-	mockReader := newMockReader("test", testData)
+	mockReader := newMockReader("test", testData, nil)
 	translator := newTestNoopTranslator()
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
@@ -459,7 +460,7 @@ func TestTranslatingReader_EOF(t *testing.T) {
 		{wkk.NewRowKey("final"): "row"},
 	}
 
-	mockReader := newMockReader("test", testData)
+	mockReader := newMockReader("test", testData, nil)
 	translator := NewTagsTranslator(map[string]string{"eof": "test"})
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)

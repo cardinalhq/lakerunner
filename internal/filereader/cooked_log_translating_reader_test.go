@@ -15,9 +15,11 @@
 package filereader
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/pipeline"
@@ -141,4 +143,53 @@ func (m *mockReaderImpl) Close() error {
 
 func (m *mockReaderImpl) TotalRowsReturned() int64 {
 	return 0
+}
+
+func (m *mockReaderImpl) GetSchema() *ReaderSchema {
+	return nil
+}
+
+// TestCookedLogTranslatingReader_GetSchema tests that schema is augmented with chq_tsns.
+func TestCookedLogTranslatingReader_GetSchema(t *testing.T) {
+	// Create test parquet data
+	rows := []map[string]any{
+		{
+			"chq_timestamp":   int64(1000),
+			"chq_fingerprint": "abc123",
+			"chq_body":        "test log message",
+		},
+	}
+
+	parquetData, _ := createTestParquetInMemory(t, rows)
+	reader := bytes.NewReader(parquetData)
+
+	// ArrowRawReader implements SchemafiedReader
+	rawReader, err := NewArrowRawReader(context.Background(), reader, 1000)
+	require.NoError(t, err)
+	defer func() { _ = rawReader.Close() }()
+
+	// CookedLogTranslatingReader wraps it and augments schema
+	cookedReader := NewCookedLogTranslatingReader(rawReader)
+	defer func() { _ = cookedReader.Close() }()
+
+	// Schema should be valid and include chq_tsns
+	schema := cookedReader.GetSchema()
+	assert.NotNil(t, schema, "Schema must not be nil")
+	assert.True(t, schema.HasColumn(wkk.RowKeyValue(wkk.RowKeyCTsns)), "Schema should include chq_tsns column")
+}
+
+// TestCookedLogTranslatingReader_GetSchema_NoSchema tests behavior with non-schema reader.
+func TestCookedLogTranslatingReader_GetSchema_NoSchema(t *testing.T) {
+	// Create a mock reader without schema support
+	mockReader := newMockReader("test", []pipeline.Row{
+		{wkk.NewRowKey("test"): "value"},
+	}, nil)
+
+	cookedReader := NewCookedLogTranslatingReader(mockReader)
+	defer func() { _ = cookedReader.Close() }()
+
+	// Should return valid schema with chq_tsns even when wrapped reader doesn't provide schema
+	schema := cookedReader.GetSchema()
+	assert.NotNil(t, schema, "Schema must not be nil even when wrapped reader has no schema")
+	assert.True(t, schema.HasColumn(wkk.RowKeyValue(wkk.RowKeyCTsns)), "Schema should include chq_tsns column")
 }

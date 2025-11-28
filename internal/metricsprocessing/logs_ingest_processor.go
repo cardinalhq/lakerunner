@@ -176,8 +176,8 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
-	var readers []filereader.Reader
-	var readersToClose []filereader.Reader
+	var readers []filereader.SchemafiedReader
+	var readersToClose []filereader.SchemafiedReader
 	var totalInputSize int64
 
 	for _, msg := range msgs {
@@ -326,7 +326,7 @@ func (p *LogIngestProcessor) GetTargetRecordCount(ctx context.Context, groupingK
 }
 
 // createLogReaderStack creates a reader stack: Translation(LogReader(file))
-func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
+func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.SchemafiedReader, error) {
 	reader, err := p.createLogReader(tmpFilename, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log reader: %w", err)
@@ -348,7 +348,7 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 	return reader, nil
 }
 
-func (p *LogIngestProcessor) createLogReader(filename, orgId string) (filereader.Reader, error) {
+func (p *LogIngestProcessor) createLogReader(filename, orgId string) (filereader.SchemafiedReader, error) {
 	options := filereader.ReaderOptions{
 		SignalType: filereader.SignalTypeLogs,
 		BatchSize:  1000,
@@ -358,7 +358,7 @@ func (p *LogIngestProcessor) createLogReader(filename, orgId string) (filereader
 }
 
 // createUnifiedLogReader creates a unified reader from multiple readers
-func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
+func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers []filereader.SchemafiedReader) (filereader.Reader, error) {
 	var finalReader filereader.Reader
 
 	if len(readers) == 1 {

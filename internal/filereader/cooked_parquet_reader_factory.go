@@ -19,7 +19,7 @@ import "io"
 // NewCookedMetricParquetReader creates a reader for cooked metric parquet files.
 // It wraps a ParquetRawReader with CookedMetricTranslatingReader to apply
 // metric-specific filtering and transformations.
-func NewCookedMetricParquetReader(r io.ReaderAt, size int64, batchSize int) (Reader, error) {
+func NewCookedMetricParquetReader(r io.ReaderAt, size int64, batchSize int) (SchemafiedReader, error) {
 	raw, err := NewParquetRawReader(r, size, batchSize)
 	if err != nil {
 		return nil, err
@@ -30,7 +30,7 @@ func NewCookedMetricParquetReader(r io.ReaderAt, size int64, batchSize int) (Rea
 // NewCookedLogParquetReader creates a reader for cooked log parquet files.
 // It wraps a ParquetRawReader with CookedLogTranslatingReader to apply
 // log-specific filtering and transformations.
-func NewCookedLogParquetReader(r io.ReaderAt, size int64, batchSize int) (Reader, error) {
+func NewCookedLogParquetReader(r io.ReaderAt, size int64, batchSize int) (SchemafiedReader, error) {
 	raw, err := NewParquetRawReader(r, size, batchSize)
 	if err != nil {
 		return nil, err
@@ -41,7 +41,7 @@ func NewCookedLogParquetReader(r io.ReaderAt, size int64, batchSize int) (Reader
 // NewCookedTraceParquetReader creates a reader for cooked trace parquet files.
 // It wraps a ParquetRawReader with CookedTraceTranslatingReader to apply
 // trace-specific filtering and transformations.
-func NewCookedTraceParquetReader(r io.ReaderAt, size int64, batchSize int) (Reader, error) {
+func NewCookedTraceParquetReader(r io.ReaderAt, size int64, batchSize int) (SchemafiedReader, error) {
 	raw, err := NewParquetRawReader(r, size, batchSize)
 	if err != nil {
 		return nil, err

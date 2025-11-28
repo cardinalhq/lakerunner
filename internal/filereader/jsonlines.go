@@ -137,3 +137,9 @@ func (r *JSONLinesReader) Close() error {
 func (r *JSONLinesReader) TotalRowsReturned() int64 {
 	return r.totalRows
 }
+
+// GetSchema returns nil as JSON Lines does not have upfront schema metadata.
+// Schema must be inferred from the data itself.
+func (r *JSONLinesReader) GetSchema() *ReaderSchema {
+	return nil
+}

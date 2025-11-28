@@ -298,6 +298,16 @@ func (r *DiskSortingReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 
+// GetSchema delegates to the wrapped reader if it provides schema information.
+func (r *DiskSortingReader) GetSchema() *ReaderSchema {
+	if r.reader != nil {
+		if schemaReader, ok := r.reader.(SchemafiedReader); ok {
+			return schemaReader.GetSchema()
+		}
+	}
+	return nil
+}
+
 // GetOTELMetrics implements the OTELMetricsProvider interface if the underlying reader supports it.
 func (r *DiskSortingReader) GetOTELMetrics() (any, error) {
 	if provider, ok := r.reader.(interface{ GetOTELMetrics() (any, error) }); ok {

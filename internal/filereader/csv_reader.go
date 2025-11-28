@@ -181,3 +181,19 @@ func (r *CSVReader) Close() error {
 func (r *CSVReader) TotalRowsReturned() int64 {
 	return r.totalRows
 }
+
+// GetSchema returns schema information extracted from CSV headers.
+// All columns are marked as nullable since CSV doesn't enforce types.
+func (r *CSVReader) GetSchema() *ReaderSchema {
+	if r.headers == nil {
+		return nil
+	}
+
+	schema := NewReaderSchema()
+	for _, header := range r.headers {
+		// CSV data is dynamically typed - can be string, int64, or float64
+		// Mark all as string type with nullable=true since we don't know upfront
+		schema.AddColumn(wkk.NewRowKey(header), DataTypeString, true)
+	}
+	return schema
+}

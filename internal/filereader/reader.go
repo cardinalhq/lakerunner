@@ -44,7 +44,7 @@ type Reader interface {
 type SchemafiedReader interface {
 	Reader
 
-	// Schema returns the ReaderSchema extracted from the content.
+	// GetSchema returns the ReaderSchema extracted from the content.
 	GetSchema() *ReaderSchema
 }
 

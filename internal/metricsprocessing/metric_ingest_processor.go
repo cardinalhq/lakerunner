@@ -173,7 +173,7 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
-	var readers []filereader.Reader
+	var readers []filereader.SchemafiedReader
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
@@ -378,8 +378,11 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 }
 
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
-func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
-	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{
+func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.SchemafiedReader, error) {
+	var reader filereader.Reader
+	var err error
+
+	reader, err = createMetricProtoReader(tmpFilename, filereader.ReaderOptions{
 		OrgID: orgID,
 	})
 	if err != nil {
@@ -398,17 +401,17 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 	}
 
 	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
-	reader, err = filereader.NewDiskSortingReader(reader, keyProvider, 1000)
+	sortedReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 	if err != nil {
 		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create sorting reader: %w", err)
 	}
 
-	return reader, nil
+	return sortedReader, nil
 }
 
 // createUnifiedReader creates a unified reader from multiple readers
-func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
+func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers []filereader.SchemafiedReader) (filereader.Reader, error) {
 	var finalReader filereader.Reader
 
 	if len(readers) == 1 {

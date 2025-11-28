@@ -619,3 +619,57 @@ func (tc *testCloser) Close() error {
 	}
 	return nil
 }
+
+// TestCSVReader_GetSchema tests that schema is extracted from CSV headers.
+func TestCSVReader_GetSchema(t *testing.T) {
+	input := `name,age,city,score
+Alice,30,NYC,95.5
+Bob,25,LA,88.3`
+
+	reader := io.NopCloser(strings.NewReader(input))
+	csvReader, err := NewCSVReader(reader, 10)
+	require.NoError(t, err)
+	defer func() { _ = csvReader.Close() }()
+
+	// Schema should be extracted from headers
+	schema := csvReader.GetSchema()
+	require.NotNil(t, schema, "Schema should be extracted from CSV headers")
+
+	// Verify schema has expected columns
+	assert.True(t, schema.HasColumn("name"))
+	assert.True(t, schema.HasColumn("age"))
+	assert.True(t, schema.HasColumn("city"))
+	assert.True(t, schema.HasColumn("score"))
+
+	// All CSV columns should be marked as string type (dynamically typed)
+	assert.Equal(t, DataTypeString, schema.GetColumnType("name"))
+	assert.Equal(t, DataTypeString, schema.GetColumnType("age"))
+	assert.Equal(t, DataTypeString, schema.GetColumnType("city"))
+	assert.Equal(t, DataTypeString, schema.GetColumnType("score"))
+}
+
+// TestCSVReader_GetSchema_EmptyHeaders tests behavior with closed reader.
+func TestCSVReader_GetSchema_AfterClose(t *testing.T) {
+	input := `name,age
+Alice,30`
+
+	reader := io.NopCloser(strings.NewReader(input))
+	csvReader, err := NewCSVReader(reader, 10)
+	require.NoError(t, err)
+
+	// Get schema before closing
+	schemaBefore := csvReader.GetSchema()
+	require.NotNil(t, schemaBefore)
+	assert.True(t, schemaBefore.HasColumn("name"))
+	assert.True(t, schemaBefore.HasColumn("age"))
+
+	// Close the reader
+	err = csvReader.Close()
+	require.NoError(t, err)
+
+	// Schema should still be available after close (headers are still in memory)
+	schemaAfter := csvReader.GetSchema()
+	require.NotNil(t, schemaAfter, "Schema should still be available after close")
+	assert.True(t, schemaAfter.HasColumn("name"))
+	assert.True(t, schemaAfter.HasColumn("age"))
+}

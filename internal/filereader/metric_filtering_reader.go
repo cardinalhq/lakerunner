@@ -244,3 +244,13 @@ func (r *MetricFilteringReader) Close() error {
 func (r *MetricFilteringReader) TotalRowsReturned() int64 {
 	return r.rowsReturned
 }
+
+// GetSchema delegates to the wrapped reader if it provides schema information.
+func (r *MetricFilteringReader) GetSchema() *ReaderSchema {
+	if r.source != nil {
+		if schemaReader, ok := r.source.(SchemafiedReader); ok {
+			return schemaReader.GetSchema()
+		}
+	}
+	return nil
+}

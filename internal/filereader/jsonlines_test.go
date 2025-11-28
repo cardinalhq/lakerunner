@@ -238,3 +238,18 @@ func TestJSONLinesReaderBatchProcessing(t *testing.T) {
 	assert.Nil(t, batch)
 	assert.True(t, errors.Is(err, io.EOF))
 }
+
+// TestJSONLinesReader_GetSchema tests that JSONLinesReader returns nil for GetSchema
+// since JSON Lines does not have upfront schema metadata.
+func TestJSONLinesReader_GetSchema(t *testing.T) {
+	jsonData := `{"name":"test","value":123}
+{"name":"test2","value":456}`
+
+	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))), 100)
+	require.NoError(t, err)
+	defer func() { _ = reader.Close() }()
+
+	// JSON Lines cannot provide schema upfront - must infer from data
+	schema := reader.GetSchema()
+	assert.Nil(t, schema, "JSONLinesReader should return nil for GetSchema as it has no metadata")
+}

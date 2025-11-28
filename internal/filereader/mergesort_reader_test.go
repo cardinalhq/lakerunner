@@ -31,6 +31,27 @@ import (
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
+// createSimpleSchema creates a basic schema for test mock readers
+func createSimpleSchema() *ReaderSchema {
+	schema := NewReaderSchema()
+	schema.AddColumn(wkk.NewRowKey("ts"), DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("data"), DataTypeString, true)
+	return schema
+}
+
+// createMetricSchema creates a schema for metric test data
+func createMetricSchema() *ReaderSchema {
+	schema := NewReaderSchema()
+	schema.AddColumn(wkk.RowKeyCName, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTID, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCTimestamp, DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("reader_id"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("row_id"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("value"), DataTypeFloat64, true)
+	schema.AddColumn(wkk.NewRowKey("source"), DataTypeString, true)
+	return schema
+}
+
 // createMergesortTestParquet creates a metric Parquet file in memory for mergesort testing
 func createMergesortTestParquet(t *testing.T, rowCount int) []byte {
 	t.Helper()
@@ -80,9 +101,10 @@ func createMergesortTestParquet(t *testing.T, rowCount int) []byte {
 
 func TestNewMergesortReader(t *testing.T) {
 	// Test with valid readers and keyProvider
-	readers := []Reader{
-		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}}),
-		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(2)}}),
+	schema := createSimpleSchema()
+	readers := []SchemafiedReader{
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}}, schema),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(2)}}, schema),
 	}
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
 
@@ -97,7 +119,7 @@ func TestNewMergesortReader(t *testing.T) {
 	}
 
 	// Test with no readers
-	_, err = NewMergesortReader(context.TODO(), []Reader{}, keyProvider, 1000)
+	_, err = NewMergesortReader(context.TODO(), []SchemafiedReader{}, keyProvider, 1000)
 	if err == nil {
 		t.Error("Expected error for empty readers slice")
 	}
@@ -111,20 +133,21 @@ func TestNewMergesortReader(t *testing.T) {
 
 func TestMergesortReader_Next(t *testing.T) {
 	// Create readers with interleaved timestamps to test ordering
-	readers := []Reader{
+	schema := createSimpleSchema()
+	readers := []SchemafiedReader{
 		newMockReader("r1", []pipeline.Row{
 			{wkk.NewRowKey("ts"): int64(1), wkk.NewRowKey("data"): "r1-first"},
 			{wkk.NewRowKey("ts"): int64(4), wkk.NewRowKey("data"): "r1-second"},
 			{wkk.NewRowKey("ts"): int64(7), wkk.NewRowKey("data"): "r1-third"},
-		}),
+		}, schema),
 		newMockReader("r2", []pipeline.Row{
 			{wkk.NewRowKey("ts"): int64(2), wkk.NewRowKey("data"): "r2-first"},
 			{wkk.NewRowKey("ts"): int64(5), wkk.NewRowKey("data"): "r2-second"},
-		}),
+		}, schema),
 		newMockReader("r3", []pipeline.Row{
 			{wkk.NewRowKey("ts"): int64(3), wkk.NewRowKey("data"): "r3-first"},
 			{wkk.NewRowKey("ts"): int64(6), wkk.NewRowKey("data"): "r3-second"},
-		}),
+		}, schema),
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
@@ -170,10 +193,11 @@ func TestMergesortReader_Next(t *testing.T) {
 }
 
 func TestMergesortReader_NextBatched(t *testing.T) {
-	readers := []Reader{
-		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(100)}}),
-		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(200)}}),
-		newMockReader("r3", []pipeline.Row{}), // Empty reader
+	schema := createSimpleSchema()
+	readers := []SchemafiedReader{
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(100)}}, schema),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(200)}}, schema),
+		newMockReader("r3", []pipeline.Row{}, schema), // Empty reader
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
@@ -209,9 +233,10 @@ func TestMergesortReader_NextBatched(t *testing.T) {
 }
 
 func TestMergesortReader_ActiveReaderCount(t *testing.T) {
-	readers := []Reader{
-		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}}),
-		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(2)}}),
+	schema := createSimpleSchema()
+	readers := []SchemafiedReader{
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}}, schema),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(2)}}, schema),
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
@@ -242,9 +267,10 @@ func TestMergesortReader_ActiveReaderCount(t *testing.T) {
 }
 
 func TestMergesortReader_AllEmptyReaders(t *testing.T) {
-	readers := []Reader{
-		newMockReader("r1", []pipeline.Row{}),
-		newMockReader("r2", []pipeline.Row{}),
+	schema := createSimpleSchema()
+	readers := []SchemafiedReader{
+		newMockReader("r1", []pipeline.Row{}, schema),
+		newMockReader("r2", []pipeline.Row{}, schema),
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
@@ -265,9 +291,10 @@ func TestMergesortReader_AllEmptyReaders(t *testing.T) {
 }
 
 func TestMergesortReader_Close(t *testing.T) {
-	readers := []Reader{
-		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}}),
-		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(2)}}),
+	schema := createSimpleSchema()
+	readers := []SchemafiedReader{
+		newMockReader("r1", []pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}}, schema),
+		newMockReader("r2", []pipeline.Row{{wkk.NewRowKey("ts"): int64(2)}}, schema),
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
@@ -368,10 +395,11 @@ type trackingReader struct {
 	index    int
 	ptrs     []string
 	rowCount int64
+	schema   *ReaderSchema
 }
 
 func newTrackingReader(rows []pipeline.Row) *trackingReader {
-	return &trackingReader{rows: rows}
+	return &trackingReader{rows: rows, schema: nil}
 }
 
 func (tr *trackingReader) Next(ctx context.Context) (*Batch, error) {
@@ -400,9 +428,11 @@ func (tr *trackingReader) Close() error { return nil }
 
 func (tr *trackingReader) TotalRowsReturned() int64 { return tr.rowCount }
 
+func (tr *trackingReader) GetSchema() *ReaderSchema { return tr.schema }
+
 func TestMergesortReader_RowReuse(t *testing.T) {
 	tr := newTrackingReader([]pipeline.Row{{wkk.NewRowKey("ts"): int64(1)}, {wkk.NewRowKey("ts"): int64(2)}, {wkk.NewRowKey("ts"): int64(3)}, {wkk.NewRowKey("ts"): int64(4)}})
-	or, err := NewMergesortReader(context.TODO(), []Reader{tr}, NewTimeOrderedSortKeyProvider("ts"), 1)
+	or, err := NewMergesortReader(context.TODO(), []SchemafiedReader{tr}, NewTimeOrderedSortKeyProvider("ts"), 1)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -474,7 +504,7 @@ func TestMergesortReader_WithActualParquetReader(t *testing.T) {
 	// Create MergesortReader with single actual parquet reader
 	// Use the same key provider that the production code uses for metrics
 	keyProvider := GetCurrentMetricSortKeyProvider()
-	mergesortReader, err := NewMergesortReader(ctx, []Reader{cookedReader}, keyProvider, 1000)
+	mergesortReader, err := NewMergesortReader(ctx, []SchemafiedReader{cookedReader}, keyProvider, 1000)
 	require.NoError(t, err, "Should create NewMergesortReader")
 	defer func() { _ = mergesortReader.Close() }()
 
@@ -530,7 +560,7 @@ func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
 	ctx := context.Background()
 
 	// Create readers for multiple files
-	var readers []Reader
+	var readers []SchemafiedReader
 	var expectedTotalRecords int
 
 	for _, tc := range testCases {
@@ -708,9 +738,10 @@ func TestMergesortReader_MetricSortKeyOrdering(t *testing.T) {
 	}
 
 	// Create mock readers with the sorted data
-	readers := make([]Reader, readerCount)
+	metricSchema := createMetricSchema()
+	readers := make([]SchemafiedReader, readerCount)
 	for i := range readerCount {
-		readers[i] = newMockReader(fmt.Sprintf("reader_%d", i), readerData[i])
+		readers[i] = newMockReader(fmt.Sprintf("reader_%d", i), readerData[i], metricSchema)
 	}
 
 	// Create MergesortReader with production metric sort key provider
@@ -839,11 +870,12 @@ func TestMergesortReader_KeyPoolingBug(t *testing.T) {
 		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(400), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader2_row2"},
 	}
 
-	reader1 := newMockReader("reader1", reader1Data)
-	reader2 := newMockReader("reader2", reader2Data)
+	metricSchema := createMetricSchema()
+	reader1 := newMockReader("reader1", reader1Data, metricSchema)
+	reader2 := newMockReader("reader2", reader2Data, metricSchema)
 
 	keyProvider := GetCurrentMetricSortKeyProvider()
-	mergesortReader, err := NewMergesortReader(ctx, []Reader{reader1, reader2}, keyProvider, 1000)
+	mergesortReader, err := NewMergesortReader(ctx, []SchemafiedReader{reader1, reader2}, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}

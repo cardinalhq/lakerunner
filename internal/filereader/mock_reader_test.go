@@ -24,19 +24,21 @@ import (
 
 // Mock readers for testing the Next() interface
 
-// mockReader is a test implementation of Reader
+// mockReader is a test implementation of Reader with optional schema support
 type mockReader struct {
 	rows     []pipeline.Row
 	index    int
 	closed   bool
 	name     string
 	rowCount int64
+	schema   *ReaderSchema
 }
 
-func newMockReader(name string, rows []pipeline.Row) *mockReader {
+func newMockReader(name string, rows []pipeline.Row, schema *ReaderSchema) *mockReader {
 	return &mockReader{
-		rows: rows,
-		name: name,
+		rows:   rows,
+		name:   name,
+		schema: schema,
 	}
 }
 
@@ -75,6 +77,10 @@ func (m *mockReader) TotalRowsReturned() int64 {
 	return m.rowCount
 }
 
+func (m *mockReader) GetSchema() *ReaderSchema {
+	return m.schema
+}
+
 // errorReader is a test reader that always returns errors
 type errorReader struct {
 	closed   bool
@@ -95,4 +101,8 @@ func (e *errorReader) Close() error {
 
 func (e *errorReader) TotalRowsReturned() int64 {
 	return e.rowCount
+}
+
+func (e *errorReader) GetSchema() *ReaderSchema {
+	return nil
 }

@@ -28,7 +28,7 @@ import (
 
 // activeReader represents a reader that has data available for merging
 type activeReader struct {
-	reader       Reader
+	reader       SchemafiedReader
 	currentKey   SortKey      // Our owned reference to the current sort key
 	currentRow   pipeline.Row // Cache of current row
 	currentBatch *Batch       // Current batch from reader
@@ -104,17 +104,21 @@ func (ar *activeReader) cleanup() {
 // It assumes each individual reader returns rows in sorted order according to the
 // provided SortKeyProvider.
 type MergesortReader struct {
-	readers       []Reader        // Original readers
-	activeReaders []*activeReader // Readers with data available
+	readers       []SchemafiedReader // Original readers
+	activeReaders []*activeReader    // Readers with data available
 	keyProvider   SortKeyProvider
 	closed        bool
 	rowCount      int64
 	batchSize     int
+	schema        *ReaderSchema // Merged schema from all readers
 }
+
+var _ Reader = (*MergesortReader)(nil)
+var _ SchemafiedReader = (*MergesortReader)(nil)
 
 // NewMergesortReader creates a new MergesortReader that merges rows from multiple readers
 // in sorted order using the new algorithm with active reader management.
-func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortKeyProvider, batchSize int) (*MergesortReader, error) {
+func NewMergesortReader(ctx context.Context, readers []SchemafiedReader, keyProvider SortKeyProvider, batchSize int) (*MergesortReader, error) {
 	if len(readers) == 0 {
 		return nil, errors.New("no readers provided")
 	}
@@ -127,6 +131,9 @@ func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortK
 		keyProvider: keyProvider,
 		batchSize:   batchSize,
 	}
+
+	// Merge schemas from all readers
+	or.schema = mergeSchemas(readers)
 
 	// Prime all readers - read first row from each and create keys
 	if err := or.primeReaders(ctx); err != nil {
@@ -200,6 +207,15 @@ func (or *MergesortReader) Next(ctx context.Context) (*Batch, error) {
 			row[k] = v
 		}
 
+		// Apply schema normalization to ensure type consistency
+		// Only normalize if we have a non-empty schema (at least one schemafied reader)
+		if or.schema != nil && len(or.schema.Columns()) > 0 {
+			if err := normalizeRow(ctx, row, or.schema); err != nil {
+				pipeline.ReturnBatch(batch)
+				return nil, fmt.Errorf("schema normalization failed: %w", err)
+			}
+		}
+
 		// Advance the selected reader to its next row
 		selectedReader.consume()
 		err := selectedReader.advance(ctx, or.keyProvider)
@@ -264,4 +280,29 @@ func (or *MergesortReader) TotalRowsReturned() int64 {
 // ActiveReaderCount returns the number of readers that still have data available.
 func (or *MergesortReader) ActiveReaderCount() int {
 	return len(or.activeReaders)
+}
+
+// GetSchema returns the merged schema from all child readers.
+func (or *MergesortReader) GetSchema() *ReaderSchema {
+	return or.schema
+}
+
+// mergeSchemas merges schemas from multiple readers, performing type promotion
+// when the same column appears with different types across readers.
+func mergeSchemas(readers []SchemafiedReader) *ReaderSchema {
+	merged := NewReaderSchema()
+
+	for _, reader := range readers {
+		readerSchema := reader.GetSchema()
+		if readerSchema == nil {
+			continue
+		}
+
+		// Merge each column from this reader's schema
+		for _, col := range readerSchema.Columns() {
+			merged.AddColumn(col.Name, col.DataType, col.HasNonNull)
+		}
+	}
+
+	return merged
 }

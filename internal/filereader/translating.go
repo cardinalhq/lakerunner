@@ -145,3 +145,13 @@ func (tr *TranslatingReader) Close() error {
 func (tr *TranslatingReader) TotalRowsReturned() int64 {
 	return tr.rowCount
 }
+
+// GetSchema delegates to the wrapped reader if it provides schema information.
+func (tr *TranslatingReader) GetSchema() *ReaderSchema {
+	if tr.reader != nil {
+		if schemaReader, ok := tr.reader.(SchemafiedReader); ok {
+			return schemaReader.GetSchema()
+		}
+	}
+	return nil
+}

@@ -173,3 +173,31 @@ func (r *CookedLogTranslatingReader) TotalRowsReturned() int64 {
 	}
 	return 0
 }
+
+// GetSchema returns schema information augmented with columns added during translation.
+// This reader adds chq_tsns (timestamp in nanoseconds) derived from chq_timestamp.
+func (r *CookedLogTranslatingReader) GetSchema() *ReaderSchema {
+	var baseSchema *ReaderSchema
+	if r.wrapped != nil {
+		if schemaReader, ok := r.wrapped.(SchemafiedReader); ok {
+			baseSchema = schemaReader.GetSchema()
+		}
+	}
+
+	if baseSchema == nil {
+		baseSchema = NewReaderSchema()
+	}
+
+	// Clone the base schema to avoid modifying the wrapped reader's schema
+	augmentedSchema := NewReaderSchema()
+	for _, col := range baseSchema.Columns() {
+		augmentedSchema.AddColumn(col.Name, col.DataType, col.HasNonNull)
+	}
+
+	// Add chq_tsns field (derived from chq_timestamp, always added if timestamp exists)
+	if !augmentedSchema.HasColumn(wkk.RowKeyValue(wkk.RowKeyCTsns)) {
+		augmentedSchema.AddColumn(wkk.RowKeyCTsns, DataTypeInt64, true)
+	}
+
+	return augmentedSchema
+}

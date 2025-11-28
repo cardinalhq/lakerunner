@@ -120,7 +120,7 @@ func TestMergesortReader_BufferLeak(t *testing.T) {
 	}
 	defer func() { _ = reader2.Close() }()
 
-	readers := []Reader{reader1, reader2}
+	readers := []SchemafiedReader{reader1, reader2}
 
 	// Create MergesortReader
 	msReader, err := NewMergesortReader(context.TODO(), readers, NewTimeOrderedSortKeyProvider("chq_timestamp"), 100)

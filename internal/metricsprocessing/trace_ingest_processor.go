@@ -288,8 +288,8 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
-	var readers []filereader.Reader
-	var readersToClose []filereader.Reader
+	var readers []filereader.SchemafiedReader
+	var readersToClose []filereader.SchemafiedReader
 	var totalInputSize int64
 
 	for _, msg := range msgs {
@@ -444,7 +444,7 @@ func (p *TraceIngestProcessor) GetTargetRecordCount(ctx context.Context, groupin
 }
 
 // createTraceReaderStack creates a reader stack: Translation(TraceReader(file))
-func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
+func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.SchemafiedReader, error) {
 	reader, err := p.createTraceReader(tmpFilename, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace reader: %w", err)
@@ -455,13 +455,13 @@ func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket
 		bucket:   bucket,
 		objectID: objectID,
 	}
-	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+	translatedReader, err := filereader.NewTranslatingReader(reader, translator, 1000)
 	if err != nil {
 		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}
 
-	return reader, nil
+	return translatedReader, nil
 }
 
 func (p *TraceIngestProcessor) createTraceReader(filename, orgID string) (filereader.Reader, error) {
@@ -474,7 +474,7 @@ func (p *TraceIngestProcessor) createTraceReader(filename, orgID string) (filere
 }
 
 // createUnifiedTraceReader creates a unified reader from multiple readers
-func (p *TraceIngestProcessor) createUnifiedTraceReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
+func (p *TraceIngestProcessor) createUnifiedTraceReader(ctx context.Context, readers []filereader.SchemafiedReader) (filereader.Reader, error) {
 	var finalReader filereader.Reader
 
 	if len(readers) == 1 {
