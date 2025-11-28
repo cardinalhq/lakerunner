@@ -35,13 +35,15 @@ import (
 type GoParquetBackend struct {
 	config BackendConfig
 
-	// CBOR buffering for schema evolution
+	// CBOR buffering
 	codec      rowcodec.Codec
 	bufferFile *os.File
 	encoder    rowcodec.Encoder
 
-	// Dynamic schema management
-	schemaBuilder *schemabuilder.SchemaBuilder
+	// Pre-built schema from ReaderSchema
+	parquetSchema *parquet.Schema
+	// Map of column names that should be in every row
+	expectedColumns map[string]bool
 
 	// Metrics
 	rowCount           int64
@@ -49,16 +51,42 @@ type GoParquetBackend struct {
 }
 
 // NewGoParquetBackend creates a new go-parquet backend.
+// The schema must be provided upfront and cannot be nil.
+// All columns are validated against the schema during writes.
+// Columns marked as all-null (HasNonNull=false) are filtered out automatically.
 func NewGoParquetBackend(config BackendConfig) (*GoParquetBackend, error) {
+	if config.Schema == nil {
+		return nil, fmt.Errorf("schema is required and cannot be nil")
+	}
+
 	codec, err := rowcodec.New(rowcodec.TypeDefault)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create codec: %w", err)
 	}
 
+	// Build parquet schema from reader schema
+	nodes, err := schemabuilder.BuildFromReaderSchema(config.Schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build parquet schema: %w", err)
+	}
+
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("schema has no non-null columns")
+	}
+
+	parquetSchema := parquet.NewSchema("lakerunner", parquet.Group(nodes))
+
+	// Build map of expected column names for validation
+	expectedColumns := make(map[string]bool, len(nodes))
+	for name := range nodes {
+		expectedColumns[name] = true
+	}
+
 	return &GoParquetBackend{
 		config:             config,
 		codec:              codec,
-		schemaBuilder:      schemabuilder.NewSchemaBuilder(),
+		parquetSchema:      parquetSchema,
+		expectedColumns:    expectedColumns,
 		conversionPrefixes: config.StringConversionPrefixes,
 	}, nil
 }
@@ -69,6 +97,8 @@ func (b *GoParquetBackend) Name() string {
 }
 
 // WriteBatch writes a batch of rows to the CBOR buffer.
+// All columns must be defined in the schema provided at construction.
+// Rows with unexpected columns will return an error.
 func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch) error {
 	// Initialize buffer file on first write
 	if b.bufferFile == nil {
@@ -84,17 +114,21 @@ func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch
 			continue
 		}
 
-		// Convert row to map[string]any for codec
-		rowMap := make(map[string]any, len(row))
+		// Convert row to map[string]any for codec and validate against schema
+		rowMap := make(map[string]any, len(b.expectedColumns))
 		for key, value := range row {
-			fieldName := key.Value()
-			// Apply string conversion if needed
-			convertedValue := b.convertToStringIfNeeded(string(fieldName), value)
-			rowMap[string(fieldName)] = convertedValue
-		}
+			fieldName := string(key.Value())
 
-		// Track schema evolution
-		_ = b.schemaBuilder.AddRow(rowMap)
+			// Validate column is in schema
+			if !b.expectedColumns[fieldName] {
+				return fmt.Errorf("row contains unexpected column '%s' not in schema (row %d). Schema must be complete upfront",
+					fieldName, b.rowCount)
+			}
+
+			// Apply string conversion if needed
+			convertedValue := b.convertToStringIfNeeded(fieldName, value)
+			rowMap[fieldName] = convertedValue
+		}
 
 		// Encode to CBOR buffer
 		if err := b.encoder.Encode(rowMap); err != nil {
@@ -125,16 +159,9 @@ func (b *GoParquetBackend) Close(ctx context.Context, writer io.Writer) (*Backen
 		return nil, fmt.Errorf("failed to sync buffer file: %w", err)
 	}
 
-	// Build final schema
-	nodes, err := b.schemaBuilder.Build()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build schema: %w", err)
-	}
-
-	schema := parquet.NewSchema("lakerunner", parquet.Group(nodes))
-
+	// Use pre-built schema (already created in constructor)
 	// Stream from CBOR buffer to Parquet
-	metadata, err := b.streamBinaryToParquet(writer, schema)
+	metadata, err := b.streamBinaryToParquet(writer, b.parquetSchema)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write parquet: %w", err)
 	}
@@ -161,7 +188,7 @@ func (b *GoParquetBackend) startNewBufferFile() error {
 
 	b.bufferFile = tmpFile
 	b.encoder = encoder
-	b.schemaBuilder = schemabuilder.NewSchemaBuilder()
+	// Schema is already built in constructor, no need to reinitialize
 
 	return nil
 }

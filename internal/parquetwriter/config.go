@@ -14,6 +14,10 @@
 
 package parquetwriter
 
+import (
+	"github.com/cardinalhq/lakerunner/internal/filereader"
+)
+
 const (
 	// NoRecordLimitPerFile can be used as RecordsPerFile value to disable file splitting
 	// and allow unlimited file size (all records go into a single file).
@@ -37,6 +41,11 @@ var DefaultStringConversionPrefixes = []string{
 type WriterConfig struct {
 	// TmpDir is the directory where temporary and output files are created
 	TmpDir string
+
+	// Schema is the required upfront schema from the reader.
+	// Must not be nil. The writer will reject rows with columns not in the schema.
+	// All-null columns (HasNonNull=false) are automatically filtered out.
+	Schema *filereader.ReaderSchema
 
 	// Grouping configuration - controls how rows are grouped and whether
 	// groups can be split across files
@@ -67,10 +76,12 @@ func (c *WriterConfig) Validate() error {
 	if c.TmpDir == "" {
 		return &ConfigError{Field: "TmpDir", Message: "cannot be empty"}
 	}
+	if c.Schema == nil {
+		return &ConfigError{Field: "Schema", Message: "is required and cannot be nil"}
+	}
 	if c.NoSplitGroups && c.GroupKeyFunc == nil {
 		return &ConfigError{Field: "GroupKeyFunc", Message: "required when NoSplitGroups is true"}
 	}
-	// No schema validation needed - discovered dynamically
 	return nil
 }
 

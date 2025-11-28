@@ -38,14 +38,16 @@ type FileSplitter struct {
 	currentGroup       any
 	conversionPrefixes []string // Cached prefixes for string conversion
 
-	// Binary buffering for schema evolution
+	// Binary buffering
 	codec        rowcodec.Codec
 	bufferFile   *os.File
 	encoder      rowcodec.Encoder
 	currentStats StatsAccumulator
 
-	// Dynamic schema management per file
-	currentSchema *schemabuilder.SchemaBuilder
+	// Pre-built schema from config (used for all files)
+	parquetSchema *parquet.Schema
+	// Map of expected column names for validation
+	expectedColumns map[string]bool
 
 	// Results tracking
 	results []Result
@@ -61,9 +63,26 @@ func NewFileSplitter(config WriterConfig) *FileSplitter {
 		panic(fmt.Sprintf("failed to create codec: %v", err))
 	}
 
+	// Build parquet schema from reader schema
+	// Schema is already validated by config.Validate()
+	nodes, err := schemabuilder.BuildFromReaderSchema(config.Schema)
+	if err != nil {
+		panic(fmt.Sprintf("failed to build parquet schema: %v", err))
+	}
+
+	parquetSchema := parquet.NewSchema("lakerunner", parquet.Group(nodes))
+
+	// Build map of expected column names for validation
+	expectedColumns := make(map[string]bool, len(nodes))
+	for name := range nodes {
+		expectedColumns[name] = true
+	}
+
 	return &FileSplitter{
 		config:             config,
 		codec:              codec,
+		parquetSchema:      parquetSchema,
+		expectedColumns:    expectedColumns,
 		results:            make([]Result, 0),
 		conversionPrefixes: config.GetStringConversionPrefixes(),
 	}
@@ -254,9 +273,11 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 
 		stringRow["chq_id"] = idgen.NextBase32ID()
 
-		// Add to schema builder for evolution tracking
-		if err := s.currentSchema.AddRow(stringRow); err != nil {
-			return fmt.Errorf("schema validation failed: %w", err)
+		// Validate all columns are in schema
+		for key := range stringRow {
+			if !s.expectedColumns[key] {
+				return fmt.Errorf("row contains unexpected column '%s' not in schema. Schema must be complete upfront", key)
+			}
 		}
 
 		// Encode and write row to buffer
@@ -288,8 +309,7 @@ func (s *FileSplitter) startNewBufferFile() error {
 		return fmt.Errorf("create binary temp file: %w", err)
 	}
 
-	// Initialize a new schema builder for this file
-	s.currentSchema = schemabuilder.NewSchemaBuilder()
+	// Schema is already built in constructor, no need to reinitialize
 
 	// Initialize stats accumulator if provider is configured
 	var stats StatsAccumulator
@@ -308,18 +328,10 @@ func (s *FileSplitter) startNewBufferFile() error {
 }
 
 // streamBinaryToParquet streams all buffered binary data to a new parquet file.
-// This creates the final parquet file with the evolved schema.
+// This uses the pre-built schema from the constructor.
 func (s *FileSplitter) streamBinaryToParquet() (string, error) {
-	// Build the final schema from all accumulated rows
-	nodes, err := s.currentSchema.Build()
-	if err != nil {
-		return "", fmt.Errorf("failed to build schema: %w", err)
-	}
-	if len(nodes) == 0 {
-		return "", fmt.Errorf("no columns discovered for schema")
-	}
-
-	schema := parquet.NewSchema("lakerunner", parquet.Group(nodes))
+	// Use pre-built schema (already created in constructor with all-null columns filtered out)
+	schema := s.parquetSchema
 
 	// Create the final parquet output file
 	parquetFile, err := os.CreateTemp(s.config.TmpDir, "*.parquet")
@@ -457,7 +469,7 @@ func (s *FileSplitter) cleanupCurrentBufferFile() {
 	s.encoder = nil
 	s.currentStats = nil
 	s.currentRows = 0
-	s.currentSchema = nil
+	// Schema is reused across files, no need to reset
 }
 
 // Close finishes the current file and returns all results.
