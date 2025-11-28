@@ -41,6 +41,13 @@ type Reader interface {
 	TotalRowsReturned() int64
 }
 
+type SchemafiedReader interface {
+	Reader
+
+	// Schema returns the ReaderSchema extracted from the content.
+	GetSchema() *ReaderSchema
+}
+
 // RowTranslator transforms rows from one format to another.
 type RowTranslator interface {
 	// TranslateRow transforms a row in-place by modifying the provided row pointer.
