@@ -18,13 +18,21 @@ This document tracks the migration of all readers to provide schema information 
 ```go
 type ColumnSchema struct {
     Name        wkk.RowKey  // Interned string
-    DataType    DataType    // Enum: String, Int64, Float64, Bool, Bytes, etc.
+    DataType    DataType    // Enum: String, Int64, Float64, Bool, Bytes, Any
     HasNonNull  bool        // true = at least one non-null value seen/expected
 }
 
 type ReaderSchema struct {
     Columns []ColumnSchema
 }
+
+// DataType values:
+// - String: UTF-8 strings
+// - Int64: 64-bit integers
+// - Float64: 64-bit floating point
+// - Bool: boolean values
+// - Bytes: byte arrays
+// - Any: complex types (lists, structs, maps) passed through as-is
 ```
 
 ## Reader interface changes
@@ -53,13 +61,16 @@ As we begin to convert the individual readers, we will change them to return a S
 
 #### 1.1 ParquetRawReader
 - **File**: `internal/filereader/parquet_raw_reader.go`
-- **Transformations**: None (passes through Parquet columns as-is)
+- **Transformations**:
+  - Converts dotted field names to underscores
+  - Applies schema normalization for type consistency
 - **Schema Source**: ✅ **Metadata** - Parquet file header contains complete schema
+- **Schema Extraction**: Walks parquet schema tree, handles Groups and leaf nodes, maps parquet types to DataType
 - **Used In**:
   - ❌ Ingestion: No (uses ArrowRawReader or Proto readers)
   - ✅ Compaction: Metrics, Traces (reads cooked Parquet)
   - ✅ Rollup: Metrics
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -68,13 +79,16 @@ As we begin to convert the individual readers, we will change them to return a S
 - **Transformations**:
   - Converts Arrow types to Go types
   - Handles NULL-type columns (skips them)
+  - Preserves dotted field names (unlike ParquetRawReader)
+  - Applies schema normalization for type consistency
 - **Schema Source**: ✅ **Metadata** - Arrow schema from Parquet metadata
+- **Schema Extraction**: Extracts from Arrow schema fields, maps Arrow types to DataType, uses DataTypeAny for complex types
 - **Used In**:
   - ✅ Ingestion: Logs (handles NULL columns from OTel collector)
   - ✅ Compaction: Logs
   - ❌ Rollup: No
-- **Notes**: Preferred for logs due to NULL-type column handling
-- **Status**: ⬜ Schema Interface | ⬜ Tested
+- **Notes**: Preferred for logs due to NULL-type column handling. Complex types (lists, structs, maps) use DataTypeAny and pass through as-is.
+- **Status**: ✅ Schema Interface | ✅ Tested
 
 ---
 
@@ -518,8 +532,12 @@ When merging schemas from multiple readers:
 | bool | bool | bool |
 | bytes | bytes | bytes |
 | bytes | * | string |
+| any | * | any |
 
-**General Rule**: When in doubt, promote to `string` (most permissive type).
+**General Rules**:
+
+- When in doubt, promote to `string` (most permissive type for simple types)
+- `any` mixed with anything stays `any` (preserves passthrough behavior for complex types)
 
 ---
 
