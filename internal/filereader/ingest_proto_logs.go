@@ -46,7 +46,6 @@ type IngestProtoLogsReader struct {
 }
 
 var _ Reader = (*IngestProtoLogsReader)(nil)
-var _ OTELLogsProvider = (*IngestProtoLogsReader)(nil)
 
 // NewIngestProtoLogsReader creates a new IngestProtoLogsReader for the given io.Reader.
 func NewIngestProtoLogsReader(reader io.Reader, opts ReaderOptions) (*IngestProtoLogsReader, error) {
@@ -188,18 +187,6 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 	row[wkk.RowKeyCTimestamp] = logRecord.Timestamp().AsTime().UnixMilli()
 	row[wkk.RowKeyCTsns] = int64(logRecord.Timestamp())
 	row[wkk.RowKeyCLevel] = logRecord.SeverityText()
-}
-
-// GetOTELLogs returns the underlying parsed OTEL logs structure.
-// This allows access to the original log body and metadata not available in the row format.
-func (r *IngestProtoLogsReader) GetOTELLogs() (*plog.Logs, error) {
-	if r.closed {
-		return nil, fmt.Errorf("reader is closed")
-	}
-	if r.logs == nil {
-		return nil, fmt.Errorf("no logs data available")
-	}
-	return r.logs, nil
 }
 
 // Close closes the reader and releases resources.

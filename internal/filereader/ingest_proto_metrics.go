@@ -58,7 +58,6 @@ type IngestProtoMetricsReader struct {
 }
 
 var _ Reader = (*IngestProtoMetricsReader)(nil)
-var _ OTELMetricsProvider = (*IngestProtoMetricsReader)(nil)
 
 // NewIngestProtoMetricsReader creates a new IngestProtoMetricsReader for the given io.Reader.
 func NewIngestProtoMetricsReader(reader io.Reader, opts ReaderOptions) (*IngestProtoMetricsReader, error) {
@@ -933,13 +932,4 @@ func parseProtoToOtelMetrics(reader io.Reader) (*pmetric.Metrics, error) {
 	}
 
 	return &metrics, nil
-}
-
-// GetOTELMetrics implements the OTELMetricsProvider interface.
-// Returns the underlying pmetric.Metrics structure for exemplar processing.
-func (r *IngestProtoMetricsReader) GetOTELMetrics() (*pmetric.Metrics, error) {
-	if r.otelMetrics == nil {
-		return nil, fmt.Errorf("no OTEL metrics available")
-	}
-	return r.otelMetrics, nil
 }
