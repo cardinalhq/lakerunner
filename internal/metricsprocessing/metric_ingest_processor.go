@@ -173,7 +173,7 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
-	var readers []filereader.SchemafiedReader
+	var readers []filereader.Reader
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
@@ -378,7 +378,7 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 }
 
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
-func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.SchemafiedReader, error) {
+func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	var reader filereader.Reader
 	var err error
 
@@ -411,7 +411,7 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 }
 
 // createUnifiedReader creates a unified reader from multiple readers
-func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers []filereader.SchemafiedReader) (filereader.Reader, error) {
+func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
 	var finalReader filereader.Reader
 
 	if len(readers) == 1 {

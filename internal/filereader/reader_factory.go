@@ -102,7 +102,7 @@ func WrapReaderForAggregation(reader Reader, opts ReaderOptions) (Reader, error)
 //   - .csv.gz: Creates a CSVReader with gzip decompression (works for all signal types)
 //   - .binpb: Creates a signal-specific proto reader (NewIngestProtoLogsReader, NewIngestProtoMetricsReader, or NewProtoTracesReader)
 //   - .binpb.gz: Creates a signal-specific proto reader with gzip decompression
-func ReaderForFileWithOptions(filename string, opts ReaderOptions) (SchemafiedReader, error) {
+func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, error) {
 	// Determine file type from extension
 	// Ensure default batch size
 	if opts.BatchSize <= 0 {
@@ -132,7 +132,7 @@ func ReaderForFileWithOptions(filename string, opts ReaderOptions) (SchemafiedRe
 // createParquetReader creates a ParquetRawReader or ArrowRawReader for the given file.
 // Uses Apache Arrow for log signal type to handle NULL-type columns gracefully.
 // Uses parquet-go for other signal types to minimize blast radius.
-func createParquetReader(filename string, opts ReaderOptions) (SchemafiedReader, error) {
+func createParquetReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
@@ -167,7 +167,7 @@ func createParquetReader(filename string, opts ReaderOptions) (SchemafiedReader,
 }
 
 // createJSONGzReader creates a JSONLinesReader for a gzipped JSON file.
-func createJSONGzReader(filename string, opts ReaderOptions) (SchemafiedReader, error) {
+func createJSONGzReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open JSON.gz file: %w", err)
@@ -194,7 +194,7 @@ func createJSONGzReader(filename string, opts ReaderOptions) (SchemafiedReader, 
 }
 
 // createJSONReader creates a JSONLinesReader for a plain JSON file.
-func createJSONReader(filename string, opts ReaderOptions) (SchemafiedReader, error) {
+func createJSONReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open JSON file: %w", err)
@@ -210,7 +210,7 @@ func createJSONReader(filename string, opts ReaderOptions) (SchemafiedReader, er
 }
 
 // createProtoBinaryGzReader creates a signal-specific proto reader for a gzipped protobuf file.
-func createProtoBinaryGzReader(filename string, opts ReaderOptions) (SchemafiedReader, error) {
+func createProtoBinaryGzReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open protobuf.gz file: %w", err)
@@ -238,7 +238,7 @@ func createProtoBinaryGzReader(filename string, opts ReaderOptions) (SchemafiedR
 }
 
 // createProtoBinaryReader creates a signal-specific proto reader for a protobuf file.
-func createProtoBinaryReader(filename string, opts ReaderOptions) (SchemafiedReader, error) {
+func createProtoBinaryReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open protobuf file: %w", err)
@@ -258,7 +258,7 @@ func createProtoBinaryReader(filename string, opts ReaderOptions) (SchemafiedRea
 }
 
 // createCSVReader creates a CSVReader with optional translation for a plain CSV file.
-func createCSVReader(filename string, opts ReaderOptions) (SchemafiedReader, error) {
+func createCSVReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open CSV file: %w", err)
@@ -285,7 +285,7 @@ func createCSVReader(filename string, opts ReaderOptions) (SchemafiedReader, err
 }
 
 // createCSVGzReader creates a CSVReader with optional translation for a gzipped CSV file.
-func createCSVGzReader(filename string, opts ReaderOptions) (SchemafiedReader, error) {
+func createCSVGzReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open CSV.gz file: %w", err)
@@ -323,7 +323,7 @@ func createCSVGzReader(filename string, opts ReaderOptions) (SchemafiedReader, e
 }
 
 // createProtoReaderWithOptions creates the appropriate proto reader with optional translation
-func createProtoReaderWithOptions(reader io.Reader, opts ReaderOptions) (SchemafiedReader, error) {
+func createProtoReaderWithOptions(reader io.Reader, opts ReaderOptions) (Reader, error) {
 	switch opts.SignalType {
 	case SignalTypeLogs:
 		protoReader, err := NewIngestProtoLogsReader(reader, opts)

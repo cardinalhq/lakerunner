@@ -184,7 +184,7 @@ func BenchmarkRealDataMergeSort(b *testing.B) {
 	ctx := context.Background()
 
 	// Open readers for all files
-	var readers []filereader.SchemafiedReader
+	var readers []filereader.Reader
 	var totalRecords int64
 	var totalBytes int64
 

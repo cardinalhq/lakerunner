@@ -625,6 +625,15 @@ func (ar *AggregatingMetricsReader) TotalRowsReturned() int64 {
 	return ar.rowCount
 }
 
+// GetSchema returns the schema from the wrapped reader.
+// This reader performs aggregation but does not change the schema structure.
+func (ar *AggregatingMetricsReader) GetSchema() *ReaderSchema {
+	if ar.reader != nil {
+		return ar.reader.GetSchema()
+	}
+	return nil
+}
+
 // GetOTELMetrics implements the OTELMetricsProvider interface if the underlying reader supports it.
 func (ar *AggregatingMetricsReader) GetOTELMetrics() (any, error) {
 	if provider, ok := ar.reader.(interface{ GetOTELMetrics() (any, error) }); ok {

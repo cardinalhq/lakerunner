@@ -447,3 +447,7 @@ func (d *delayedErrorReaderImpl) Close() error {
 func (d *delayedErrorReaderImpl) TotalRowsReturned() int64 {
 	return d.rowCount
 }
+
+func (d *delayedErrorReaderImpl) GetSchema() *ReaderSchema {
+	return nil
+}

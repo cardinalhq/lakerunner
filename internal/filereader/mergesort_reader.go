@@ -28,7 +28,7 @@ import (
 
 // activeReader represents a reader that has data available for merging
 type activeReader struct {
-	reader       SchemafiedReader
+	reader       Reader
 	currentKey   SortKey      // Our owned reference to the current sort key
 	currentRow   pipeline.Row // Cache of current row
 	currentBatch *Batch       // Current batch from reader
@@ -104,8 +104,8 @@ func (ar *activeReader) cleanup() {
 // It assumes each individual reader returns rows in sorted order according to the
 // provided SortKeyProvider.
 type MergesortReader struct {
-	readers       []SchemafiedReader // Original readers
-	activeReaders []*activeReader    // Readers with data available
+	readers       []Reader        // Original readers
+	activeReaders []*activeReader // Readers with data available
 	keyProvider   SortKeyProvider
 	closed        bool
 	rowCount      int64
@@ -114,11 +114,11 @@ type MergesortReader struct {
 }
 
 var _ Reader = (*MergesortReader)(nil)
-var _ SchemafiedReader = (*MergesortReader)(nil)
+var _ Reader = (*MergesortReader)(nil)
 
 // NewMergesortReader creates a new MergesortReader that merges rows from multiple readers
 // in sorted order using the new algorithm with active reader management.
-func NewMergesortReader(ctx context.Context, readers []SchemafiedReader, keyProvider SortKeyProvider, batchSize int) (*MergesortReader, error) {
+func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortKeyProvider, batchSize int) (*MergesortReader, error) {
 	if len(readers) == 0 {
 		return nil, errors.New("no readers provided")
 	}
@@ -289,7 +289,7 @@ func (or *MergesortReader) GetSchema() *ReaderSchema {
 
 // mergeSchemas merges schemas from multiple readers, performing type promotion
 // when the same column appears with different types across readers.
-func mergeSchemas(readers []SchemafiedReader) *ReaderSchema {
+func mergeSchemas(readers []Reader) *ReaderSchema {
 	merged := NewReaderSchema()
 
 	for _, reader := range readers {

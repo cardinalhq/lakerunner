@@ -32,7 +32,7 @@ import (
 )
 
 type logReaderStackResult struct {
-	Readers         []filereader.SchemafiedReader
+	Readers         []filereader.Reader
 	Files           []*os.File
 	DownloadedFiles []string
 	HeadReader      filereader.Reader
@@ -48,7 +48,7 @@ func createLogReaderStack(
 ) (*logReaderStackResult, error) {
 	ll := logctx.FromContext(ctx)
 
-	var readers []filereader.SchemafiedReader
+	var readers []filereader.Reader
 	var files []*os.File
 	var downloadedFiles []string
 

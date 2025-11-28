@@ -298,12 +298,10 @@ func (r *DiskSortingReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 
-// GetSchema delegates to the wrapped reader if it provides schema information.
+// GetSchema delegates to the wrapped reader.
 func (r *DiskSortingReader) GetSchema() *ReaderSchema {
 	if r.reader != nil {
-		if schemaReader, ok := r.reader.(SchemafiedReader); ok {
-			return schemaReader.GetSchema()
-		}
+		return r.reader.GetSchema()
 	}
 	return nil
 }

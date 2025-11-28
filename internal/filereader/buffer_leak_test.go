@@ -64,6 +64,10 @@ func (m *mockLeakTestReader) TotalRowsReturned() int64 {
 	return int64(m.index)
 }
 
+func (m *mockLeakTestReader) GetSchema() *ReaderSchema {
+	return nil
+}
+
 // assertNoBufferLeaks checks that the number of GetBatch calls equals ReturnBatch calls
 func assertNoBufferLeaks(t *testing.T, initialStats, finalStats pipeline.BatchPoolStats) {
 	t.Helper()
@@ -120,7 +124,7 @@ func TestMergesortReader_BufferLeak(t *testing.T) {
 	}
 	defer func() { _ = reader2.Close() }()
 
-	readers := []SchemafiedReader{reader1, reader2}
+	readers := []Reader{reader1, reader2}
 
 	// Create MergesortReader
 	msReader, err := NewMergesortReader(context.TODO(), readers, NewTimeOrderedSortKeyProvider("chq_timestamp"), 100)

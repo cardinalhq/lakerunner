@@ -39,7 +39,7 @@ func TestCookedTraceTranslatingReader_GetSchema(t *testing.T) {
 	parquetData, _ := createTestParquetInMemory(t, rows)
 	reader := bytes.NewReader(parquetData)
 
-	// ParquetRawReader implements SchemafiedReader
+	// ParquetRawReader implements Reader
 	rawReader, err := NewParquetRawReader(reader, int64(len(parquetData)), 1000)
 	require.NoError(t, err)
 	defer func() { _ = rawReader.Close() }()

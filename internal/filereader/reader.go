@@ -39,12 +39,9 @@ type Reader interface {
 	// TotalRowsReturned returns the total number of rows that have been successfully
 	// returned via Next() calls from this reader so far.
 	TotalRowsReturned() int64
-}
 
-type SchemafiedReader interface {
-	Reader
-
-	// GetSchema returns the ReaderSchema extracted from the content.
+	// GetSchema returns the ReaderSchema extracted from the content.  Must not return nil, and
+	// must include all columns that may be returned by Next() with the types in the schema.
 	GetSchema() *ReaderSchema
 }
 

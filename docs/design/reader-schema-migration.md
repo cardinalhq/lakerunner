@@ -35,19 +35,6 @@ type ReaderSchema struct {
 // - Any: complex types (lists, structs, maps) passed through as-is
 ```
 
-## Reader interface changes
-
-type SchemafiedReader interface {
-  Reader
-  SchemaReader
-}
-
-type SchemaReader interface {
-  // whatever function(s) we need here to return the content's schema
-}
-
-As we begin to convert the individual readers, we will change them to return a SchemafiedReader.
-
 **Important Invariants:**
 - OK: Declare `HasNonNull=true` but emit no non-null values
 - **NOT OK**: Declare `HasNonNull=false` then emit non-null values
@@ -263,7 +250,7 @@ As we begin to convert the individual readers, we will change them to return a S
     - If types differ → promote to most general (int64 + string → string)
     - Uses same `promoteType()` rules as in-file conflicts
     - Track `HasNonNull = any child has non-null`
-- **Schema Extraction**: Calls `GetSchema()` on each child reader (if SchemafiedReader), merges via `AddColumn()` which automatically promotes types
+- **Schema Extraction**: Calls `GetSchema()` on each child reader (if Reader), merges via `AddColumn()` which automatically promotes types
 - **Schema Normalization**: Only applies when merged schema has columns (backward compatible with non-schemafied readers)
 - **Used In**:
   - ✅ Ingestion: Logs, Metrics, Traces (multi-file ingestion)

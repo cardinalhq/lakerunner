@@ -150,3 +150,19 @@ func (sr *SequentialReader) RemainingReaderCount() int {
 func (sr *SequentialReader) TotalRowsReturned() int64 {
 	return sr.rowCount
 }
+
+// GetSchema merges schemas from all child readers using the same type promotion rules as MergesortReader.
+func (sr *SequentialReader) GetSchema() *ReaderSchema {
+	mergedSchema := NewReaderSchema()
+	for _, reader := range sr.readers {
+		if reader != nil {
+			schema := reader.GetSchema()
+			if schema != nil {
+				for _, col := range schema.Columns() {
+					mergedSchema.AddColumn(col.Name, col.DataType, col.HasNonNull)
+				}
+			}
+		}
+	}
+	return mergedSchema
+}

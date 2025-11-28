@@ -32,7 +32,7 @@ import (
 )
 
 type metricReaderStackResult struct {
-	Readers         []filereader.SchemafiedReader
+	Readers         []filereader.Reader
 	Files           []*os.File
 	DownloadedFiles []string
 	HeadReader      filereader.Reader
@@ -49,7 +49,7 @@ func createMetricReaderStack(
 ) (*metricReaderStackResult, error) {
 	ll := logctx.FromContext(ctx)
 
-	var readers []filereader.SchemafiedReader
+	var readers []filereader.Reader
 	var files []*os.File
 	var downloadedFiles []string
 

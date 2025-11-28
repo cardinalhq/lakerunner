@@ -54,6 +54,10 @@ func (m *mockFilterReader) TotalRowsReturned() int64 {
 	return total
 }
 
+func (m *mockFilterReader) GetSchema() *ReaderSchema {
+	return nil
+}
+
 func TestMetricFilteringReader_FiltersSingleMetric(t *testing.T) {
 	// Create test data with multiple metrics
 	batch1 := pipeline.GetBatch()

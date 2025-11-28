@@ -144,7 +144,7 @@ func BenchmarkBaselineMergeSort(b *testing.B) {
 
 	// Create 4 test files
 	tmpDir := b.TempDir()
-	var readers []filereader.SchemafiedReader
+	var readers []filereader.Reader
 	var totalRecords int64
 	var totalBytes int64
 

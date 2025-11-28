@@ -196,6 +196,14 @@ func (r *MemorySortingReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 
+// GetSchema delegates to the wrapped reader.
+func (r *MemorySortingReader) GetSchema() *ReaderSchema {
+	if r.reader != nil {
+		return r.reader.GetSchema()
+	}
+	return nil
+}
+
 // GetOTELMetrics implements the OTELMetricsProvider interface if the underlying reader supports it.
 func (r *MemorySortingReader) GetOTELMetrics() (any, error) {
 	if provider, ok := r.reader.(interface{ GetOTELMetrics() (any, error) }); ok {

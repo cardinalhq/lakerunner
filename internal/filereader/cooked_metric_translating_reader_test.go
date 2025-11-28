@@ -265,6 +265,10 @@ func (m *testMockReader) TotalRowsReturned() int64 {
 	return total
 }
 
+func (m *testMockReader) GetSchema() *ReaderSchema {
+	return nil
+}
+
 // TestCookedMetricTranslatingReader_ShouldDropRow tests if shouldDropRow is correctly identifying rows to drop
 func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
 	testCases := []struct {

@@ -179,9 +179,7 @@ func (r *CookedLogTranslatingReader) TotalRowsReturned() int64 {
 func (r *CookedLogTranslatingReader) GetSchema() *ReaderSchema {
 	var baseSchema *ReaderSchema
 	if r.wrapped != nil {
-		if schemaReader, ok := r.wrapped.(SchemafiedReader); ok {
-			baseSchema = schemaReader.GetSchema()
-		}
+		baseSchema = r.wrapped.GetSchema()
 	}
 
 	if baseSchema == nil {

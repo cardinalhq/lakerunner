@@ -70,7 +70,7 @@ func BenchmarkProcessMetricsWithTimeBinning(b *testing.B) {
 		defer func() { _ = reader.Close() }()
 
 		// Create unified reader
-		unifiedReader, err := processor.createUnifiedReader(ctx, []filereader.SchemafiedReader{reader})
+		unifiedReader, err := processor.createUnifiedReader(ctx, []filereader.Reader{reader})
 		require.NoError(b, err)
 		defer func() { _ = unifiedReader.Close() }()
 

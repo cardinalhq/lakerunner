@@ -41,7 +41,7 @@ func TestMergesortReader_SchemaUnion(t *testing.T) {
 
 	ctx := context.Background()
 	keyProvider := &mockSortKeyProvider{}
-	mergeReader, err := NewMergesortReader(ctx, []SchemafiedReader{reader1, reader2}, keyProvider, 100)
+	mergeReader, err := NewMergesortReader(ctx, []Reader{reader1, reader2}, keyProvider, 100)
 	require.NoError(t, err)
 	defer func() { _ = mergeReader.Close() }()
 
@@ -91,7 +91,7 @@ func TestMergesortReader_SchemaTypePromotion(t *testing.T) {
 
 			ctx := context.Background()
 			keyProvider := &mockSortKeyProvider{}
-			mergeReader, err := NewMergesortReader(ctx, []SchemafiedReader{reader1, reader2}, keyProvider, 100)
+			mergeReader, err := NewMergesortReader(ctx, []Reader{reader1, reader2}, keyProvider, 100)
 			require.NoError(t, err)
 			defer func() { _ = mergeReader.Close() }()
 
@@ -119,7 +119,7 @@ func TestMergesortReader_SchemaHasNonNull(t *testing.T) {
 
 	ctx := context.Background()
 	keyProvider := &mockSortKeyProvider{}
-	mergeReader, err := NewMergesortReader(ctx, []SchemafiedReader{reader1, reader2}, keyProvider, 100)
+	mergeReader, err := NewMergesortReader(ctx, []Reader{reader1, reader2}, keyProvider, 100)
 	require.NoError(t, err)
 	defer func() { _ = mergeReader.Close() }()
 
@@ -165,7 +165,7 @@ func TestMergesortReader_SchemaNormalization(t *testing.T) {
 	ctx := context.Background()
 	// Use a real sort key provider that sorts by _timestamp
 	keyProvider := &TimestampSortKeyProvider{}
-	mergeReader, err := NewMergesortReader(ctx, []SchemafiedReader{reader1, reader2}, keyProvider, 100)
+	mergeReader, err := NewMergesortReader(ctx, []Reader{reader1, reader2}, keyProvider, 100)
 	require.NoError(t, err)
 	defer func() { _ = mergeReader.Close() }()
 

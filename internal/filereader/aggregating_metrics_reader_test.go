@@ -82,6 +82,10 @@ func (r *mockAggregatingMetricsReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 
+func (r *mockAggregatingMetricsReader) GetSchema() *ReaderSchema {
+	return nil
+}
+
 func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 	// Single singleton row - should pass through unchanged
 	inputRows := []pipeline.Row{
@@ -527,6 +531,10 @@ func (r *mockEOFReader) Close() error {
 
 func (r *mockEOFReader) TotalRowsReturned() int64 {
 	return r.rowCount
+}
+
+func (r *mockEOFReader) GetSchema() *ReaderSchema {
+	return nil
 }
 
 func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
