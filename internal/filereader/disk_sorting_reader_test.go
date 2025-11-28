@@ -240,7 +240,7 @@ func (m *MockReader) TotalRowsReturned() int64 {
 }
 
 func (m *MockReader) GetSchema() *ReaderSchema {
-	return nil
+	return NewReaderSchema()
 }
 
 func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {

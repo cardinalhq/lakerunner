@@ -250,6 +250,8 @@ func TestJSONLinesReader_GetSchema(t *testing.T) {
 	defer func() { _ = reader.Close() }()
 
 	// JSON Lines cannot provide schema upfront - must infer from data
+	// Returns empty schema since no metadata is available
 	schema := reader.GetSchema()
-	assert.Nil(t, schema, "JSONLinesReader should return nil for GetSchema as it has no metadata")
+	assert.NotNil(t, schema, "GetSchema must never return nil")
+	assert.Equal(t, 0, len(schema.Columns()), "JSONLinesReader should return empty schema as it has no metadata")
 }

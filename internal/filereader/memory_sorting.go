@@ -201,7 +201,7 @@ func (r *MemorySortingReader) GetSchema() *ReaderSchema {
 	if r.reader != nil {
 		return r.reader.GetSchema()
 	}
-	return nil
+	return NewReaderSchema()
 }
 
 // GetOTELMetrics implements the OTELMetricsProvider interface if the underlying reader supports it.

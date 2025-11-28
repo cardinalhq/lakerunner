@@ -146,7 +146,7 @@ func (m *mockReaderImpl) TotalRowsReturned() int64 {
 }
 
 func (m *mockReaderImpl) GetSchema() *ReaderSchema {
-	return nil
+	return NewReaderSchema()
 }
 
 // TestCookedLogTranslatingReader_GetSchema tests that schema is augmented with chq_tsns.

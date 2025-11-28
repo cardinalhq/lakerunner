@@ -88,7 +88,7 @@ func (m *mockReaderForBenchmark) TotalRowsReturned() int64 {
 }
 
 func (m *mockReaderForBenchmark) GetSchema() *ReaderSchema {
-	return nil
+	return NewReaderSchema()
 }
 
 func BenchmarkAggregatingMetricsReader_ZeroCopy(b *testing.B) {

@@ -151,5 +151,5 @@ func (tr *TranslatingReader) GetSchema() *ReaderSchema {
 	if tr.reader != nil {
 		return tr.reader.GetSchema()
 	}
-	return nil
+	return NewReaderSchema()
 }

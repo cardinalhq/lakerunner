@@ -83,7 +83,7 @@ func (r *mockAggregatingMetricsReader) TotalRowsReturned() int64 {
 }
 
 func (r *mockAggregatingMetricsReader) GetSchema() *ReaderSchema {
-	return nil
+	return NewReaderSchema()
 }
 
 func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
@@ -534,7 +534,7 @@ func (r *mockEOFReader) TotalRowsReturned() int64 {
 }
 
 func (r *mockEOFReader) GetSchema() *ReaderSchema {
-	return nil
+	return NewReaderSchema()
 }
 
 func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {

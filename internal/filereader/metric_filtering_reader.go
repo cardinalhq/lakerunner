@@ -250,5 +250,5 @@ func (r *MetricFilteringReader) GetSchema() *ReaderSchema {
 	if r.source != nil {
 		return r.source.GetSchema()
 	}
-	return nil
+	return NewReaderSchema()
 }

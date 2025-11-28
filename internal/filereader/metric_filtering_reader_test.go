@@ -55,7 +55,7 @@ func (m *mockFilterReader) TotalRowsReturned() int64 {
 }
 
 func (m *mockFilterReader) GetSchema() *ReaderSchema {
-	return nil
+	return NewReaderSchema()
 }
 
 func TestMetricFilteringReader_FiltersSingleMetric(t *testing.T) {

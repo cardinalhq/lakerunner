@@ -449,5 +449,5 @@ func (d *delayedErrorReaderImpl) TotalRowsReturned() int64 {
 }
 
 func (d *delayedErrorReaderImpl) GetSchema() *ReaderSchema {
-	return nil
+	return NewReaderSchema()
 }

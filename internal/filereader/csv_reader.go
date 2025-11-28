@@ -184,12 +184,13 @@ func (r *CSVReader) TotalRowsReturned() int64 {
 
 // GetSchema returns schema information extracted from CSV headers.
 // All columns are marked as nullable since CSV doesn't enforce types.
+// Returns empty schema if headers haven't been read yet.
 func (r *CSVReader) GetSchema() *ReaderSchema {
+	schema := NewReaderSchema()
 	if r.headers == nil {
-		return nil
+		return schema
 	}
 
-	schema := NewReaderSchema()
 	for _, header := range r.headers {
 		// CSV data is dynamically typed - can be string, int64, or float64
 		// Mark all as string type with nullable=true since we don't know upfront

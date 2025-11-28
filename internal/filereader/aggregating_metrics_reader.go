@@ -631,7 +631,7 @@ func (ar *AggregatingMetricsReader) GetSchema() *ReaderSchema {
 	if ar.reader != nil {
 		return ar.reader.GetSchema()
 	}
-	return nil
+	return NewReaderSchema()
 }
 
 // GetOTELMetrics implements the OTELMetricsProvider interface if the underlying reader supports it.

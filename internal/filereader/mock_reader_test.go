@@ -104,5 +104,5 @@ func (e *errorReader) TotalRowsReturned() int64 {
 }
 
 func (e *errorReader) GetSchema() *ReaderSchema {
-	return nil
+	return NewReaderSchema()
 }

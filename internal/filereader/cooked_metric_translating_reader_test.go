@@ -266,7 +266,7 @@ func (m *testMockReader) TotalRowsReturned() int64 {
 }
 
 func (m *testMockReader) GetSchema() *ReaderSchema {
-	return nil
+	return NewReaderSchema()
 }
 
 // TestCookedMetricTranslatingReader_ShouldDropRow tests if shouldDropRow is correctly identifying rows to drop
