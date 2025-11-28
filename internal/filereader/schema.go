@@ -25,6 +25,12 @@ import (
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
+// DebugSchemaErrors controls whether normalizeRow returns errors or just increments counters.
+// When true, schema violations and type conversion failures cause errors to be returned.
+// When false (default), violations are counted but silently dropped.
+// This should be set to true in tests to catch schema bugs early.
+var DebugSchemaErrors = false
+
 // DataType represents the type of data in a column.
 type DataType int
 
@@ -157,7 +163,8 @@ func promoteType(a, b DataType) DataType {
 
 // normalizeRow normalizes a row in-place according to the schema, performing type conversions
 // and removing keys with null values. Columns not in schema are dropped and counted as errors.
-func normalizeRow(ctx context.Context, row pipeline.Row, schema *ReaderSchema) {
+// When DebugSchemaErrors is true, returns an error on schema violations or conversion failures.
+func normalizeRow(ctx context.Context, row pipeline.Row, schema *ReaderSchema) error {
 	// Track keys to delete (can't delete while iterating)
 	var keysToDelete []wkk.RowKey
 
@@ -176,6 +183,9 @@ func normalizeRow(ctx context.Context, row pipeline.Row, schema *ReaderSchema) {
 			schemaViolationsCounter.Add(ctx, 1, otelmetric.WithAttributes(
 				attribute.String("column", wkk.RowKeyValue(key)),
 			))
+			if DebugSchemaErrors {
+				return fmt.Errorf("schema violation: column %q not in schema", wkk.RowKeyValue(key))
+			}
 			continue
 		}
 
@@ -188,6 +198,9 @@ func normalizeRow(ctx context.Context, row pipeline.Row, schema *ReaderSchema) {
 				attribute.String("column", wkk.RowKeyValue(key)),
 				attribute.String("target_type", col.DataType.String()),
 			))
+			if DebugSchemaErrors {
+				return fmt.Errorf("type conversion failed for column %q to %s: %w", wkk.RowKeyValue(key), col.DataType.String(), err)
+			}
 			continue
 		}
 
@@ -199,6 +212,8 @@ func normalizeRow(ctx context.Context, row pipeline.Row, schema *ReaderSchema) {
 	for _, key := range keysToDelete {
 		delete(row, key)
 	}
+
+	return nil
 }
 
 // convertValue converts a value to the target data type.

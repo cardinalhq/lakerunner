@@ -167,7 +167,9 @@ func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context, row pipeline.
 
 				// Build row for this span
 				r.buildSpanRow(ctx, rs, ss, span, row)
-				normalizeRow(ctx, row, r.schema)
+				if err := normalizeRow(ctx, row, r.schema); err != nil {
+					return err
+				}
 
 				// Advance to next span
 				r.spanIndex++

@@ -137,7 +137,9 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context, row pipeline.Row)
 			if r.logIndex < sl.LogRecords().Len() {
 				logRecord := sl.LogRecords().At(r.logIndex)
 				r.buildLogRow(rl, sl, logRecord, row)
-				normalizeRow(ctx, row, r.schema)
+				if err := normalizeRow(ctx, row, r.schema); err != nil {
+					return err
+				}
 				r.logIndex++
 				return nil
 			}

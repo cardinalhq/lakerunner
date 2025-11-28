@@ -90,7 +90,7 @@ func TestNormalizeRow_TypeConversion(t *testing.T) {
 	row[wkk.NewRowKey("bool_col")] = "true"    // string → bool
 
 	// Normalize in-place
-	normalizeRow(context.Background(), row, schema)
+	_ = normalizeRow(context.Background(), row, schema)
 	defer pipeline.ReturnPooledRow(row)
 
 	// Verify conversions
@@ -115,7 +115,7 @@ func TestNormalizeRow_NullHandling(t *testing.T) {
 	// col4 is not in row at all
 
 	// Normalize in-place
-	normalizeRow(context.Background(), row, schema)
+	_ = normalizeRow(context.Background(), row, schema)
 	defer pipeline.ReturnPooledRow(row)
 
 	// Verify only non-null values are present
@@ -133,7 +133,7 @@ func TestNormalizeRow_EmptyStringIsNotNull(t *testing.T) {
 	row[wkk.NewRowKey("col1")] = "" // empty string
 
 	// Normalize in-place
-	normalizeRow(context.Background(), row, schema)
+	_ = normalizeRow(context.Background(), row, schema)
 	defer pipeline.ReturnPooledRow(row)
 
 	// Empty string should be kept (it's a value, not null)
@@ -142,6 +142,11 @@ func TestNormalizeRow_EmptyStringIsNotNull(t *testing.T) {
 
 // TestNormalizeRow_UnknownColumns tests that columns not in schema are passed through.
 func TestNormalizeRow_UnknownColumns(t *testing.T) {
+	// Temporarily disable debug mode to test production behavior (silent dropping)
+	oldDebug := DebugSchemaErrors
+	DebugSchemaErrors = false
+	defer func() { DebugSchemaErrors = oldDebug }()
+
 	schema := NewReaderSchema()
 	schema.AddColumn(wkk.NewRowKey("known_col"), DataTypeString, true)
 
@@ -150,7 +155,7 @@ func TestNormalizeRow_UnknownColumns(t *testing.T) {
 	row[wkk.NewRowKey("unknown_col")] = "unknown"
 
 	// Normalize in-place
-	normalizeRow(context.Background(), row, schema)
+	_ = normalizeRow(context.Background(), row, schema)
 	defer pipeline.ReturnPooledRow(row)
 
 	// Known column should be present, unknown column should be dropped
@@ -219,6 +224,11 @@ func TestConvertValue(t *testing.T) {
 
 // TestConvertValue_Fallback tests that failed conversions drop the value.
 func TestConvertValue_Fallback(t *testing.T) {
+	// Temporarily disable debug mode to test production behavior (silent dropping)
+	oldDebug := DebugSchemaErrors
+	DebugSchemaErrors = false
+	defer func() { DebugSchemaErrors = oldDebug }()
+
 	schema := NewReaderSchema()
 	schema.AddColumn(wkk.NewRowKey("col1"), DataTypeInt64, true)
 
@@ -227,7 +237,7 @@ func TestConvertValue_Fallback(t *testing.T) {
 	row[wkk.NewRowKey("col1")] = "not_a_number"
 
 	// Normalize in-place
-	normalizeRow(context.Background(), row, schema)
+	_ = normalizeRow(context.Background(), row, schema)
 	defer pipeline.ReturnPooledRow(row)
 
 	// Value should be dropped if conversion fails
