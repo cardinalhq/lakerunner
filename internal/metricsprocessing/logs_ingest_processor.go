@@ -57,6 +57,7 @@ type DateintBinManager struct {
 	bins        map[int32]*DateintBin // Key is dateint
 	tmpDir      string
 	rpfEstimate int64
+	schema      *filereader.ReaderSchema
 }
 
 // LogIngestProcessor implements the Processor interface for raw log ingestion
@@ -327,6 +328,32 @@ func (p *LogIngestProcessor) GetTargetRecordCount(ctx context.Context, groupingK
 
 // createLogReaderStack creates a reader stack: Translation(LogReader(file))
 func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
+	// Determine file type from extension for logging
+	var fileType string
+	switch {
+	case strings.HasSuffix(tmpFilename, ".parquet"):
+		fileType = "parquet"
+	case strings.HasSuffix(tmpFilename, ".json.gz"):
+		fileType = "json.gz"
+	case strings.HasSuffix(tmpFilename, ".json"):
+		fileType = "json"
+	case strings.HasSuffix(tmpFilename, ".binpb.gz"):
+		fileType = "binpb.gz"
+	case strings.HasSuffix(tmpFilename, ".binpb"):
+		fileType = "binpb"
+	case strings.HasSuffix(tmpFilename, ".csv.gz"):
+		fileType = "csv.gz"
+	case strings.HasSuffix(tmpFilename, ".csv"):
+		fileType = "csv"
+	default:
+		fileType = "unknown"
+	}
+
+	slog.Info("Reading log file",
+		"fileType", fileType,
+		"objectID", objectID,
+		"bucket", bucket)
+
 	reader, err := p.createLogReader(tmpFilename, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log reader: %w", err)
@@ -383,10 +410,26 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	rpfEstimate := p.store.GetLogEstimate(ctx, storageProfile.OrganizationID)
 
 	// Create dateint bin manager
+	// Get schema from reader
+	schema := reader.GetSchema()
+
+	// Add columns that will be injected by LogTranslator
+	// These columns are added to every row but aren't in the OTEL schema
+	schema.AddColumn(wkk.RowKeyResourceBucketName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFile, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+
 	binManager := &DateintBinManager{
 		bins:        make(map[int32]*DateintBin),
 		tmpDir:      tmpDir,
 		rpfEstimate: rpfEstimate,
+		schema:      schema,
 	}
 
 	var totalRowsProcessed int64
@@ -489,7 +532,7 @@ func (manager *DateintBinManager) getOrCreateBin(_ context.Context, dateint int3
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewLogsWriter(manager.tmpDir, manager.rpfEstimate)
+	writer, err := factories.NewLogsWriter(manager.tmpDir, manager.schema, manager.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}

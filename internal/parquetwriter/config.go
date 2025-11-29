@@ -14,6 +14,10 @@
 
 package parquetwriter
 
+import (
+	"github.com/cardinalhq/lakerunner/internal/filereader"
+)
+
 const (
 	// NoRecordLimitPerFile can be used as RecordsPerFile value to disable file splitting
 	// and allow unlimited file size (all records go into a single file).
@@ -38,9 +42,42 @@ type WriterConfig struct {
 	// TmpDir is the directory where temporary and output files are created
 	TmpDir string
 
-	// Grouping configuration - controls how rows are grouped and whether
-	// groups can be split across files
-	GroupKeyFunc  func(map[string]any) any
+	// Schema is the required upfront schema from the reader.
+	// Must not be nil. The writer will reject rows with columns not in the schema.
+	// All-null columns (HasNonNull=false) are automatically filtered out.
+	Schema *filereader.ReaderSchema
+
+	// GroupKeyFunc extracts a grouping key from a row. Used to track which group
+	// the current file belongs to. If nil, grouping is disabled.
+	//
+	// Example for metrics: func(row map[string]any) any {
+	//     return [2]any{row["metric_name"], row["chq_tid"]}
+	// }
+	//
+	// The returned key should be comparable (==) for group change detection.
+	GroupKeyFunc func(map[string]any) any
+
+	// NoSplitGroups, when true, prevents splitting a group across multiple files.
+	//
+	// IMPORTANT: This does NOT create new files on every group change. Instead:
+	//
+	// 1. Files split ONLY when RecordsPerFile limit is exceeded AND group changes
+	//    between batches (not within a batch).
+	//
+	// 2. If a group exceeds RecordsPerFile, it stays together in one file.
+	//    Example: RecordsPerFile=5, group A has 10 rows → all 10 rows in one file.
+	//
+	// 3. Splitting happens BETWEEN batches, never within a batch.
+	//    Example: Batch 1 has groups [A,A,B,B,C]. All rows go into same file
+	//    regardless of RecordsPerFile limit.
+	//
+	// 4. Split happens when a NEW batch arrives that would exceed RecordsPerFile
+	//    AND has a different group key than the current file.
+	//
+	// Purpose: Keep similar rows (same group key) together for better compression
+	// and query performance, while respecting file size limits at group boundaries.
+	//
+	// Requires: GroupKeyFunc must be set when NoSplitGroups is true.
 	NoSplitGroups bool
 
 	// RecordsPerFile is the estimated number of records that fit in a target file.
@@ -58,7 +95,7 @@ type WriterConfig struct {
 
 	// ChunkSize controls the number of rows buffered before flushing to Parquet.
 	// Used by both Arrow backend (RecordBatch size) and go-parquet backend (CBOR buffer flush).
-	// If 0, uses backend-specific defaults (typically 10000).
+	// If 0, uses backend-specific defaults.
 	ChunkSize int64
 }
 
@@ -67,10 +104,12 @@ func (c *WriterConfig) Validate() error {
 	if c.TmpDir == "" {
 		return &ConfigError{Field: "TmpDir", Message: "cannot be empty"}
 	}
+	if c.Schema == nil {
+		return &ConfigError{Field: "Schema", Message: "is required and cannot be nil"}
+	}
 	if c.NoSplitGroups && c.GroupKeyFunc == nil {
 		return &ConfigError{Field: "GroupKeyFunc", Message: "required when NoSplitGroups is true"}
 	}
-	// No schema validation needed - discovered dynamically
 	return nil
 }
 

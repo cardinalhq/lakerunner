@@ -19,15 +19,18 @@ import (
 
 	mapset "github.com/deckarep/golang-set/v2"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
 
 // NewLogsWriter creates a writer optimized for logs data.
 // Logs need to be sorted by timestamp and can be split freely.
-func NewLogsWriter(tmpdir string, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
+// The schema must be provided from the reader and cannot be nil.
+func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
 		TmpDir: tmpdir,
+		Schema: schema,
 
 		// Logs can be split anywhere - no grouping constraints
 		NoSplitGroups: false,

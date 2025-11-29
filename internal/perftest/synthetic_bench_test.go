@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/pipeline"
 )
@@ -44,6 +45,10 @@ func BenchmarkSyntheticData(b *testing.B) {
 	allBatches := gen.GenerateBatches(400000, 1000)
 	b.Logf("Pre-allocated 400 batches (400k total rows) for reuse")
 
+	// Scan all batches once to discover complete schema
+	schema := scanAllBatchesForSchema(allBatches)
+	b.Logf("Scanned schema with %d columns", len(schema.Columns()))
+
 	rowCounts := []int{
 		10000,
 		25000,
@@ -62,7 +67,7 @@ func BenchmarkSyntheticData(b *testing.B) {
 		for _, backendType := range backends {
 			name := benchName(rowCount, backendType)
 			b.Run(name, func(b *testing.B) {
-				benchmarkSynthetic(b, backendType, rowCount, allBatches)
+				benchmarkSynthetic(b, backendType, rowCount, allBatches, schema)
 			})
 		}
 	}
@@ -87,7 +92,7 @@ func formatRowCount(n int) string {
 	return string(rune('0' + n))
 }
 
-func benchmarkSynthetic(b *testing.B, backendType parquetwriter.BackendType, rowCount int, allBatches []*pipeline.Batch) {
+func benchmarkSynthetic(b *testing.B, backendType parquetwriter.BackendType, rowCount int, allBatches []*pipeline.Batch, schema *filereader.ReaderSchema) {
 	ctx := context.Background()
 
 	// Calculate how many batches we need from the pre-allocated pool
@@ -139,6 +144,7 @@ func benchmarkSynthetic(b *testing.B, backendType parquetwriter.BackendType, row
 			Type:      backendType,
 			TmpDir:    tmpDir,
 			ChunkSize: 10000,
+			Schema:    schema,
 			StringConversionPrefixes: []string{
 				"resource_",
 				"scope_",
@@ -204,4 +210,44 @@ func benchmarkSynthetic(b *testing.B, backendType parquetwriter.BackendType, row
 	b.ReportMetric(float64(totalAlloc)/(1024*1024), "total_alloc_MB")
 	b.ReportMetric(float64(gcRuns), "gc_runs")
 	b.ReportMetric(float64(totalPauseNs)/(1000*1000), "gc_pause_ms")
+}
+
+// scanAllBatchesForSchema scans all batches to discover the complete schema.
+// This properly handles sparse columns by tracking which columns have non-null values.
+// It applies string conversion to match what the backends will do at write time.
+func scanAllBatchesForSchema(batches []*pipeline.Batch) *filereader.ReaderSchema {
+	builder := filereader.NewSchemaBuilder()
+
+	// String conversion prefixes (must match backend config)
+	stringPrefixes := []string{"resource_", "scope_", "attr_"}
+
+	for _, batch := range batches {
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
+			if row == nil {
+				continue
+			}
+			for key, value := range row {
+				fieldName := string(key.Value())
+
+				// Apply string conversion if needed (match backend behavior)
+				convertedValue := value
+				for _, prefix := range stringPrefixes {
+					if len(fieldName) >= len(prefix) && fieldName[:len(prefix)] == prefix {
+						// Convert non-string values to string
+						if value != nil {
+							if _, isString := value.(string); !isString {
+								convertedValue = "string_placeholder"
+							}
+						}
+						break
+					}
+				}
+
+				builder.AddValue(fieldName, convertedValue)
+			}
+		}
+	}
+
+	return builder.Build()
 }

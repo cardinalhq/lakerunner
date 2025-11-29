@@ -22,10 +22,12 @@ import (
 )
 
 var (
-	rowsInCounter            otelmetric.Int64Counter
-	rowsOutCounter           otelmetric.Int64Counter
-	rowsDroppedCounter       otelmetric.Int64Counter
-	timestampFallbackCounter otelmetric.Int64Counter
+	rowsInCounter               otelmetric.Int64Counter
+	rowsOutCounter              otelmetric.Int64Counter
+	rowsDroppedCounter          otelmetric.Int64Counter
+	timestampFallbackCounter    otelmetric.Int64Counter
+	schemaViolationsCounter     otelmetric.Int64Counter
+	typeConversionFailedCounter otelmetric.Int64Counter
 )
 
 func init() {
@@ -62,5 +64,21 @@ func init() {
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create timestamp.fallback counter: %w", err))
+	}
+
+	schemaViolationsCounter, err = meter.Int64Counter(
+		"lakerunner.reader.schema.violations",
+		otelmetric.WithDescription("Number of columns found in rows that were not in the extracted schema"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create schema.violations counter: %w", err))
+	}
+
+	typeConversionFailedCounter, err = meter.Int64Counter(
+		"lakerunner.reader.type.conversion.failed",
+		otelmetric.WithDescription("Number of values that failed type conversion and were dropped"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create type.conversion.failed counter: %w", err))
 	}
 }

@@ -63,6 +63,8 @@ type DiskSortingReader struct {
 	sorted       bool
 }
 
+var _ Reader = (*DiskSortingReader)(nil)
+
 // NewDiskSortingReader creates a reader that uses disk-based sorting with custom binary encoding.
 //
 // Use this for large datasets that may not fit in memory. The temp file is automatically
@@ -296,6 +298,14 @@ func (r *DiskSortingReader) Close() error {
 // TotalRowsReturned returns the number of rows that have been returned via Next().
 func (r *DiskSortingReader) TotalRowsReturned() int64 {
 	return r.rowCount
+}
+
+// GetSchema delegates to the wrapped reader.
+func (r *DiskSortingReader) GetSchema() *ReaderSchema {
+	if r.reader != nil {
+		return r.reader.GetSchema()
+	}
+	return NewReaderSchema()
 }
 
 // GetOTELMetrics implements the OTELMetricsProvider interface if the underlying reader supports it.

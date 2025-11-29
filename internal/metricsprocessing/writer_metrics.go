@@ -71,8 +71,11 @@ func processMetricsWithAggregation(ctx context.Context, params metricProcessingP
 	}
 	defer func() { _ = aggReader.Close() }()
 
+	// Get schema from aggregating reader
+	schema := aggReader.GetSchema()
+
 	// Create metrics writer
-	writer, err := factories.NewMetricsWriter(params.TmpDir, params.MaxRecords)
+	writer, err := factories.NewMetricsWriter(params.TmpDir, schema, params.MaxRecords)
 	if err != nil {
 		return nil, fmt.Errorf("create parquet writer: %w", err)
 	}

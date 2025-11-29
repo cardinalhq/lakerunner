@@ -127,8 +127,11 @@ func BenchmarkWriteFromReader(b *testing.B) {
 		require.NoError(b, err)
 		defer func() { _ = translatingReader.Close() }()
 
+		// Get schema from reader
+		schema := translatingReader.GetSchema()
+
 		// Create writer
-		writer, err := factories.NewLogsWriter(tmpDir, 10000)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000)
 		require.NoError(b, err)
 
 		// Benchmark the write operation
@@ -221,8 +224,11 @@ func BenchmarkMemoryLeaks(b *testing.B) {
 		translatingReader, err := filereader.NewTranslatingReader(reader, translator, 1000)
 		require.NoError(b, err)
 
+		// Get schema from reader
+		schema := translatingReader.GetSchema()
+
 		// Create writer
-		writer, err := factories.NewLogsWriter(tmpDir, 10000)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000)
 		require.NoError(b, err)
 
 		// Process all batches
@@ -310,8 +316,11 @@ func BenchmarkDetailedMemoryProfile(b *testing.B) {
 		stages = append(stages, "After translator creation")
 		memStats = append(memStats, mem2)
 
+		// Get schema from reader
+		schema := translatingReader.GetSchema()
+
 		// Stage 3: Create writer
-		writer, err := factories.NewLogsWriter(tmpDir, 10000)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000)
 		require.NoError(b, err)
 
 		runtime.GC()

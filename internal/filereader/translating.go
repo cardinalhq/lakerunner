@@ -36,6 +36,8 @@ type TranslatingReader struct {
 	batchSize  int
 }
 
+var _ Reader = (*TranslatingReader)(nil)
+
 // NewTranslatingReader creates a new TranslatingReader that applies the given
 // translator to each row returned by the underlying reader.
 //
@@ -144,4 +146,12 @@ func (tr *TranslatingReader) Close() error {
 // returned via Next() after translation by this reader.
 func (tr *TranslatingReader) TotalRowsReturned() int64 {
 	return tr.rowCount
+}
+
+// GetSchema delegates to the wrapped reader.
+func (tr *TranslatingReader) GetSchema() *ReaderSchema {
+	if tr.reader != nil {
+		return tr.reader.GetSchema()
+	}
+	return NewReaderSchema()
 }

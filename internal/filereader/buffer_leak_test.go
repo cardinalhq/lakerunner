@@ -64,6 +64,10 @@ func (m *mockLeakTestReader) TotalRowsReturned() int64 {
 	return int64(m.index)
 }
 
+func (m *mockLeakTestReader) GetSchema() *ReaderSchema {
+	return NewReaderSchema()
+}
+
 // assertNoBufferLeaks checks that the number of GetBatch calls equals ReturnBatch calls
 func assertNoBufferLeaks(t *testing.T, initialStats, finalStats pipeline.BatchPoolStats) {
 	t.Helper()

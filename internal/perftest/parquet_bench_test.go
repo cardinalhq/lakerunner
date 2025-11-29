@@ -95,8 +95,14 @@ func BenchmarkReadFingerprintWrite(b *testing.B) {
 			b.Fatal(err)
 		}
 
+		// Get schema from reader
+		schema := reader.GetSchema()
+
+		// Add chq_fingerprint column since we'll be adding fingerprints to rows
+		schema.AddColumn(wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+
 		// Create Parquet writer
-		writer, err := factories.NewLogsWriter(tmpDir, 100000)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 100000)
 		if err != nil {
 			_ = reader.Close()
 			b.Fatal(err)
@@ -227,6 +233,9 @@ func BenchmarkParquetWriteOnly(b *testing.B) {
 		batches = append(batches, batch)
 		totalLogs += int64(batch.Len())
 	}
+
+	// Get schema from reader before closing
+	schema := reader.GetSchema()
 	_ = reader.Close()
 
 	b.Logf("Pre-loaded %d batches (%d logs) for write-only test", len(batches), totalLogs)
@@ -243,7 +252,7 @@ func BenchmarkParquetWriteOnly(b *testing.B) {
 
 		b.StartTimer()
 
-		writer, err := factories.NewLogsWriter(tmpDir, 100000)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 100000)
 		if err != nil {
 			b.Fatal(err)
 		}

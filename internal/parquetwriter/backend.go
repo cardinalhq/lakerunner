@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
@@ -83,4 +84,8 @@ type BackendConfig struct {
 
 	// StringConversionPrefixes for type coercion
 	StringConversionPrefixes []string
+
+	// Schema is the required upfront schema from the reader.
+	// Must not be nil. All-null columns (HasNonNull=false) are filtered out automatically.
+	Schema *filereader.ReaderSchema
 }

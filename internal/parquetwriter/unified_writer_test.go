@@ -19,9 +19,21 @@ import (
 	"os"
 	"testing"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
+
+// testUnifiedSchema creates a schema for unified writer tests
+func testUnifiedSchema() *filereader.ReaderSchema {
+	schema := filereader.NewReaderSchema()
+	schema.AddColumn(wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("message"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("value"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
+	return schema
+}
 
 // Helper function to convert []map[string]any to *pipeline.Batch for testing
 func testDataToBatch(testRows []map[string]any) *pipeline.Batch {
@@ -40,6 +52,7 @@ func TestUnifiedWriter_Basic(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpdir,
+		Schema:         testUnifiedSchema(),
 		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
@@ -99,6 +112,7 @@ func TestUnifiedWriter_WriteBatch(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpdir,
+		Schema:         testUnifiedSchema(),
 		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)

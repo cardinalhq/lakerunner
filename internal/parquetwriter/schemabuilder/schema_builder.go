@@ -19,6 +19,8 @@ import (
 	"reflect"
 
 	"github.com/parquet-go/parquet-go"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
 // SchemaBuilder accumulates multiple example rows (map[string]any) and produces
@@ -83,4 +85,62 @@ func (b *SchemaBuilder) GetColumnNames() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// BuildFromReaderSchema creates parquet nodes directly from a ReaderSchema.
+// This allows providing schema upfront without needing to scan data.
+// Filters out all-null columns (HasNonNull=false) automatically.
+func BuildFromReaderSchema(schema *filereader.ReaderSchema) (map[string]parquet.Node, error) {
+	if schema == nil {
+		return nil, fmt.Errorf("schema cannot be nil")
+	}
+
+	nodes := make(map[string]parquet.Node)
+	for _, col := range schema.Columns() {
+		// Skip all-null columns
+		if !col.HasNonNull {
+			continue
+		}
+
+		columnName := string(col.Name.Value())
+		node, err := ParquetNodeFromReaderDataType(columnName, col.DataType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build node for column %q: %w", columnName, err)
+		}
+		nodes[columnName] = node
+	}
+
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("schema has no non-null columns")
+	}
+
+	return nodes, nil
+}
+
+// ParquetNodeFromReaderDataType converts a filereader.DataType to a parquet.Node.
+func ParquetNodeFromReaderDataType(name string, dataType filereader.DataType) (parquet.Node, error) {
+	enc := func(n parquet.Node) parquet.Node {
+		if n.Leaf() && wantDictionary(name) {
+			n = parquet.Encoded(n, &parquet.RLEDictionary)
+		}
+		return n
+	}
+
+	switch dataType {
+	case filereader.DataTypeBool:
+		return parquet.Optional(enc(parquet.Leaf(parquet.BooleanType))), nil
+	case filereader.DataTypeInt64:
+		return parquet.Optional(enc(parquet.Int(64))), nil
+	case filereader.DataTypeFloat64:
+		return parquet.Optional(enc(parquet.Leaf(parquet.DoubleType))), nil
+	case filereader.DataTypeString:
+		return parquet.Optional(enc(parquet.String())), nil
+	case filereader.DataTypeBytes:
+		return parquet.Optional(parquet.Leaf(parquet.ByteArrayType)), nil
+	case filereader.DataTypeAny:
+		// For complex types, use string representation
+		return parquet.Optional(enc(parquet.String())), nil
+	default:
+		return nil, fmt.Errorf("unsupported data type: %v", dataType)
+	}
 }

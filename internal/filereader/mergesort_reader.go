@@ -110,7 +110,10 @@ type MergesortReader struct {
 	closed        bool
 	rowCount      int64
 	batchSize     int
+	schema        *ReaderSchema // Merged schema from all readers
 }
+
+var _ Reader = (*MergesortReader)(nil)
 
 // NewMergesortReader creates a new MergesortReader that merges rows from multiple readers
 // in sorted order using the new algorithm with active reader management.
@@ -127,6 +130,9 @@ func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortK
 		keyProvider: keyProvider,
 		batchSize:   batchSize,
 	}
+
+	// Merge schemas from all readers
+	or.schema = mergeSchemas(readers)
 
 	// Prime all readers - read first row from each and create keys
 	if err := or.primeReaders(ctx); err != nil {
@@ -200,6 +206,15 @@ func (or *MergesortReader) Next(ctx context.Context) (*Batch, error) {
 			row[k] = v
 		}
 
+		// Apply schema normalization to ensure type consistency
+		// Only normalize if we have a non-empty schema (at least one schemafied reader)
+		if or.schema != nil && len(or.schema.Columns()) > 0 {
+			if err := normalizeRow(ctx, row, or.schema); err != nil {
+				pipeline.ReturnBatch(batch)
+				return nil, fmt.Errorf("schema normalization failed: %w", err)
+			}
+		}
+
 		// Advance the selected reader to its next row
 		selectedReader.consume()
 		err := selectedReader.advance(ctx, or.keyProvider)
@@ -264,4 +279,29 @@ func (or *MergesortReader) TotalRowsReturned() int64 {
 // ActiveReaderCount returns the number of readers that still have data available.
 func (or *MergesortReader) ActiveReaderCount() int {
 	return len(or.activeReaders)
+}
+
+// GetSchema returns the merged schema from all child readers.
+func (or *MergesortReader) GetSchema() *ReaderSchema {
+	return or.schema
+}
+
+// mergeSchemas merges schemas from multiple readers, performing type promotion
+// when the same column appears with different types across readers.
+func mergeSchemas(readers []Reader) *ReaderSchema {
+	merged := NewReaderSchema()
+
+	for _, reader := range readers {
+		readerSchema := reader.GetSchema()
+		if readerSchema == nil {
+			continue
+		}
+
+		// Merge each column from this reader's schema
+		for _, col := range readerSchema.Columns() {
+			merged.AddColumn(col.Name, col.DataType, col.HasNonNull)
+		}
+	}
+
+	return merged
 }

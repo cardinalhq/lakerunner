@@ -52,7 +52,14 @@ func runAggregation(t *testing.T) {
 		}
 	}
 
-	mock := newMockReader("test", rows)
+	schema := NewReaderSchema()
+	schema.AddColumn(wkk.RowKeyCTimestamp, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCName, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyRollupSum, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupMax, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyCMetricType, DataTypeString, true)
+
+	mock := newMockReader("test", rows, schema)
 	reader, err := NewAggregatingMetricsReader(mock, 10000, 50)
 	require.NoError(t, err)
 

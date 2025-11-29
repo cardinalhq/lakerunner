@@ -87,6 +87,10 @@ func (m *mockReaderForBenchmark) TotalRowsReturned() int64 {
 	return int64(m.rowsEmitted)
 }
 
+func (m *mockReaderForBenchmark) GetSchema() *ReaderSchema {
+	return NewReaderSchema()
+}
+
 func BenchmarkAggregatingMetricsReader_ZeroCopy(b *testing.B) {
 	// Benchmark with different data sizes
 	sizes := []struct {

@@ -171,6 +171,7 @@ type TraceDateintBinManager struct {
 	bins        map[int32]*TraceDateintBin // Key is dateint
 	tmpDir      string
 	rpfEstimate int64
+	schema      *filereader.ReaderSchema
 }
 
 // TraceIngestProcessor implements the Processor interface for raw trace ingestion
@@ -455,13 +456,13 @@ func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket
 		bucket:   bucket,
 		objectID: objectID,
 	}
-	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+	translatedReader, err := filereader.NewTranslatingReader(reader, translator, 1000)
 	if err != nil {
 		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}
 
-	return reader, nil
+	return translatedReader, nil
 }
 
 func (p *TraceIngestProcessor) createTraceReader(filename, orgID string) (filereader.Reader, error) {
@@ -495,12 +496,20 @@ func (p *TraceIngestProcessor) createUnifiedTraceReader(ctx context.Context, rea
 func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*TraceDateintBin, error) {
 	ll := logctx.FromContext(ctx)
 
+	// Get schema from reader
+	schema := reader.GetSchema()
+
+	// Add columns that will be injected by TraceTranslator
+	// These columns are added to every row but aren't in the OTEL schema
+	schema.AddColumn(wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
+
 	rpfEstimate := p.store.GetTraceEstimate(ctx, storageProfile.OrganizationID)
 
 	binManager := &TraceDateintBinManager{
 		bins:        make(map[int32]*TraceDateintBin),
 		tmpDir:      tmpDir,
 		rpfEstimate: rpfEstimate,
+		schema:      schema,
 	}
 
 	var totalRowsProcessed int64
@@ -598,7 +607,7 @@ func (manager *TraceDateintBinManager) getOrCreateBin(dateint int32) (*TraceDate
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewTracesWriter(manager.tmpDir, manager.rpfEstimate)
+	writer, err := factories.NewTracesWriter(manager.tmpDir, manager.schema, manager.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}

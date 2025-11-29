@@ -43,10 +43,12 @@ type IngestProtoLogsReader struct {
 	scopeIndex    int
 	logIndex      int
 	orgId         string
+
+	// Schema extracted from all logs
+	schema *ReaderSchema
 }
 
 var _ Reader = (*IngestProtoLogsReader)(nil)
-var _ OTELLogsProvider = (*IngestProtoLogsReader)(nil)
 
 // NewIngestProtoLogsReader creates a new IngestProtoLogsReader for the given io.Reader.
 func NewIngestProtoLogsReader(reader io.Reader, opts ReaderOptions) (*IngestProtoLogsReader, error) {
@@ -55,16 +57,20 @@ func NewIngestProtoLogsReader(reader io.Reader, opts ReaderOptions) (*IngestProt
 		batchSize = 1000
 	}
 
-	protoReader := &IngestProtoLogsReader{
-		batchSize: batchSize,
-		orgId:     opts.OrgID,
-	}
-
 	logs, err := parseProtoToOtelLogs(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse proto to OTEL logs: %w", err)
 	}
-	protoReader.logs = logs
+
+	// Extract schema from all logs (two-pass approach)
+	schema := extractSchemaFromOTELLogs(logs)
+
+	protoReader := &IngestProtoLogsReader{
+		batchSize: batchSize,
+		orgId:     opts.OrgID,
+		logs:      logs,
+		schema:    schema,
+	}
 
 	return protoReader, nil
 }
@@ -121,7 +127,6 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context, row pipeline.Row)
 		return io.EOF
 	}
 
-	// Iterator pattern: advance through resources -> scopes -> logs
 	for r.resourceIndex < r.logs.ResourceLogs().Len() {
 		rl := r.logs.ResourceLogs().At(r.resourceIndex)
 
@@ -131,6 +136,9 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context, row pipeline.Row)
 			if r.logIndex < sl.LogRecords().Len() {
 				logRecord := sl.LogRecords().At(r.logIndex)
 				r.buildLogRow(rl, sl, logRecord, row)
+				if err := normalizeRow(ctx, row, r.schema); err != nil {
+					return err
+				}
 				r.logIndex++
 				return nil
 			}
@@ -148,37 +156,22 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context, row pipeline.Row)
 }
 
 // buildLogRow populates the provided row from a single log record and its context.
+// Values are extracted with their native types based on OTEL value type.
 func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord, row pipeline.Row) {
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-		// Fast path: avoid conversion if already a string (90% of attributes)
-		var value string
-		if v.Type() == pcommon.ValueTypeStr {
-			value = v.Str()
-		} else {
-			value = v.AsString()
-		}
+		value := otelValueToGoValue(v)
 		row[prefixAttributeRowKey(name, "resource")] = value
 		return true
 	})
 
 	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-		var value string
-		if v.Type() == pcommon.ValueTypeStr {
-			value = v.Str()
-		} else {
-			value = v.AsString()
-		}
+		value := otelValueToGoValue(v)
 		row[prefixAttributeRowKey(name, "scope")] = value
 		return true
 	})
 
 	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
-		var value string
-		if v.Type() == pcommon.ValueTypeStr {
-			value = v.Str()
-		} else {
-			value = v.AsString()
-		}
+		value := otelValueToGoValue(v)
 		row[prefixAttributeRowKey(name, "attr")] = value
 		return true
 	})
@@ -190,16 +183,27 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 	row[wkk.RowKeyCLevel] = logRecord.SeverityText()
 }
 
-// GetOTELLogs returns the underlying parsed OTEL logs structure.
-// This allows access to the original log body and metadata not available in the row format.
-func (r *IngestProtoLogsReader) GetOTELLogs() (*plog.Logs, error) {
-	if r.closed {
-		return nil, fmt.Errorf("reader is closed")
+// otelValueToGoValue converts an OTEL pcommon.Value to a Go value with the correct type.
+func otelValueToGoValue(v pcommon.Value) any {
+	switch v.Type() {
+	case pcommon.ValueTypeStr:
+		return v.Str()
+	case pcommon.ValueTypeInt:
+		return v.Int()
+	case pcommon.ValueTypeDouble:
+		return v.Double()
+	case pcommon.ValueTypeBool:
+		return v.Bool()
+	case pcommon.ValueTypeBytes:
+		return v.Bytes().AsRaw()
+	case pcommon.ValueTypeMap, pcommon.ValueTypeSlice:
+		// Convert complex types to JSON string
+		return v.AsString()
+	case pcommon.ValueTypeEmpty:
+		return ""
+	default:
+		return v.AsString()
 	}
-	if r.logs == nil {
-		return nil, fmt.Errorf("no logs data available")
-	}
-	return r.logs, nil
 }
 
 // Close closes the reader and releases resources.
@@ -218,6 +222,11 @@ func (r *IngestProtoLogsReader) Close() error {
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
 func (r *IngestProtoLogsReader) TotalRowsReturned() int64 {
 	return r.rowCount
+}
+
+// GetSchema returns the schema extracted from the OTEL logs.
+func (r *IngestProtoLogsReader) GetSchema() *ReaderSchema {
+	return r.schema
 }
 
 func parseProtoToOtelLogs(reader io.Reader) (*plog.Logs, error) {

@@ -265,6 +265,10 @@ func (m *testMockReader) TotalRowsReturned() int64 {
 	return total
 }
 
+func (m *testMockReader) GetSchema() *ReaderSchema {
+	return NewReaderSchema()
+}
+
 // TestCookedMetricTranslatingReader_ShouldDropRow tests if shouldDropRow is correctly identifying rows to drop
 func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
 	testCases := []struct {
@@ -391,4 +395,50 @@ func TestCookedMetricTranslatingReader_NextWithSmallFiles(t *testing.T) {
 				"CookedMetricTranslatingReader should read all records correctly when used in isolation")
 		})
 	}
+}
+
+// TestCookedMetricTranslatingReader_GetSchema tests that schema is augmented with chq_tsns.
+func TestCookedMetricTranslatingReader_GetSchema(t *testing.T) {
+	// Create test parquet data
+	rows := []map[string]any{
+		{
+			"chq_timestamp":  int64(1000),
+			"chq_tid":        int64(123),
+			"chq_name":       "test_metric",
+			"chq_rollup_sum": float64(100.5),
+		},
+	}
+
+	parquetData, _ := createTestParquetInMemory(t, rows)
+	reader := bytes.NewReader(parquetData)
+
+	// ParquetRawReader implements SchemafiedReader
+	rawReader, err := NewParquetRawReader(reader, int64(len(parquetData)), 1000)
+	require.NoError(t, err)
+	defer func() { _ = rawReader.Close() }()
+
+	// CookedMetricTranslatingReader wraps it and augments schema
+	cookedReader := NewCookedMetricTranslatingReader(rawReader)
+	defer func() { _ = cookedReader.Close() }()
+
+	// Schema should be valid and include chq_tsns
+	schema := cookedReader.GetSchema()
+	assert.NotNil(t, schema, "Schema must not be nil")
+	assert.True(t, schema.HasColumn(wkk.RowKeyValue(wkk.RowKeyCTsns)), "Schema should include chq_tsns column")
+}
+
+// TestCookedMetricTranslatingReader_GetSchema_NoSchema tests behavior with non-schema reader.
+func TestCookedMetricTranslatingReader_GetSchema_NoSchema(t *testing.T) {
+	// Create a mock reader without schema support
+	mockReader := newMockReader("test", []pipeline.Row{
+		{wkk.NewRowKey("test"): "value"},
+	}, nil)
+
+	cookedReader := NewCookedMetricTranslatingReader(mockReader)
+	defer func() { _ = cookedReader.Close() }()
+
+	// Should return valid schema with chq_tsns even when wrapped reader doesn't provide schema
+	schema := cookedReader.GetSchema()
+	assert.NotNil(t, schema, "Schema must not be nil even when wrapped reader has no schema")
+	assert.True(t, schema.HasColumn(wkk.RowKeyValue(wkk.RowKeyCTsns)), "Schema should include chq_tsns column")
 }
