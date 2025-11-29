@@ -27,18 +27,16 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/schemabuilder"
 	"github.com/cardinalhq/lakerunner/pipeline"
-	"github.com/cardinalhq/lakerunner/pipeline/rowcodec"
 )
 
-// GoParquetBackend implements ParquetBackend using segmentio/parquet-go with CBOR buffering.
+// GoParquetBackend implements ParquetBackend using parquet-go, writing directly to Parquet.
 // This is the current production implementation.
 type GoParquetBackend struct {
 	config BackendConfig
 
-	// CBOR buffering
-	codec      rowcodec.Codec
-	bufferFile *os.File
-	encoder    rowcodec.Encoder
+	// Parquet writer state
+	tmpFile       *os.File
+	parquetWriter *parquet.GenericWriter[map[string]any]
 
 	// Pre-built schema from ReaderSchema
 	parquetSchema *parquet.Schema
@@ -57,11 +55,6 @@ type GoParquetBackend struct {
 func NewGoParquetBackend(config BackendConfig) (*GoParquetBackend, error) {
 	if config.Schema == nil {
 		return nil, fmt.Errorf("schema is required and cannot be nil")
-	}
-
-	codec, err := rowcodec.New(rowcodec.TypeDefault)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create codec: %w", err)
 	}
 
 	// Build parquet schema from reader schema
@@ -84,7 +77,6 @@ func NewGoParquetBackend(config BackendConfig) (*GoParquetBackend, error) {
 
 	return &GoParquetBackend{
 		config:             config,
-		codec:              codec,
 		parquetSchema:      parquetSchema,
 		expectedColumns:    expectedColumns,
 		conversionPrefixes: config.StringConversionPrefixes,
@@ -96,14 +88,14 @@ func (b *GoParquetBackend) Name() string {
 	return "go-parquet"
 }
 
-// WriteBatch writes a batch of rows to the CBOR buffer.
+// WriteBatch writes a batch of rows directly to Parquet.
 // All columns must be defined in the schema provided at construction.
 // Rows with unexpected columns will return an error.
 func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch) error {
-	// Initialize buffer file on first write
-	if b.bufferFile == nil {
-		if err := b.startNewBufferFile(); err != nil {
-			return fmt.Errorf("failed to start buffer file: %w", err)
+	// Initialize Parquet writer on first write
+	if b.parquetWriter == nil {
+		if err := b.initParquetWriter(); err != nil {
+			return fmt.Errorf("failed to initialize parquet writer: %w", err)
 		}
 	}
 
@@ -114,7 +106,7 @@ func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch
 			continue
 		}
 
-		// Convert row to map[string]any for codec and validate against schema
+		// Convert row to map[string]any and validate against schema
 		rowMap := make(map[string]any, len(b.expectedColumns))
 		for key, value := range row {
 			fieldName := string(key.Value())
@@ -130,9 +122,9 @@ func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch
 			rowMap[fieldName] = convertedValue
 		}
 
-		// Encode to CBOR buffer
-		if err := b.encoder.Encode(rowMap); err != nil {
-			return fmt.Errorf("failed to encode row: %w", err)
+		// Write directly to Parquet
+		if _, err := b.parquetWriter.Write([]map[string]any{rowMap}); err != nil {
+			return fmt.Errorf("failed to write row to parquet: %w", err)
 		}
 
 		b.rowCount++
@@ -143,7 +135,7 @@ func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch
 
 // Close finalizes the Parquet file and writes it to the output writer.
 func (b *GoParquetBackend) Close(ctx context.Context, writer io.Writer) (*BackendMetadata, error) {
-	if b.bufferFile == nil {
+	if b.parquetWriter == nil {
 		// No data written
 		return &BackendMetadata{
 			RowCount:    0,
@@ -151,124 +143,81 @@ func (b *GoParquetBackend) Close(ctx context.Context, writer io.Writer) (*Backen
 		}, nil
 	}
 
-	// Finalize buffer file (encoder is set to nil, not closed)
-	b.encoder = nil
+	// Close the Parquet writer (flushes all data)
+	if err := b.parquetWriter.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close parquet writer: %w", err)
+	}
+	b.parquetWriter = nil
 
-	// Sync the buffer file
-	if err := b.bufferFile.Sync(); err != nil {
-		return nil, fmt.Errorf("failed to sync buffer file: %w", err)
+	// Close temp file and reopen for reading
+	tmpFileName := b.tmpFile.Name()
+	if err := b.tmpFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 
-	// Use pre-built schema (already created in constructor)
-	// Stream from CBOR buffer to Parquet
-	metadata, err := b.streamBinaryToParquet(writer, b.parquetSchema)
+	// Copy temp file to output writer
+	tmpFile, err := os.Open(tmpFileName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to write parquet: %w", err)
+		return nil, fmt.Errorf("failed to reopen temp file: %w", err)
+	}
+	defer func() { _ = tmpFile.Close() }()
+
+	if _, err := io.Copy(writer, tmpFile); err != nil {
+		return nil, fmt.Errorf("failed to copy parquet data to output: %w", err)
 	}
 
-	// Cleanup buffer file
-	b.cleanupBufferFile()
+	// Calculate schema fingerprint
+	fingerprint := b.calculateSchemaFingerprint(b.parquetSchema)
 
-	return metadata, nil
+	// Cleanup temp file
+	b.cleanupTempFile()
+
+	return &BackendMetadata{
+		RowCount:          b.rowCount,
+		ColumnCount:       len(b.parquetSchema.Fields()),
+		SchemaFingerprint: fingerprint,
+	}, nil
 }
 
 // Abort cleans up resources without writing output.
 func (b *GoParquetBackend) Abort() {
-	b.cleanupBufferFile()
+	if b.parquetWriter != nil {
+		_ = b.parquetWriter.Close()
+		b.parquetWriter = nil
+	}
+	b.cleanupTempFile()
 }
 
-// startNewBufferFile creates a new temporary file for CBOR buffering.
-func (b *GoParquetBackend) startNewBufferFile() error {
-	tmpFile, err := os.CreateTemp(b.config.TmpDir, "goparquet-buffer-*.cbor")
+// initParquetWriter creates a temp file and initializes the Parquet writer.
+func (b *GoParquetBackend) initParquetWriter() error {
+	tmpFile, err := os.CreateTemp(b.config.TmpDir, "goparquet-*.parquet")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	encoder := b.codec.NewEncoder(tmpFile)
+	// Create Parquet writer config
+	writerConfig, err := parquet.NewWriterConfig(schemabuilder.WriterOptions(b.config.TmpDir, b.parquetSchema)...)
+	if err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+		return fmt.Errorf("failed to create writer config: %w", err)
+	}
 
-	b.bufferFile = tmpFile
-	b.encoder = encoder
-	// Schema is already built in constructor, no need to reinitialize
+	// Create Parquet writer
+	parquetWriter := parquet.NewGenericWriter[map[string]any](tmpFile, writerConfig)
+
+	b.tmpFile = tmpFile
+	b.parquetWriter = parquetWriter
 
 	return nil
 }
 
-// streamBinaryToParquet reads from CBOR buffer and writes Parquet.
-func (b *GoParquetBackend) streamBinaryToParquet(output io.Writer, schema *parquet.Schema) (*BackendMetadata, error) {
-	// Close and reopen buffer file for reading
-	bufferFileName := b.bufferFile.Name()
-	if err := b.bufferFile.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close buffer file: %w", err)
-	}
-
-	bufferFile, err := os.Open(bufferFileName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to reopen buffer file: %w", err)
-	}
-	defer func() { _ = bufferFile.Close() }()
-
-	// Create Parquet writer config
-	writerConfig, err := parquet.NewWriterConfig(schemabuilder.WriterOptions(b.config.TmpDir, schema)...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create writer config: %w", err)
-	}
-
-	// Create Parquet writer
-	writer := parquet.NewGenericWriter[map[string]any](output, writerConfig)
-	defer func() { _ = writer.Close() }()
-
-	// Decode and write rows
-	decoder := b.codec.NewDecoder(bufferFile)
-	rowsWritten := int64(0)
-
-	row := make(map[string]any) // Reuse for all decodes
-	for {
-		err := decoder.Decode(row)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			// Handle EOF from map length read
-			if err.Error() == "read map length: EOF" {
-				break
-			}
-			return nil, fmt.Errorf("failed to decode row: %w", err)
-		}
-
-		if _, err := writer.Write([]map[string]any{row}); err != nil {
-			return nil, fmt.Errorf("failed to write row to parquet: %w", err)
-		}
-		rowsWritten++
-
-		// Clear map for next decode (reuse)
-		for k := range row {
-			delete(row, k)
-		}
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close parquet writer: %w", err)
-	}
-
-	// Calculate schema fingerprint for comparison
-	fingerprint := b.calculateSchemaFingerprint(schema)
-
-	return &BackendMetadata{
-		RowCount:          rowsWritten,
-		ColumnCount:       len(schema.Fields()),
-		SchemaFingerprint: fingerprint,
-		Extra: map[string]any{
-			"buffer_file_used": true,
-		},
-	}, nil
-}
-
-// cleanupBufferFile removes the temporary CBOR file.
-func (b *GoParquetBackend) cleanupBufferFile() {
-	if b.bufferFile != nil {
-		_ = b.bufferFile.Close()
-		_ = os.Remove(b.bufferFile.Name())
-		b.bufferFile = nil
+// cleanupTempFile removes the temporary Parquet file.
+func (b *GoParquetBackend) cleanupTempFile() {
+	if b.tmpFile != nil {
+		_ = b.tmpFile.Close()
+		_ = os.Remove(b.tmpFile.Name())
+		b.tmpFile = nil
 	}
 }
 

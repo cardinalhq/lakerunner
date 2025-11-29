@@ -67,7 +67,7 @@ type WriterConfig struct {
 
 	// ChunkSize controls the number of rows buffered before flushing to Parquet.
 	// Used by both Arrow backend (RecordBatch size) and go-parquet backend (CBOR buffer flush).
-	// If 0, uses backend-specific defaults (typically 10000).
+	// If 0, uses backend-specific defaults.
 	ChunkSize int64
 }
 

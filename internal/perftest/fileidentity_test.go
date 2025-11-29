@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -71,6 +72,12 @@ func TestChunkSizeFileIdentity(t *testing.T) {
 
 	t.Logf("Loaded %d batches for identity test", len(batches))
 
+	// Define string conversion prefixes (must match backend config)
+	stringConversionPrefixes := []string{"resource_", "scope_", "attr_"}
+
+	// Adjust schema to convert matching columns to strings (match backend behavior)
+	adjustedSchema := adjustSchemaForStringConversion(schema, stringConversionPrefixes)
+
 	// Test different chunk sizes
 	chunkSizes := []int64{10000, 25000, 50000}
 	hashes := make(map[int64]string)
@@ -80,15 +87,11 @@ func TestChunkSizeFileIdentity(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		config := parquetwriter.BackendConfig{
-			Type:      parquetwriter.BackendArrow,
-			TmpDir:    tmpDir,
-			Schema:    schema,
-			ChunkSize: chunkSize,
-			StringConversionPrefixes: []string{
-				"resource_",
-				"scope_",
-				"attr_",
-			},
+			Type:                     parquetwriter.BackendArrow,
+			TmpDir:                   tmpDir,
+			Schema:                   adjustedSchema,
+			ChunkSize:                chunkSize,
+			StringConversionPrefixes: stringConversionPrefixes,
 		}
 
 		backend, err := parquetwriter.NewArrowBackend(config)
@@ -158,4 +161,35 @@ func TestChunkSizeFileIdentity(t *testing.T) {
 		t.Logf("✓ All files are byte-for-byte IDENTICAL (same SHA256, same size)")
 		t.Logf("  This confirms chunk size only affects in-memory buffering, not output")
 	}
+}
+
+// adjustSchemaForStringConversion converts columns matching the given prefixes to string type.
+// This ensures the schema matches what the backend will actually write after string conversion.
+func adjustSchemaForStringConversion(schema *filereader.ReaderSchema, prefixes []string) *filereader.ReaderSchema {
+	newSchema := filereader.NewReaderSchema()
+
+	for _, col := range schema.Columns() {
+		dataType := col.DataType
+		hasNonNull := col.HasNonNull
+		fieldName := string(col.Name.Value())
+
+		// Check if this column name matches any prefix
+		shouldConvert := false
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(fieldName, prefix) {
+				shouldConvert = true
+				break
+			}
+		}
+
+		// Convert to string if it matches a prefix
+		if shouldConvert {
+			dataType = filereader.DataTypeString
+		}
+
+		// Add column to new schema
+		newSchema.AddColumn(col.Name, dataType, hasNonNull)
+	}
+
+	return newSchema
 }

@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -58,7 +59,8 @@ type ArrowBackend struct {
 	rowsSinceLastFlush int64
 
 	// Configuration
-	chunkSize int64 // Rows per record batch
+	chunkSize          int64    // Rows per record batch
+	conversionPrefixes []string // Cached prefixes for string conversion
 }
 
 // NewArrowBackend creates a new Arrow-based backend with streaming writes.
@@ -103,6 +105,7 @@ func NewArrowBackend(config BackendConfig) (*ArrowBackend, error) {
 		columns:            columns,
 		allocator:          allocator,
 		chunkSize:          chunkSize,
+		conversionPrefixes: config.StringConversionPrefixes,
 		schemaFinalized:    false,
 		rowsSinceLastFlush: 0,
 	}, nil
@@ -133,6 +136,55 @@ func readerDataTypeToArrow(dt filereader.DataType) arrow.DataType {
 // Name returns the backend name.
 func (b *ArrowBackend) Name() string {
 	return "arrow"
+}
+
+// shouldConvertToString checks if a field should be converted to string.
+func (b *ArrowBackend) shouldConvertToString(fieldName string) bool {
+	for _, prefix := range b.conversionPrefixes {
+		if strings.HasPrefix(fieldName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// convertToStringIfNeeded converts a value to string if needed.
+func (b *ArrowBackend) convertToStringIfNeeded(fieldName string, value any) any {
+	if !b.shouldConvertToString(fieldName) {
+		return value
+	}
+
+	if value == nil {
+		return nil
+	}
+
+	if _, ok := value.(string); ok {
+		return value
+	}
+
+	// Convert based on type
+	switch v := value.(type) {
+	case int:
+		return fmt.Sprintf("%d", v)
+	case int32:
+		return fmt.Sprintf("%d", v)
+	case int64:
+		return fmt.Sprintf("%d", v)
+	case uint:
+		return fmt.Sprintf("%d", v)
+	case uint32:
+		return fmt.Sprintf("%d", v)
+	case uint64:
+		return fmt.Sprintf("%d", v)
+	case float32:
+		return fmt.Sprintf("%f", v)
+	case float64:
+		return fmt.Sprintf("%f", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // WriteBatch appends a batch of rows to the in-memory columns.
@@ -175,7 +227,9 @@ func (b *ArrowBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch) er
 				colBuilder.builder.AppendNull()
 			} else {
 				value := row[key]
-				if err := b.appendValue(colBuilder, value); err != nil {
+				// Apply string conversion if needed
+				convertedValue := b.convertToStringIfNeeded(colBuilder.name, value)
+				if err := b.appendValue(colBuilder, convertedValue); err != nil {
 					return fmt.Errorf("failed to append value to column %s at row %d: %w", colBuilder.name, b.rowCount+int64(i), err)
 				}
 			}
