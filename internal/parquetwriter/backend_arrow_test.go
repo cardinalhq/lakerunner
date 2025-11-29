@@ -106,11 +106,11 @@ func TestArrowBackendStatistics(t *testing.T) {
 	// Read the parquet file and verify statistics
 	f, err := os.Open(tmpFile.Name())
 	require.NoError(t, err)
-	defer func() { _ = f.Close() }()
+	// Note: NewParquetReader takes ownership of the file and will close it
 
 	pf, err := file.NewParquetReader(f, file.WithReadProps(nil))
 	require.NoError(t, err)
-	defer func() { _ = pf.Close() }()
+	defer func() { require.NoError(t, pf.Close()) }()
 
 	// Verify we have row groups
 	require.Greater(t, pf.NumRowGroups(), 0, "Parquet file should have at least one row group")
@@ -322,12 +322,12 @@ func TestArrowBackendAllNullColumn(t *testing.T) {
 	// Read the parquet file using our Arrow reader
 	f, err := os.Open(tmpFile.Name())
 	require.NoError(t, err)
-	defer func() { _ = f.Close() }()
+	// Note: NewArrowRawReader takes ownership of the file and will close it
 
 	// Use our Arrow reader to extract schema with statistics
 	arrowReader, err := filereader.NewArrowRawReader(ctx, f, 1000)
 	require.NoError(t, err)
-	defer func() { _ = arrowReader.Close() }()
+	defer func() { require.NoError(t, arrowReader.Close()) }()
 
 	extractedSchema := arrowReader.GetSchema()
 	require.NotNil(t, extractedSchema)
@@ -401,11 +401,11 @@ func TestArrowBackendStatisticsEnabled(t *testing.T) {
 
 	f, err := os.Open(tmpFile.Name())
 	require.NoError(t, err)
-	defer func() { _ = f.Close() }()
+	// Note: NewParquetReader takes ownership of the file and will close it
 
 	pf, err := file.NewParquetReader(f)
 	require.NoError(t, err)
-	defer func() { _ = pf.Close() }()
+	defer func() { require.NoError(t, pf.Close()) }()
 
 	require.Greater(t, pf.NumRowGroups(), 0)
 
