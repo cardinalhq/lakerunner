@@ -32,7 +32,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
@@ -94,9 +93,6 @@ func init() {
 			}
 
 			sp := storageprofile.NewStorageProfileProvider(cdb)
-
-			ll := logctx.FromContext(ctx).With("instanceID", myInstanceID)
-			ctx = logctx.WithLogger(ctx, ll)
 
 			kafkaFactory := fly.NewFactory(&cfg.Kafka)
 			slog.Info("Starting metrics ingestion worker (processing from boxer)")

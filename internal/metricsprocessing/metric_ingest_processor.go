@@ -451,6 +451,9 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 	// Get RPF estimate for this org/instance
 	rpfEstimate := p.store.GetMetricEstimate(ctx, storageProfile.OrganizationID, 10000) // 10 second blocks
 
+	ll.Info("Starting file grouping with estimated records per file",
+		slog.Int64("recordsPerFile", rpfEstimate))
+
 	// Create time bin manager
 	binManager := &TimeBinManager{
 		bins:        make(map[int64]*TimeBin),
