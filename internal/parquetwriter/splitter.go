@@ -60,6 +60,24 @@ func NewFileSplitter(config WriterConfig) *FileSplitter {
 		panic(fmt.Sprintf("failed to build parquet schema: %v", err))
 	}
 
+	// Apply string conversion to schema: any column matching configured prefixes
+	// must be converted to string type in the parquet schema, since we convert
+	// the actual values to strings at write time
+	conversionPrefixes := config.GetStringConversionPrefixes()
+	for nodeName := range nodes {
+		shouldConvert := false
+		for _, prefix := range conversionPrefixes {
+			if strings.HasPrefix(nodeName, prefix) {
+				shouldConvert = true
+				break
+			}
+		}
+		if shouldConvert {
+			// Replace with string node, preserving optional/required status
+			nodes[nodeName] = parquet.Optional(parquet.String())
+		}
+	}
+
 	// Add synthetic chq_id column to schema (injected by WriteBatchRows)
 	nodes["chq_id"] = parquet.Optional(parquet.String())
 
@@ -321,7 +339,12 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 
 		// Write row directly to Parquet
 		if _, err := s.parquetWriter.Write([]map[string]any{stringRow}); err != nil {
-			return fmt.Errorf("write row to parquet: %w", err)
+			// Add debug info about the row that failed
+			debugInfo := fmt.Sprintf("\nRow that failed to write (row %d):\n", i)
+			for k, v := range stringRow {
+				debugInfo += fmt.Sprintf("  %s: %v (%T)\n", k, v, v)
+			}
+			return fmt.Errorf("write row to parquet: %w%s", err, debugInfo)
 		}
 
 		// Update stats and tracking
