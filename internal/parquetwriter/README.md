@@ -11,6 +11,8 @@ High-performance Parquet writer with schema-driven conversion, size-based splitt
 - **Per-File Metadata Collection**: Returns actual TIDs, fingerprints, span/trace IDs for database operations
 - **Direct Parquet Writes**: Uses go-parquet library for 2x faster throughput (100K+ logs/sec)
 
+The schema will be checked as rows are written, and missing columns in a row will be filled with NULL.
+
 ## Architecture
 
 - **UnifiedWriter**: Main implementation coordinating ordering, sizing, and splitting
@@ -69,7 +71,7 @@ schema := reader.GetSchema()
 
 config := parquetwriter.WriterConfig{
     TmpDir:         tmpdir,
-    Schema:         schema, // REQUIRED: Must provide complete schema upfront
+    Schema:         schema,
     RecordsPerFile: 10000,  // Or use parquetwriter.NoRecordLimitPerFile for unlimited
     GroupKeyFunc:   func(row map[string]any) any { return row["group"] },
     NoSplitGroups:  true,
