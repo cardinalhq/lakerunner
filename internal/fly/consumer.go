@@ -39,6 +39,9 @@ type Consumer interface {
 	// CommitPartitionOffsets commits specific offsets for given partitions
 	CommitPartitionOffsets(ctx context.Context, offsets map[int32]int64) error
 
+	// Stats returns current consumer statistics
+	Stats() kafka.ReaderStats
+
 	// Close the consumer
 	Close() error
 }
@@ -290,6 +293,10 @@ func (c *kafkaConsumer) CommitPartitionOffsets(ctx context.Context, offsets map[
 	}
 
 	return c.reader.CommitMessages(ctx, kmsgs...)
+}
+
+func (c *kafkaConsumer) Stats() kafka.ReaderStats {
+	return c.reader.Stats()
 }
 
 func (c *kafkaConsumer) Close() error {
