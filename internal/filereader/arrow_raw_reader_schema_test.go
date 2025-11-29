@@ -93,10 +93,9 @@ func TestArrowRawReader_SchemaExtraction_ColumnNames(t *testing.T) {
 	// Verify simple column name
 	assert.True(t, schema.HasColumn("simple"))
 
-	// Arrow now converts dots to underscores to match OTEL attribute handling
-	// (same as ParquetRawReader)
-	assert.True(t, schema.HasColumn("dotted_name"))
-	assert.True(t, schema.HasColumn("multi_dot_col"))
+	// Arrow preserves dotted names exactly as they are in the schema
+	assert.True(t, schema.HasColumn("dotted.name"))
+	assert.True(t, schema.HasColumn("multi.dot.col"))
 }
 
 // TestArrowRawReader_SchemaExtraction_ReadWithSchema tests that reading rows

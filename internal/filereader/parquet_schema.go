@@ -167,8 +167,7 @@ func extractParquetStatistics(pf *file.Reader) map[string]bool {
 
 // walkArrowField recursively walks an Arrow field and adds columns.
 func walkArrowField(schema *ReaderSchema, field arrow.Field, columnStats map[string]bool) {
-	// Replace dots with underscores to match row key normalization
-	columnName := strings.ReplaceAll(field.Name, ".", "_")
+	columnName := field.Name
 	key := wkk.NewRowKeyFromBytes([]byte(columnName))
 
 	// Map arrow type to our DataType
