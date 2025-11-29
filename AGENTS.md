@@ -252,7 +252,6 @@ Inside the container, memory and CPU limits for Go will match the constraints of
 - When working on SQL, ensure `make test-integration` passes
 - Do what has been asked; nothing more, nothing less
 - "make test-integration" should be run via the sub-agent named "integration-test-runner"
-- "make check" should be run via the sub-agent named check-runner.
 
 ## Specialized Sub-Agents
 
