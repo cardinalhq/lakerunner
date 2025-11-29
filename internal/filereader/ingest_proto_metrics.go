@@ -42,10 +42,10 @@ import (
 //
 // Implements OTELMetricsProvider interface.
 type IngestProtoMetricsReader struct {
-	closed       bool
-	rowCount     int64
-	rowsSkipped  int64
-	batchSize    int
+	closed      bool
+	rowCount    int64
+	rowsSkipped int64
+	batchSize   int
 
 	// Store the original OTEL metrics for exemplar processing
 	orgId       string
