@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -439,8 +440,34 @@ func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers
 func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int64]*TimeBin, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Get schema from reader
-	schema := reader.GetSchema()
+	// Get schema from reader and filter it to match MetricTranslator.filterKeys behavior
+	// The translator removes most resource_ columns, keeping only a specific set
+	originalSchema := reader.GetSchema()
+	schema := filereader.NewReaderSchema()
+
+	keepkeys := map[string]bool{
+		"resource_app":                  true,
+		"resource_container_image_name": true,
+		"resource_container_image_tag":  true,
+		"resource_k8s_cluster_name":     true,
+		"resource_k8s_daemonset_name":   true,
+		"resource_k8s_deployment_name":  true,
+		"resource_k8s_namespace_name":   true,
+		"resource_k8s_pod_ip":           true,
+		"resource_k8s_pod_name":         true,
+		"resource_k8s_statefulset_name": true,
+		"resource_service_name":         true,
+		"resource_service_version":      true,
+	}
+
+	// Copy columns from original schema, filtering out resource_ columns not in keepkeys
+	for _, col := range originalSchema.Columns() {
+		colName := string(col.Name.Value())
+		if strings.HasPrefix(colName, "resource_") && !keepkeys[colName] {
+			continue // Skip this column
+		}
+		schema.AddColumn(col.Name, col.DataType, col.HasNonNull)
+	}
 
 	// Add columns that will be injected by MetricTranslator
 	// These columns are added to every row but aren't in the OTEL schema
