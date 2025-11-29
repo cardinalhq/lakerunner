@@ -60,6 +60,9 @@ func NewFileSplitter(config WriterConfig) *FileSplitter {
 		panic(fmt.Sprintf("failed to build parquet schema: %v", err))
 	}
 
+	// Add synthetic chq_id column to schema (injected by WriteBatchRows)
+	nodes["chq_id"] = parquet.Optional(parquet.String())
+
 	parquetSchema := parquet.NewSchema("lakerunner", parquet.Group(nodes))
 
 	// Build map of expected column names for validation
