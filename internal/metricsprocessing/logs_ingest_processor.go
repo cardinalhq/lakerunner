@@ -387,6 +387,18 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	// Get schema from reader
 	schema := reader.GetSchema()
 
+	// Add columns that will be injected by LogTranslator
+	// These columns are added to every row but aren't in the OTEL schema
+	schema.AddColumn(wkk.RowKeyResourceBucketName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFile, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+
 	binManager := &DateintBinManager{
 		bins:        make(map[int32]*DateintBin),
 		tmpDir:      tmpDir,
