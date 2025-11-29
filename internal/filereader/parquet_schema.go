@@ -138,14 +138,25 @@ func extractParquetStatistics(pf *file.Reader) map[string]bool {
 			schemaCol := pf.MetaData().Schema.Column(colIdx)
 			colName := schemaCol.Name()
 
+			// Skip if we already determined this column has non-null values
+			if columnStats[colName] {
+				continue
+			}
+
 			// Get statistics for this column chunk
 			if stats, err := colChunk.Statistics(); err == nil && stats != nil {
 				// If column has min/max set, it has non-null values
-				// Or if null count is less than total rows, it has non-null values
 				if stats.HasMinMax() {
 					columnStats[colName] = true
 				} else if stats.HasNullCount() && stats.NullCount() < rgMeta.NumRows() {
+					// Null count is less than total rows, so there are non-null values
 					columnStats[colName] = true
+				} else if stats.HasNullCount() && stats.NullCount() == rgMeta.NumRows() {
+					// All values are null in this row group
+					// Only set to false if not already set (another row group might have data)
+					if _, exists := columnStats[colName]; !exists {
+						columnStats[colName] = false
+					}
 				}
 			}
 		}

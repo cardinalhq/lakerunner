@@ -97,20 +97,20 @@ func TestArrowBackendStatistics(t *testing.T) {
 	// Write to a temp file so we can read it with Arrow
 	tmpFile, err := os.CreateTemp(tmpDir, "test-*.parquet")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.Write(buf.Bytes())
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	// Read the parquet file and verify statistics
 	f, err := os.Open(tmpFile.Name())
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	pf, err := file.NewParquetReader(f, file.WithReadProps(nil))
 	require.NoError(t, err)
-	defer pf.Close()
+	defer func() { _ = pf.Close() }()
 
 	// Verify we have row groups
 	require.Greater(t, pf.NumRowGroups(), 0, "Parquet file should have at least one row group")
@@ -256,6 +256,107 @@ func TestArrowBackendStatistics(t *testing.T) {
 	})
 }
 
+// TestArrowBackendAllNullColumn verifies that when we write a column that only contains
+// nulls, the statistics correctly reflect this, and the reader can detect it.
+// This tests the round-trip: write with schema HasNonNull=true, but only write nulls,
+// then read back and verify statistics show it's actually all-null.
+func TestArrowBackendAllNullColumn(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a test schema with a column we'll never populate (only nulls)
+	schema := filereader.NewReaderSchema()
+	schema.AddColumn(wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("name"), filereader.DataTypeString, true)
+	// This column is marked as HasNonNull=true in the schema, but we'll only write nulls
+	schema.AddColumn(wkk.NewRowKey("never_populated"), filereader.DataTypeString, true)
+
+	config := BackendConfig{
+		Type:      BackendArrow,
+		TmpDir:    tmpDir,
+		ChunkSize: 100,
+		Schema:    schema,
+	}
+
+	backend, err := NewArrowBackend(config)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Write test data - never include "never_populated" field (will be null)
+	batch := pipeline.GetBatch()
+	batch.AppendRow(pipeline.Row{
+		wkk.NewRowKey("id"):   int64(1),
+		wkk.NewRowKey("name"): "Alice",
+		// never_populated is omitted (null)
+	})
+	batch.AppendRow(pipeline.Row{
+		wkk.NewRowKey("id"):   int64(2),
+		wkk.NewRowKey("name"): "Bob",
+		// never_populated is omitted (null)
+	})
+	batch.AppendRow(pipeline.Row{
+		wkk.NewRowKey("id"):   int64(3),
+		wkk.NewRowKey("name"): "Charlie",
+		// never_populated is omitted (null)
+	})
+
+	err = backend.WriteBatch(ctx, batch)
+	require.NoError(t, err)
+	pipeline.ReturnBatch(batch)
+
+	// Close backend and get the parquet file
+	var buf bytes.Buffer
+	metadata, err := backend.Close(context.Background(), &buf)
+	require.NoError(t, err)
+	require.NotNil(t, metadata)
+
+	// Write to a temp file so we can read it back
+	tmpFile, err := os.CreateTemp(tmpDir, "test-*.parquet")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	_, err = tmpFile.Write(buf.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	// Read the parquet file using our Arrow reader
+	f, err := os.Open(tmpFile.Name())
+	require.NoError(t, err)
+	defer func() { _ = f.Close() }()
+
+	// Use our Arrow reader to extract schema with statistics
+	arrowReader, err := filereader.NewArrowRawReader(ctx, f, 1000)
+	require.NoError(t, err)
+	defer func() { _ = arrowReader.Close() }()
+
+	extractedSchema := arrowReader.GetSchema()
+	require.NotNil(t, extractedSchema)
+
+	// Verify the schema correctly identifies the all-null column
+	columns := extractedSchema.Columns()
+
+	var foundNeverPopulated bool
+	for _, col := range columns {
+		if col.Name.Value() == "never_populated" {
+			foundNeverPopulated = true
+			// The column should be marked as HasNonNull=false because statistics
+			// show it only contains nulls (no min/max set, or null count == total rows)
+			require.False(t, col.HasNonNull,
+				"never_populated column should be detected as all-null based on statistics")
+		}
+	}
+
+	require.True(t, foundNeverPopulated, "never_populated column should exist in schema")
+
+	// Also verify the other columns are correctly marked as having data
+	for _, col := range columns {
+		if col.Name.Value() == "id" || col.Name.Value() == "name" {
+			require.True(t, col.HasNonNull,
+				"%s column should be marked as having non-null values", col.Name.Value())
+		}
+	}
+}
+
 // TestArrowBackendStatisticsEnabled verifies that statistics are enabled by default
 // in the Arrow parquet writer configuration.
 func TestArrowBackendStatisticsEnabled(t *testing.T) {
@@ -292,19 +393,19 @@ func TestArrowBackendStatisticsEnabled(t *testing.T) {
 	// Verify the file has statistics
 	tmpFile, err := os.CreateTemp(tmpDir, "test-*.parquet")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	_, err = tmpFile.Write(buf.Bytes())
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	f, err := os.Open(tmpFile.Name())
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	pf, err := file.NewParquetReader(f)
 	require.NoError(t, err)
-	defer pf.Close()
+	defer func() { _ = pf.Close() }()
 
 	require.Greater(t, pf.NumRowGroups(), 0)
 
