@@ -80,7 +80,7 @@ func NewArrowRawReader(ctx context.Context, reader parquet.ReaderAtSeeker, batch
 		_ = pf.Close()
 		return nil, fmt.Errorf("failed to get arrow schema: %w", err)
 	}
-	readerSchema := extractSchemaFromArrowSchema(arrowSchema)
+	readerSchema := extractSchemaFromArrowSchema(arrowSchema, pf)
 
 	return &ArrowRawReader{
 		pr:           pf,

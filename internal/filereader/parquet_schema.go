@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/parquet-go/parquet-go"
 
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
@@ -98,25 +99,79 @@ func parquetTypeToDataType(ptype parquet.Type) DataType {
 }
 
 // extractSchemaFromArrowSchema extracts schema from Arrow schema metadata.
-func extractSchemaFromArrowSchema(arrowSchema *arrow.Schema) *ReaderSchema {
+// It uses parquet file statistics to determine if columns contain non-null values.
+// If statistics are unavailable, defaults to HasNonNull=true (safe assumption).
+func extractSchemaFromArrowSchema(arrowSchema *arrow.Schema, pf *file.Reader) *ReaderSchema {
 	schema := NewReaderSchema()
+
+	// Build map of column statistics
+	columnStats := extractParquetStatistics(pf)
 
 	// Walk through all fields in the schema
 	for _, field := range arrowSchema.Fields() {
-		walkArrowField(schema, field)
+		walkArrowField(schema, field, columnStats)
 	}
 
 	return schema
 }
 
+// extractParquetStatistics extracts column statistics from parquet file.
+// Returns map of columnName -> hasNonNull.
+func extractParquetStatistics(pf *file.Reader) map[string]bool {
+	columnStats := make(map[string]bool)
+
+	if pf == nil {
+		return columnStats
+	}
+
+	// Check statistics across all row groups
+	for rgIdx := 0; rgIdx < pf.NumRowGroups(); rgIdx++ {
+		rgMeta := pf.MetaData().RowGroup(rgIdx)
+
+		for colIdx := 0; colIdx < rgMeta.NumColumns(); colIdx++ {
+			colChunk, err := rgMeta.ColumnChunk(colIdx)
+			if err != nil {
+				continue
+			}
+
+			// Get column name from schema
+			schemaCol := pf.MetaData().Schema.Column(colIdx)
+			colName := schemaCol.Name()
+
+			// Get statistics for this column chunk
+			if stats, err := colChunk.Statistics(); err == nil && stats != nil {
+				// If column has min/max set, it has non-null values
+				// Or if null count is less than total rows, it has non-null values
+				if stats.HasMinMax() {
+					columnStats[colName] = true
+				} else if stats.HasNullCount() && stats.NullCount() < rgMeta.NumRows() {
+					columnStats[colName] = true
+				}
+			}
+		}
+	}
+
+	return columnStats
+}
+
 // walkArrowField recursively walks an Arrow field and adds columns.
-func walkArrowField(schema *ReaderSchema, field arrow.Field) {
+func walkArrowField(schema *ReaderSchema, field arrow.Field, columnStats map[string]bool) {
 	columnName := field.Name
 	key := wkk.NewRowKeyFromBytes([]byte(columnName))
 
 	// Map arrow type to our DataType
 	dataType := arrowTypeToDataType(field.Type)
-	schema.AddColumn(key, dataType, !field.Nullable)
+
+	// Determine if column has non-null values:
+	// 1. If we have statistics showing non-null values, use that
+	// 2. Otherwise, default to true (assume column has data unless proven otherwise)
+	// Never use field.Nullable - that just means the column CAN contain nulls
+	hasNonNull := true
+	if statsValue, hasStats := columnStats[columnName]; hasStats {
+		hasNonNull = statsValue
+	}
+
+	schema.AddColumn(key, dataType, hasNonNull)
 }
 
 // arrowTypeToDataType converts Arrow type to our DataType.
