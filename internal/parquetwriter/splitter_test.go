@@ -156,8 +156,8 @@ func TestFileSplitterWriteBatchRows_EmptyBatch(t *testing.T) {
 	}
 
 	// Should not create any files
-	if splitter.bufferFile != nil {
-		t.Error("Expected no current buffer file for empty batch")
+	if splitter.parquetWriter != nil {
+		t.Error("Expected no parquet writer for empty batch")
 	}
 }
 
@@ -178,9 +178,9 @@ func TestFileSplitterWriteBatchRows_SingleBatch(t *testing.T) {
 		t.Fatalf("WriteBatchRows failed: %v", err)
 	}
 
-	// Should have created a buffer file
-	if splitter.bufferFile == nil {
-		t.Error("Expected current buffer file to be created")
+	// Should have created a parquet writer
+	if splitter.parquetWriter == nil {
+		t.Error("Expected parquet writer to be created")
 	}
 	if splitter.currentRows != 3 {
 		t.Errorf("Expected 3 current rows, got %d", splitter.currentRows)
@@ -380,6 +380,96 @@ func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
 	}
 }
 
+func TestFileSplitterWriteBatchRows_NoSplitGroups(t *testing.T) {
+	tmpDir := t.TempDir()
+	config := WriterConfig{
+		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
+		RecordsPerFile: 5, // Small limit to trigger splits
+		GroupKeyFunc: func(row map[string]any) any {
+			return row["group"]
+		},
+		NoSplitGroups: true,
+	}
+
+	splitter := NewFileSplitter(config)
+	ctx := context.Background()
+
+	// First batch: 3 rows of group "A"
+	batch1 := createTestBatchWithGroups(t, []string{"A", "A", "A"})
+	err := splitter.WriteBatchRows(ctx, batch1)
+	if err != nil {
+		t.Fatalf("WriteBatchRows batch1 failed: %v", err)
+	}
+
+	// Second batch: 7 more rows of group "A" - total 10 rows in group A
+	// This exceeds RecordsPerFile (5) but should NOT split because we're still in group A
+	batch2 := createTestBatchWithGroups(t, []string{"A", "A", "A", "A", "A", "A", "A"})
+	err = splitter.WriteBatchRows(ctx, batch2)
+	if err != nil {
+		t.Fatalf("WriteBatchRows batch2 failed: %v", err)
+	}
+
+	// Third batch: switch to group "B" with 8 rows
+	// This should trigger a split because group changed from A to B
+	batch3 := createTestBatchWithGroups(t, []string{"B", "B", "B", "B", "B", "B", "B", "B"})
+	err = splitter.WriteBatchRows(ctx, batch3)
+	if err != nil {
+		t.Fatalf("WriteBatchRows batch3 failed: %v", err)
+	}
+
+	// Fourth batch: 3 rows of group "C"
+	// Should trigger another split because group changed from B to C
+	batch4 := createTestBatchWithGroups(t, []string{"C", "C", "C"})
+	err = splitter.WriteBatchRows(ctx, batch4)
+	if err != nil {
+		t.Fatalf("WriteBatchRows batch4 failed: %v", err)
+	}
+
+	results, err := splitter.Close(ctx)
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Should have exactly 3 files (one per group), not split by row count
+	if len(results) != 3 {
+		t.Errorf("Expected 3 result files (one per group), got %d", len(results))
+		for i, result := range results {
+			t.Logf("  File %d: %d records", i, result.RecordCount)
+		}
+		t.FailNow()
+	}
+
+	// Verify row counts: 10 + 8 + 3 = 21 total rows
+	totalRows := int64(0)
+	for i, result := range results {
+		totalRows += result.RecordCount
+		t.Logf("File %d: %d records", i, result.RecordCount)
+	}
+
+	if totalRows != 21 {
+		t.Errorf("Expected 21 total rows across all files, got %d", totalRows)
+	}
+
+	// First file should have 10 rows (group A - not split despite exceeding RecordsPerFile)
+	if results[0].RecordCount != 10 {
+		t.Errorf("Expected first file to have 10 rows (group A), got %d", results[0].RecordCount)
+	}
+	// Second file should have 8 rows (group B)
+	if results[1].RecordCount != 8 {
+		t.Errorf("Expected second file to have 8 rows (group B), got %d", results[1].RecordCount)
+	}
+	// Third file should have 3 rows (group C)
+	if results[2].RecordCount != 3 {
+		t.Errorf("Expected third file to have 3 rows (group C), got %d", results[2].RecordCount)
+	}
+
+	// Clean up
+	for _, result := range results {
+		_ = os.Remove(result.FileName)
+	}
+}
+
 func TestFileSplitterClose_MultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
@@ -436,21 +526,21 @@ func TestFileSplitterAbort(t *testing.T) {
 		t.Fatalf("WriteBatchRows failed: %v", err)
 	}
 
-	// Get buffer file name before abort
+	// Get temp file name before abort
 	var fileName string
-	if splitter.bufferFile != nil {
-		fileName = splitter.bufferFile.Name()
+	if splitter.tmpFile != nil {
+		fileName = splitter.tmpFile.Name()
 	}
 
 	// Abort should clean up
 	splitter.Abort()
 
-	// Check that buffer file is cleaned up
-	if splitter.bufferFile != nil {
-		t.Error("Expected bufferFile to be nil after abort")
+	// Check that writer and temp file are cleaned up
+	if splitter.parquetWriter != nil {
+		t.Error("Expected parquetWriter to be nil after abort")
 	}
-	if splitter.encoder != nil {
-		t.Error("Expected encoder to be nil after abort")
+	if splitter.tmpFile != nil {
+		t.Error("Expected tmpFile to be nil after abort")
 	}
 	if !splitter.closed {
 		t.Error("Expected splitter to be closed after abort")
