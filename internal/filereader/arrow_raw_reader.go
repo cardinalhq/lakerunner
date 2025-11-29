@@ -131,7 +131,8 @@ func (r *ArrowRawReader) Next(ctx context.Context) (*Batch, error) {
 			if !col.IsNull(i) {
 				val := convertArrowValue(col, i)
 				if val != nil {
-					br[wkk.NewRowKeyFromBytes([]byte(f.Name))] = val
+					fieldName := strings.ReplaceAll(f.Name, ".", "_")
+					br[wkk.NewRowKeyFromBytes([]byte(fieldName))] = val
 				}
 			}
 		}
