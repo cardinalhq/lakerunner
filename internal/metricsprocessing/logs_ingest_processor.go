@@ -328,6 +328,32 @@ func (p *LogIngestProcessor) GetTargetRecordCount(ctx context.Context, groupingK
 
 // createLogReaderStack creates a reader stack: Translation(LogReader(file))
 func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
+	// Determine file type from extension for logging
+	var fileType string
+	switch {
+	case strings.HasSuffix(tmpFilename, ".parquet"):
+		fileType = "parquet"
+	case strings.HasSuffix(tmpFilename, ".json.gz"):
+		fileType = "json.gz"
+	case strings.HasSuffix(tmpFilename, ".json"):
+		fileType = "json"
+	case strings.HasSuffix(tmpFilename, ".binpb.gz"):
+		fileType = "binpb.gz"
+	case strings.HasSuffix(tmpFilename, ".binpb"):
+		fileType = "binpb"
+	case strings.HasSuffix(tmpFilename, ".csv.gz"):
+		fileType = "csv.gz"
+	case strings.HasSuffix(tmpFilename, ".csv"):
+		fileType = "csv"
+	default:
+		fileType = "unknown"
+	}
+
+	slog.Info("Reading log file",
+		"fileType", fileType,
+		"objectID", objectID,
+		"bucket", bucket)
+
 	reader, err := p.createLogReader(tmpFilename, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log reader: %w", err)
