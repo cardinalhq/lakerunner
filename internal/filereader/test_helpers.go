@@ -14,11 +14,6 @@
 
 package filereader
 
-import "testing"
-
-// init sets up test environment to fail hard on schema violations
-func init() {
-	if testing.Testing() {
-		DebugSchemaErrors = true
-	}
-}
+// Test helpers for filereader package.
+// Schema normalization now always returns errors for violations,
+// so no special test setup is needed.

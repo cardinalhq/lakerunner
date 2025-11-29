@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -25,11 +26,36 @@ import (
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
-// DebugSchemaErrors controls whether normalizeRow returns errors or just increments counters.
-// When true, schema violations and type conversion failures cause errors to be returned.
-// When false (default), violations are counted but silently dropped.
-// This should be set to true in tests to catch schema bugs early.
-var DebugSchemaErrors = false
+// ErrRowNormalization is a sentinel error indicating row normalization failed.
+// Use errors.Is(err, ErrRowNormalization) to check for this error.
+// Use errors.As(err, &RowNormalizationError{}) to extract details.
+var ErrRowNormalization = errors.New("row normalization failed")
+
+// RowNormalizationError represents an error that occurred while normalizing a single row.
+// These errors are row-specific and indicate data quality issues rather than systemic failures.
+type RowNormalizationError struct {
+	// Column is the name of the column that caused the error
+	Column string
+	// Reason describes what went wrong
+	Reason string
+	// Err is the underlying error if any
+	Err error
+}
+
+func (e *RowNormalizationError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("%s: column %q: %s: %v", ErrRowNormalization, e.Column, e.Reason, e.Err)
+	}
+	return fmt.Sprintf("%s: column %q: %s", ErrRowNormalization, e.Column, e.Reason)
+}
+
+func (e *RowNormalizationError) Unwrap() error {
+	return e.Err
+}
+
+func (e *RowNormalizationError) Is(target error) bool {
+	return target == ErrRowNormalization
+}
 
 // DataType represents the type of data in a column.
 type DataType int
@@ -173,8 +199,13 @@ func promoteType(a, b DataType) DataType {
 }
 
 // normalizeRow normalizes a row in-place according to the schema, performing type conversions
-// and removing keys with null values. Columns not in schema are dropped and counted as errors.
-// When DebugSchemaErrors is true, returns an error on schema violations or conversion failures.
+// and removing keys with null values.
+//
+// Returns a RowNormalizationError if:
+// - A column exists in the row but not in the schema (indicates schema extraction bug)
+// - Type conversion fails for a column value
+//
+// These errors indicate data quality issues and should cause the row to be rejected.
 func normalizeRow(ctx context.Context, row pipeline.Row, schema *ReaderSchema) error {
 	// Track keys to delete (can't delete while iterating)
 	var keysToDelete []wkk.RowKey
@@ -189,30 +220,31 @@ func normalizeRow(ctx context.Context, row pipeline.Row, schema *ReaderSchema) e
 		col, exists := schema.columns[key]
 		if !exists {
 			// Column not in schema - this is a bug in schema extraction
-			// Drop the column and increment error counter
-			keysToDelete = append(keysToDelete, key)
+			// Increment error counter and return error
+			columnName := wkk.RowKeyValue(key)
 			schemaViolationsCounter.Add(ctx, 1, otelmetric.WithAttributes(
-				attribute.String("column", wkk.RowKeyValue(key)),
+				attribute.String("column", columnName),
 			))
-			if DebugSchemaErrors {
-				return fmt.Errorf("schema violation: column %q not in schema", wkk.RowKeyValue(key))
+			return &RowNormalizationError{
+				Column: columnName,
+				Reason: "column not in schema",
 			}
-			continue
 		}
 
 		// Convert value to match schema type
 		converted, err := convertValue(value, col.DataType)
 		if err != nil {
-			// If conversion fails, drop the value (downstream consumers expect typed values)
-			keysToDelete = append(keysToDelete, key)
+			// Conversion failed - increment counter and return error
+			columnName := wkk.RowKeyValue(key)
 			typeConversionFailedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-				attribute.String("column", wkk.RowKeyValue(key)),
+				attribute.String("column", columnName),
 				attribute.String("target_type", col.DataType.String()),
 			))
-			if DebugSchemaErrors {
-				return fmt.Errorf("type conversion failed for column %q to %s: %w", wkk.RowKeyValue(key), col.DataType.String(), err)
+			return &RowNormalizationError{
+				Column: columnName,
+				Reason: fmt.Sprintf("type conversion to %s failed", col.DataType.String()),
+				Err:    err,
 			}
-			continue
 		}
 
 		// Update in-place

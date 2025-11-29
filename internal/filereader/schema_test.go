@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -140,27 +141,25 @@ func TestNormalizeRow_EmptyStringIsNotNull(t *testing.T) {
 	assert.Equal(t, "", row[wkk.NewRowKey("col1")])
 }
 
-// TestNormalizeRow_UnknownColumns tests that columns not in schema are passed through.
+// TestNormalizeRow_UnknownColumns tests that columns not in schema cause an error.
 func TestNormalizeRow_UnknownColumns(t *testing.T) {
-	// Temporarily disable debug mode to test production behavior (silent dropping)
-	oldDebug := DebugSchemaErrors
-	DebugSchemaErrors = false
-	defer func() { DebugSchemaErrors = oldDebug }()
-
 	schema := NewReaderSchema()
 	schema.AddColumn(wkk.NewRowKey("known_col"), DataTypeString, true)
 
 	row := pipeline.GetPooledRow()
 	row[wkk.NewRowKey("known_col")] = "known"
 	row[wkk.NewRowKey("unknown_col")] = "unknown"
-
-	// Normalize in-place
-	_ = normalizeRow(context.Background(), row, schema)
 	defer pipeline.ReturnPooledRow(row)
 
-	// Known column should be present, unknown column should be dropped
-	assert.Equal(t, "known", row[wkk.NewRowKey("known_col")])
-	assert.NotContains(t, row, wkk.NewRowKey("unknown_col"), "Unknown column should be dropped")
+	// Normalize should return an error for unknown column
+	err := normalizeRow(context.Background(), row, schema)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRowNormalization), "Error should be ErrRowNormalization")
+
+	var rowErr *RowNormalizationError
+	require.True(t, errors.As(err, &rowErr))
+	assert.Equal(t, "unknown_col", rowErr.Column)
+	assert.Equal(t, "column not in schema", rowErr.Reason)
 }
 
 // TestConvertValue tests individual value conversions.
@@ -222,26 +221,26 @@ func TestConvertValue(t *testing.T) {
 	}
 }
 
-// TestConvertValue_Fallback tests that failed conversions drop the value.
-func TestConvertValue_Fallback(t *testing.T) {
-	// Temporarily disable debug mode to test production behavior (silent dropping)
-	oldDebug := DebugSchemaErrors
-	DebugSchemaErrors = false
-	defer func() { DebugSchemaErrors = oldDebug }()
-
+// TestNormalizeRow_ConversionFailure tests that failed conversions return an error.
+func TestNormalizeRow_ConversionFailure(t *testing.T) {
 	schema := NewReaderSchema()
 	schema.AddColumn(wkk.NewRowKey("col1"), DataTypeInt64, true)
 
 	// Create a row with a value that can't be converted to int64
 	row := pipeline.GetPooledRow()
 	row[wkk.NewRowKey("col1")] = "not_a_number"
-
-	// Normalize in-place
-	_ = normalizeRow(context.Background(), row, schema)
 	defer pipeline.ReturnPooledRow(row)
 
-	// Value should be dropped if conversion fails
-	assert.NotContains(t, row, wkk.NewRowKey("col1"), "Value that fails conversion should be dropped")
+	// Normalize should return an error for conversion failure
+	err := normalizeRow(context.Background(), row, schema)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRowNormalization), "Error should be ErrRowNormalization")
+
+	var rowErr *RowNormalizationError
+	require.True(t, errors.As(err, &rowErr))
+	assert.Equal(t, "col1", rowErr.Column)
+	assert.Contains(t, rowErr.Reason, "type conversion to int64 failed")
+	assert.Error(t, rowErr.Err, "Should have underlying conversion error")
 }
 
 // TestReaderSchema_AddColumn tests schema column addition and type promotion.
