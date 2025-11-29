@@ -3,6 +3,7 @@
 ## Test Configuration
 
 All tests run with production constraints:
+
 - **GOGC=50** (GC when heap grows 50% instead of default 100%)
 - **GOMAXPROCS=1** (single CPU core)
 - **GOMEMLIMIT=2276 MB** (adjusted for pre-allocated data)
@@ -11,7 +12,6 @@ All tests run with production constraints:
   - Total: 2276 MB
 - **Pre-allocated data**: 400k rows allocated once (590 MB RSS), each test uses first N rows
 - **Metrics measure backend overhead only** (baseline subtracted)
-- **Direct Parquet writes**: No intermediate CBOR codec (removed as of 2025)
 
 ## Performance Summary
 
@@ -35,6 +35,7 @@ All tests run with production constraints:
 ### 1. Go-Parquet Dominates Across All Batch Sizes
 
 **Performance advantage**: Go-parquet is **39-224% faster** across all batch sizes:
+
 - **10K rows**: go-parquet **160% faster** (97,359 vs 37,471 logs/sec)
 - **25K rows**: go-parquet **224% faster** (104,825 vs 32,360 logs/sec)
 - **50K rows**: go-parquet **176% faster** (106,663 vs 38,608 logs/sec)
@@ -47,6 +48,7 @@ All tests run with production constraints:
 ### 2. Memory Overhead Comparison
 
 #### Go-Parquet (Low Overhead, Consistent)
+
 - **Heap Delta**: 330-371 MB across all sizes (very consistent)
 - **RSS Delta**: 0.1-56.3 MB (minimal except initial 10K run)
 - **Total Allocations**: 841-2,242 MB (2.1-5.6 MB per 1K rows)
@@ -54,6 +56,7 @@ All tests run with production constraints:
 - **GC Pause**: 0.17-0.59 ms (sub-millisecond)
 
 #### Arrow (High Memory Churn)
+
 - **Heap Delta**: 462-1,928 MB (1.2-5.4x more than go-parquet)
 - **RSS Delta**: 0-720 MB (spikes at 100K-200K)
 - **Total Allocations**: 4,488-44,729 MB (5.3-20.0x more than go-parquet!)
@@ -61,6 +64,7 @@ All tests run with production constraints:
 - **GC Pause**: 0.71-3.94 ms (4.2-6.7x longer than go-parquet)
 
 **Why Go-Parquet Wins**:
+
 1. **Minimal allocations**: 5-20x less memory churn than Arrow
 2. **Predictable GC**: 4-10 GC runs vs Arrow's 14-59
 3. **Sub-millisecond pauses**: 0.17-0.59ms vs Arrow's 0.71-3.94ms
@@ -69,6 +73,7 @@ All tests run with production constraints:
 ### 3. Throughput Scaling
 
 #### Go-Parquet (Stable, High Throughput)
+
 - 10K → 25K: **+7.7%** throughput increase
 - 25K → 50K: **+1.8%** (stable)
 - 50K → 100K: **+5.9%** (continues scaling)
@@ -78,6 +83,7 @@ All tests run with production constraints:
 **Consistent ~97-113K logs/sec across all sizes** - excellent predictability. Peaks at 100K rows.
 
 #### Arrow (Accelerates but Never Catches Up)
+
 - 10K → 25K: **-13.6%** (slowdown, GC overhead dominates)
 - 25K → 50K: **+19.3%** (recovery as batching benefits emerge)
 - 50K → 100K: **+18.2%** (continues improving)
@@ -89,11 +95,13 @@ Arrow's performance **improves with batch size** - starts slow (37K logs/sec at 
 ### 4. File Size Efficiency
 
 Arrow produces **3-4% smaller output files** across all batch sizes:
+
 - 10K: 698 KB vs 723 KB (-3.5%)
 - 50K: 3,469 KB vs 3,596 KB (-3.5%)
 - 400K: 27,734 KB vs 28,764 KB (-3.6%)
 
 **However**: The 3-4% storage savings is vastly offset by:
+
 - 64-224% slower processing time
 - 5-20x more memory allocations
 - 3.5-5.9x more GC runs
@@ -123,6 +131,7 @@ Comparing new direct-to-Parquet vs old CBOR-based implementation (go-parquet):
 Based on comprehensive benchmarking, **go-parquet is the clear winner** for all batch sizes:
 
 ✅ **Go-Parquet Benefits**:
+
 - **64-224% faster** throughput across all batch sizes
 - Consistent 97-113K logs/sec performance
 - Minimal memory overhead (330-371 MB heap delta)
@@ -132,6 +141,7 @@ Based on comprehensive benchmarking, **go-parquet is the clear winner** for all 
 - **Recommended for all production workloads**
 
 ❌ **Arrow Drawbacks**:
+
 - 39-224% slower than go-parquet at all batch sizes
 - High allocation overhead (5-20x more than go-parquet)
 - 3.5-5.9x more GC runs
@@ -142,6 +152,7 @@ Based on comprehensive benchmarking, **go-parquet is the clear winner** for all 
 ### Hardware Sizing
 
 **For typical workloads (all batch sizes)**:
+
 - **Backend**: go-parquet
 - **RAM per worker**: 1.5-2 GB
 - **Expected throughput**: ~100-113K logs/sec per core
@@ -152,6 +163,7 @@ Based on comprehensive benchmarking, **go-parquet is the clear winner** for all 
 Arrow's columnar approach creates more allocations than it saves in processing time. Even at 400K rows where Arrow performs best, it's still **64% slower** than go-parquet while using **5.4x more heap** and producing **20x more allocations**.
 
 The 3-4% file size savings doesn't offset:
+
 - 64-224% slower processing (higher CPU costs)
 - 5-20x memory churn (higher GC overhead)
 - Unpredictable RSS spikes (harder capacity planning)
@@ -159,6 +171,7 @@ The 3-4% file size savings doesn't offset:
 ## Benchmark Methodology
 
 Data generated with synthetic OTEL log generator (`internal/perftest/synthetic_data.go`):
+
 - **400k rows pre-allocated** at benchmark start
 - Each test uses **first N batches** from pool (10 batches = 10K rows, etc.)
 - **Baseline memory measured** before backend processing starts
@@ -173,6 +186,7 @@ Data generated with synthetic OTEL log generator (`internal/perftest/synthetic_d
 - **Direct Parquet writes**: No intermediate CBOR codec (removed as of 2025)
 
 This approach ensures:
+
 1. Input data doesn't pollute memory measurements
 2. Backend overhead is isolated and accurate
 3. Tests compare apples-to-apples across all sizes
