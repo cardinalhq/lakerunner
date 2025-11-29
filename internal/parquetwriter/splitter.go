@@ -322,21 +322,6 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 			}
 		}
 
-		// Check for group change within batch (if NoSplitGroups is enabled)
-		if s.config.NoSplitGroups && s.config.GroupKeyFunc != nil && s.currentGroup != nil {
-			rowGroup := s.config.GroupKeyFunc(stringRow)
-			if rowGroup != s.currentGroup {
-				// Group changed - finish current file before writing this row
-				if err := s.finishCurrentFile(); err != nil {
-					return fmt.Errorf("finish current file on group change: %w", err)
-				}
-				// Start new file
-				if err := s.startNewParquetWriter(); err != nil {
-					return fmt.Errorf("start new parquet writer after group change: %w", err)
-				}
-			}
-		}
-
 		// Write row directly to Parquet
 		if _, err := s.parquetWriter.Write([]map[string]any{stringRow}); err != nil {
 			// Add debug info about the row that failed
