@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-go/v18/parquet/file"
+	pqmetadata "github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -140,6 +141,15 @@ func TestArrowBackendStatistics(t *testing.T) {
 		require.True(t, stats.HasMinMax(), "id column should have min/max values")
 		require.True(t, stats.HasNullCount(), "id column should have null count")
 		require.Equal(t, int64(0), stats.NullCount(), "id column should have no nulls")
+
+		// Verify min/max values are correct (we wrote 1, 2, 3)
+		minBytes := stats.EncodeMin()
+		maxBytes := stats.EncodeMax()
+		colDescr := stats.Descr()
+		minVal := pqmetadata.GetStatValue(colDescr.PhysicalType(), minBytes)
+		maxVal := pqmetadata.GetStatValue(colDescr.PhysicalType(), maxBytes)
+		require.Equal(t, int64(1), minVal, "id min should be 1")
+		require.Equal(t, int64(3), maxVal, "id max should be 3")
 	})
 
 	t.Run("name column has statistics", func(t *testing.T) {
@@ -156,6 +166,16 @@ func TestArrowBackendStatistics(t *testing.T) {
 		require.True(t, stats.HasMinMax(), "name column should have min/max values")
 		require.True(t, stats.HasNullCount(), "name column should have null count")
 		require.Equal(t, int64(0), stats.NullCount(), "name column should have no nulls")
+
+		// Verify min/max values are correct (we wrote "Alice", "Bob", "Charlie")
+		// String comparison is lexicographic
+		minBytes := stats.EncodeMin()
+		maxBytes := stats.EncodeMax()
+		colDescr := stats.Descr()
+		minVal := pqmetadata.GetStatValue(colDescr.PhysicalType(), minBytes)
+		maxVal := pqmetadata.GetStatValue(colDescr.PhysicalType(), maxBytes)
+		require.Equal(t, "Alice", string(minVal.([]byte)), "name min should be 'Alice'")
+		require.Equal(t, "Charlie", string(maxVal.([]byte)), "name max should be 'Charlie'")
 	})
 
 	t.Run("score column has statistics", func(t *testing.T) {
@@ -172,6 +192,15 @@ func TestArrowBackendStatistics(t *testing.T) {
 		require.True(t, stats.HasMinMax(), "score column should have min/max values")
 		require.True(t, stats.HasNullCount(), "score column should have null count")
 		require.Equal(t, int64(0), stats.NullCount(), "score column should have no nulls")
+
+		// Verify min/max values are correct (we wrote 95.5, 87.3, 92.1)
+		minBytes := stats.EncodeMin()
+		maxBytes := stats.EncodeMax()
+		colDescr := stats.Descr()
+		minVal := pqmetadata.GetStatValue(colDescr.PhysicalType(), minBytes)
+		maxVal := pqmetadata.GetStatValue(colDescr.PhysicalType(), maxBytes)
+		require.Equal(t, 87.3, minVal.(float64), "score min should be 87.3")
+		require.Equal(t, 95.5, maxVal.(float64), "score max should be 95.5")
 	})
 
 	t.Run("active column has statistics", func(t *testing.T) {
@@ -188,6 +217,16 @@ func TestArrowBackendStatistics(t *testing.T) {
 		require.True(t, stats.HasMinMax(), "active column should have min/max values")
 		require.True(t, stats.HasNullCount(), "active column should have null count")
 		require.Equal(t, int64(0), stats.NullCount(), "active column should have no nulls")
+
+		// Verify min/max values are correct (we wrote true, false, true)
+		// For boolean, false < true
+		minBytes := stats.EncodeMin()
+		maxBytes := stats.EncodeMax()
+		colDescr := stats.Descr()
+		minVal := pqmetadata.GetStatValue(colDescr.PhysicalType(), minBytes)
+		maxVal := pqmetadata.GetStatValue(colDescr.PhysicalType(), maxBytes)
+		require.Equal(t, false, minVal.(bool), "active min should be false")
+		require.Equal(t, true, maxVal.(bool), "active max should be true")
 	})
 
 	t.Run("nullable_field column has statistics showing nulls", func(t *testing.T) {
@@ -205,8 +244,15 @@ func TestArrowBackendStatistics(t *testing.T) {
 		require.True(t, stats.HasNullCount(), "nullable_field column should have null count")
 		require.Equal(t, int64(2), stats.NullCount(), "nullable_field should have 2 nulls")
 
-		// Should still have min/max for the one non-null value
+		// Should still have min/max for the one non-null value ("has value")
 		require.True(t, stats.HasMinMax(), "nullable_field should have min/max even with some nulls")
+		minBytes := stats.EncodeMin()
+		maxBytes := stats.EncodeMax()
+		colDescr := stats.Descr()
+		minVal := pqmetadata.GetStatValue(colDescr.PhysicalType(), minBytes)
+		maxVal := pqmetadata.GetStatValue(colDescr.PhysicalType(), maxBytes)
+		require.Equal(t, "has value", string(minVal.([]byte)), "nullable_field min should be 'has value'")
+		require.Equal(t, "has value", string(maxVal.([]byte)), "nullable_field max should be 'has value'")
 	})
 }
 
