@@ -470,6 +470,77 @@ func TestFileSplitterWriteBatchRows_NoSplitGroups(t *testing.T) {
 	}
 }
 
+func TestFileSplitterWriteBatchRows_NoSplitGroups_SingleLargeBatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	config := WriterConfig{
+		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
+		RecordsPerFile: 5, // Small limit to trigger splits
+		GroupKeyFunc: func(row map[string]any) any {
+			return row["group"]
+		},
+		NoSplitGroups: true,
+	}
+
+	splitter := NewFileSplitter(config)
+	ctx := context.Background()
+
+	// Single large batch with mixed groups: 10xA, 8xB, 3xC
+	// This tests that WriteBatchRows can handle group transitions within a single batch
+	batch := createTestBatchWithGroups(t, []string{
+		"A", "A", "A", "A", "A", "A", "A", "A", "A", "A", // 10 rows of A
+		"B", "B", "B", "B", "B", "B", "B", "B", // 8 rows of B
+		"C", "C", "C", // 3 rows of C
+	})
+	err := splitter.WriteBatchRows(ctx, batch)
+	if err != nil {
+		t.Fatalf("WriteBatchRows failed: %v", err)
+	}
+
+	results, err := splitter.Close(ctx)
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Should have exactly 3 files (one per group)
+	if len(results) != 3 {
+		t.Errorf("Expected 3 result files (one per group), got %d", len(results))
+		for i, result := range results {
+			t.Logf("  File %d: %d records", i, result.RecordCount)
+		}
+		t.FailNow()
+	}
+
+	// Verify row counts: 10 + 8 + 3 = 21 total rows
+	totalRows := int64(0)
+	for i, result := range results {
+		totalRows += result.RecordCount
+		t.Logf("File %d: %d records", i, result.RecordCount)
+	}
+
+	if totalRows != 21 {
+		t.Errorf("Expected 21 total rows across all files, got %d", totalRows)
+	}
+
+	// First file should have 10 rows (group A)
+	if results[0].RecordCount != 10 {
+		t.Errorf("Expected first file to have 10 rows (group A), got %d", results[0].RecordCount)
+	}
+	// Second file should have 8 rows (group B)
+	if results[1].RecordCount != 8 {
+		t.Errorf("Expected second file to have 8 rows (group B), got %d", results[1].RecordCount)
+	}
+	// Third file should have 3 rows (group C)
+	if results[2].RecordCount != 3 {
+		t.Errorf("Expected third file to have 3 rows (group C), got %d", results[2].RecordCount)
+	}
+
+	// Clean up
+	for _, result := range results {
+		_ = os.Remove(result.FileName)
+	}
+}
+
 func TestFileSplitterClose_MultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
