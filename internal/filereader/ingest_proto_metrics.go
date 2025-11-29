@@ -234,12 +234,14 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pi
 	row[wkk.NewRowKey("chq_scope_name")] = sm.Scope().Name()
 
 	metricName := strings.ReplaceAll(metric.Name(), ".", "_")
-	row[wkk.RowKeyCName] = metricName
 
 	// Skip metrics with empty names - these are malformed OTEL data
+	// Check BEFORE setting the field to avoid mutating the row
 	if metricName == "" {
 		return true, nil // dropped=true, no error
 	}
+
+	row[wkk.RowKeyCName] = metricName
 
 	row[wkk.NewRowKey("chq_description")] = metric.Description()
 	row[wkk.NewRowKey("chq_unit")] = metric.Unit()
