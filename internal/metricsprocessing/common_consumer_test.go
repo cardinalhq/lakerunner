@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -547,6 +548,11 @@ func (m *MockFlyConsumer) CommitMessages(ctx context.Context, messages ...fly.Co
 func (m *MockFlyConsumer) CommitPartitionOffsets(ctx context.Context, offsets map[int32]int64) error {
 	args := m.Called(ctx, offsets)
 	return args.Error(0)
+}
+
+func (m *MockFlyConsumer) Stats() kafka.ReaderStats {
+	args := m.Called()
+	return args.Get(0).(kafka.ReaderStats)
 }
 
 func (m *MockFlyConsumer) Close() error {
