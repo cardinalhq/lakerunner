@@ -350,7 +350,10 @@ func (fp *fingerprinterImpl) tokenizeWithTokenizer(tk *tokenizer.FingerprintToke
 			return tokenMap, strings.ToLower(level), nil
 		}
 		_, tok, literal := s.Next()
-		lowerCaseLiteral := strings.ToLower(literal)
+
+		// Compute lowerCaseLiteral only when needed (not for all token types)
+		// This avoids allocations for tokens that don't need lowercase version
+		var lowerCaseLiteral string
 
 		switch tok {
 		case ragel.EOF:
@@ -363,6 +366,7 @@ func (fp *fingerprinterImpl) tokenizeWithTokenizer(tk *tokenizer.FingerprintToke
 				currentQuotedStringIndex += 1
 			}
 		case tokenizer.TokenList:
+			lowerCaseLiteral = strings.ToLower(literal)
 			quotedStringCount := strings.Count(lowerCaseLiteral, "quotedstringplaceholder")
 			if currentQuotedStringIndex < len(quotedStrings) && currentQuotedStringIndex+quotedStringCount <= len(quotedStrings) {
 				tokenMap.add("<List>")
@@ -372,10 +376,12 @@ func (fp *fingerprinterImpl) tokenizeWithTokenizer(tk *tokenizer.FingerprintToke
 				level = literal
 				tokenMap.add(LogLevelPlaceHolder)
 			} else {
+				lowerCaseLiteral = strings.ToLower(literal)
 				tokenMap.add(lowerCaseLiteral)
 			}
 		case tokenizer.TokenIdentifier:
-			if level == "" && slices.Contains(tokenizer.LogLevelNames, strings.ToLower(literal)) {
+			lowerCaseLiteral = strings.ToLower(literal)
+			if level == "" && slices.Contains(tokenizer.LogLevelNames, lowerCaseLiteral) {
 				level = literal
 				tokenMap.add(LogLevelPlaceHolder)
 				continue
@@ -389,6 +395,7 @@ func (fp *fingerprinterImpl) tokenizeWithTokenizer(tk *tokenizer.FingerprintToke
 			}
 		case tokenizer.TokenString:
 			if fp.IsWord(literal) {
+				lowerCaseLiteral = strings.ToLower(literal)
 				tokenMap.add(lowerCaseLiteral)
 			}
 		default:

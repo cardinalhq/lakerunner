@@ -18,6 +18,10 @@ const (
 	// NoRecordLimitPerFile can be used as RecordsPerFile value to disable file splitting
 	// and allow unlimited file size (all records go into a single file).
 	NoRecordLimitPerFile = -1
+
+	// DefaultChunkSize is the default number of rows to buffer before flushing to Parquet.
+	// Larger chunks reduce memory usage and improve performance for Arrow backend.
+	DefaultChunkSize = 50000
 )
 
 // DefaultStringConversionPrefixes are the default field name prefixes that will have
@@ -51,6 +55,11 @@ type WriterConfig struct {
 	// values converted to strings to avoid type conflicts during schema merging.
 	// If nil or empty, uses default prefixes: resource_, scope_, attr_, metric_
 	StringConversionPrefixes []string
+
+	// ChunkSize controls the number of rows buffered before flushing to Parquet.
+	// Used by both Arrow backend (RecordBatch size) and go-parquet backend (CBOR buffer flush).
+	// If 0, uses backend-specific defaults (typically 10000).
+	ChunkSize int64
 }
 
 // Validate checks that the configuration is valid and returns an error if not.
@@ -72,6 +81,14 @@ func (c *WriterConfig) GetStringConversionPrefixes() []string {
 		return c.StringConversionPrefixes
 	}
 	return DefaultStringConversionPrefixes
+}
+
+// GetChunkSize returns the effective chunk size, using the default if not specified.
+func (c *WriterConfig) GetChunkSize() int64 {
+	if c.ChunkSize > 0 {
+		return c.ChunkSize
+	}
+	return DefaultChunkSize
 }
 
 // ConfigError represents a configuration validation error.

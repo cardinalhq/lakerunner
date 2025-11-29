@@ -24,15 +24,42 @@ func prefixAttributeRowKey(name, prefix string) wkk.RowKey {
 	if name == "" {
 		return wkk.NewRowKey("")
 	}
-	var result string
+
+	// Fast path: check if there are any dots to replace
+	hasDots := strings.Contains(name, ".")
+
 	if name[0] == '_' {
-		// Convert dots to underscores even for underscore-prefixed fields
-		result = strings.ReplaceAll(name, ".", "_")
-	} else {
-		// Use underscore separator for PromQL/LogQL compatibility
-		result = prefix + "_" + strings.ReplaceAll(name, ".", "_")
+		// Underscore-prefixed: just replace dots if present
+		if !hasDots {
+			return wkk.NewRowKey(name)
+		}
+		return wkk.NewRowKey(strings.ReplaceAll(name, ".", "_"))
 	}
-	return wkk.NewRowKey(result)
+
+	// Normal attribute: add prefix
+	if !hasDots {
+		// No dots: simple concatenation
+		var b strings.Builder
+		b.Grow(len(prefix) + 1 + len(name))
+		b.WriteString(prefix)
+		b.WriteByte('_')
+		b.WriteString(name)
+		return wkk.NewRowKey(b.String())
+	}
+
+	// Has dots: replace and add prefix
+	var b strings.Builder
+	b.Grow(len(prefix) + 1 + len(name)) // Estimate capacity
+	b.WriteString(prefix)
+	b.WriteByte('_')
+	for i := 0; i < len(name); i++ {
+		if name[i] == '.' {
+			b.WriteByte('_')
+		} else {
+			b.WriteByte(name[i])
+		}
+	}
+	return wkk.NewRowKey(b.String())
 }
 
 // prefixAttribute is kept for compatibility with tests
