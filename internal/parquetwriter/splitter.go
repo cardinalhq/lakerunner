@@ -238,8 +238,24 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		return nil
 	}
 
-	// Check if we need to split files BEFORE processing this batch
-	// Skip splitting if RecordsPerFile is NoRecordLimitPerFile (unlimited mode)
+	// File splitting logic (BETWEEN batches only, never within a batch):
+	//
+	// Splitting happens BEFORE processing each batch and only if:
+	// 1. We have an existing file (s.parquetWriter != nil)
+	// 2. RecordsPerFile limit is set (not unlimited mode)
+	// 3. Adding this batch would exceed RecordsPerFile
+	//
+	// With NoSplitGroups enabled:
+	// - Split ONLY if the new batch has a different group key than current file
+	// - If same group, continue writing to same file even if exceeding RecordsPerFile
+	// - This keeps groups together while respecting file size limits at group boundaries
+	//
+	// Without NoSplitGroups:
+	// - Split whenever RecordsPerFile would be exceeded
+	//
+	// Note: Splitting never happens WITHIN a batch. If a batch contains multiple groups
+	// or exceeds limits, all rows still go into the current file. This ensures efficient
+	// batch processing without mid-batch file switches.
 	shouldSplit := false
 	if s.parquetWriter != nil && s.config.RecordsPerFile != NoRecordLimitPerFile && s.config.RecordsPerFile > 0 {
 		projectedRows := s.currentRows + int64(actualRowCount)
