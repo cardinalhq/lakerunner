@@ -16,6 +16,8 @@ package metricsprocessing
 
 import (
 	"context"
+	"log/slog"
+	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -63,7 +65,31 @@ func (w *WorkerConsumer) Run(ctx context.Context) error {
 		"topic", w.processor.GetTopic(),
 		"consumerGroup", w.processor.GetConsumerGroup())
 
+	// Start lag monitoring
+	go w.monitorLag(ctx)
+
 	return w.consumer.Consume(ctx, w.handleBatch)
+}
+
+// monitorLag logs consumer lag every minute
+func (w *WorkerConsumer) monitorLag(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	ll := logctx.FromContext(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			stats := w.consumer.Stats()
+			ll.Info("Consumer lag",
+				slog.Int64("lag", stats.Lag),
+				slog.String("topic", w.processor.GetTopic()),
+				slog.String("consumerGroup", w.processor.GetConsumerGroup()))
+		}
+	}
 }
 
 // handleBatch processes a batch of messages
