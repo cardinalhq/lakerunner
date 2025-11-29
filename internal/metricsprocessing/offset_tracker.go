@@ -41,6 +41,7 @@ type offsetTracker struct {
 
 // partitionState tracks state for a single partition
 type partitionState struct {
+	mu               sync.Mutex     // Lock for this partition's state
 	lastSeenOffset   int64          // Last offset we read from Kafka
 	lastCommitOffset int64          // Last offset we committed to Kafka consumer group
 	dedupeCache      map[int64]bool // Future offsets to filter out (self-cleaning)
@@ -58,19 +59,30 @@ func newOffsetTracker(store OffsetTrackerStore, consumerGroup, topic string) *of
 
 // isOffsetProcessed checks if an offset has already been processed for a partition
 func (s *offsetTracker) isOffsetProcessed(ctx context.Context, partition int32, offset int64) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Get or create partition state
+	// Fast path: try to get partition state with read lock
+	s.mu.RLock()
 	state, exists := s.partitions[partition]
+	s.mu.RUnlock()
+
+	// Slow path: create partition state if it doesn't exist
 	if !exists {
-		state = &partitionState{
-			lastSeenOffset:   0,
-			lastCommitOffset: -1,
-			dedupeCache:      make(map[int64]bool),
+		s.mu.Lock()
+		// Double-check after acquiring write lock (another goroutine might have created it)
+		state, exists = s.partitions[partition]
+		if !exists {
+			state = &partitionState{
+				lastSeenOffset:   0,
+				lastCommitOffset: -1,
+				dedupeCache:      make(map[int64]bool),
+			}
+			s.partitions[partition] = state
 		}
-		s.partitions[partition] = state
+		s.mu.Unlock()
 	}
+
+	// Now lock only this partition's state for the deduplication work
+	state.mu.Lock()
+	defer state.mu.Unlock()
 
 	// Check if this is first message, there's a gap, or offset moved backward
 	needsQuery := state.lastSeenOffset == 0 || offset > state.lastSeenOffset+1 || offset < state.lastSeenOffset

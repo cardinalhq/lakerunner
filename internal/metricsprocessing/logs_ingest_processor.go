@@ -21,9 +21,11 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
@@ -44,6 +46,9 @@ import (
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
+
+// MaxParallelS3Operations limits concurrent S3 downloads/uploads per bundle
+const MaxParallelS3Operations = 4
 
 // DateintBin represents a file group containing logs for a specific dateint
 type DateintBin struct {
@@ -176,35 +181,80 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
+	// Download and create readers in parallel
+	type downloadResult struct {
+		reader   filereader.Reader
+		fileSize int64
+		objectID string
+		err      error
+		is404    bool
+	}
+
+	results := make([]downloadResult, len(msgs))
+	var mu sync.Mutex
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(MaxParallelS3Operations)
+
+	for i, msg := range msgs {
+		i, msg := i, msg // capture loop variables
+		g.Go(func() error {
+			ll.Debug("Processing raw log file",
+				slog.String("objectID", msg.ObjectID),
+				slog.Int64("fileSize", msg.FileSize))
+
+			tmpFilename, _, is404, err := inputClient.DownloadObject(gCtx, tmpDir, msg.Bucket, msg.ObjectID)
+			if err != nil {
+				mu.Lock()
+				results[i] = downloadResult{objectID: msg.ObjectID, err: err}
+				mu.Unlock()
+				return nil // Don't fail the group, handle errors after
+			}
+			if is404 {
+				mu.Lock()
+				results[i] = downloadResult{objectID: msg.ObjectID, is404: true}
+				mu.Unlock()
+				return nil
+			}
+
+			reader, err := p.createLogReaderStack(tmpFilename, msg.OrganizationID.String(), msg.Bucket, msg.ObjectID)
+			if err != nil {
+				mu.Lock()
+				results[i] = downloadResult{objectID: msg.ObjectID, err: err}
+				mu.Unlock()
+				return nil
+			}
+
+			mu.Lock()
+			results[i] = downloadResult{reader: reader, fileSize: msg.FileSize, objectID: msg.ObjectID}
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	// Wait for all downloads to complete
+	if err := g.Wait(); err != nil {
+		return fmt.Errorf("download error: %w", err)
+	}
+
+	// Collect successful readers
 	var readers []filereader.Reader
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
-	for _, msg := range msgs {
-
-		ll.Debug("Processing raw log file",
-			slog.String("objectID", msg.ObjectID),
-			slog.Int64("fileSize", msg.FileSize))
-
-		tmpFilename, _, is404, err := inputClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
-		if err != nil {
-			ll.Error("Failed to download file", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
-			continue // Skip this file but continue with others
-		}
-		if is404 {
-			ll.Warn("Object not found, skipping", slog.String("objectID", msg.ObjectID))
+	for _, r := range results {
+		if r.err != nil {
+			ll.Error("Failed to download file", slog.String("objectID", r.objectID), slog.Any("error", r.err))
 			continue
 		}
-
-		reader, err := p.createLogReaderStack(tmpFilename, msg.OrganizationID.String(), msg.Bucket, msg.ObjectID)
-		if err != nil {
-			ll.Error("Failed to create reader stack", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
+		if r.is404 {
+			ll.Warn("Object not found, skipping", slog.String("objectID", r.objectID))
 			continue
 		}
-
-		readers = append(readers, reader)
-		readersToClose = append(readersToClose, reader)
-		totalInputSize += msg.FileSize
+		if r.reader != nil {
+			readers = append(readers, r.reader)
+			readersToClose = append(readersToClose, r.reader)
+			totalInputSize += r.fileSize
+		}
 	}
 
 	defer func() {
@@ -547,51 +597,77 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 	// Generate unique batch IDs for all valid results to avoid collisions
 	batchSegmentIDs := idgen.GenerateBatchIDs(len(validResults))
 
+	// Prepare upload tasks with pre-computed paths and segment params
+	type uploadTask struct {
+		idx        int
+		uploadPath string
+		fileName   string
+		params     lrdb.InsertLogSegmentParams
+	}
+
+	tasks := make([]uploadTask, len(validResults))
 	for i, valid := range validResults {
-		dateint := valid.dateint
-		result := valid.result
-		stats := valid.stats
-
 		segmentID := batchSegmentIDs[i]
-
 		uploadPath := helpers.MakeDBObjectID(
 			storageProfile.OrganizationID,
 			storageProfile.CollectorName,
-			dateint,
-			helpers.HourFromMillis(stats.FirstTS),
+			valid.dateint,
+			helpers.HourFromMillis(valid.stats.FirstTS),
 			segmentID,
 			"logs",
 		)
 
-		uploadErr := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadPath, result.FileName)
-		if uploadErr != nil {
-			return nil, fmt.Errorf("failed to upload file %s to %s: %w", result.FileName, uploadPath, uploadErr)
+		tasks[i] = uploadTask{
+			idx:        i,
+			uploadPath: uploadPath,
+			fileName:   valid.result.FileName,
+			params: lrdb.InsertLogSegmentParams{
+				OrganizationID: storageProfile.OrganizationID,
+				Dateint:        valid.dateint,
+				SegmentID:      segmentID,
+				InstanceNum:    storageProfile.InstanceNum,
+				StartTs:        valid.stats.FirstTS,
+				EndTs:          valid.stats.LastTS + 1, // end is exclusive
+				RecordCount:    valid.result.RecordCount,
+				FileSize:       valid.result.FileSize,
+				CreatedBy:      lrdb.CreatedByIngest,
+				Fingerprints:   valid.stats.Fingerprints,
+				Published:      true,  // Mark ingested segments as published
+				Compacted:      false, // New segments are not compacted
+				LabelNameMap:   valid.stats.LabelNameMap,
+			},
 		}
+	}
 
-		ll.Debug("Uploaded log segment",
-			slog.String("uploadPath", uploadPath),
-			slog.Int64("segmentID", segmentID),
-			slog.Int64("recordCount", result.RecordCount),
-			slog.Int64("fileSize", result.FileSize))
+	// Upload files in parallel
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(MaxParallelS3Operations)
 
-		// Create segment parameters using stats from parquet writer
-		params := lrdb.InsertLogSegmentParams{
-			OrganizationID: storageProfile.OrganizationID,
-			Dateint:        dateint,
-			SegmentID:      segmentID,
-			InstanceNum:    storageProfile.InstanceNum,
-			StartTs:        stats.FirstTS,
-			EndTs:          stats.LastTS + 1, // end is exclusive
-			RecordCount:    result.RecordCount,
-			FileSize:       result.FileSize,
-			CreatedBy:      lrdb.CreatedByIngest,
-			Fingerprints:   stats.Fingerprints,
-			Published:      true,  // Mark ingested segments as published
-			Compacted:      false, // New segments are not compacted
-			LabelNameMap:   stats.LabelNameMap,
-		}
+	for _, task := range tasks {
+		task := task // capture loop variable
+		g.Go(func() error {
+			uploadErr := storageClient.UploadObject(gCtx, storageProfile.Bucket, task.uploadPath, task.fileName)
+			if uploadErr != nil {
+				return fmt.Errorf("failed to upload file %s to %s: %w", task.fileName, task.uploadPath, uploadErr)
+			}
 
-		segmentParams = append(segmentParams, params)
+			ll.Debug("Uploaded log segment",
+				slog.String("uploadPath", task.uploadPath),
+				slog.Int64("segmentID", task.params.SegmentID),
+				slog.Int64("recordCount", task.params.RecordCount),
+				slog.Int64("fileSize", task.params.FileSize))
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	// Collect segment params in order
+	segmentParams = make([]lrdb.InsertLogSegmentParams, len(tasks))
+	for i, task := range tasks {
+		segmentParams[i] = task.params
 	}
 
 	ll.Info("Log segment upload completed", slog.Int("totalSegments", len(segmentParams)))
