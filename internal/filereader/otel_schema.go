@@ -142,6 +142,14 @@ func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
 	schema.AddColumn(wkk.RowKeyCTsns, DataTypeInt64, true)
 	schema.AddColumn(wkk.RowKeyCMetricType, DataTypeString, true)
 
+	// Scope fields (added by buildMetricRow)
+	schema.AddColumn(wkk.NewRowKey("chq_scope_url"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_scope_name"), DataTypeString, true)
+
+	// Metric metadata fields (added by buildMetricRow)
+	schema.AddColumn(wkk.NewRowKey("chq_description"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_unit"), DataTypeString, true)
+
 	// Rollup fields
 	schema.AddColumn(wkk.RowKeySketch, DataTypeBytes, true)
 	schema.AddColumn(wkk.RowKeyRollupAvg, DataTypeFloat64, true)
