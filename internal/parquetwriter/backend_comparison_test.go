@@ -117,7 +117,7 @@ func TestBackendOutputComparison(t *testing.T) {
 
 	_, err = goParquetBackend.Close(ctx, goParquetFile)
 	require.NoError(t, err)
-	goParquetFile.Close()
+	require.NoError(t, goParquetFile.Close())
 
 	// Write with Arrow backend
 	arrowConfig := BackendConfig{
@@ -138,12 +138,12 @@ func TestBackendOutputComparison(t *testing.T) {
 
 	_, err = arrowBackend.Close(ctx, arrowFile)
 	require.NoError(t, err)
-	arrowFile.Close()
+	require.NoError(t, arrowFile.Close())
 
 	// Read back both files with DuckDB and compare
 	db, err := sql.Open("duckdb", "")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	// Read go-parquet output
 	goParquetRows := readParquetFile(t, db, tmpDir+"/goparquet.parquet")
@@ -188,7 +188,7 @@ func readParquetFile(t *testing.T, db *sql.DB, filePath string) []map[string]any
 	query := fmt.Sprintf("SELECT * FROM read_parquet('%s') ORDER BY id", filePath)
 	rows, err := db.Query(query)
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() { require.NoError(t, rows.Close()) }()
 
 	columnNames, err := rows.Columns()
 	require.NoError(t, err)
@@ -268,7 +268,7 @@ func TestBackendOutputComparison_LargeDataset(t *testing.T) {
 
 	_, err = goParquetBackend.Close(ctx, goParquetFile)
 	require.NoError(t, err)
-	goParquetFile.Close()
+	require.NoError(t, goParquetFile.Close())
 
 	arrowConfig := BackendConfig{
 		Type:                     BackendArrow,
@@ -288,12 +288,12 @@ func TestBackendOutputComparison_LargeDataset(t *testing.T) {
 
 	_, err = arrowBackend.Close(ctx, arrowFile)
 	require.NoError(t, err)
-	arrowFile.Close()
+	require.NoError(t, arrowFile.Close())
 
 	// Read back and compare using DuckDB
 	db, err := sql.Open("duckdb", "")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	goParquetRows := readParquetFile(t, db, tmpDir+"/goparquet_large.parquet")
 	arrowRows := readParquetFile(t, db, tmpDir+"/arrow_large.parquet")
@@ -393,13 +393,13 @@ func TestBackendOutputComparison_StringConversion(t *testing.T) {
 
 		_, err = backend.Close(ctx, file)
 		require.NoError(t, err)
-		file.Close()
+		require.NoError(t, file.Close())
 	}
 
 	// Read back and verify all string conversions match
 	db, err := sql.Open("duckdb", "")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	goParquetRows := readParquetFile(t, db, tmpDir+"/go-parquet_conversion.parquet")
 	arrowRows := readParquetFile(t, db, tmpDir+"/arrow_conversion.parquet")
