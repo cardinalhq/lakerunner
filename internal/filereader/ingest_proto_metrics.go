@@ -42,9 +42,10 @@ import (
 //
 // Implements OTELMetricsProvider interface.
 type IngestProtoMetricsReader struct {
-	closed    bool
-	rowCount  int64
-	batchSize int
+	closed       bool
+	rowCount     int64
+	rowsSkipped  int64
+	batchSize    int
 
 	// Store the original OTEL metrics for exemplar processing
 	orgId       string
@@ -167,6 +168,11 @@ func (r *IngestProtoMetricsReader) getMetricRow(ctx context.Context, row pipelin
 						continue
 					}
 					if dropped {
+						r.rowsSkipped++
+						rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
+							attribute.String("reader", "IngestProtoMetricsReader"),
+							attribute.String("reason", "empty_metric_name"),
+						))
 						continue
 					}
 
@@ -227,7 +233,14 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pi
 	row[wkk.NewRowKey("chq_scope_url")] = sm.Scope().Version()
 	row[wkk.NewRowKey("chq_scope_name")] = sm.Scope().Name()
 
-	row[wkk.RowKeyCName] = strings.ReplaceAll(metric.Name(), ".", "_")
+	metricName := strings.ReplaceAll(metric.Name(), ".", "_")
+	row[wkk.RowKeyCName] = metricName
+
+	// Skip metrics with empty names - these are malformed OTEL data
+	if metricName == "" {
+		return true, nil // dropped=true, no error
+	}
+
 	row[wkk.NewRowKey("chq_description")] = metric.Description()
 	row[wkk.NewRowKey("chq_unit")] = metric.Unit()
 
