@@ -79,6 +79,12 @@ func NewArrowBackend(config BackendConfig) (*ArrowBackend, error) {
 	allocator := memory.DefaultAllocator
 	columns := make(map[wkk.RowKey]*ArrowColumnBuilder)
 
+	// Get string conversion prefixes
+	conversionPrefixes := config.StringConversionPrefixes
+	if len(conversionPrefixes) == 0 {
+		conversionPrefixes = DefaultStringConversionPrefixes
+	}
+
 	// Create columns from schema, filtering out all-null columns
 	for _, col := range config.Schema.Columns() {
 		// Skip columns that are all null (HasNonNull=false)
@@ -86,9 +92,26 @@ func NewArrowBackend(config BackendConfig) (*ArrowBackend, error) {
 			continue
 		}
 
-		arrowType := readerDataTypeToArrow(col.DataType)
+		// Determine Arrow type - apply string conversion if field name matches prefixes
+		var arrowType arrow.DataType
+		fieldName := wkk.RowKeyValue(col.Name)
+		shouldConvert := false
+		for _, prefix := range conversionPrefixes {
+			if strings.HasPrefix(fieldName, prefix) {
+				shouldConvert = true
+				break
+			}
+		}
+
+		if shouldConvert {
+			// Convert to string type to match value conversion at write time
+			arrowType = arrow.BinaryTypes.String
+		} else {
+			arrowType = readerDataTypeToArrow(col.DataType)
+		}
+
 		colBuilder := &ArrowColumnBuilder{
-			name:     wkk.RowKeyValue(col.Name),
+			name:     fieldName,
 			dataType: arrowType,
 			builder:  array.NewBuilder(allocator, arrowType),
 		}
