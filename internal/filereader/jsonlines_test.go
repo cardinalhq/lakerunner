@@ -160,6 +160,23 @@ func (m *mockReadCloser) Close() error {
 	return nil
 }
 
+// seekableReadCloser wraps a bytes.Reader to provide io.ReadCloser with io.Seeker support
+type seekableReadCloser struct {
+	*bytes.Reader
+	closed bool
+}
+
+func newSeekableReadCloser(data []byte) *seekableReadCloser {
+	return &seekableReadCloser{
+		Reader: bytes.NewReader(data),
+	}
+}
+
+func (s *seekableReadCloser) Close() error {
+	s.closed = true
+	return nil
+}
+
 // TestJSONLinesReaderWithMockEOF tests the specific n>0 && EOF case using a mock
 func TestJSONLinesReaderWithMockEOF(t *testing.T) {
 	// Create mock reader that returns data and EOF on same call
@@ -239,19 +256,143 @@ func TestJSONLinesReaderBatchProcessing(t *testing.T) {
 	assert.True(t, errors.Is(err, io.EOF))
 }
 
-// TestJSONLinesReader_GetSchema tests that JSONLinesReader returns nil for GetSchema
-// since JSON Lines does not have upfront schema metadata.
-func TestJSONLinesReader_GetSchema(t *testing.T) {
-	jsonData := `{"name":"test","value":123}
-{"name":"test2","value":456}`
+// TestJSONLinesReader_GetSchemaSeekable tests schema inference for seekable readers
+func TestJSONLinesReader_GetSchemaSeekable(t *testing.T) {
+	jsonData := `{"name":"test","value":123,"active":true}
+{"name":"test2","value":456,"extra":"field"}`
 
-	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))), 100)
+	// Use seekableReadCloser which implements both io.ReadCloser and io.Seeker
+	reader, err := NewJSONLinesReader(newSeekableReadCloser([]byte(jsonData)), 100)
 	require.NoError(t, err)
 	defer func() { _ = reader.Close() }()
 
-	// JSON Lines cannot provide schema upfront - must infer from data
-	// Returns empty schema since no metadata is available
 	schema := reader.GetSchema()
 	assert.NotNil(t, schema, "GetSchema must never return nil")
-	assert.Equal(t, 0, len(schema.Columns()), "JSONLinesReader should return empty schema as it has no metadata")
+
+	// Should have discovered all unique keys from both rows
+	columns := schema.Columns()
+	assert.Equal(t, 4, len(columns), "Should discover all unique keys across all rows")
+
+	// Verify column names and types
+	columnsByName := make(map[string]*ColumnSchema)
+	for _, col := range columns {
+		columnsByName[string(col.Name.Value())] = col
+		assert.True(t, col.HasNonNull, "All columns should be marked as HasNonNull=true")
+	}
+
+	// Check each column has correct inferred type
+	assert.NotNil(t, columnsByName["name"], "Should have 'name' column")
+	assert.Equal(t, DataTypeString, columnsByName["name"].DataType, "name should be string")
+
+	assert.NotNil(t, columnsByName["value"], "Should have 'value' column")
+	assert.Equal(t, DataTypeInt64, columnsByName["value"].DataType, "value should be int64 (123 and 456 are integers)")
+
+	assert.NotNil(t, columnsByName["active"], "Should have 'active' column")
+	assert.Equal(t, DataTypeBool, columnsByName["active"].DataType, "active should be bool")
+
+	assert.NotNil(t, columnsByName["extra"], "Should have 'extra' column")
+	assert.Equal(t, DataTypeString, columnsByName["extra"].DataType, "extra should be string")
+}
+
+// TestJSONLinesReader_GetSchemaNonSeekable tests that non-seekable readers return empty schema
+func TestJSONLinesReader_GetSchemaNonSeekable(t *testing.T) {
+	jsonData := `{"name":"test","value":123}`
+
+	// Create a gzip reader which doesn't implement io.Seeker
+	var buf bytes.Buffer
+	gzWriter := gzip.NewWriter(&buf)
+	_, err := gzWriter.Write([]byte(jsonData))
+	require.NoError(t, err)
+	require.NoError(t, gzWriter.Close())
+
+	gzReader, err := gzip.NewReader(&buf)
+	require.NoError(t, err)
+
+	reader, err := NewJSONLinesReader(gzReader, 100)
+	require.NoError(t, err)
+	defer func() { _ = reader.Close() }()
+
+	// Non-seekable readers should return empty schema
+	schema := reader.GetSchema()
+	assert.NotNil(t, schema, "GetSchema must never return nil")
+	assert.Equal(t, 0, len(schema.Columns()), "Non-seekable readers should return empty schema")
+}
+
+// TestJSONLinesReader_SchemaInferenceAndReading tests that schema inference doesn't affect reading
+func TestJSONLinesReader_SchemaInferenceAndReading(t *testing.T) {
+	jsonData := `{"line": 1, "value": "first"}
+{"line": 2, "value": "second"}
+{"line": 3, "value": "third", "extra": "data"}`
+
+	reader, err := NewJSONLinesReader(newSeekableReadCloser([]byte(jsonData)), 100)
+	require.NoError(t, err)
+	defer func() { _ = reader.Close() }()
+
+	// First verify schema was inferred
+	schema := reader.GetSchema()
+	require.NotNil(t, schema)
+	columns := schema.Columns()
+	assert.Equal(t, 3, len(columns), "Should discover all unique keys: line, value, extra")
+
+	// Then verify we can still read all the data correctly
+	rows, err := readAllRows(reader)
+	require.NoError(t, err)
+	assert.Len(t, rows, 3, "Should read all rows after schema inference")
+
+	// Verify data integrity
+	assert.Equal(t, float64(1), rows[0][wkk.NewRowKey("line")])
+	assert.Equal(t, "first", rows[0][wkk.NewRowKey("value")])
+	assert.Equal(t, float64(2), rows[1][wkk.NewRowKey("line")])
+	assert.Equal(t, "second", rows[1][wkk.NewRowKey("value")])
+	assert.Equal(t, float64(3), rows[2][wkk.NewRowKey("line")])
+	assert.Equal(t, "third", rows[2][wkk.NewRowKey("value")])
+	assert.Equal(t, "data", rows[2][wkk.NewRowKey("extra")])
+}
+
+// TestJSONLinesReader_TypePromotion tests that int64 is promoted to float64 when needed
+func TestJSONLinesReader_TypePromotion(t *testing.T) {
+	// First row has integer, second row has float - should promote to float64
+	jsonData := `{"id":1,"count":100}
+{"id":2,"count":200.5}`
+
+	reader, err := NewJSONLinesReader(newSeekableReadCloser([]byte(jsonData)), 100)
+	require.NoError(t, err)
+	defer func() { _ = reader.Close() }()
+
+	schema := reader.GetSchema()
+	require.NotNil(t, schema)
+
+	columnsByName := make(map[string]*ColumnSchema)
+	for _, col := range schema.Columns() {
+		columnsByName[string(col.Name.Value())] = col
+	}
+
+	// id is always integer, should be int64
+	assert.Equal(t, DataTypeInt64, columnsByName["id"].DataType, "id should stay int64")
+
+	// count starts as int (100) but becomes float (200.5), should promote to float64
+	assert.Equal(t, DataTypeFloat64, columnsByName["count"].DataType, "count should be promoted to float64")
+}
+
+// TestJSONLinesReader_ComplexTypes tests handling of arrays and objects
+func TestJSONLinesReader_ComplexTypes(t *testing.T) {
+	jsonData := `{"tags":["a","b"],"metadata":{"key":"value"},"simple":"text"}
+{"tags":["c"],"metadata":{"key":"other"},"simple":"more"}`
+
+	reader, err := NewJSONLinesReader(newSeekableReadCloser([]byte(jsonData)), 100)
+	require.NoError(t, err)
+	defer func() { _ = reader.Close() }()
+
+	schema := reader.GetSchema()
+	require.NotNil(t, schema)
+
+	columnsByName := make(map[string]*ColumnSchema)
+	for _, col := range schema.Columns() {
+		columnsByName[string(col.Name.Value())] = col
+	}
+
+	// Arrays and objects should use DataTypeAny
+	assert.Equal(t, DataTypeAny, columnsByName["tags"].DataType, "tags (array) should be DataTypeAny")
+	assert.Equal(t, DataTypeAny, columnsByName["metadata"].DataType, "metadata (object) should be DataTypeAny")
+	assert.Equal(t, DataTypeString, columnsByName["simple"].DataType, "simple should be string")
 }

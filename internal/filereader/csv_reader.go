@@ -39,12 +39,15 @@ type CSVReader struct {
 	closer    io.Closer
 	batchSize int
 	rowIndex  int
+	schema    *ReaderSchema // Inferred schema from scanning the file
 }
 
 var _ Reader = (*CSVReader)(nil)
 
 // NewCSVReader creates a new CSVReader for the given io.ReadCloser.
 // The reader takes ownership of the closer and will close it when Close is called.
+// If the reader is seekable (implements io.Seeker), the file will be scanned once
+// to infer column types before being reset for actual reading.
 func NewCSVReader(reader io.ReadCloser, batchSize int) (*CSVReader, error) {
 	csvReader := csv.NewReader(reader)
 	csvReader.LazyQuotes = true
@@ -73,6 +76,38 @@ func NewCSVReader(reader io.ReadCloser, batchSize int) (*CSVReader, error) {
 		rowKeys[i] = wkk.NewRowKey(header)
 	}
 
+	// Try to infer schema if reader is seekable
+	schema := NewReaderSchema()
+	if seeker, ok := reader.(io.Seeker); ok {
+		// We've already read headers, so scan remaining rows for type inference
+		schema, err = inferCSVSchema(csvReader, headers)
+		if err != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("failed to infer CSV schema: %w", err)
+		}
+
+		// Reset to beginning for actual reading
+		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("failed to reset reader after schema inference: %w", err)
+		}
+
+		// Re-create CSV reader and skip header row
+		csvReader = csv.NewReader(reader)
+		csvReader.LazyQuotes = true
+		csvReader.TrimLeadingSpace = true
+		csvReader.FieldsPerRecord = -1
+		if _, err := csvReader.Read(); err != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("failed to re-read headers after reset: %w", err)
+		}
+	} else {
+		// Non-seekable: create default schema (all string, all HasNonNull=true)
+		for _, header := range headers {
+			schema.AddColumn(wkk.NewRowKey(header), DataTypeString, true)
+		}
+	}
+
 	return &CSVReader{
 		reader:    csvReader,
 		headers:   headers,
@@ -80,6 +115,7 @@ func NewCSVReader(reader io.ReadCloser, batchSize int) (*CSVReader, error) {
 		closer:    reader,
 		batchSize: batchSize,
 		rowIndex:  0,
+		schema:    schema,
 	}, nil
 }
 
@@ -184,19 +220,41 @@ func (r *CSVReader) TotalRowsReturned() int64 {
 	return r.totalRows
 }
 
-// GetSchema returns schema information extracted from CSV headers.
-// All columns are marked as nullable since CSV doesn't enforce types.
-// Returns empty schema if headers haven't been read yet.
+// GetSchema returns the inferred schema from scanning the file.
+// Returns empty schema if headers haven't been read or schema inference failed.
 func (r *CSVReader) GetSchema() *ReaderSchema {
-	schema := NewReaderSchema()
-	if r.headers == nil {
-		return schema
+	return r.schema
+}
+
+// inferCSVSchema scans a CSV file to discover column types.
+// Types are inferred from parsing string values and promoted as needed (e.g., int64 -> float64).
+// The CSV reader should already have read the header row.
+func inferCSVSchema(csvReader *csv.Reader, headers []string) (*ReaderSchema, error) {
+	builder := NewSchemaBuilder()
+
+	// Scan all rows to infer types
+	for {
+		record, err := csvReader.Read()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			// Don't fail on read errors during schema inference
+			continue
+		}
+
+		// Skip rows with wrong number of columns
+		if len(record) != len(headers) {
+			continue
+		}
+
+		// Infer type for each column value
+		for i, value := range record {
+			if i < len(headers) {
+				builder.AddStringValue(headers[i], value)
+			}
+		}
 	}
 
-	for _, header := range r.headers {
-		// CSV data is dynamically typed - can be string, int64, or float64
-		// Mark all as string type with nullable=true since we don't know upfront
-		schema.AddColumn(wkk.NewRowKey(header), DataTypeString, true)
-	}
-	return schema
+	return builder.Build(), nil
 }

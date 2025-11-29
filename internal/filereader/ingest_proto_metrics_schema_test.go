@@ -78,7 +78,7 @@ func TestIngestProtoMetricsReader_SchemaExtraction_BasicTypes(t *testing.T) {
 	require.NotNil(t, schema)
 
 	// Verify core metric fields
-	assert.Equal(t, DataTypeString, schema.GetColumnType("chq_name"))
+	assert.Equal(t, DataTypeString, schema.GetColumnType("metric_name"))
 	assert.Equal(t, DataTypeInt64, schema.GetColumnType("chq_tid"))
 	assert.Equal(t, DataTypeInt64, schema.GetColumnType("chq_timestamp"))
 	assert.Equal(t, DataTypeString, schema.GetColumnType("chq_metric_type"))

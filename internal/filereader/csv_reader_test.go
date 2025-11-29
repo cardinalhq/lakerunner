@@ -673,3 +673,103 @@ Alice,30`
 	assert.True(t, schemaAfter.HasColumn("name"))
 	assert.True(t, schemaAfter.HasColumn("age"))
 }
+
+// seekableCSVReadCloser wraps a bytes.Reader to provide io.ReadCloser with io.Seeker support
+type seekableCSVReadCloser struct {
+	*bytes.Reader
+	closed bool
+}
+
+func newSeekableCSVReadCloser(data []byte) *seekableCSVReadCloser {
+	return &seekableCSVReadCloser{
+		Reader: bytes.NewReader(data),
+	}
+}
+
+func (s *seekableCSVReadCloser) Close() error {
+	s.closed = true
+	return nil
+}
+
+var _ io.ReadCloser = (*seekableCSVReadCloser)(nil)
+var _ io.Seeker = (*seekableCSVReadCloser)(nil)
+
+// TestCSVReader_TypeInference tests type inference for seekable CSV readers
+func TestCSVReader_TypeInference(t *testing.T) {
+	input := `name,age,score,active,city
+Alice,30,95.5,true,NYC
+Bob,25,88,false,LA
+Charlie,35,92.3,true,SF`
+
+	csvReader, err := NewCSVReader(newSeekableCSVReadCloser([]byte(input)), 10)
+	require.NoError(t, err)
+	defer func() { _ = csvReader.Close() }()
+
+	schema := csvReader.GetSchema()
+	require.NotNil(t, schema)
+
+	// name should be string
+	assert.Equal(t, DataTypeString, schema.GetColumnType("name"))
+
+	// age should be int64 (all values are integers)
+	assert.Equal(t, DataTypeInt64, schema.GetColumnType("age"))
+
+	// score should be float64 (mix of int and float promotes to float)
+	assert.Equal(t, DataTypeFloat64, schema.GetColumnType("score"))
+
+	// active should be bool
+	assert.Equal(t, DataTypeBool, schema.GetColumnType("active"))
+
+	// city should be string
+	assert.Equal(t, DataTypeString, schema.GetColumnType("city"))
+}
+
+// TestCSVReader_TypePromotion tests int64 -> float64 promotion
+func TestCSVReader_TypePromotion(t *testing.T) {
+	input := `id,count
+1,100
+2,200
+3,150.5`
+
+	csvReader, err := NewCSVReader(newSeekableCSVReadCloser([]byte(input)), 10)
+	require.NoError(t, err)
+	defer func() { _ = csvReader.Close() }()
+
+	schema := csvReader.GetSchema()
+	require.NotNil(t, schema)
+
+	// Debug
+	t.Logf("Schema has %d columns", len(schema.Columns()))
+	for _, col := range schema.Columns() {
+		t.Logf("  %s: %v", string(col.Name.Value()), col.DataType)
+	}
+	require.True(t, schema.HasColumn("id"), "Schema must have 'id' column")
+	require.True(t, schema.HasColumn("count"), "Schema must have 'count' column")
+
+	// id is always integer
+	assert.Equal(t, DataTypeInt64, schema.GetColumnType("id"))
+
+	// count starts as int but gets promoted to float64 when we see 150.5
+	assert.Equal(t, DataTypeFloat64, schema.GetColumnType("count"))
+}
+
+// TestCSVReader_NonSeekableSchema tests that non-seekable readers return all strings
+func TestCSVReader_NonSeekableSchema(t *testing.T) {
+	input := `name,age,score
+Alice,30,95.5
+Bob,25,88.3`
+
+	// io.NopCloser doesn't implement io.Seeker
+	reader := io.NopCloser(strings.NewReader(input))
+	csvReader, err := NewCSVReader(reader, 10)
+	require.NoError(t, err)
+	defer func() { _ = csvReader.Close() }()
+
+	schema := csvReader.GetSchema()
+	require.NotNil(t, schema)
+
+	// Non-seekable should default to all string
+	assert.Equal(t, DataTypeString, schema.GetColumnType("name"))
+	assert.Equal(t, DataTypeString, schema.GetColumnType("age"))
+	assert.Equal(t, DataTypeString, schema.GetColumnType("score"))
+}

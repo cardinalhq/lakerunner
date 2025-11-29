@@ -38,25 +38,46 @@ type JSONLinesReader struct {
 	totalRows int64
 	closer    io.Closer
 	batchSize int
+	schema    *ReaderSchema // Inferred schema from scanning the file
 }
 
 var _ Reader = (*JSONLinesReader)(nil)
 
 // NewJSONLinesReader creates a new JSONLinesReader for the given io.ReadCloser.
 // The reader takes ownership of the closer and will close it when Close is called.
+// If the reader is seekable (implements io.Seeker), the file will be scanned once
+// to infer schema before being reset for actual reading.
 func NewJSONLinesReader(reader io.ReadCloser, batchSize int) (*JSONLinesReader, error) {
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), constants.MaxLineSizeBytes)
-
 	if batchSize <= 0 {
 		batchSize = 1000 // Default batch size
 	}
+
+	// Try to infer schema if reader is seekable
+	schema := NewReaderSchema()
+	if seeker, ok := reader.(io.Seeker); ok {
+		var err error
+		schema, err = inferJSONSchema(reader)
+		if err != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("failed to infer JSON schema: %w", err)
+		}
+
+		// Reset to beginning for actual reading
+		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("failed to reset reader after schema inference: %w", err)
+		}
+	}
+
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), constants.MaxLineSizeBytes)
 
 	return &JSONLinesReader{
 		scanner:   scanner,
 		rowIndex:  0,
 		closer:    reader,
 		batchSize: batchSize,
+		schema:    schema,
 	}, nil
 }
 
@@ -140,8 +161,48 @@ func (r *JSONLinesReader) TotalRowsReturned() int64 {
 	return r.totalRows
 }
 
-// GetSchema returns nil as JSON Lines does not have upfront schema metadata.
-// Schema must be inferred from the data itself.
+// GetSchema returns the inferred schema from scanning the file.
+// Returns empty schema if file was not seekable or schema inference failed.
 func (r *JSONLinesReader) GetSchema() *ReaderSchema {
-	return NewReaderSchema()
+	return r.schema
+}
+
+// inferJSONSchema scans a JSON lines file to discover all unique keys and their types.
+// Types are inferred from actual data values and promoted as needed (e.g., int64 -> float64).
+// The reader position is not reset - caller must handle that.
+func inferJSONSchema(reader io.Reader) (*ReaderSchema, error) {
+	builder := NewSchemaBuilder()
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), constants.MaxLineSizeBytes)
+
+	lineNum := 0
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		lineNum++
+
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+
+		// Parse JSON to discover keys and types
+		var jsonRow map[string]any
+		if err := json.Unmarshal([]byte(line), &jsonRow); err != nil {
+			// Don't fail on parse errors during schema inference
+			// Just skip the line
+			continue
+		}
+
+		// Infer type for each value and add/update column
+		for key, value := range jsonRow {
+			builder.AddValue(key, value)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scanner error during schema inference at line %d: %w", lineNum, err)
+	}
+
+	return builder.Build(), nil
 }

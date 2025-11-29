@@ -35,7 +35,8 @@ var DebugSchemaErrors = false
 type DataType int
 
 const (
-	DataTypeString DataType = iota
+	DataTypeUnknown DataType = iota // Unknown/uninitialized type - should not be used
+	DataTypeString
 	DataTypeInt64
 	DataTypeFloat64
 	DataTypeBool
@@ -45,6 +46,8 @@ const (
 
 func (dt DataType) String() string {
 	switch dt {
+	case DataTypeUnknown:
+		return "unknown"
 	case DataTypeString:
 		return "string"
 	case DataTypeInt64:
@@ -102,7 +105,7 @@ func (s *ReaderSchema) GetColumnType(name string) DataType {
 	if col, ok := s.columns[key]; ok {
 		return col.DataType
 	}
-	return DataTypeString // Default to string if not found
+	return DataTypeUnknown // Return Unknown if column not found
 }
 
 // HasColumn returns true if the schema has the specified column.
