@@ -501,7 +501,7 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 
 	// Add columns that will be injected by TraceTranslator
 	// These columns are added to every row but aren't in the OTEL schema
-	schema.AddColumn(wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
 
 	rpfEstimate := p.store.GetTraceEstimate(ctx, storageProfile.OrganizationID)
 

@@ -99,7 +99,7 @@ func BenchmarkReadFingerprintWrite(b *testing.B) {
 		schema := reader.GetSchema()
 
 		// Add chq_fingerprint column since we'll be adding fingerprints to rows
-		schema.AddColumn(wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+		schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
 
 		// Create Parquet writer
 		writer, err := factories.NewLogsWriter(tmpDir, schema, 100000)

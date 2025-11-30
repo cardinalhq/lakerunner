@@ -236,7 +236,10 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		return nil
 	}
 
-	segmentParams, err := p.uploadAndCreateLogSegments(ctx, outputClient, dateintBins, dstProfile)
+	// Get schema from reader for label name mapping
+	schema := finalReader.GetSchema()
+
+	segmentParams, err := p.uploadAndCreateLogSegments(ctx, outputClient, dateintBins, schema, dstProfile)
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
@@ -415,15 +418,15 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 
 	// Add columns that will be injected by LogTranslator
 	// These columns are added to every row but aren't in the OTEL schema
-	schema.AddColumn(wkk.RowKeyResourceBucketName, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceFile, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCName, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyResourceBucketName, wkk.RowKeyResourceBucketName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFileName, wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFile, wkk.RowKeyResourceFile, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFileType, wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
 
 	binManager := &DateintBinManager{
 		bins:        make(map[int32]*DateintBin),
@@ -547,8 +550,15 @@ func (manager *DateintBinManager) getOrCreateBin(_ context.Context, dateint int3
 }
 
 // uploadAndCreateLogSegments uploads dateint bins to S3 and creates segment parameters
-func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, storageClient cloudstorage.Client, dateintBins map[int32]*DateintBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertLogSegmentParams, error) {
+func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, storageClient cloudstorage.Client, dateintBins map[int32]*DateintBin, schema *filereader.ReaderSchema, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertLogSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
+
+	// Build label name map from schema once (used for all segments)
+	schemaColumnMappings := make(map[string]string)
+	for newKey, originalKey := range schema.GetAllOriginalNames() {
+		schemaColumnMappings[wkk.RowKeyValue(newKey)] = wkk.RowKeyValue(originalKey)
+	}
+	labelNameMap := factories.BuildLabelNameMapFromSchema(schemaColumnMappings)
 
 	var segmentParams []lrdb.InsertLogSegmentParams
 
@@ -631,7 +641,7 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			Fingerprints:   stats.Fingerprints,
 			Published:      true,  // Mark ingested segments as published
 			Compacted:      false, // New segments are not compacted
-			LabelNameMap:   stats.LabelNameMap,
+			LabelNameMap:   labelNameMap,
 		}
 
 		segmentParams = append(segmentParams, params)

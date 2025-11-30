@@ -70,7 +70,7 @@ func walkParquetSchema(schema *ReaderSchema, node parquet.Node, prefix string) {
 
 	// Map parquet type to our DataType
 	dataType := parquetTypeToDataType(node.Type())
-	schema.AddColumn(key, dataType, true)
+	schema.AddColumn(key, key, dataType, true)
 }
 
 // parquetTypeToDataType converts parquet type to our DataType.
@@ -96,23 +96,6 @@ func parquetTypeToDataType(ptype parquet.Type) DataType {
 		// Default to string for unknown types
 		return DataTypeString
 	}
-}
-
-// extractSchemaFromArrowSchema extracts schema from Arrow schema metadata.
-// It uses parquet file statistics to determine if columns contain non-null values.
-// If statistics are unavailable, defaults to HasNonNull=true (safe assumption).
-func extractSchemaFromArrowSchema(arrowSchema *arrow.Schema, pf *file.Reader) *ReaderSchema {
-	schema := NewReaderSchema()
-
-	// Build map of column statistics
-	columnStats := extractParquetStatistics(pf)
-
-	// Walk through all fields in the schema
-	for _, field := range arrowSchema.Fields() {
-		walkArrowField(schema, field, columnStats)
-	}
-
-	return schema
 }
 
 // extractParquetStatistics extracts column statistics from parquet file.
@@ -163,26 +146,6 @@ func extractParquetStatistics(pf *file.Reader) map[string]bool {
 	}
 
 	return columnStats
-}
-
-// walkArrowField recursively walks an Arrow field and adds columns.
-func walkArrowField(schema *ReaderSchema, field arrow.Field, columnStats map[string]bool) {
-	columnName := field.Name
-	key := wkk.NewRowKeyFromBytes([]byte(columnName))
-
-	// Map arrow type to our DataType
-	dataType := arrowTypeToDataType(field.Type)
-
-	// Determine if column has non-null values:
-	// 1. If we have statistics showing non-null values, use that
-	// 2. Otherwise, default to true (assume column has data unless proven otherwise)
-	// Never use field.Nullable - that just means the column CAN contain nulls
-	hasNonNull := true
-	if statsValue, hasStats := columnStats[columnName]; hasStats {
-		hasNonNull = statsValue
-	}
-
-	schema.AddColumn(key, dataType, hasNonNull)
 }
 
 // arrowTypeToDataType converts Arrow type to our DataType.

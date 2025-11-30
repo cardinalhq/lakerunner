@@ -27,11 +27,11 @@ import (
 // testUnifiedSchema creates a schema for unified writer tests
 func testUnifiedSchema() *filereader.ReaderSchema {
 	schema := filereader.NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("message"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("value"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("id"), wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("timestamp"), wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("message"), wkk.NewRowKey("message"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("value"), wkk.NewRowKey("value"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
 	return schema
 }
 

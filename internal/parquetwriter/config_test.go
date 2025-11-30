@@ -25,7 +25,7 @@ import (
 // testSchema creates a basic schema for testing
 func testSchema() *filereader.ReaderSchema {
 	schema := filereader.NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("test_col"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("test_col"), wkk.NewRowKey("test_col"), filereader.DataTypeString, true)
 	return schema
 }
 

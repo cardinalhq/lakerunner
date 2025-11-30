@@ -243,7 +243,7 @@ func TestReaderForFile(t *testing.T) {
 			filename:      filepath.Join(testdataDir, "logs", "logs_1747427310000_667024137.parquet"),
 			signalType:    SignalTypeLogs,
 			expectSuccess: true,
-			expectedType:  "*filereader.ArrowRawReader",
+			expectedType:  "*filereader.IngestLogParquetReader",
 			description:   "Logs parquet file with logs signal type",
 		},
 		{

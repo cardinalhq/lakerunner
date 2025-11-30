@@ -105,19 +105,24 @@ func (sb *SchemaBuilder) AddValue(columnName string, value any) {
 		// Only add if we haven't seen this column yet
 		key := wkk.NewRowKey(columnName)
 		if len(sb.schema.columns) == 0 || sb.schema.columns[key] == nil {
-			sb.schema.AddColumn(key, DataTypeAny, false)
+			// Add with identity mapping (column name -> column name)
+			sb.schema.AddColumn(key, key, DataTypeAny, false)
 		}
 		return
 	}
 
 	dataType := InferTypeFromValue(value)
-	sb.schema.AddColumn(wkk.NewRowKey(columnName), dataType, true)
+	key := wkk.NewRowKey(columnName)
+	// Add with identity mapping (column name -> column name)
+	sb.schema.AddColumn(key, key, dataType, true)
 }
 
 // AddStringValue parses a string value, infers its type, and adds to schema.
 func (sb *SchemaBuilder) AddStringValue(columnName string, stringValue string) {
 	dataType, _ := InferTypeFromString(stringValue)
-	sb.schema.AddColumn(wkk.NewRowKey(columnName), dataType, true)
+	key := wkk.NewRowKey(columnName)
+	// Add with identity mapping (column name -> column name)
+	sb.schema.AddColumn(key, key, dataType, true)
 }
 
 // Build returns the built schema.

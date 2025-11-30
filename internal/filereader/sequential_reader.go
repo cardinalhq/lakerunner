@@ -161,7 +161,9 @@ func (sr *SequentialReader) GetSchema() *ReaderSchema {
 			schema := reader.GetSchema()
 			if schema != nil {
 				for _, col := range schema.Columns() {
-					mergedSchema.AddColumn(col.Name, col.DataType, col.HasNonNull)
+					// Preserve the original name mapping from the reader schema
+					originalName := schema.GetOriginalName(col.Name)
+					mergedSchema.AddColumn(col.Name, originalName, col.DataType, col.HasNonNull)
 				}
 			}
 		}

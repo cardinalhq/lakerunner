@@ -48,7 +48,7 @@ func TestArrowRawReader_SchemaExtraction_BasicTypes(t *testing.T) {
 	parquetData, _ := createTestParquetInMemory(t, rows)
 	reader := bytes.NewReader(parquetData)
 
-	arrowReader, err := NewArrowRawReader(context.Background(), reader, 1000)
+	arrowReader, err := NewIngestLogParquetReader(context.Background(), reader, 1000)
 	require.NoError(t, err)
 	defer func() { _ = arrowReader.Close() }()
 
@@ -83,7 +83,7 @@ func TestArrowRawReader_SchemaExtraction_ColumnNames(t *testing.T) {
 	parquetData, _ := createTestParquetInMemory(t, rows)
 	reader := bytes.NewReader(parquetData)
 
-	arrowReader, err := NewArrowRawReader(context.Background(), reader, 1000)
+	arrowReader, err := NewIngestLogParquetReader(context.Background(), reader, 1000)
 	require.NoError(t, err)
 	defer func() { _ = arrowReader.Close() }()
 
@@ -93,9 +93,17 @@ func TestArrowRawReader_SchemaExtraction_ColumnNames(t *testing.T) {
 	// Verify simple column name
 	assert.True(t, schema.HasColumn("simple"))
 
-	// Arrow preserves dotted names exactly as they are in the schema
-	assert.True(t, schema.HasColumn("dotted.name"))
-	assert.True(t, schema.HasColumn("multi.dot.col"))
+	// Dotted names are normalized to underscores in the schema
+	assert.True(t, schema.HasColumn("dotted_name"))
+	assert.True(t, schema.HasColumn("multi_dot_col"))
+
+	// Original dotted names should NOT be in the schema
+	assert.False(t, schema.HasColumn("dotted.name"))
+	assert.False(t, schema.HasColumn("multi.dot.col"))
+
+	// But we should have mappings to the original names
+	assert.Equal(t, wkk.NewRowKey("dotted.name"), schema.GetOriginalName(wkk.NewRowKey("dotted_name")))
+	assert.Equal(t, wkk.NewRowKey("multi.dot.col"), schema.GetOriginalName(wkk.NewRowKey("multi_dot_col")))
 }
 
 // TestArrowRawReader_SchemaExtraction_ReadWithSchema tests that reading rows
@@ -118,7 +126,7 @@ func TestArrowRawReader_SchemaExtraction_ReadWithSchema(t *testing.T) {
 	parquetData, _ := createTestParquetInMemory(t, rows)
 	reader := bytes.NewReader(parquetData)
 
-	arrowReader, err := NewArrowRawReader(context.Background(), reader, 1000)
+	arrowReader, err := NewIngestLogParquetReader(context.Background(), reader, 1000)
 	require.NoError(t, err)
 	defer func() { _ = arrowReader.Close() }()
 
@@ -169,7 +177,7 @@ func TestArrowRawReader_SchemaExtraction_MultipleReads(t *testing.T) {
 	parquetData, _ := createTestParquetInMemory(t, rows)
 	reader := bytes.NewReader(parquetData)
 
-	arrowReader, err := NewArrowRawReader(context.Background(), reader, 10)
+	arrowReader, err := NewIngestLogParquetReader(context.Background(), reader, 10)
 	require.NoError(t, err)
 	defer func() { _ = arrowReader.Close() }()
 

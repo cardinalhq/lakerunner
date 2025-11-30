@@ -29,12 +29,12 @@ import (
 func TestMergesortReader_SchemaUnion(t *testing.T) {
 	// Create two readers with different columns
 	schema1 := NewReaderSchema()
-	schema1.AddColumn(wkk.NewRowKey("col_a"), DataTypeString, true)
-	schema1.AddColumn(wkk.NewRowKey("col_b"), DataTypeInt64, true)
+	schema1.AddColumn(wkk.NewRowKey("col_a"), wkk.NewRowKey("col_a"), DataTypeString, true)
+	schema1.AddColumn(wkk.NewRowKey("col_b"), wkk.NewRowKey("col_b"), DataTypeInt64, true)
 
 	schema2 := NewReaderSchema()
-	schema2.AddColumn(wkk.NewRowKey("col_b"), DataTypeInt64, true)
-	schema2.AddColumn(wkk.NewRowKey("col_c"), DataTypeFloat64, true)
+	schema2.AddColumn(wkk.NewRowKey("col_b"), wkk.NewRowKey("col_b"), DataTypeInt64, true)
+	schema2.AddColumn(wkk.NewRowKey("col_c"), wkk.NewRowKey("col_c"), DataTypeFloat64, true)
 
 	reader1 := newMockReader("reader1", []pipeline.Row{}, schema1)
 	reader2 := newMockReader("reader2", []pipeline.Row{}, schema2)
@@ -81,10 +81,11 @@ func TestMergesortReader_SchemaTypePromotion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			schema1 := NewReaderSchema()
-			schema1.AddColumn(wkk.NewRowKey("test_col"), tt.type1, true)
+			testCol := wkk.NewRowKey("test_col")
+			schema1.AddColumn(testCol, testCol, tt.type1, true)
 
 			schema2 := NewReaderSchema()
-			schema2.AddColumn(wkk.NewRowKey("test_col"), tt.type2, true)
+			schema2.AddColumn(testCol, testCol, tt.type2, true)
 
 			reader1 := newMockReader("reader1", []pipeline.Row{}, schema1)
 			reader2 := newMockReader("reader2", []pipeline.Row{}, schema2)
@@ -108,11 +109,11 @@ func TestMergesortReader_SchemaTypePromotion(t *testing.T) {
 func TestMergesortReader_SchemaHasNonNull(t *testing.T) {
 	// Reader 1: col has HasNonNull=false
 	schema1 := NewReaderSchema()
-	schema1.AddColumn(wkk.NewRowKey("test_col"), DataTypeString, false)
+	schema1.AddColumn(wkk.NewRowKey("test_col"), wkk.NewRowKey("test_col"), DataTypeString, false)
 
 	// Reader 2: same col has HasNonNull=true
 	schema2 := NewReaderSchema()
-	schema2.AddColumn(wkk.NewRowKey("test_col"), DataTypeString, true)
+	schema2.AddColumn(wkk.NewRowKey("test_col"), wkk.NewRowKey("test_col"), DataTypeString, true)
 
 	reader1 := newMockReader("reader1", []pipeline.Row{}, schema1)
 	reader2 := newMockReader("reader2", []pipeline.Row{}, schema2)
@@ -137,8 +138,8 @@ func TestMergesortReader_SchemaHasNonNull(t *testing.T) {
 func TestMergesortReader_SchemaNormalization(t *testing.T) {
 	// Reader 1: declares col as int64, but emits string value
 	schema1 := NewReaderSchema()
-	schema1.AddColumn(wkk.NewRowKey("test_col"), DataTypeInt64, true)
-	schema1.AddColumn(wkk.NewRowKey("_timestamp"), DataTypeInt64, true)
+	schema1.AddColumn(wkk.NewRowKey("test_col"), wkk.NewRowKey("test_col"), DataTypeInt64, true)
+	schema1.AddColumn(wkk.NewRowKey("_timestamp"), wkk.NewRowKey("_timestamp"), DataTypeInt64, true)
 
 	rows1 := []pipeline.Row{
 		{
@@ -149,8 +150,8 @@ func TestMergesortReader_SchemaNormalization(t *testing.T) {
 
 	// Reader 2: declares col as int64, emits int64 value
 	schema2 := NewReaderSchema()
-	schema2.AddColumn(wkk.NewRowKey("test_col"), DataTypeInt64, true)
-	schema2.AddColumn(wkk.NewRowKey("_timestamp"), DataTypeInt64, true)
+	schema2.AddColumn(wkk.NewRowKey("test_col"), wkk.NewRowKey("test_col"), DataTypeInt64, true)
+	schema2.AddColumn(wkk.NewRowKey("_timestamp"), wkk.NewRowKey("_timestamp"), DataTypeInt64, true)
 
 	rows2 := []pipeline.Row{
 		{

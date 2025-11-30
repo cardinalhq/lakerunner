@@ -37,17 +37,17 @@ func TestBackendOutputComparison(t *testing.T) {
 
 	// Create test schema with various types including string conversion
 	schema := filereader.NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("message"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("level"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("value"), filereader.DataTypeFloat64, true)
-	schema.AddColumn(wkk.NewRowKey("active"), filereader.DataTypeBool, true)
+	schema.AddColumn(wkk.NewRowKey("id"), wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("timestamp"), wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("message"), wkk.NewRowKey("message"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("level"), wkk.NewRowKey("level"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("value"), wkk.NewRowKey("value"), filereader.DataTypeFloat64, true)
+	schema.AddColumn(wkk.NewRowKey("active"), wkk.NewRowKey("active"), filereader.DataTypeBool, true)
 	// String conversion columns
-	schema.AddColumn(wkk.NewRowKey("resource_service"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("attr_user_id"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("attr_count"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("resource_service"), wkk.NewRowKey("resource_service"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("attr_user_id"), wkk.NewRowKey("attr_user_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("attr_count"), wkk.NewRowKey("attr_count"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
 
 	// Create test data batch
 	batch := pipeline.GetBatch()
@@ -225,13 +225,13 @@ func TestBackendOutputComparison_LargeDataset(t *testing.T) {
 
 	// Create schema
 	schema := filereader.NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("message"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("value"), filereader.DataTypeFloat64, true)
-	schema.AddColumn(wkk.NewRowKey("resource_service"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("attr_count"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("id"), wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("timestamp"), wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("message"), wkk.NewRowKey("message"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("value"), wkk.NewRowKey("value"), filereader.DataTypeFloat64, true)
+	schema.AddColumn(wkk.NewRowKey("resource_service"), wkk.NewRowKey("resource_service"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("attr_count"), wkk.NewRowKey("attr_count"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
 
 	// Create 1000 rows
 	batch := pipeline.GetBatch()
@@ -328,12 +328,12 @@ func TestBackendOutputComparison_StringConversion(t *testing.T) {
 
 	// Create schema with columns that will be converted to strings
 	schema := filereader.NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("attr_int"), filereader.DataTypeString, true)    // int -> string
-	schema.AddColumn(wkk.NewRowKey("attr_float"), filereader.DataTypeString, true)  // float -> string
-	schema.AddColumn(wkk.NewRowKey("attr_bool"), filereader.DataTypeString, true)   // bool -> string
-	schema.AddColumn(wkk.NewRowKey("resource_id"), filereader.DataTypeString, true) // int -> string
-	schema.AddColumn(wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("id"), wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("attr_int"), wkk.NewRowKey("attr_int"), filereader.DataTypeString, true)       // int -> string
+	schema.AddColumn(wkk.NewRowKey("attr_float"), wkk.NewRowKey("attr_float"), filereader.DataTypeString, true)   // float -> string
+	schema.AddColumn(wkk.NewRowKey("attr_bool"), wkk.NewRowKey("attr_bool"), filereader.DataTypeString, true)     // bool -> string
+	schema.AddColumn(wkk.NewRowKey("resource_id"), wkk.NewRowKey("resource_id"), filereader.DataTypeString, true) // int -> string
+	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
 
 	batch := pipeline.GetBatch()
 	defer pipeline.ReturnBatch(batch)

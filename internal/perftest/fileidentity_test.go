@@ -187,8 +187,9 @@ func adjustSchemaForStringConversion(schema *filereader.ReaderSchema, prefixes [
 			dataType = filereader.DataTypeString
 		}
 
-		// Add column to new schema
-		newSchema.AddColumn(col.Name, dataType, hasNonNull)
+		// Add column to new schema - preserve original name mapping
+		originalName := schema.GetOriginalName(col.Name)
+		newSchema.AddColumn(col.Name, originalName, dataType, hasNonNull)
 	}
 
 	return newSchema

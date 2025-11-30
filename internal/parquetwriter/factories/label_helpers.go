@@ -75,6 +75,8 @@ func underscoreToDotted(underscored string) string {
 // This map serves dual purposes:
 // 1. For v2 APIs (LogQL/PromQL): All keys are used for tag queries
 // 2. For v1 legacy APIs: Only entries with non-empty values (dotted mappings) are used
+// DEPRECATED: Use BuildLabelNameMapFromSchema instead which uses actual reader mappings.
+// This heuristic version is still used by metrics and traces writers.
 func buildLabelNameMap(columns mapset.Set[string]) []byte {
 	cardinality := columns.Cardinality()
 	if cardinality == 0 {
@@ -110,6 +112,42 @@ func buildLabelNameMap(columns mapset.Set[string]) []byte {
 	slog.Debug("buildLabelNameMap created mapping",
 		slog.Int("columnCount", cardinality),
 		slog.Int("mappingCount", len(mapping)))
+
+	return jsonBytes
+}
+
+// BuildLabelNameMapFromSchema creates a JSON mapping using actual reader schema mappings.
+// This function extracts all column mappings from the schema and filters to label columns only.
+// The mapping stores new_name -> original_name for all columns.
+func BuildLabelNameMapFromSchema(schema map[string]string) []byte {
+	if len(schema) == 0 {
+		slog.Warn("buildLabelNameMapFromSchema called with empty schema mappings - label_name_map will be NULL")
+		return nil
+	}
+
+	// Filter to label columns only
+	mapping := make(map[string]string)
+	for newName, originalName := range schema {
+		if isLabelColumn(newName) {
+			mapping[newName] = originalName
+		}
+	}
+
+	if len(mapping) == 0 {
+		slog.Warn("buildLabelNameMapFromSchema: no label columns found in schema",
+			slog.Int("totalColumns", len(schema)))
+		return nil
+	}
+
+	jsonBytes, err := json.Marshal(mapping)
+	if err != nil {
+		slog.Error("buildLabelNameMapFromSchema: failed to marshal mapping", slog.Any("error", err))
+		return nil
+	}
+
+	slog.Debug("buildLabelNameMapFromSchema created mapping",
+		slog.Int("totalColumns", len(schema)),
+		slog.Int("labelColumns", len(mapping)))
 
 	return jsonBytes
 }

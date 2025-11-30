@@ -46,6 +46,11 @@ type IngestProtoTracesReader struct {
 
 	// Schema extracted from all traces
 	schema *ReaderSchema
+
+	// Cached RowKeys for attribute names (entire file scope)
+	resourceAttrCache *PrefixedRowKeyCache // "service.name" → wkk("resource_service_name")
+	scopeAttrCache    *PrefixedRowKeyCache // "name" → wkk("scope_name")
+	attrCache         *PrefixedRowKeyCache // "user.id" → wkk("attr_user_id")
 }
 
 var _ Reader = (*IngestProtoTracesReader)(nil)
@@ -66,9 +71,12 @@ func NewProtoTracesReader(reader io.Reader, batchSize int) (*IngestProtoTracesRe
 	schema := extractSchemaFromOTELTraces(traces)
 
 	protoReader := &IngestProtoTracesReader{
-		batchSize: batchSize,
-		traces:    traces,
-		schema:    schema,
+		batchSize:         batchSize,
+		traces:            traces,
+		schema:            schema,
+		resourceAttrCache: NewPrefixedRowKeyCache("resource"),
+		scopeAttrCache:    NewPrefixedRowKeyCache("scope"),
+		attrCache:         NewPrefixedRowKeyCache("attr"),
 	}
 
 	return protoReader, nil
@@ -90,10 +98,13 @@ func NewIngestProtoTracesReader(reader io.Reader, opts ReaderOptions) (*IngestPr
 	schema := extractSchemaFromOTELTraces(traces)
 
 	protoReader := &IngestProtoTracesReader{
-		batchSize: batchSize,
-		orgId:     opts.OrgID,
-		traces:    traces,
-		schema:    schema,
+		batchSize:         batchSize,
+		orgId:             opts.OrgID,
+		traces:            traces,
+		schema:            schema,
+		resourceAttrCache: NewPrefixedRowKeyCache("resource"),
+		scopeAttrCache:    NewPrefixedRowKeyCache("scope"),
+		attrCache:         NewPrefixedRowKeyCache("attr"),
 	}
 
 	return protoReader, nil
@@ -195,22 +206,25 @@ func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context, row pipeline.
 func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span, row pipeline.Row) {
 	// Add resource attributes with prefix (preserve native types)
 	rs.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.resourceAttrCache.Get(name)
 		value := otelValueToGoValue(v)
-		row[prefixAttributeRowKey(name, "resource")] = value
+		row[key] = value
 		return true
 	})
 
 	// Add scope attributes with prefix (preserve native types)
 	ss.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.scopeAttrCache.Get(name)
 		value := otelValueToGoValue(v)
-		row[prefixAttributeRowKey(name, "scope")] = value
+		row[key] = value
 		return true
 	})
 
 	// Add span attributes with prefix (preserve native types)
 	span.Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.attrCache.Get(name)
 		value := otelValueToGoValue(v)
-		row[prefixAttributeRowKey(name, "attr")] = value
+		row[key] = value
 		return true
 	})
 

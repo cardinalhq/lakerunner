@@ -33,21 +33,21 @@ import (
 func testSplitterSchema() *filereader.ReaderSchema {
 	schema := filereader.NewReaderSchema()
 	// Basic test fields
-	schema.AddColumn(wkk.NewRowKey("field1"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("field2"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("group"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("field1"), wkk.NewRowKey("field1"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("field2"), wkk.NewRowKey("field2"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("timestamp"), wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("group"), wkk.NewRowKey("group"), filereader.DataTypeString, true)
 	// String conversion test fields
-	schema.AddColumn(wkk.NewRowKey("resource_id"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("resource_name"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("attr_value"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("regular_field"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("resource_id"), wkk.NewRowKey("resource_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("resource_name"), wkk.NewRowKey("resource_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("attr_value"), wkk.NewRowKey("attr_value"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("regular_field"), wkk.NewRowKey("regular_field"), filereader.DataTypeInt64, true)
 	// Fingerprint test fields
-	schema.AddColumn(wkk.NewRowKey("message"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("resource_service_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("message"), wkk.NewRowKey("message"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("resource_service_name"), wkk.NewRowKey("resource_service_name"), filereader.DataTypeString, true)
 	// Always-present fields
-	schema.AddColumn(wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("chq_fingerprint"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_fingerprint"), wkk.NewRowKey("chq_fingerprint"), filereader.DataTypeInt64, true)
 	return schema
 }
 

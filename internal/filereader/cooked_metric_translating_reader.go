@@ -204,12 +204,15 @@ func (r *CookedMetricTranslatingReader) GetSchema() *ReaderSchema {
 	// Clone the base schema to avoid modifying the wrapped reader's schema
 	augmentedSchema := NewReaderSchema()
 	for _, col := range baseSchema.Columns() {
-		augmentedSchema.AddColumn(col.Name, col.DataType, col.HasNonNull)
+		// Preserve the original name mapping from the base schema
+		originalName := baseSchema.GetOriginalName(col.Name)
+		augmentedSchema.AddColumn(col.Name, originalName, col.DataType, col.HasNonNull)
 	}
 
 	// Add chq_tsns field (derived from chq_timestamp, always added if timestamp exists)
 	if !augmentedSchema.HasColumn(wkk.RowKeyValue(wkk.RowKeyCTsns)) {
-		augmentedSchema.AddColumn(wkk.RowKeyCTsns, DataTypeInt64, true)
+		// Identity mapping for chq_tsns
+		augmentedSchema.AddColumn(wkk.RowKeyCTsns, wkk.RowKeyCTsns, DataTypeInt64, true)
 	}
 
 	return augmentedSchema

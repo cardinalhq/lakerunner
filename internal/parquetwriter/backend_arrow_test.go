@@ -37,11 +37,11 @@ func TestArrowBackendStatistics(t *testing.T) {
 
 	// Create a test schema with various column types
 	schema := filereader.NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("name"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("score"), filereader.DataTypeFloat64, true)
-	schema.AddColumn(wkk.NewRowKey("active"), filereader.DataTypeBool, true)
-	schema.AddColumn(wkk.NewRowKey("nullable_field"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("id"), wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("name"), wkk.NewRowKey("name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("score"), wkk.NewRowKey("score"), filereader.DataTypeFloat64, true)
+	schema.AddColumn(wkk.NewRowKey("active"), wkk.NewRowKey("active"), filereader.DataTypeBool, true)
+	schema.AddColumn(wkk.NewRowKey("nullable_field"), wkk.NewRowKey("nullable_field"), filereader.DataTypeString, true)
 
 	// Create backend
 	config := BackendConfig{
@@ -265,10 +265,10 @@ func TestArrowBackendAllNullColumn(t *testing.T) {
 
 	// Create a test schema with a column we'll never populate (only nulls)
 	schema := filereader.NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("id"), wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("name"), wkk.NewRowKey("name"), filereader.DataTypeString, true)
 	// This column is marked as HasNonNull=true in the schema, but we'll only write nulls
-	schema.AddColumn(wkk.NewRowKey("never_populated"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("never_populated"), wkk.NewRowKey("never_populated"), filereader.DataTypeString, true)
 
 	config := BackendConfig{
 		Type:      BackendArrow,
@@ -322,10 +322,10 @@ func TestArrowBackendAllNullColumn(t *testing.T) {
 	// Read the parquet file using our Arrow reader
 	f, err := os.Open(tmpFile.Name())
 	require.NoError(t, err)
-	// Note: NewArrowRawReader takes ownership of the file and will close it
+	// Note: NewIngestLogParquetReader takes ownership of the file and will close it
 
 	// Use our Arrow reader to extract schema with statistics
-	arrowReader, err := filereader.NewArrowRawReader(ctx, f, 1000)
+	arrowReader, err := filereader.NewIngestLogParquetReader(ctx, f, 1000)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, arrowReader.Close()) }()
 
@@ -363,7 +363,7 @@ func TestArrowBackendStatisticsEnabled(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	schema := filereader.NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("test_col"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("test_col"), wkk.NewRowKey("test_col"), filereader.DataTypeInt64, true)
 
 	config := BackendConfig{
 		Type:      BackendArrow,

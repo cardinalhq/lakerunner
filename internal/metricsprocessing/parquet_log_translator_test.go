@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -274,64 +275,42 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 	}
 }
 
-func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.T) {
+func TestParquetLogTranslator_TranslateRow_FlattenedFields(t *testing.T) {
 	tests := []struct {
 		name     string
 		inputRow pipeline.Row
 		expected map[string]any
 	}{
 		{
-			name: "nested map structure",
+			name: "already flattened fields from reader",
 			inputRow: pipeline.Row{
-				wkk.NewRowKey("timestamp"): int64(1234567890123),
-				wkk.NewRowKey("message"):   "test message",
-				wkk.NewRowKey("metadata"): map[string]any{
-					"user": "john",
-					"details": map[string]any{
-						"age":  30,
-						"city": "NYC",
-					},
-				},
+				wkk.NewRowKey("timestamp"):      int64(1234567890123),
+				wkk.NewRowKey("message"):        "test message",
+				wkk.NewRowKey("metadata_user"):  "john",
+				wkk.NewRowKey("metadata_age"):   int64(30),
+				wkk.NewRowKey("metadata_city"):  "NYC",
+				wkk.NewRowKey("service_name"):   "api",
+				wkk.NewRowKey("service_region"): "us-west-2",
 			},
 			expected: map[string]any{
-				"resource_metadata_user":         "john",
-				"resource_metadata_details_age":  30,
-				"resource_metadata_details_city": "NYC",
+				"resource_metadata_user":  "john",
+				"resource_metadata_age":   int64(30),
+				"resource_metadata_city":  "NYC",
+				"resource_service_name":   "api",
+				"resource_service_region": "us-west-2",
 			},
 		},
 		{
-			name: "array structure",
+			name: "special fields are not prefixed",
 			inputRow: pipeline.Row{
-				wkk.NewRowKey("timestamp"): int64(1234567890123),
-				wkk.NewRowKey("message"):   "test message",
-				wkk.NewRowKey("tags"):      []any{"tag1", "tag2", "tag3"},
+				wkk.NewRowKey("timestamp"):     int64(1234567890123),
+				wkk.NewRowKey("message"):       "test message",
+				wkk.NewRowKey("chq_timestamp"): int64(1234567890123),
+				wkk.NewRowKey("chq_message"):   "test message",
+				wkk.NewRowKey("other_field"):   "value",
 			},
 			expected: map[string]any{
-				"resource_tags[0]": "tag1",
-				"resource_tags[1]": "tag2",
-				"resource_tags[2]": "tag3",
-			},
-		},
-		{
-			name: "complex nested structure",
-			inputRow: pipeline.Row{
-				wkk.NewRowKey("timestamp"): int64(1234567890123),
-				wkk.NewRowKey("message"):   "test message",
-				wkk.NewRowKey("data"): map[string]any{ // Changed from "event" to avoid message field detection
-					"type": "click",
-					"properties": map[string]any{
-						"button": "submit",
-						"coordinates": []any{
-							map[string]any{"x": 100, "y": 200},
-						},
-					},
-				},
-			},
-			expected: map[string]any{
-				"resource_data_type":                        "click",
-				"resource_data_properties_button":           "submit",
-				"resource_data_properties_coordinates[0]_x": 100,
-				"resource_data_properties_coordinates[0]_y": 200,
+				"resource_other_field": "value",
 			},
 		},
 	}
@@ -353,7 +332,7 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 			err := translator.TranslateRow(context.Background(), &row)
 			require.NoError(t, err)
 
-			// Check that nested structures were flattened correctly
+			// Check that fields were prefixed correctly
 			for expectedKey, expectedValue := range tt.expected {
 				key := wkk.NewRowKey(expectedKey)
 				actualValue, exists := row[key]
@@ -361,18 +340,19 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 				assert.Equal(t, expectedValue, actualValue, "Value mismatch for key %s", expectedKey)
 			}
 
-			// Verify original nested keys were removed
-			if _, ok := tt.inputRow[wkk.NewRowKey("metadata")]; ok {
-				_, exists := row[wkk.NewRowKey("metadata")]
-				assert.False(t, exists, "Original nested 'metadata' key should be removed")
-			}
-			if _, ok := tt.inputRow[wkk.NewRowKey("tags")]; ok {
-				_, exists := row[wkk.NewRowKey("tags")]
-				assert.False(t, exists, "Original 'tags' array key should be removed")
-			}
-			if _, ok := tt.inputRow[wkk.NewRowKey("data")]; ok {
-				_, exists := row[wkk.NewRowKey("data")]
-				assert.False(t, exists, "Original nested 'data' key should be removed")
+			// Verify original keys were removed (fields that get resource_ prefix)
+			for k := range tt.inputRow {
+				keyStr := wkk.RowKeyValue(k)
+				// Special fields and already-prefixed fields should remain unchanged
+				if keyStr == "timestamp" || keyStr == "message" ||
+					strings.HasPrefix(keyStr, "chq_") ||
+					strings.HasPrefix(keyStr, "resource_") ||
+					strings.HasPrefix(keyStr, "_") {
+					continue
+				}
+				// Other fields should be removed (they now have resource_ prefix)
+				_, exists := row[k]
+				assert.False(t, exists, "Original key %s should be removed after adding resource_ prefix", keyStr)
 			}
 		})
 	}

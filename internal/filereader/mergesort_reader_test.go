@@ -34,21 +34,21 @@ import (
 // createSimpleSchema creates a basic schema for test mock readers
 func createSimpleSchema() *ReaderSchema {
 	schema := NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("ts"), DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("data"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("ts"), wkk.NewRowKey("ts"), DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("data"), wkk.NewRowKey("data"), DataTypeString, true)
 	return schema
 }
 
 // createMetricSchema creates a schema for metric test data
 func createMetricSchema() *ReaderSchema {
 	schema := NewReaderSchema()
-	schema.AddColumn(wkk.RowKeyCName, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTID, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCTimestamp, DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("reader_id"), DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("row_id"), DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("value"), DataTypeFloat64, true)
-	schema.AddColumn(wkk.NewRowKey("source"), DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTID, wkk.RowKeyCTID, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCTimestamp, wkk.RowKeyCTimestamp, DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("reader_id"), wkk.NewRowKey("reader_id"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("row_id"), wkk.NewRowKey("row_id"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("value"), wkk.NewRowKey("value"), DataTypeFloat64, true)
+	schema.AddColumn(wkk.NewRowKey("source"), wkk.NewRowKey("source"), DataTypeString, true)
 	return schema
 }
 

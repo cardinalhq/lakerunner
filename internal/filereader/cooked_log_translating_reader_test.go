@@ -164,7 +164,7 @@ func TestCookedLogTranslatingReader_GetSchema(t *testing.T) {
 	reader := bytes.NewReader(parquetData)
 
 	// ArrowRawReader implements Reader
-	rawReader, err := NewArrowRawReader(context.Background(), reader, 1000)
+	rawReader, err := NewIngestLogParquetReader(context.Background(), reader, 1000)
 	require.NoError(t, err)
 	defer func() { _ = rawReader.Close() }()
 

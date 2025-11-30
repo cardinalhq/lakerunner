@@ -104,7 +104,9 @@ func NewCSVReader(reader io.ReadCloser, batchSize int) (*CSVReader, error) {
 	} else {
 		// Non-seekable: create default schema (all string, all HasNonNull=true)
 		for _, header := range headers {
-			schema.AddColumn(wkk.NewRowKey(header), DataTypeString, true)
+			key := wkk.NewRowKey(header)
+			// Identity mapping for CSV (header name is the same as column name)
+			schema.AddColumn(key, key, DataTypeString, true)
 		}
 	}
 

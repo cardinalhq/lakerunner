@@ -299,7 +299,9 @@ func mergeSchemas(readers []Reader) *ReaderSchema {
 
 		// Merge each column from this reader's schema
 		for _, col := range readerSchema.Columns() {
-			merged.AddColumn(col.Name, col.DataType, col.HasNonNull)
+			// Preserve the original name mapping from the reader schema
+			originalName := readerSchema.GetOriginalName(col.Name)
+			merged.AddColumn(col.Name, originalName, col.DataType, col.HasNonNull)
 		}
 	}
 

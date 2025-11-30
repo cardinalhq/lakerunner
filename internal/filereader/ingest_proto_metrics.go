@@ -59,6 +59,11 @@ type IngestProtoMetricsReader struct {
 
 	// Schema extracted from all metrics
 	schema *ReaderSchema
+
+	// Cached RowKeys for attribute names (entire file scope)
+	resourceAttrCache *PrefixedRowKeyCache // "service.name" → wkk("resource_service_name")
+	scopeAttrCache    *PrefixedRowKeyCache // "name" → wkk("scope_name")
+	attrCache         *PrefixedRowKeyCache // "user.id" → wkk("attr_user_id")
 }
 
 var _ Reader = (*IngestProtoMetricsReader)(nil)
@@ -89,10 +94,13 @@ func NewIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics, opts Reade
 	schema := extractSchemaFromOTELMetrics(metrics)
 
 	return &IngestProtoMetricsReader{
-		otelMetrics: metrics,
-		orgId:       opts.OrgID,
-		batchSize:   batchSize,
-		schema:      schema,
+		otelMetrics:       metrics,
+		orgId:             opts.OrgID,
+		batchSize:         batchSize,
+		schema:            schema,
+		resourceAttrCache: NewPrefixedRowKeyCache("resource"),
+		scopeAttrCache:    NewPrefixedRowKeyCache("scope"),
+		attrCache:         NewPrefixedRowKeyCache("attr"),
 	}, nil
 }
 
@@ -219,14 +227,16 @@ func (r *IngestProtoMetricsReader) getDatapointCount(metric pmetric.Metric) int 
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
 func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pipeline.Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (bool, error) {
 	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.resourceAttrCache.Get(name)
 		value := v.AsString()
-		row[prefixAttributeRowKey(name, "resource")] = value
+		row[key] = value
 		return true
 	})
 
 	sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.scopeAttrCache.Get(name)
 		value := v.AsString()
-		row[prefixAttributeRowKey(name, "scope")] = value
+		row[key] = value
 		return true
 	})
 
@@ -430,8 +440,9 @@ func summaryToDDSketch(dp pmetric.SummaryDataPoint) (*ddsketch.DDSketch, error) 
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
 func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.attrCache.Get(name)
 		value := v.AsString()
-		ret[prefixAttributeRowKey(name, "attr")] = value
+		ret[key] = value
 		return true
 	})
 
@@ -702,8 +713,9 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 // addExponentialHistogramDatapointFields adds fields from an ExponentialHistogramDataPoint to the row.
 func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.attrCache.Get(name)
 		value := v.AsString()
-		ret[prefixAttributeRowKey(name, "attr")] = value
+		ret[key] = value
 		return true
 	})
 
@@ -823,8 +835,9 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.SummaryDataPoint) (bool, error) {
 	// Add attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.attrCache.Get(name)
 		value := v.AsString()
-		ret[prefixAttributeRowKey(name, "attr")] = value
+		ret[key] = value
 		return true
 	})
 

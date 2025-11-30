@@ -247,18 +247,18 @@ func generateTestBatches(b *testing.B, numLogs int) ([]*pipeline.Batch, *filerea
 
 	// Create schema matching what testdata.GenerateLogBatch produces
 	schema := filereader.NewReaderSchema()
-	schema.AddColumn(wkk.RowKeyCTimestamp, filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCMessage, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCLevel, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("service_name"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("host_name"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("container_name"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("k8s_namespace_name"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("k8s_pod_name"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("k8s_cluster_name"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("deployment_environment"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTimestamp, wkk.RowKeyCTimestamp, filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCMessage, wkk.RowKeyCMessage, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCLevel, wkk.RowKeyCLevel, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("service_name"), wkk.NewRowKey("service_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("host_name"), wkk.NewRowKey("host_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("container_name"), wkk.NewRowKey("container_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("k8s_namespace_name"), wkk.NewRowKey("k8s_namespace_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("k8s_pod_name"), wkk.NewRowKey("k8s_pod_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("k8s_cluster_name"), wkk.NewRowKey("k8s_cluster_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("deployment_environment"), wkk.NewRowKey("deployment_environment"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
 
 	batchSize := 1000
 	numBatches := (numLogs + batchSize - 1) / batchSize

@@ -53,11 +53,11 @@ func runAggregation(t *testing.T) {
 	}
 
 	schema := NewReaderSchema()
-	schema.AddColumn(wkk.RowKeyCTimestamp, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCName, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyRollupSum, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupMax, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyCMetricType, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTimestamp, wkk.RowKeyCTimestamp, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyRollupSum, wkk.RowKeyRollupSum, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupMax, wkk.RowKeyRollupMax, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyCMetricType, wkk.RowKeyCMetricType, DataTypeString, true)
 
 	mock := newMockReader("test", rows, schema)
 	reader, err := NewAggregatingMetricsReader(mock, 10000, 50)

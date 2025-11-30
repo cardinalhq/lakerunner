@@ -27,11 +27,11 @@ import (
 func extractSchemaFromOTELLogs(logs *plog.Logs) *ReaderSchema {
 	schema := NewReaderSchema()
 
-	// Add core log fields that are always present
-	schema.AddColumn(wkk.RowKeyCMessage, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTimestamp, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCTsns, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCLevel, DataTypeString, true)
+	// Add core log fields that are always present (with identity mappings)
+	schema.AddColumn(wkk.RowKeyCMessage, wkk.RowKeyCMessage, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTimestamp, wkk.RowKeyCTimestamp, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCTsns, wkk.RowKeyCTsns, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCLevel, wkk.RowKeyCLevel, DataTypeString, true)
 
 	// Iterate through all logs to discover all attributes and their types
 	for i := range logs.ResourceLogs().Len() {
@@ -41,7 +41,8 @@ func extractSchemaFromOTELLogs(logs *plog.Logs) *ReaderSchema {
 		rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 			dataType := otelValueTypeToDataType(v.Type())
 			key := prefixAttributeRowKey(name, "resource")
-			schema.AddColumn(key, dataType, true)
+			// Add with identity mapping (prefixed name -> prefixed name)
+			schema.AddColumn(key, key, dataType, true)
 			return true
 		})
 
@@ -52,7 +53,8 @@ func extractSchemaFromOTELLogs(logs *plog.Logs) *ReaderSchema {
 			sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 				dataType := otelValueTypeToDataType(v.Type())
 				key := prefixAttributeRowKey(name, "scope")
-				schema.AddColumn(key, dataType, true)
+				// Add with identity mapping (prefixed name -> prefixed name)
+				schema.AddColumn(key, key, dataType, true)
 				return true
 			})
 
@@ -63,7 +65,8 @@ func extractSchemaFromOTELLogs(logs *plog.Logs) *ReaderSchema {
 				logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
 					dataType := otelValueTypeToDataType(v.Type())
 					key := prefixAttributeRowKey(name, "attr")
-					schema.AddColumn(key, dataType, true)
+					// Add with identity mapping (prefixed name -> prefixed name)
+					schema.AddColumn(key, key, dataType, true)
 					return true
 				})
 			}
@@ -78,18 +81,18 @@ func extractSchemaFromOTELTraces(traces *ptrace.Traces) *ReaderSchema {
 	schema := NewReaderSchema()
 
 	// Add core span fields that are always present
-	schema.AddColumn(wkk.RowKeySpanTraceID, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeySpanID, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeySpanParentSpanID, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeySpanName, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeySpanKind, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeySpanStatusCode, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeySpanStatusMessage, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTimestamp, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCTsns, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeySpanEndTimestamp, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeySpanDuration, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCFingerprint, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeySpanTraceID, wkk.RowKeySpanTraceID, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeySpanID, wkk.RowKeySpanID, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeySpanParentSpanID, wkk.RowKeySpanParentSpanID, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeySpanName, wkk.RowKeySpanName, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeySpanKind, wkk.RowKeySpanKind, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeySpanStatusCode, wkk.RowKeySpanStatusCode, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeySpanStatusMessage, wkk.RowKeySpanStatusMessage, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTimestamp, wkk.RowKeyCTimestamp, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCTsns, wkk.RowKeyCTsns, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeySpanEndTimestamp, wkk.RowKeySpanEndTimestamp, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeySpanDuration, wkk.RowKeySpanDuration, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, DataTypeInt64, true)
 
 	// Scan all spans to discover attributes
 	for i := 0; i < traces.ResourceSpans().Len(); i++ {
@@ -99,7 +102,8 @@ func extractSchemaFromOTELTraces(traces *ptrace.Traces) *ReaderSchema {
 		rs.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 			key := prefixAttributeRowKey(name, "resource")
 			dataType := otelValueTypeToDataType(v.Type())
-			schema.AddColumn(key, dataType, true)
+			// Identity mapping for dynamic attribute keys
+			schema.AddColumn(key, key, dataType, true)
 			return true
 		})
 
@@ -110,7 +114,7 @@ func extractSchemaFromOTELTraces(traces *ptrace.Traces) *ReaderSchema {
 			ss.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 				key := prefixAttributeRowKey(name, "scope")
 				dataType := otelValueTypeToDataType(v.Type())
-				schema.AddColumn(key, dataType, true)
+				schema.AddColumn(key, key, dataType, true)
 				return true
 			})
 
@@ -121,7 +125,7 @@ func extractSchemaFromOTELTraces(traces *ptrace.Traces) *ReaderSchema {
 				span.Attributes().Range(func(name string, v pcommon.Value) bool {
 					key := prefixAttributeRowKey(name, "attr")
 					dataType := otelValueTypeToDataType(v.Type())
-					schema.AddColumn(key, dataType, true)
+					schema.AddColumn(key, key, dataType, true)
 					return true
 				})
 			}
@@ -136,33 +140,33 @@ func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
 	schema := NewReaderSchema()
 
 	// Add core metric fields that are always present
-	schema.AddColumn(wkk.RowKeyCName, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTID, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCTimestamp, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCTsns, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCMetricType, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTID, wkk.RowKeyCTID, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCTimestamp, wkk.RowKeyCTimestamp, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCTsns, wkk.RowKeyCTsns, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCMetricType, wkk.RowKeyCMetricType, DataTypeString, true)
 
 	// Scope fields (added by buildMetricRow)
-	schema.AddColumn(wkk.NewRowKey("chq_scope_url"), DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("chq_scope_name"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_scope_url"), wkk.NewRowKey("chq_scope_url"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_scope_name"), wkk.NewRowKey("chq_scope_name"), DataTypeString, true)
 
 	// Metric metadata fields (added by buildMetricRow)
-	schema.AddColumn(wkk.NewRowKey("chq_description"), DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("chq_unit"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_description"), wkk.NewRowKey("chq_description"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_unit"), wkk.NewRowKey("chq_unit"), DataTypeString, true)
 
 	// Rollup fields
-	schema.AddColumn(wkk.RowKeySketch, DataTypeBytes, true)
-	schema.AddColumn(wkk.RowKeyRollupAvg, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupMax, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupMin, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupCount, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupSum, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP25, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP50, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP75, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP90, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP95, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP99, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeySketch, wkk.RowKeySketch, DataTypeBytes, true)
+	schema.AddColumn(wkk.RowKeyRollupAvg, wkk.RowKeyRollupAvg, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupMax, wkk.RowKeyRollupMax, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupMin, wkk.RowKeyRollupMin, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupCount, wkk.RowKeyRollupCount, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupSum, wkk.RowKeyRollupSum, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupP25, wkk.RowKeyRollupP25, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupP50, wkk.RowKeyRollupP50, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupP75, wkk.RowKeyRollupP75, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupP90, wkk.RowKeyRollupP90, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupP95, wkk.RowKeyRollupP95, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupP99, wkk.RowKeyRollupP99, DataTypeFloat64, true)
 
 	// Scan all metrics to discover attributes
 	for i := 0; i < metrics.ResourceMetrics().Len(); i++ {
@@ -172,7 +176,7 @@ func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
 		rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 			key := prefixAttributeRowKey(name, "resource")
 			dataType := otelValueTypeToDataType(v.Type())
-			schema.AddColumn(key, dataType, true)
+			schema.AddColumn(key, key, dataType, true)
 			return true
 		})
 
@@ -183,7 +187,7 @@ func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
 			sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 				key := prefixAttributeRowKey(name, "scope")
 				dataType := otelValueTypeToDataType(v.Type())
-				schema.AddColumn(key, dataType, true)
+				schema.AddColumn(key, key, dataType, true)
 				return true
 			})
 
@@ -198,7 +202,7 @@ func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
 						dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 							key := prefixAttributeRowKey(name, "attr")
 							dataType := otelValueTypeToDataType(v.Type())
-							schema.AddColumn(key, dataType, true)
+							schema.AddColumn(key, key, dataType, true)
 							return true
 						})
 					}
@@ -208,7 +212,7 @@ func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
 						dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 							key := prefixAttributeRowKey(name, "attr")
 							dataType := otelValueTypeToDataType(v.Type())
-							schema.AddColumn(key, dataType, true)
+							schema.AddColumn(key, key, dataType, true)
 							return true
 						})
 					}
@@ -218,7 +222,7 @@ func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
 						dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 							key := prefixAttributeRowKey(name, "attr")
 							dataType := otelValueTypeToDataType(v.Type())
-							schema.AddColumn(key, dataType, true)
+							schema.AddColumn(key, key, dataType, true)
 							return true
 						})
 					}
@@ -228,7 +232,7 @@ func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
 						dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 							key := prefixAttributeRowKey(name, "attr")
 							dataType := otelValueTypeToDataType(v.Type())
-							schema.AddColumn(key, dataType, true)
+							schema.AddColumn(key, key, dataType, true)
 							return true
 						})
 					}
@@ -238,7 +242,7 @@ func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
 						dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 							key := prefixAttributeRowKey(name, "attr")
 							dataType := otelValueTypeToDataType(v.Type())
-							schema.AddColumn(key, dataType, true)
+							schema.AddColumn(key, key, dataType, true)
 							return true
 						})
 					}

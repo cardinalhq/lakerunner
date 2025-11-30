@@ -17,7 +17,6 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"maps"
 	"strings"
 	"time"
 
@@ -170,35 +169,6 @@ func NewParquetLogTranslator(orgID, bucket, objectID string) *ParquetLogTranslat
 		OrgID:    orgID,
 		Bucket:   bucket,
 		ObjectID: objectID,
-	}
-}
-
-// flattenValue recursively flattens nested structures into underscore-notation fields
-func (t *ParquetLogTranslator) flattenValue(prefix string, value any, result map[wkk.RowKey]any) {
-	switch v := value.(type) {
-	case map[string]any:
-		// Handle nested maps
-		for key, nestedVal := range v {
-			newPrefix := key
-			if prefix != "" {
-				newPrefix = prefix + "_" + key
-			}
-			t.flattenValue(newPrefix, nestedVal, result)
-		}
-	case []any:
-		// Handle arrays
-		for idx, elem := range v {
-			newPrefix := fmt.Sprintf("%s[%d]", prefix, idx)
-			t.flattenValue(newPrefix, elem, result)
-		}
-	case nil:
-		// Skip nil values
-		return
-	default:
-		// Store the flattened value
-		if prefix != "" {
-			result[wkk.NewRowKey(prefix)] = value
-		}
 	}
 }
 
@@ -582,23 +552,11 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.R
 	}
 
 	// Second pass: process and add back with resource. prefix
+	// Note: Flattening is already done by IngestLogParquetReader, so all values are already flat
 	for key, value := range fieldsToProcess {
 		keyStr := wkk.RowKeyValue(key)
-
-		// If it's a nested structure, flatten it with resource. prefix
-		switch v := value.(type) {
-		case map[string]any:
-			flattened := make(map[wkk.RowKey]any)
-			t.flattenValue("resource_"+keyStr, v, flattened)
-			maps.Copy((*row), flattened)
-		case []any:
-			flattened := make(map[wkk.RowKey]any)
-			t.flattenValue("resource_"+keyStr, v, flattened)
-			maps.Copy((*row), flattened)
-		default:
-			// Simple value - add with resource_ prefix
-			(*row)[wkk.NewRowKey("resource_"+keyStr)] = value
-		}
+		// Add with resource_ prefix (no flattening needed - already done by reader)
+		(*row)[wkk.NewRowKey("resource_"+keyStr)] = value
 	}
 
 	// Add standard resource fields

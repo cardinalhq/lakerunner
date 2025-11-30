@@ -46,6 +46,11 @@ type IngestProtoLogsReader struct {
 
 	// Schema extracted from all logs
 	schema *ReaderSchema
+
+	// Cached RowKeys for attribute names (entire file scope)
+	resourceAttrCache *PrefixedRowKeyCache // "service.name" → wkk("resource_service_name")
+	scopeAttrCache    *PrefixedRowKeyCache // "name" → wkk("scope_name")
+	logAttrCache      *PrefixedRowKeyCache // "user.id" → wkk("attr_user_id")
 }
 
 var _ Reader = (*IngestProtoLogsReader)(nil)
@@ -66,10 +71,13 @@ func NewIngestProtoLogsReader(reader io.Reader, opts ReaderOptions) (*IngestProt
 	schema := extractSchemaFromOTELLogs(logs)
 
 	protoReader := &IngestProtoLogsReader{
-		batchSize: batchSize,
-		orgId:     opts.OrgID,
-		logs:      logs,
-		schema:    schema,
+		batchSize:         batchSize,
+		orgId:             opts.OrgID,
+		logs:              logs,
+		schema:            schema,
+		resourceAttrCache: NewPrefixedRowKeyCache("resource"),
+		scopeAttrCache:    NewPrefixedRowKeyCache("scope"),
+		logAttrCache:      NewPrefixedRowKeyCache("attr"),
 	}
 
 	return protoReader, nil
@@ -158,21 +166,27 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context, row pipeline.Row)
 // buildLogRow populates the provided row from a single log record and its context.
 // Values are extracted with their native types based on OTEL value type.
 func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord, row pipeline.Row) {
+	// Process resource attributes - use cached RowKeys
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.resourceAttrCache.Get(name)
 		value := otelValueToGoValue(v)
-		row[prefixAttributeRowKey(name, "resource")] = value
+		row[key] = value
 		return true
 	})
 
+	// Process scope attributes - use cached RowKeys
 	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.scopeAttrCache.Get(name)
 		value := otelValueToGoValue(v)
-		row[prefixAttributeRowKey(name, "scope")] = value
+		row[key] = value
 		return true
 	})
 
+	// Process log attributes - use cached RowKeys
 	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.logAttrCache.Get(name)
 		value := otelValueToGoValue(v)
-		row[prefixAttributeRowKey(name, "attr")] = value
+		row[key] = value
 		return true
 	})
 

@@ -48,27 +48,18 @@ type LogsStatsProvider struct{}
 func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &LogsStatsAccumulator{
 		fingerprints: mapset.NewSet[int64](),
-		labelColumns: mapset.NewSet[string](),
 	}
 }
 
 // LogsStatsAccumulator collects logs-specific statistics.
 type LogsStatsAccumulator struct {
 	fingerprints mapset.Set[int64]
-	labelColumns mapset.Set[string]
 	firstTS      int64
 	lastTS       int64
 	first        bool
 }
 
 func (a *LogsStatsAccumulator) Add(row map[string]any) {
-	// Track label column names for label_name_map
-	for key := range row {
-		if isLabelColumn(key) {
-			a.labelColumns.Add(key)
-		}
-	}
-
 	// Track timestamp range
 	if ts, ok := row["chq_timestamp"].(int64); ok {
 		if !a.first {
@@ -93,13 +84,10 @@ func (a *LogsStatsAccumulator) Add(row map[string]any) {
 }
 
 func (a *LogsStatsAccumulator) Finalize() any {
-	labelNameMap := buildLabelNameMap(a.labelColumns)
-
 	return LogsFileStats{
 		FirstTS:      a.firstTS,
 		LastTS:       a.lastTS,
 		Fingerprints: a.fingerprints.ToSlice(),
-		LabelNameMap: labelNameMap,
 	}
 }
 
@@ -108,7 +96,6 @@ type LogsFileStats struct {
 	FirstTS      int64   // Earliest timestamp
 	LastTS       int64   // Latest timestamp
 	Fingerprints []int64 // Actual list of unique fingerprints in this file
-	LabelNameMap []byte  // JSON map of label column names to dotted names
 }
 
 // ValidateLogsRow checks that a row has the required fields for logs processing.

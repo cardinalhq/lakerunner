@@ -78,10 +78,10 @@ func TestPromoteType(t *testing.T) {
 // TestNormalizeRow_TypeConversion tests that normalizeRow correctly converts values to schema types.
 func TestNormalizeRow_TypeConversion(t *testing.T) {
 	schema := NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("str_col"), DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("int_col"), DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("float_col"), DataTypeFloat64, true)
-	schema.AddColumn(wkk.NewRowKey("bool_col"), DataTypeBool, true)
+	schema.AddColumn(wkk.NewRowKey("str_col"), wkk.NewRowKey("str_col"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("int_col"), wkk.NewRowKey("int_col"), DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("float_col"), wkk.NewRowKey("float_col"), DataTypeFloat64, true)
+	schema.AddColumn(wkk.NewRowKey("bool_col"), wkk.NewRowKey("bool_col"), DataTypeBool, true)
 
 	// Create a row with values that need conversion
 	row := pipeline.GetPooledRow()
@@ -104,9 +104,9 @@ func TestNormalizeRow_TypeConversion(t *testing.T) {
 // TestNormalizeRow_NullHandling tests that normalizeRow removes null values.
 func TestNormalizeRow_NullHandling(t *testing.T) {
 	schema := NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("col1"), DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("col2"), DataTypeInt64, true)
-	schema.AddColumn(wkk.NewRowKey("col3"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("col1"), wkk.NewRowKey("col1"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("col2"), wkk.NewRowKey("col2"), DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("col3"), wkk.NewRowKey("col3"), DataTypeString, true)
 
 	// Create a row with some null values
 	row := pipeline.GetPooledRow()
@@ -128,7 +128,7 @@ func TestNormalizeRow_NullHandling(t *testing.T) {
 // TestNormalizeRow_EmptyStringIsNotNull tests that empty strings are treated as non-null.
 func TestNormalizeRow_EmptyStringIsNotNull(t *testing.T) {
 	schema := NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("col1"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("col1"), wkk.NewRowKey("col1"), DataTypeString, true)
 
 	row := pipeline.GetPooledRow()
 	row[wkk.NewRowKey("col1")] = "" // empty string
@@ -144,7 +144,7 @@ func TestNormalizeRow_EmptyStringIsNotNull(t *testing.T) {
 // TestNormalizeRow_UnknownColumns tests that columns not in schema cause an error.
 func TestNormalizeRow_UnknownColumns(t *testing.T) {
 	schema := NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("known_col"), DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("known_col"), wkk.NewRowKey("known_col"), DataTypeString, true)
 
 	row := pipeline.GetPooledRow()
 	row[wkk.NewRowKey("known_col")] = "known"
@@ -224,7 +224,7 @@ func TestConvertValue(t *testing.T) {
 // TestNormalizeRow_ConversionFailure tests that failed conversions return an error.
 func TestNormalizeRow_ConversionFailure(t *testing.T) {
 	schema := NewReaderSchema()
-	schema.AddColumn(wkk.NewRowKey("col1"), DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("col1"), wkk.NewRowKey("col1"), DataTypeInt64, true)
 
 	// Create a row with a value that can't be converted to int64
 	row := pipeline.GetPooledRow()
@@ -249,15 +249,15 @@ func TestReaderSchema_AddColumn(t *testing.T) {
 
 	// Add initial column
 	key := wkk.NewRowKey("test_col")
-	schema.AddColumn(key, DataTypeInt64, true)
+	schema.AddColumn(key, key, DataTypeInt64, true)
 	assert.Equal(t, DataTypeInt64, schema.GetColumnType("test_col"))
 
 	// Add same column with different type (should promote)
-	schema.AddColumn(key, DataTypeString, true)
+	schema.AddColumn(key, key, DataTypeString, true)
 	assert.Equal(t, DataTypeString, schema.GetColumnType("test_col"), "Type should be promoted to string")
 
 	// Add same column with float64 (but string is already most general)
-	schema.AddColumn(key, DataTypeFloat64, true)
+	schema.AddColumn(key, key, DataTypeFloat64, true)
 	assert.Equal(t, DataTypeString, schema.GetColumnType("test_col"), "Type should remain string")
 }
 
@@ -267,19 +267,19 @@ func TestReaderSchema_HasNonNull(t *testing.T) {
 	key := wkk.NewRowKey("test_col")
 
 	// Add column with HasNonNull=false
-	schema.AddColumn(key, DataTypeString, false)
+	schema.AddColumn(key, key, DataTypeString, false)
 	columns := schema.Columns()
 	require.Len(t, columns, 1)
 	assert.False(t, columns[0].HasNonNull)
 
 	// Add same column with HasNonNull=true (should update to true)
-	schema.AddColumn(key, DataTypeString, true)
+	schema.AddColumn(key, key, DataTypeString, true)
 	columns = schema.Columns()
 	require.Len(t, columns, 1)
 	assert.True(t, columns[0].HasNonNull)
 
 	// Add same column with HasNonNull=false (should stay true)
-	schema.AddColumn(key, DataTypeString, false)
+	schema.AddColumn(key, key, DataTypeString, false)
 	columns = schema.Columns()
 	require.Len(t, columns, 1)
 	assert.True(t, columns[0].HasNonNull, "HasNonNull should not flip back to false")

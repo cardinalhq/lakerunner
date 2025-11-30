@@ -100,29 +100,54 @@ type ColumnSchema struct {
 
 // ReaderSchema represents the complete schema for a reader.
 type ReaderSchema struct {
-	columns map[wkk.RowKey]*ColumnSchema
+	columns       map[wkk.RowKey]*ColumnSchema
+	columnNameMap map[wkk.RowKey]wkk.RowKey // new name -> original name mapping
 }
 
 // NewReaderSchema creates a new empty schema.
 func NewReaderSchema() *ReaderSchema {
 	return &ReaderSchema{
-		columns: make(map[wkk.RowKey]*ColumnSchema),
+		columns:       make(map[wkk.RowKey]*ColumnSchema),
+		columnNameMap: make(map[wkk.RowKey]wkk.RowKey),
 	}
 }
 
-// AddColumn adds or updates a column in the schema.
-func (s *ReaderSchema) AddColumn(name wkk.RowKey, dataType DataType, hasNonNull bool) {
-	if existing, ok := s.columns[name]; ok {
+// AddColumn adds or updates a column in the schema with name mapping.
+// The column is stored under the new (normalized) name.
+// The mapping tracks the relationship between new and original names.
+// For identity mappings (where new == original), pass the same name for both parameters.
+func (s *ReaderSchema) AddColumn(newName, originalName wkk.RowKey, dataType DataType, hasNonNull bool) {
+	if existing, ok := s.columns[newName]; ok {
 		// Promote type if needed
 		existing.DataType = promoteType(existing.DataType, dataType)
 		existing.HasNonNull = existing.HasNonNull || hasNonNull
 	} else {
-		s.columns[name] = &ColumnSchema{
-			Name:       name,
+		s.columns[newName] = &ColumnSchema{
+			Name:       newName,
 			DataType:   dataType,
 			HasNonNull: hasNonNull,
 		}
 	}
+	// Always store the mapping from new name to original name
+	s.columnNameMap[newName] = originalName
+}
+
+// GetOriginalName returns the original name for a column, or the same name if no mapping exists.
+func (s *ReaderSchema) GetOriginalName(newName wkk.RowKey) wkk.RowKey {
+	if originalName, exists := s.columnNameMap[newName]; exists {
+		return originalName
+	}
+	return newName
+}
+
+// GetAllOriginalNames returns a map of all new names to original names.
+func (s *ReaderSchema) GetAllOriginalNames() map[wkk.RowKey]wkk.RowKey {
+	// Return a copy to prevent external mutation
+	result := make(map[wkk.RowKey]wkk.RowKey, len(s.columnNameMap))
+	for k, v := range s.columnNameMap {
+		result[k] = v
+	}
+	return result
 }
 
 // GetColumnType returns the data type for a column name.
