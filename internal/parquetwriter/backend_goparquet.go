@@ -23,6 +23,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/schemabuilder"
 	"github.com/cardinalhq/lakerunner/pipeline"
 )
@@ -83,7 +84,7 @@ func NewGoParquetBackend(config BackendConfig) (*GoParquetBackend, error) {
 	for _, col := range config.Schema.Columns() {
 		fieldName := string(col.Name.Value())
 		switch col.DataType {
-		case 2, 3, 4: // DataTypeInt64, DataTypeFloat64, DataTypeBool
+		case filereader.DataTypeInt64, filereader.DataTypeFloat64, filereader.DataTypeBool:
 			nonStringColumns[fieldName] = true
 		}
 	}
