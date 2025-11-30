@@ -44,6 +44,7 @@ type GoParquetBackend struct {
 	// Cached column types for fast lookup (avoids iterating schema for every field)
 	nonStringColumns   map[string]bool // columns that should NOT be converted to string
 	conversionPrefixes []string
+	convertToString    map[string]bool // pre-computed map of fields that need string conversion
 
 	// Metrics
 	rowCount int64
@@ -87,12 +88,33 @@ func NewGoParquetBackend(config BackendConfig) (*GoParquetBackend, error) {
 		}
 	}
 
+	// Pre-compute which fields need string conversion based on prefixes
+	// This avoids checking prefixes for every field on every row
+	convertToString := make(map[string]bool)
+	for _, col := range config.Schema.Columns() {
+		fieldName := string(col.Name.Value())
+
+		// Skip if it's a non-string column type
+		if nonStringColumns[fieldName] {
+			continue
+		}
+
+		// Check if field matches any conversion prefix
+		for _, prefix := range config.StringConversionPrefixes {
+			if strings.HasPrefix(fieldName, prefix) {
+				convertToString[fieldName] = true
+				break
+			}
+		}
+	}
+
 	return &GoParquetBackend{
 		config:             config,
 		parquetSchema:      parquetSchema,
 		expectedColumns:    expectedColumns,
 		nonStringColumns:   nonStringColumns,
 		conversionPrefixes: config.StringConversionPrefixes,
+		convertToString:    convertToString,
 	}, nil
 }
 
@@ -235,19 +257,9 @@ func (b *GoParquetBackend) cleanupTempFile() {
 }
 
 // shouldConvertToString checks if a field should be converted to string.
+// Uses pre-computed map for O(1) lookup instead of checking prefixes on every call.
 func (b *GoParquetBackend) shouldConvertToString(fieldName string) bool {
-	// Fast path: check cache first - if it's a non-string type, don't convert
-	if b.nonStringColumns[fieldName] {
-		return false
-	}
-
-	// Check if field name matches a conversion prefix
-	for _, prefix := range b.conversionPrefixes {
-		if strings.HasPrefix(fieldName, prefix) {
-			return true
-		}
-	}
-	return false
+	return b.convertToString[fieldName]
 }
 
 // convertToStringIfNeeded converts a value to string if needed.
