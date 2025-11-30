@@ -23,6 +23,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
 
 // BenchmarkE2ELogIngestion measures the complete end-to-end log ingestion pipeline
@@ -94,6 +95,7 @@ func BenchmarkE2ELogIngestion(b *testing.B) {
 			outputDir,
 			10000,              // rpfEstimate
 			fingerprintManager, // enable fingerprint calculation like production
+			parquetwriter.DefaultBackend,
 		)
 		if err != nil {
 			b.Fatal(err)
@@ -183,6 +185,7 @@ func BenchmarkE2ELogIngestionMultiFile(b *testing.B) {
 			outputDir,
 			10000,
 			fingerprintManager,
+			parquetwriter.DefaultBackend,
 		)
 		if err != nil {
 			b.Fatal(err)

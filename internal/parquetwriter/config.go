@@ -97,6 +97,10 @@ type WriterConfig struct {
 	// Used by both Arrow backend (RecordBatch size) and go-parquet backend (CBOR buffer flush).
 	// If 0, uses backend-specific defaults.
 	ChunkSize int64
+
+	// BackendType specifies which Parquet writing backend to use.
+	// If empty, defaults to BackendGoParquet.
+	BackendType BackendType
 }
 
 // Validate checks that the configuration is valid and returns an error if not.
@@ -128,6 +132,14 @@ func (c *WriterConfig) GetChunkSize() int64 {
 		return c.ChunkSize
 	}
 	return DefaultChunkSize
+}
+
+// GetBackendType returns the effective backend type, using go-parquet as default.
+func (c *WriterConfig) GetBackendType() BackendType {
+	if c.BackendType == "" {
+		return BackendGoParquet
+	}
+	return c.BackendType
 }
 
 // ConfigError represents a configuration validation error.

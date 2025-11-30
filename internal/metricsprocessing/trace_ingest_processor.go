@@ -607,7 +607,7 @@ func (manager *TraceDateintBinManager) getOrCreateBin(dateint int32) (*TraceDate
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewTracesWriter(manager.tmpDir, manager.schema, manager.rpfEstimate)
+	writer, err := factories.NewTracesWriter(manager.tmpDir, manager.schema, manager.rpfEstimate, parquetwriter.DefaultBackend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}

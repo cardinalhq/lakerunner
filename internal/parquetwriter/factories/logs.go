@@ -27,7 +27,8 @@ import (
 // NewLogsWriter creates a writer optimized for logs data.
 // Logs need to be sorted by timestamp and can be split freely.
 // The schema must be provided from the reader and cannot be nil.
-func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
+// If backendType is empty, defaults to go-parquet backend.
+func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64, backendType parquetwriter.BackendType) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
 		TmpDir: tmpdir,
 		Schema: schema,
@@ -37,6 +38,7 @@ func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFil
 
 		RecordsPerFile: recordsPerFile,
 		StatsProvider:  &LogsStatsProvider{},
+		BackendType:    backendType,
 	}
 
 	return parquetwriter.NewUnifiedWriter(config)

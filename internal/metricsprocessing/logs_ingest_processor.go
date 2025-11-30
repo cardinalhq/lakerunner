@@ -58,6 +58,7 @@ type DateintBinManager struct {
 	tmpDir      string
 	rpfEstimate int64
 	schema      *filereader.ReaderSchema
+	backendType parquetwriter.BackendType
 }
 
 // LogIngestProcessor implements the Processor interface for raw log ingestion
@@ -350,6 +351,7 @@ type LogIngestionResult struct {
 //   - outputDir: Directory to write output Parquet files
 //   - rpfEstimate: Rows-per-file estimate for Parquet writer sizing
 //   - fingerprintManager: Optional fingerprint manager (can be nil for benchmarks)
+//   - backendType: Parquet backend type (empty string defaults to go-parquet)
 //
 // Returns:
 //   - LogIngestionResult with statistics and output file information
@@ -362,6 +364,7 @@ func ProcessLogFiles(
 	outputDir string,
 	rpfEstimate int64,
 	fingerprintManager *fingerprint.TenantManager,
+	backendType parquetwriter.BackendType,
 ) (*LogIngestionResult, error) {
 	ll := logctx.FromContext(ctx)
 
@@ -421,6 +424,8 @@ func ProcessLogFiles(
 	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
 	schema.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
 	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+	// Add chq_id column (injected by FileSplitter when writing rows)
+	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true)
 
 	// Create dateint bin manager
 	binManager := &DateintBinManager{
@@ -428,6 +433,7 @@ func ProcessLogFiles(
 		tmpDir:      outputDir,
 		rpfEstimate: rpfEstimate,
 		schema:      schema,
+		backendType: backendType,
 	}
 
 	var totalRowsProcessed int64
@@ -659,12 +665,15 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
 	schema.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
 	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+	// Add chq_id column (injected by FileSplitter when writing rows)
+	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true)
 
 	binManager := &DateintBinManager{
 		bins:        make(map[int32]*DateintBin),
 		tmpDir:      tmpDir,
 		rpfEstimate: rpfEstimate,
 		schema:      schema,
+		backendType: parquetwriter.DefaultBackend,
 	}
 
 	var totalRowsProcessed int64
@@ -767,7 +776,7 @@ func (manager *DateintBinManager) getOrCreateBin(_ context.Context, dateint int3
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewLogsWriter(manager.tmpDir, manager.schema, manager.rpfEstimate)
+	writer, err := factories.NewLogsWriter(manager.tmpDir, manager.schema, manager.rpfEstimate, manager.backendType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}

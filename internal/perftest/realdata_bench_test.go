@@ -138,7 +138,7 @@ func BenchmarkRealDataParquetWrite(b *testing.B) {
 		sampler.Start()
 		b.StartTimer()
 
-		writer, err := factories.NewLogsWriter(tmpDir, schema, totalLogs)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, totalLogs, parquetwriter.DefaultBackend)
 		if err != nil {
 			b.Fatal(err)
 		}

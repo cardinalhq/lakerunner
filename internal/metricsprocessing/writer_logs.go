@@ -61,7 +61,7 @@ func processLogsWithSorting(ctx context.Context, params logProcessingParams) ([]
 	schema := readerStack.HeadReader.GetSchema()
 
 	// Create logs writer (no aggregation needed, just sorting)
-	writer, err := factories.NewLogsWriter(params.TmpDir, schema, params.MaxRecords)
+	writer, err := factories.NewLogsWriter(params.TmpDir, schema, params.MaxRecords, parquetwriter.DefaultBackend)
 	if err != nil {
 		return nil, fmt.Errorf("create parquet writer: %w", err)
 	}

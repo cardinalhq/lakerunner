@@ -16,7 +16,6 @@ package parquetwriter
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -411,21 +410,14 @@ func (b *ArrowBackend) Close(ctx context.Context, writer io.Writer) (*BackendMet
 		}
 	}
 
-	// Calculate schema fingerprint
-	var fingerprint string
-	if b.schema != nil {
-		fingerprint = b.calculateSchemaFingerprint(b.schema)
-	}
-
 	columnCount := len(b.columns)
 
 	// Release column builders
 	b.releaseColumns()
 
 	return &BackendMetadata{
-		RowCount:          b.rowCount,
-		ColumnCount:       columnCount,
-		SchemaFingerprint: fingerprint,
+		RowCount:    b.rowCount,
+		ColumnCount: columnCount,
 		Extra: map[string]any{
 			"chunk_size": b.chunkSize,
 			"streaming":  true,
@@ -524,24 +516,4 @@ func (b *ArrowBackend) releaseColumns() {
 			col.builder.Release()
 		}
 	}
-}
-
-// calculateSchemaFingerprint generates a deterministic hash of the schema.
-func (b *ArrowBackend) calculateSchemaFingerprint(schema *arrow.Schema) string {
-	h := sha256.New()
-
-	// Sort fields by name for deterministic ordering
-	fields := schema.Fields()
-	sort.Slice(fields, func(i, j int) bool {
-		return fields[i].Name < fields[j].Name
-	})
-
-	for _, field := range fields {
-		h.Write([]byte(field.Name))
-		h.Write([]byte("\n"))
-		h.Write([]byte(field.Type.String()))
-		h.Write([]byte("\n"))
-	}
-
-	return fmt.Sprintf("%x", h.Sum(nil))
 }

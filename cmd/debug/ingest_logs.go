@@ -26,6 +26,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/pipeline"
 )
@@ -104,7 +105,7 @@ func runIngestLogs(filename, orgID, bucket, outputDir string) error {
 	schema := reader.GetSchema()
 
 	// Create parquet writer using the same factory as production
-	writer, err := factories.NewLogsWriter(outputDir, schema, 10000)
+	writer, err := factories.NewLogsWriter(outputDir, schema, 10000, parquetwriter.DefaultBackend)
 	if err != nil {
 		return fmt.Errorf("failed to create parquet writer: %w", err)
 	}

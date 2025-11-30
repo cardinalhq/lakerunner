@@ -16,11 +16,9 @@ package parquetwriter
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/parquet-go/parquet-go"
@@ -43,9 +41,12 @@ type GoParquetBackend struct {
 	// Map of column names that should be in every row
 	expectedColumns map[string]bool
 
-	// Metrics
-	rowCount           int64
+	// Cached column types for fast lookup (avoids iterating schema for every field)
+	nonStringColumns   map[string]bool // columns that should NOT be converted to string
 	conversionPrefixes []string
+
+	// Metrics
+	rowCount int64
 }
 
 // NewGoParquetBackend creates a new go-parquet backend.
@@ -75,10 +76,22 @@ func NewGoParquetBackend(config BackendConfig) (*GoParquetBackend, error) {
 		expectedColumns[name] = true
 	}
 
+	// Build cache of columns that should NOT be converted to strings
+	// (int64, float64, bool types) - avoids iterating schema for every field
+	nonStringColumns := make(map[string]bool)
+	for _, col := range config.Schema.Columns() {
+		fieldName := string(col.Name.Value())
+		switch col.DataType {
+		case 2, 3, 4: // DataTypeInt64, DataTypeFloat64, DataTypeBool
+			nonStringColumns[fieldName] = true
+		}
+	}
+
 	return &GoParquetBackend{
 		config:             config,
 		parquetSchema:      parquetSchema,
 		expectedColumns:    expectedColumns,
+		nonStringColumns:   nonStringColumns,
 		conversionPrefixes: config.StringConversionPrefixes,
 	}, nil
 }
@@ -166,16 +179,12 @@ func (b *GoParquetBackend) Close(ctx context.Context, writer io.Writer) (*Backen
 		return nil, fmt.Errorf("failed to copy parquet data to output: %w", err)
 	}
 
-	// Calculate schema fingerprint
-	fingerprint := b.calculateSchemaFingerprint(b.parquetSchema)
-
 	// Cleanup temp file
 	b.cleanupTempFile()
 
 	return &BackendMetadata{
-		RowCount:          b.rowCount,
-		ColumnCount:       len(b.parquetSchema.Fields()),
-		SchemaFingerprint: fingerprint,
+		RowCount:    b.rowCount,
+		ColumnCount: len(b.parquetSchema.Fields()),
 	}, nil
 }
 
@@ -223,6 +232,12 @@ func (b *GoParquetBackend) cleanupTempFile() {
 
 // shouldConvertToString checks if a field should be converted to string.
 func (b *GoParquetBackend) shouldConvertToString(fieldName string) bool {
+	// Fast path: check cache first - if it's a non-string type, don't convert
+	if b.nonStringColumns[fieldName] {
+		return false
+	}
+
+	// Check if field name matches a conversion prefix
 	for _, prefix := range b.conversionPrefixes {
 		if strings.HasPrefix(fieldName, prefix) {
 			return true
@@ -268,24 +283,4 @@ func (b *GoParquetBackend) convertToStringIfNeeded(fieldName string, value any) 
 	default:
 		return fmt.Sprintf("%v", v)
 	}
-}
-
-// calculateSchemaFingerprint creates a deterministic hash of the schema.
-func (b *GoParquetBackend) calculateSchemaFingerprint(schema *parquet.Schema) string {
-	// Get field names only (types can vary in representation between backends)
-	fields := schema.Fields()
-	fieldNames := make([]string, len(fields))
-	for i, field := range fields {
-		fieldNames[i] = field.Name()
-	}
-	sort.Strings(fieldNames)
-
-	// Hash the sorted field list
-	h := sha256.New()
-	for _, name := range fieldNames {
-		h.Write([]byte(name))
-		h.Write([]byte("\n"))
-	}
-
-	return fmt.Sprintf("%x", h.Sum(nil))[:16]
 }

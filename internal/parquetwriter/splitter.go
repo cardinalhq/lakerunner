@@ -19,32 +19,24 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
-	"github.com/parquet-go/parquet-go"
-
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter/schemabuilder"
 	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // FileSplitter manages splitting data into multiple output files based on
 // size constraints and grouping requirements.
 type FileSplitter struct {
-	config             WriterConfig
-	currentRows        int64
-	currentGroup       any
-	conversionPrefixes []string // Cached prefixes for string conversion
+	config       WriterConfig
+	currentRows  int64
+	currentGroup any
 
-	// Parquet writer state
-	tmpFile       *os.File
-	parquetWriter *parquet.GenericWriter[map[string]any]
-	currentStats  StatsAccumulator
-
-	// Pre-built schema from config (used for all files)
-	parquetSchema *parquet.Schema
-	// Map of expected column names for validation
-	expectedColumns map[string]bool
+	// Parquet backend state
+	backend      ParquetBackend
+	tmpFile      *os.File // For final file rename
+	currentStats StatsAccumulator
 
 	// Results tracking
 	results []Result
@@ -53,118 +45,15 @@ type FileSplitter struct {
 
 // NewFileSplitter creates a new file splitter with the given configuration.
 func NewFileSplitter(config WriterConfig) *FileSplitter {
-	// Build parquet schema from reader schema
-	// Schema is already validated by config.Validate()
-	nodes, err := schemabuilder.BuildFromReaderSchema(config.Schema)
-	if err != nil {
-		panic(fmt.Sprintf("failed to build parquet schema: %v", err))
-	}
-
-	// Apply string conversion to schema: any column matching configured prefixes
-	// must be converted to string type in the parquet schema, since we convert
-	// the actual values to strings at write time
-	conversionPrefixes := config.GetStringConversionPrefixes()
-	for nodeName := range nodes {
-		shouldConvert := false
-		for _, prefix := range conversionPrefixes {
-			if strings.HasPrefix(nodeName, prefix) {
-				shouldConvert = true
-				break
-			}
-		}
-		if shouldConvert {
-			// Replace with string node, preserving optional/required status
-			nodes[nodeName] = parquet.Optional(parquet.String())
-		}
-	}
-
-	// Add synthetic chq_id column to schema (injected by WriteBatchRows)
-	nodes["chq_id"] = parquet.Optional(parquet.String())
-
-	parquetSchema := parquet.NewSchema("lakerunner", parquet.Group(nodes))
-
-	// Build map of expected column names for validation
-	expectedColumns := make(map[string]bool, len(nodes))
-	for name := range nodes {
-		expectedColumns[name] = true
-	}
-
 	return &FileSplitter{
-		config:             config,
-		parquetSchema:      parquetSchema,
-		expectedColumns:    expectedColumns,
-		results:            make([]Result, 0),
-		conversionPrefixes: config.GetStringConversionPrefixes(),
-	}
-}
-
-// shouldConvertToString checks if a field name matches any of the configured prefixes
-// that require string conversion.
-func (s *FileSplitter) shouldConvertToString(fieldName string) bool {
-	for _, prefix := range s.conversionPrefixes {
-		if strings.HasPrefix(fieldName, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// convertToStringIfNeeded converts a value to string if the field name matches
-// one of the configured prefixes. Otherwise, returns the value unchanged.
-func (s *FileSplitter) convertToStringIfNeeded(fieldName string, value any) any {
-	if !s.shouldConvertToString(fieldName) {
-		return value
-	}
-
-	// Handle nil values
-	if value == nil {
-		return nil
-	}
-
-	// If already a string, return as-is
-	if _, ok := value.(string); ok {
-		return value
-	}
-
-	// Convert to string based on type
-	switch v := value.(type) {
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case int32:
-		return strconv.FormatInt(int64(v), 10)
-	case int16:
-		return strconv.FormatInt(int64(v), 10)
-	case int8:
-		return strconv.FormatInt(int64(v), 10)
-	case int:
-		return strconv.Itoa(v)
-	case uint64:
-		return strconv.FormatUint(v, 10)
-	case uint32:
-		return strconv.FormatUint(uint64(v), 10)
-	case uint16:
-		return strconv.FormatUint(uint64(v), 10)
-	case uint8:
-		return strconv.FormatUint(uint64(v), 10)
-	case uint:
-		return strconv.FormatUint(uint64(v), 10)
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case float32:
-		return strconv.FormatFloat(float64(v), 'f', -1, 32)
-	case bool:
-		return strconv.FormatBool(v)
-	case []byte:
-		return string(v)
-	default:
-		// For any other type (including slices, maps, etc.), use fmt.Sprint
-		return fmt.Sprint(v)
+		config:  config,
+		results: make([]Result, 0),
 	}
 }
 
 // convertFingerprintToInt64 converts chq_fingerprint from string to int64 if needed.
-// The fingerprint field must always be int64 in the schema.
-func (s *FileSplitter) convertFingerprintToInt64(value any) (any, error) {
+// Some live data accidentally uses string for this field, but we always want int64.
+func convertFingerprintToInt64(value any) (any, error) {
 	if value == nil {
 		return nil, nil
 	}
@@ -194,7 +83,7 @@ func (s *FileSplitter) convertFingerprintToInt64(value any) (any, error) {
 	case int8:
 		return int64(v), nil
 	case uint64:
-		if v > uint64(9223372036854775807) { // max int64
+		if v > 9223372036854775807 { // max int64
 			return nil, fmt.Errorf("fingerprint value %d exceeds int64 max", v)
 		}
 		return int64(v), nil
@@ -205,7 +94,7 @@ func (s *FileSplitter) convertFingerprintToInt64(value any) (any, error) {
 	case uint8:
 		return int64(v), nil
 	case uint:
-		if v > uint(9223372036854775807) {
+		if v > 9223372036854775807 {
 			return nil, fmt.Errorf("fingerprint value %d exceeds int64 max", v)
 		}
 		return int64(v), nil
@@ -241,7 +130,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 	// File splitting logic (BETWEEN batches only, never within a batch):
 	//
 	// Splitting happens BEFORE processing each batch and only if:
-	// 1. We have an existing file (s.parquetWriter != nil)
+	// 1. We have an existing file (s.backend != nil)
 	// 2. RecordsPerFile limit is set (not unlimited mode)
 	// 3. Adding this batch would exceed RecordsPerFile
 	//
@@ -257,7 +146,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 	// or exceeds limits, all rows still go into the current file. This ensures efficient
 	// batch processing without mid-batch file switches.
 	shouldSplit := false
-	if s.parquetWriter != nil && s.config.RecordsPerFile != NoRecordLimitPerFile && s.config.RecordsPerFile > 0 {
+	if s.backend != nil && s.config.RecordsPerFile != NoRecordLimitPerFile && s.config.RecordsPerFile > 0 {
 		projectedRows := s.currentRows + int64(actualRowCount)
 		if projectedRows > s.config.RecordsPerFile {
 			// Check if NoSplitGroups is enabled
@@ -297,73 +186,66 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 	}
 
 	// Start a new Parquet writer if we don't have one
-	if s.parquetWriter == nil {
+	if s.backend == nil {
 		if err := s.startNewParquetWriter(); err != nil {
 			return fmt.Errorf("start new parquet writer: %w", err)
 		}
 	}
 
-	// Process and buffer all rows
+	// Build column type map once for efficient lookups
+	int64Columns := make(map[wkk.RowKey]bool)
+	for _, col := range s.config.Schema.Columns() {
+		if col.DataType == filereader.DataTypeInt64 {
+			int64Columns[col.Name] = true
+		}
+	}
+
+	// Process and prepare all rows in the batch
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
 		if row == nil {
 			continue
 		}
 
-		// Convert pipeline.Row to map[string]any efficiently
-		stringRow := make(map[string]any, len(row)+1) // +1 for chq_id
+		// Convert int64 fields that might be strings (defensive measure for messy live data)
 		for key, value := range row {
-			fieldName := string(key.Value())
-			// Apply string conversion for fields with configured prefixes
-			convertedValue := s.convertToStringIfNeeded(fieldName, value)
-
-			// Special handling for chq_fingerprint: must always be int64
-			if fieldName == "chq_fingerprint" {
-				var err error
-				convertedValue, err = s.convertFingerprintToInt64(convertedValue)
-				if err != nil {
-					return fmt.Errorf("convert fingerprint for row %d: %w", i, err)
+			if int64Columns[key] && value != nil {
+				if str, ok := value.(string); ok {
+					converted, err := convertFingerprintToInt64(str)
+					if err != nil {
+						return fmt.Errorf("convert %s (int64 field) from string for row %d: %w", string(key.Value()), i, err)
+					}
+					row[key] = converted
 				}
 			}
-
-			stringRow[fieldName] = convertedValue
 		}
 
-		stringRow["chq_id"] = idgen.NextBase32ID()
-
-		// Validate all columns are in schema
-		for key := range stringRow {
-			if !s.expectedColumns[key] {
-				return fmt.Errorf("row contains unexpected column '%s' not in schema. Schema must be complete upfront", key)
-			}
-		}
-
-		// Write row directly to Parquet
-		if _, err := s.parquetWriter.Write([]map[string]any{stringRow}); err != nil {
-			// Add debug info about the row that failed
-			debugInfo := fmt.Sprintf("\nRow that failed to write (row %d):\n", i)
-			for k, v := range stringRow {
-				debugInfo += fmt.Sprintf("  %s: %v (%T)\n", k, v, v)
-			}
-			return fmt.Errorf("write row to parquet: %w%s", err, debugInfo)
-		}
+		// Add chq_id to the row
+		row[wkk.RowKeyCID] = idgen.NextBase32ID()
 
 		// Update stats and tracking
 		if s.currentStats != nil {
+			stringRow := pipeline.ToStringMap(row)
 			s.currentStats.Add(stringRow)
 		}
 		s.currentRows++
 
 		// Update group tracking
 		if s.config.GroupKeyFunc != nil {
+			stringRow := pipeline.ToStringMap(row)
 			s.currentGroup = s.config.GroupKeyFunc(stringRow)
 		}
+	}
+
+	// Write entire batch to backend at once (much more efficient than row-by-row)
+	if err := s.backend.WriteBatch(context.Background(), batch); err != nil {
+		return fmt.Errorf("write batch to backend: %w", err)
 	}
 
 	return nil
 }
 
-// startNewParquetWriter creates a new temp file and Parquet writer.
+// startNewParquetWriter creates a new temp file and backend.
 func (s *FileSplitter) startNewParquetWriter() error {
 	// Create temp Parquet file
 	tmpFile, err := os.CreateTemp(s.config.TmpDir, "*.parquet")
@@ -371,14 +253,33 @@ func (s *FileSplitter) startNewParquetWriter() error {
 		return fmt.Errorf("create parquet temp file: %w", err)
 	}
 
-	writerConfig, err := parquet.NewWriterConfig(schemabuilder.WriterOptions(s.config.TmpDir, s.parquetSchema)...)
+	// Create backend configuration
+	backendConfig := BackendConfig{
+		Type:                     s.config.GetBackendType(),
+		TmpDir:                   s.config.TmpDir,
+		Schema:                   s.config.Schema,
+		ChunkSize:                s.config.GetChunkSize(),
+		StringConversionPrefixes: s.config.GetStringConversionPrefixes(),
+	}
+
+	// Create the appropriate backend
+	var backend ParquetBackend
+	switch backendConfig.Type {
+	case BackendArrow:
+		backend, err = NewArrowBackend(backendConfig)
+	case BackendGoParquet:
+		backend, err = NewGoParquetBackend(backendConfig)
+	default:
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+		return fmt.Errorf("unknown backend type: %s", backendConfig.Type)
+	}
+
 	if err != nil {
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpFile.Name())
-		return fmt.Errorf("create writer config: %w", err)
+		return fmt.Errorf("create backend: %w", err)
 	}
-
-	parquetWriter := parquet.NewGenericWriter[map[string]any](tmpFile, writerConfig)
 
 	// Initialize stats accumulator if provider is configured
 	var stats StatsAccumulator
@@ -387,7 +288,7 @@ func (s *FileSplitter) startNewParquetWriter() error {
 	}
 
 	s.tmpFile = tmpFile
-	s.parquetWriter = parquetWriter
+	s.backend = backend
 	s.currentStats = stats
 	s.currentRows = 0
 	// currentGroup will be set when first row is written
@@ -395,13 +296,15 @@ func (s *FileSplitter) startNewParquetWriter() error {
 	return nil
 }
 
-// finalizeParquetFile closes the Parquet writer and returns the file name.
+// finalizeParquetFile closes the backend and returns the file name.
 func (s *FileSplitter) finalizeParquetFile() (string, error) {
-	// Close the Parquet writer (flushes all data)
-	if err := s.parquetWriter.Close(); err != nil {
-		return "", fmt.Errorf("close parquet writer: %w", err)
+	ctx := context.Background()
+
+	// Close the backend (flushes all data to tmpFile)
+	if _, err := s.backend.Close(ctx, s.tmpFile); err != nil {
+		return "", fmt.Errorf("close backend: %w", err)
 	}
-	s.parquetWriter = nil
+	s.backend = nil
 
 	// Close temp file (CHECK return code since we're keeping this file)
 	tmpFileName := s.tmpFile.Name()
@@ -415,7 +318,7 @@ func (s *FileSplitter) finalizeParquetFile() (string, error) {
 
 // finishCurrentFile finalizes the current Parquet file and adds to results.
 func (s *FileSplitter) finishCurrentFile() error {
-	if s.parquetWriter == nil {
+	if s.backend == nil {
 		return nil // No file to finish
 	}
 
@@ -462,9 +365,9 @@ func (s *FileSplitter) finishCurrentFile() error {
 
 // cleanupCurrentFile removes the current Parquet file and resets state.
 func (s *FileSplitter) cleanupCurrentFile() {
-	if s.parquetWriter != nil {
-		_ = s.parquetWriter.Close()
-		s.parquetWriter = nil
+	if s.backend != nil {
+		s.backend.Abort()
+		s.backend = nil
 	}
 
 	if s.tmpFile != nil {

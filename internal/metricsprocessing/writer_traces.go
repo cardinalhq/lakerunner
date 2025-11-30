@@ -61,7 +61,7 @@ func processTracesWithSorting(ctx context.Context, params traceProcessingParams)
 	schema := readerStack.HeadReader.GetSchema()
 
 	// Create traces writer (no aggregation needed, just sorting)
-	writer, err := factories.NewTracesWriter(params.TmpDir, schema, params.MaxRecords)
+	writer, err := factories.NewTracesWriter(params.TmpDir, schema, params.MaxRecords, parquetwriter.DefaultBackend)
 	if err != nil {
 		return nil, fmt.Errorf("create parquet writer: %w", err)
 	}

@@ -24,7 +24,8 @@ import (
 
 // NewTracesWriter creates a writer optimized for traces data.
 // The schema must be provided from the reader and cannot be nil.
-func NewTracesWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
+// If backendType is empty, defaults to go-parquet backend.
+func NewTracesWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64, backendType parquetwriter.BackendType) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
 		TmpDir: tmpdir,
 		Schema: schema,
@@ -37,6 +38,7 @@ func NewTracesWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerF
 
 		RecordsPerFile: recordsPerFile,
 		StatsProvider:  &TracesStatsProvider{},
+		BackendType:    backendType,
 	}
 
 	return parquetwriter.NewUnifiedWriter(config)
