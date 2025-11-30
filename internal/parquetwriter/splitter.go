@@ -218,10 +218,9 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		// Add chq_id to the row
 		row[wkk.RowKeyCID] = idgen.NextBase32ID()
 
-		// Update stats (requires map) and group tracking (uses Row directly)
+		// Update stats and group tracking (both use Row directly now)
 		if s.currentStats != nil {
-			stringRow := pipeline.ToStringMap(row)
-			s.currentStats.Add(stringRow)
+			s.currentStats.Add(row)
 		}
 		if s.config.GroupKeyFunc != nil {
 			s.currentGroup = s.config.GroupKeyFunc(row)

@@ -95,21 +95,23 @@ type MetricsStatsAccumulator struct {
 	first        bool
 }
 
-func (a *MetricsStatsAccumulator) Add(row map[string]any) {
+func (a *MetricsStatsAccumulator) Add(row pipeline.Row) {
 	// Track metric name for fingerprinting
-	if name, ok := row["metric_name"].(string); ok && name != "" {
+	metricNameKey := wkk.NewRowKey("metric_name")
+	if name, ok := row[metricNameKey].(string); ok && name != "" {
 		a.metricNames.Add(name)
 	}
 
 	// Track label column names for label_name_map
 	for key := range row {
-		if isLabelColumn(key) {
-			a.labelColumns.Add(key)
+		keyStr := string(key.Value())
+		if isLabelColumn(keyStr) {
+			a.labelColumns.Add(keyStr)
 		}
 	}
 
 	// Track timestamp range
-	if ts, ok := row["chq_timestamp"].(int64); ok {
+	if ts, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
 		if !a.first {
 			a.firstTS = ts
 			a.lastTS = ts
@@ -124,7 +126,7 @@ func (a *MetricsStatsAccumulator) Add(row map[string]any) {
 		}
 	} else {
 		// Debug: log when timestamp is missing or wrong type
-		if tsVal, exists := row["chq_timestamp"]; exists {
+		if tsVal, exists := row[wkk.RowKeyCTimestamp]; exists {
 			// Timestamp exists but wrong type - this could be the issue
 			fmt.Printf("DEBUG: timestamp wrong type: %T = %v\n", tsVal, tsVal)
 		} else {

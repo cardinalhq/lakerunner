@@ -21,6 +21,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // NewTracesWriter creates a writer optimized for traces data.
@@ -66,16 +67,17 @@ type TracesStatsAccumulator struct {
 	fieldFingerprinter *fingerprint.FieldFingerprinter
 }
 
-func (a *TracesStatsAccumulator) Add(row map[string]any) {
+func (a *TracesStatsAccumulator) Add(row pipeline.Row) {
 	// Track label column names for label_name_map
 	for key := range row {
-		if isLabelColumn(key) {
-			a.labelColumns.Add(key)
+		keyStr := string(key.Value())
+		if isLabelColumn(keyStr) {
+			a.labelColumns.Add(keyStr)
 		}
 	}
 
 	// Track timestamp range
-	if startTime, ok := row["chq_timestamp"].(int64); ok {
+	if startTime, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
 		if !a.first {
 			a.firstTS = startTime
 			a.lastTS = startTime
@@ -90,11 +92,8 @@ func (a *TracesStatsAccumulator) Add(row map[string]any) {
 		}
 	}
 
-	// Generate comprehensive fingerprints for the row
-	rowFingerprints := a.fieldFingerprinter.GenerateFingerprints(row)
-	for _, fp := range rowFingerprints.ToSlice() {
-		a.fingerprints.Add(fp)
-	}
+	fps := a.fieldFingerprinter.GenerateFingerprints(row)
+	a.fingerprints.Append(fps...)
 }
 
 func (a *TracesStatsAccumulator) Finalize() any {

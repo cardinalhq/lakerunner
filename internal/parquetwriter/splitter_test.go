@@ -64,10 +64,10 @@ func (p *mockStatsProvider) NewAccumulator() StatsAccumulator {
 
 // mockStatsAccumulator implements StatsAccumulator for testing
 type mockStatsAccumulator struct {
-	rows []map[string]any
+	rows []pipeline.Row
 }
 
-func (a *mockStatsAccumulator) Add(row map[string]any) {
+func (a *mockStatsAccumulator) Add(row pipeline.Row) {
 	a.rows = append(a.rows, row)
 }
 

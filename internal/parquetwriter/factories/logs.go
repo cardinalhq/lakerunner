@@ -22,6 +22,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // NewLogsWriter creates a writer optimized for logs data.
@@ -63,9 +65,9 @@ type LogsStatsAccumulator struct {
 	fieldFingerprinter *fingerprint.FieldFingerprinter
 }
 
-func (a *LogsStatsAccumulator) Add(row map[string]any) {
+func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
 	// Track timestamp range
-	if ts, ok := row["chq_timestamp"].(int64); ok {
+	if ts, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
 		if !a.first {
 			a.firstTS = ts
 			a.lastTS = ts
@@ -80,11 +82,8 @@ func (a *LogsStatsAccumulator) Add(row map[string]any) {
 		}
 	}
 
-	// Generate comprehensive fingerprints for the row
-	rowFingerprints := a.fieldFingerprinter.GenerateFingerprints(row)
-	for _, fp := range rowFingerprints.ToSlice() {
-		a.fingerprints.Add(fp)
-	}
+	fps := a.fieldFingerprinter.GenerateFingerprints(row)
+	a.fingerprints.Append(fps...)
 }
 
 func (a *LogsStatsAccumulator) Finalize() any {

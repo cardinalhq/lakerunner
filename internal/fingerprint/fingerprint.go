@@ -19,6 +19,8 @@ import (
 	"unicode/utf8"
 
 	mapset "github.com/deckarep/golang-set/v2"
+
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 const (
@@ -165,14 +167,17 @@ func NewFieldFingerprinter() *FieldFingerprinter {
 	}
 }
 
-// GenerateFingerprints generates comprehensive fingerprints for a row.
-func (f *FieldFingerprinter) GenerateFingerprints(row map[string]any) mapset.Set[int64] {
+// GenerateFingerprints generates comprehensive fingerprints for a Row.
+// Returns a deduplicated slice of fingerprints.
+func (f *FieldFingerprinter) GenerateFingerprints(row pipeline.Row) []int64 {
 	fingerprints := mapset.NewSet[int64]()
 
-	for fieldName, fieldValue := range row {
+	for key, fieldValue := range row {
 		if fieldValue == nil {
 			continue
 		}
+
+		fieldName := string(key.Value())
 
 		// Get or compute the "exists" fingerprint for this field (cached)
 		existsFp, found := f.existsFpCache[fieldName]
@@ -228,5 +233,5 @@ func (f *FieldFingerprinter) GenerateFingerprints(row map[string]any) mapset.Set
 		}
 	}
 
-	return fingerprints
+	return fingerprints.ToSlice()
 }
