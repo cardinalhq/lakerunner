@@ -55,7 +55,11 @@ func runAggregation(t *testing.T) {
 	schema := NewReaderSchema()
 	schema.AddColumn(wkk.RowKeyCTimestamp, wkk.RowKeyCTimestamp, DataTypeInt64, true)
 	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTID, wkk.RowKeyCTID, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeySketch, wkk.RowKeySketch, DataTypeBytes, true)
 	schema.AddColumn(wkk.RowKeyRollupSum, wkk.RowKeyRollupSum, DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyRollupCount, wkk.RowKeyRollupCount, DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyRollupMin, wkk.RowKeyRollupMin, DataTypeFloat64, true)
 	schema.AddColumn(wkk.RowKeyRollupMax, wkk.RowKeyRollupMax, DataTypeFloat64, true)
 	schema.AddColumn(wkk.RowKeyCMetricType, wkk.RowKeyCMetricType, DataTypeString, true)
 

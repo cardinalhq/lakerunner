@@ -59,6 +59,15 @@ func (m *mockReader) Next(ctx context.Context) (*Batch, error) {
 		for k, v := range m.rows[m.index] {
 			row[k] = v
 		}
+
+		// Normalize row against schema (like real readers do)
+		if m.schema != nil {
+			if err := normalizeRow(ctx, row, m.schema); err != nil {
+				pipeline.ReturnBatch(batch)
+				return nil, fmt.Errorf("mock reader normalization failed: %w", err)
+			}
+		}
+
 		m.index++
 	}
 

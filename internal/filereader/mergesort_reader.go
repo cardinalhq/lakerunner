@@ -131,14 +131,16 @@ func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortK
 		batchSize:   batchSize,
 	}
 
-	// Merge schemas from all readers
-	or.schema = mergeSchemas(readers)
-
-	// Prime all readers - read first row from each and create keys
+	// Prime all readers first - read first row from each and create keys
+	// This is important because priming causes IngestLogParquetReader to discover
+	// and add dynamic columns (from map flattening) to their schemas
 	if err := or.primeReaders(ctx); err != nil {
 		_ = or.Close() // Clean up any partially initialized state
 		return nil, err
 	}
+
+	// Merge schemas from all readers AFTER priming, when dynamic columns have been discovered
+	or.schema = mergeSchemas(readers)
 
 	return or, nil
 }
@@ -201,18 +203,11 @@ func (or *MergesortReader) Next(ctx context.Context) (*Batch, error) {
 		selectedReader := or.activeReaders[minIndex]
 
 		// Copy the row to the batch
+		// Rows are already normalized by their source readers (e.g., IngestLogParquetReader)
+		// so we don't normalize again here to avoid rejecting dynamic columns from map flattening
 		row := batch.AddRow()
 		for k, v := range selectedReader.currentRow {
 			row[k] = v
-		}
-
-		// Apply schema normalization to ensure type consistency
-		// Only normalize if we have a non-empty schema (at least one schemafied reader)
-		if or.schema != nil && len(or.schema.Columns()) > 0 {
-			if err := normalizeRow(ctx, row, or.schema); err != nil {
-				pipeline.ReturnBatch(batch)
-				return nil, fmt.Errorf("schema normalization failed: %w", err)
-			}
 		}
 
 		// Advance the selected reader to its next row

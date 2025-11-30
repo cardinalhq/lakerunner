@@ -63,8 +63,7 @@ func NewIngestLogParquetReader(ctx context.Context, reader parquet.ReaderAtSeeke
 		batchSize = 1000
 	}
 
-	// For now, skip flattening schema extraction due to two-pass complexity
-	// Just extract basic schema from Arrow and use identity mappings
+	// Open parquet file
 	pf, err := file.NewParquetReader(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
@@ -77,29 +76,12 @@ func NewIngestLogParquetReader(ctx context.Context, reader parquet.ReaderAtSeeke
 		return nil, fmt.Errorf("failed to create arrow file reader: %w", err)
 	}
 
-	// Extract schema from Arrow metadata
-	arrowSchema, err := fr.Schema()
+	// Extract complete schema by scanning all rows (two-pass approach)
+	// This discovers all map keys and nested structures across the entire file
+	readerSchema, err := ExtractCompleteParquetSchema(ctx, pf, fr)
 	if err != nil {
 		_ = pf.Close()
-		return nil, fmt.Errorf("failed to get arrow schema: %w", err)
-	}
-
-	// Extract statistics to determine which columns have non-null values
-	columnStats := extractParquetStatistics(pf)
-
-	// Create schema with identity mappings (for now, no flattening in schema extraction)
-	readerSchema := NewReaderSchema()
-	for _, field := range arrowSchema.Fields() {
-		columnName := field.Name
-		// Replace dots with underscores in column name
-		newName := strings.ReplaceAll(columnName, ".", "_")
-		newKey := wkk.NewRowKey(newName)
-		origKey := wkk.NewRowKey(columnName)
-		dataType := arrowTypeToDataType(field.Type)
-		// Check statistics to see if column has non-null values
-		hasNonNull := columnStats[columnName]
-		// Add with mapping from new name to original name
-		readerSchema.AddColumn(newKey, origKey, dataType, hasNonNull)
+		return nil, fmt.Errorf("failed to extract schema: %w", err)
 	}
 
 	rr, err := fr.GetRecordReader(ctx, nil, nil)
@@ -204,16 +186,12 @@ func flattenValueIntoRow(row pipeline.Row, dottedPath, underscoredPath string, c
 				value := convertArrowValue(items, int(j))
 				if keyStr, ok := key.(string); ok {
 					// Build nested paths: append map key to both paths
-					nestedDotted := dottedPath + "." + keyStr
 					nestedUnderscored := underscoredPath + "_" + keyStr
 					// Store the value
 					finalUnderscored := strings.ReplaceAll(nestedUnderscored, ".", "_")
-					finalDotted := nestedDotted
 					rowKey := wkk.NewRowKeyFromBytes([]byte(finalUnderscored))
 					row[rowKey] = value
-					// Add to schema if not present
-					dataType := inferDataType(value)
-					schema.AddColumn(wkk.NewRowKey(finalUnderscored), wkk.NewRowKey(finalDotted), dataType, true)
+					// Schema already complete from two-pass scan
 				}
 			}
 		}
@@ -225,8 +203,7 @@ func flattenValueIntoRow(row pipeline.Row, dottedPath, underscoredPath string, c
 			finalUnderscored := strings.ReplaceAll(underscoredPath, ".", "_")
 			rowKey := wkk.NewRowKeyFromBytes([]byte(finalUnderscored))
 			row[rowKey] = val
-			// Add to schema if not present
-			schema.AddColumn(wkk.NewRowKey(finalUnderscored), wkk.NewRowKey(dottedPath), DataTypeAny, true)
+			// Schema already complete from two-pass scan
 		}
 
 	default:
@@ -236,28 +213,8 @@ func flattenValueIntoRow(row pipeline.Row, dottedPath, underscoredPath string, c
 			finalUnderscored := strings.ReplaceAll(underscoredPath, ".", "_")
 			rowKey := wkk.NewRowKeyFromBytes([]byte(finalUnderscored))
 			row[rowKey] = val
-			// Add to schema if not present
-			dataType := inferDataType(val)
-			schema.AddColumn(wkk.NewRowKey(finalUnderscored), wkk.NewRowKey(dottedPath), dataType, true)
+			// Schema already complete from two-pass scan
 		}
-	}
-}
-
-// inferDataType infers the DataType from a Go value
-func inferDataType(value any) DataType {
-	switch value.(type) {
-	case string:
-		return DataTypeString
-	case int64, int, int32, int16, int8:
-		return DataTypeInt64
-	case float64, float32:
-		return DataTypeFloat64
-	case bool:
-		return DataTypeBool
-	case []byte:
-		return DataTypeBytes
-	default:
-		return DataTypeAny
 	}
 }
 
