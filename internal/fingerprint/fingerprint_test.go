@@ -16,6 +16,7 @@ package fingerprint
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -32,16 +33,6 @@ func toRow(m map[string]any) pipeline.Row {
 		row[wkk.NewRowKey(k)] = v
 	}
 	return row
-}
-
-// contains checks if a slice contains a value
-func contains(slice []int64, val int64) bool {
-	for _, v := range slice {
-		if v == val {
-			return true
-		}
-	}
-	return false
 }
 
 func TestComputeHash(t *testing.T) {
@@ -311,7 +302,7 @@ func TestGenerateRowFingerprints(t *testing.T) {
 
 	// Verify some expected fingerprints are present
 	for _, expectedFp := range expectedFingerprints.ToSlice() {
-		assert.True(t, contains(fingerprints, expectedFp), "Should contain fingerprint %d", expectedFp)
+		assert.True(t, slices.Contains(fingerprints, expectedFp), "Should contain fingerprint %d", expectedFp)
 	}
 }
 
