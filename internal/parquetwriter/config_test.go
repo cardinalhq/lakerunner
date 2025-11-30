@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
@@ -48,8 +49,9 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 				TmpDir:         "/tmp",
 				Schema:         testSchema(),
 				RecordsPerFile: 100,
-				GroupKeyFunc: func(row map[string]any) any {
-					return row["group"]
+				GroupKeyFunc: func(row pipeline.Row) any {
+					groupKey := wkk.NewRowKey("group")
+					return row[groupKey]
 				},
 				NoSplitGroups: false,
 			},
@@ -60,8 +62,9 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 				TmpDir:         "/tmp",
 				Schema:         testSchema(),
 				RecordsPerFile: 100,
-				GroupKeyFunc: func(row map[string]any) any {
-					return row["group"]
+				GroupKeyFunc: func(row pipeline.Row) any {
+					groupKey := wkk.NewRowKey("group")
+					return row[groupKey]
 				},
 				NoSplitGroups: true,
 			},
@@ -315,8 +318,9 @@ func TestWriterConfig_GroupKeyFuncValidation(t *testing.T) {
 			TmpDir:         "/tmp",
 			Schema:         testSchema(),
 			RecordsPerFile: 100,
-			GroupKeyFunc: func(row map[string]any) any {
-				return row["group"]
+			GroupKeyFunc: func(row pipeline.Row) any {
+				groupKey := wkk.NewRowKey("group")
+				return row[groupKey]
 			},
 			NoSplitGroups: false, // This should be fine
 		}
@@ -331,8 +335,9 @@ func TestWriterConfig_GroupKeyFuncValidation(t *testing.T) {
 			TmpDir:         "/tmp",
 			Schema:         testSchema(),
 			RecordsPerFile: 100,
-			GroupKeyFunc: func(row map[string]any) any {
-				return row["group"]
+			GroupKeyFunc: func(row pipeline.Row) any {
+				groupKey := wkk.NewRowKey("group")
+				return row[groupKey]
 			},
 			NoSplitGroups: true, // This should be fine since GroupKeyFunc is provided
 		}

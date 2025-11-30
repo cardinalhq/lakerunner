@@ -23,6 +23,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // NewMetricsWriter creates a writer optimized for metrics data.
@@ -47,16 +49,17 @@ func NewMetricsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPer
 // metricsGroupKeyFunc returns the grouping key function for metrics.
 // Groups by [metric name, TID] only - keeps all timestamps for the same metric together
 // for efficient rollup aggregation.
-func metricsGroupKeyFunc() func(row map[string]any) any {
-	return func(row map[string]any) any {
-		name, nameOk := row["metric_name"].(string)
+func metricsGroupKeyFunc() func(row pipeline.Row) any {
+	metricNameKey := wkk.NewRowKey("metric_name")
+	return func(row pipeline.Row) any {
+		name, nameOk := row[metricNameKey].(string)
 		if !nameOk {
 			return nil
 		}
 
 		// Handle both string and int64 TID values
 		var tid int64
-		switch v := row["chq_tid"].(type) {
+		switch v := row[wkk.RowKeyCTID].(type) {
 		case int64:
 			tid = v
 		case string:

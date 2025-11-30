@@ -16,6 +16,7 @@ package parquetwriter
 
 import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 const (
@@ -50,12 +51,13 @@ type WriterConfig struct {
 	// GroupKeyFunc extracts a grouping key from a row. Used to track which group
 	// the current file belongs to. If nil, grouping is disabled.
 	//
-	// Example for metrics: func(row map[string]any) any {
-	//     return [2]any{row["metric_name"], row["chq_tid"]}
+	// Example for metrics: func(row pipeline.Row) any {
+	//     metricName := wkk.NewRowKey("metric_name")
+	//     return [2]any{row[metricName], row[wkk.RowKeyCTID]}
 	// }
 	//
 	// The returned key should be comparable (==) for group change detection.
-	GroupKeyFunc func(map[string]any) any
+	GroupKeyFunc func(pipeline.Row) any
 
 	// NoSplitGroups, when true, prevents splitting a group across multiple files.
 	//

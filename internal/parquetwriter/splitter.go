@@ -156,12 +156,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 				for i := 0; i < batch.Len(); i++ {
 					row := batch.Get(i)
 					if row != nil {
-						// Convert to map to extract group key
-						tempRow := make(map[string]any, len(row))
-						for key, value := range row {
-							tempRow[string(key.Value())] = value
-						}
-						batchGroup = s.config.GroupKeyFunc(tempRow)
+						batchGroup = s.config.GroupKeyFunc(row)
 						break
 					}
 				}
@@ -223,18 +218,15 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		// Add chq_id to the row
 		row[wkk.RowKeyCID] = idgen.NextBase32ID()
 
-		// Update stats and tracking
+		// Update stats (requires map) and group tracking (uses Row directly)
 		if s.currentStats != nil {
 			stringRow := pipeline.ToStringMap(row)
 			s.currentStats.Add(stringRow)
 		}
-		s.currentRows++
-
-		// Update group tracking
 		if s.config.GroupKeyFunc != nil {
-			stringRow := pipeline.ToStringMap(row)
-			s.currentGroup = s.config.GroupKeyFunc(stringRow)
+			s.currentGroup = s.config.GroupKeyFunc(row)
 		}
+		s.currentRows++
 	}
 
 	// Write entire batch to backend at once (much more efficient than row-by-row)

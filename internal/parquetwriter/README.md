@@ -73,7 +73,7 @@ config := parquetwriter.WriterConfig{
     TmpDir:         tmpdir,
     Schema:         schema,
     RecordsPerFile: 10000,  // Or use parquetwriter.NoRecordLimitPerFile for unlimited
-    GroupKeyFunc:   func(row map[string]any) any { return row["group"] },
+    GroupKeyFunc:   func(row pipeline.Row) any { return row["group"] },
     NoSplitGroups:  true,
 }
 writer, err := parquetwriter.NewUnifiedWriter(config)

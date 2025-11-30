@@ -20,6 +20,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 // NewTracesWriter creates a writer optimized for traces data.
@@ -31,7 +32,7 @@ func NewTracesWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerF
 		Schema: schema,
 
 		// No grouping needed since slots are removed
-		GroupKeyFunc: func(row map[string]any) any {
+		GroupKeyFunc: func(row pipeline.Row) any {
 			return 0
 		},
 		NoSplitGroups: false, // Allow splitting within slots for size management

@@ -348,8 +348,9 @@ func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
 		TmpDir:         tmpDir,
 		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
-		GroupKeyFunc: func(row map[string]any) any {
-			return row["group"]
+		GroupKeyFunc: func(row pipeline.Row) any {
+			groupKey := wkk.NewRowKey("group")
+			return row[groupKey]
 		},
 	}
 
@@ -385,8 +386,9 @@ func TestFileSplitterWriteBatchRows_NoSplitGroups(t *testing.T) {
 		TmpDir:         tmpDir,
 		Schema:         testSplitterSchema(),
 		RecordsPerFile: 5, // Small limit to trigger splits
-		GroupKeyFunc: func(row map[string]any) any {
-			return row["group"]
+		GroupKeyFunc: func(row pipeline.Row) any {
+			groupKey := wkk.NewRowKey("group")
+			return row[groupKey]
 		},
 		NoSplitGroups: true,
 	}
@@ -475,8 +477,9 @@ func TestFileSplitterWriteBatchRows_NoSplitGroups_SingleLargeBatch(t *testing.T)
 		TmpDir:         tmpDir,
 		Schema:         testSplitterSchema(),
 		RecordsPerFile: 5, // Small limit - but won't trigger splits within a single batch
-		GroupKeyFunc: func(row map[string]any) any {
-			return row["group"]
+		GroupKeyFunc: func(row pipeline.Row) any {
+			groupKey := wkk.NewRowKey("group")
+			return row[groupKey]
 		},
 		NoSplitGroups: true,
 	}
