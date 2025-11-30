@@ -41,13 +41,25 @@ type FileSplitter struct {
 	// Results tracking
 	results []Result
 	closed  bool
+
+	// Cached column type lookups (built once from schema)
+	int64Columns map[wkk.RowKey]bool
 }
 
 // NewFileSplitter creates a new file splitter with the given configuration.
 func NewFileSplitter(config WriterConfig) *FileSplitter {
+	// Build column type map once for efficient lookups during batch processing
+	int64Columns := make(map[wkk.RowKey]bool)
+	for _, col := range config.Schema.Columns() {
+		if col.DataType == filereader.DataTypeInt64 {
+			int64Columns[col.Name] = true
+		}
+	}
+
 	return &FileSplitter{
-		config:  config,
-		results: make([]Result, 0),
+		config:       config,
+		results:      make([]Result, 0),
+		int64Columns: int64Columns,
 	}
 }
 
@@ -187,14 +199,6 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		}
 	}
 
-	// Build column type map once for efficient lookups
-	int64Columns := make(map[wkk.RowKey]bool)
-	for _, col := range s.config.Schema.Columns() {
-		if col.DataType == filereader.DataTypeInt64 {
-			int64Columns[col.Name] = true
-		}
-	}
-
 	// Process and prepare all rows in the batch
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
@@ -204,7 +208,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 
 		// Convert int64 fields that might be strings (defensive measure for messy live data)
 		for key, value := range row {
-			if int64Columns[key] && value != nil {
+			if s.int64Columns[key] && value != nil {
 				if str, ok := value.(string); ok {
 					converted, err := convertFingerprintToInt64(str)
 					if err != nil {
