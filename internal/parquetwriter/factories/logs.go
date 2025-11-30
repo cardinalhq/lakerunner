@@ -47,16 +47,18 @@ type LogsStatsProvider struct{}
 
 func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &LogsStatsAccumulator{
-		fingerprints: mapset.NewSet[int64](),
+		fingerprints:       mapset.NewSet[int64](),
+		fieldFingerprinter: fingerprint.NewFieldFingerprinter(),
 	}
 }
 
 // LogsStatsAccumulator collects logs-specific statistics.
 type LogsStatsAccumulator struct {
-	fingerprints mapset.Set[int64]
-	firstTS      int64
-	lastTS       int64
-	first        bool
+	fingerprints       mapset.Set[int64]
+	firstTS            int64
+	lastTS             int64
+	first              bool
+	fieldFingerprinter *fingerprint.FieldFingerprinter
 }
 
 func (a *LogsStatsAccumulator) Add(row map[string]any) {
@@ -77,7 +79,7 @@ func (a *LogsStatsAccumulator) Add(row map[string]any) {
 	}
 
 	// Generate comprehensive fingerprints for the row
-	rowFingerprints := fingerprint.GenerateRowFingerprints(row)
+	rowFingerprints := a.fieldFingerprinter.GenerateFingerprints(row)
 	for _, fp := range rowFingerprints.ToSlice() {
 		a.fingerprints.Add(fp)
 	}

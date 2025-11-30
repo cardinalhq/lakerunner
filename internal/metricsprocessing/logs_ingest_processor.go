@@ -329,6 +329,238 @@ func (p *LogIngestProcessor) GetTargetRecordCount(ctx context.Context, groupingK
 	return 5 * 1024 * 1024 // 5MB file size limit instead of record count
 }
 
+// LogIngestionResult contains the results of processing log files
+type LogIngestionResult struct {
+	OutputFiles      []parquetwriter.Result // Parquet files generated
+	TotalRecords     int64                  // Total number of log records processed
+	TotalInputBytes  int64                  // Total size of input files
+	TotalOutputBytes int64                  // Total size of output files
+	SegmentParams    []lrdb.InsertLogSegmentParams
+}
+
+// ProcessLogFiles performs end-to-end log ingestion on a set of files.
+// This function encapsulates the complete ingestion pipeline and can be called
+// from both the production processor and benchmarks.
+//
+// Parameters:
+//   - ctx: Context for cancellation and logging
+//   - filePaths: List of file paths to process (can be local files)
+//   - orgID: Organization ID for metadata
+//   - bucket: Bucket name for metadata
+//   - outputDir: Directory to write output Parquet files
+//   - rpfEstimate: Rows-per-file estimate for Parquet writer sizing
+//   - fingerprintManager: Optional fingerprint manager (can be nil for benchmarks)
+//
+// Returns:
+//   - LogIngestionResult with statistics and output file information
+//   - error if any step fails
+func ProcessLogFiles(
+	ctx context.Context,
+	filePaths []string,
+	orgID string,
+	bucket string,
+	outputDir string,
+	rpfEstimate int64,
+	fingerprintManager *fingerprint.TenantManager,
+) (*LogIngestionResult, error) {
+	ll := logctx.FromContext(ctx)
+
+	var readers []filereader.Reader
+	var totalInputSize int64
+
+	// Create readers for all files
+	for _, filePath := range filePaths {
+		stat, err := os.Stat(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to stat file %s: %w", filePath, err)
+		}
+		totalInputSize += stat.Size()
+
+		reader, err := createLogReaderStackStandalone(filePath, orgID, bucket, filePath, fingerprintManager)
+		if err != nil {
+			// Close any readers we've already created
+			for _, r := range readers {
+				_ = r.Close()
+			}
+			return nil, fmt.Errorf("failed to create reader for %s: %w", filePath, err)
+		}
+		readers = append(readers, reader)
+	}
+
+	defer func() {
+		for _, reader := range readers {
+			if closeErr := reader.Close(); closeErr != nil {
+				ll.Warn("Failed to close reader during cleanup", slog.Any("error", closeErr))
+			}
+		}
+	}()
+
+	// Create unified reader
+	var finalReader filereader.Reader
+	if len(readers) == 1 {
+		finalReader = readers[0]
+	} else {
+		keyProvider := &filereader.TimestampSortKeyProvider{}
+		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
+		}
+		finalReader = multiReader
+	}
+
+	// Get schema from reader
+	schema := finalReader.GetSchema()
+
+	// Add columns that will be injected by LogTranslator
+	schema.AddColumn(wkk.RowKeyResourceBucketName, wkk.RowKeyResourceBucketName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFileName, wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFile, wkk.RowKeyResourceFile, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFileType, wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+
+	// Create dateint bin manager
+	binManager := &DateintBinManager{
+		bins:        make(map[int32]*DateintBin),
+		tmpDir:      outputDir,
+		rpfEstimate: rpfEstimate,
+		schema:      schema,
+	}
+
+	var totalRowsProcessed int64
+
+	// Process all rows from the reader
+	for {
+		batch, readErr := finalReader.Next(ctx)
+		if readErr != nil && readErr != io.EOF {
+			if batch != nil {
+				pipeline.ReturnBatch(batch)
+			}
+			return nil, fmt.Errorf("failed to read from unified pipeline: %w", readErr)
+		}
+
+		if batch != nil {
+			// Process each row in the batch
+			for i := 0; i < batch.Len(); i++ {
+				row := batch.Get(i)
+				if row == nil {
+					continue
+				}
+
+				ts, ok := row[wkk.RowKeyCTimestamp].(int64)
+				if !ok {
+					ll.Warn("Row missing timestamp, skipping", slog.Int("rowIndex", i))
+					continue
+				}
+
+				dateint, _ := helpers.MSToDateintHour(ts)
+				bin, err := binManager.getOrCreateBin(ctx, dateint)
+				if err != nil {
+					ll.Error("Failed to get/create dateint bin", slog.Int("dateint", int(dateint)), slog.Any("error", err))
+					continue
+				}
+
+				// Add fingerprint to row if manager is available
+				if fingerprintManager != nil {
+					message, ok := row[wkk.RowKeyCMessage].(string)
+					if ok && message != "" {
+						tenant := fingerprintManager.GetTenant(orgID)
+						trieClusterManager := tenant.GetTrieClusterManager()
+						fp, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
+						if err == nil {
+							row[wkk.RowKeyCFingerprint] = fp
+						}
+					}
+				}
+
+				takenRow := batch.TakeRow(i)
+				if takenRow == nil {
+					continue
+				}
+				singleRowBatch := pipeline.GetBatch()
+				singleRowBatch.AppendRow(takenRow)
+
+				if err := bin.Writer.WriteBatch(singleRowBatch); err != nil {
+					ll.Error("Failed to write row to dateint bin",
+						slog.Int("dateint", int(dateint)),
+						slog.Any("error", err))
+				} else {
+					totalRowsProcessed++
+				}
+
+				pipeline.ReturnBatch(singleRowBatch)
+			}
+			pipeline.ReturnBatch(batch)
+		}
+
+		if readErr == io.EOF {
+			break
+		}
+	}
+
+	ll.Info("Log binning completed",
+		slog.Int64("rowsProcessed", totalRowsProcessed),
+		slog.Int("dateintBinsCreated", len(binManager.bins)))
+
+	// Close all writers and collect results
+	var allResults []parquetwriter.Result
+	var totalOutputBytes int64
+
+	for binDateint, bin := range binManager.bins {
+		results, err := bin.Writer.Close(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to close writer for bin %d: %w", binDateint, err)
+		}
+
+		if len(results) > 0 {
+			bin.Results = append(bin.Results, results...)
+			allResults = append(allResults, results...)
+			for _, res := range results {
+				totalOutputBytes += res.FileSize
+			}
+		}
+	}
+
+	return &LogIngestionResult{
+		OutputFiles:      allResults,
+		TotalRecords:     totalRowsProcessed,
+		TotalInputBytes:  totalInputSize,
+		TotalOutputBytes: totalOutputBytes,
+	}, nil
+}
+
+// createLogReaderStackStandalone creates a reader stack for standalone use (benchmarks, tests)
+func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fingerprintManager *fingerprint.TenantManager) (filereader.Reader, error) {
+	options := filereader.ReaderOptions{
+		SignalType: filereader.SignalTypeLogs,
+		BatchSize:  1000,
+		OrgID:      orgID,
+	}
+
+	reader, err := filereader.ReaderForFileWithOptions(filename, options)
+	if err != nil {
+		return nil, err
+	}
+
+	var translator filereader.RowTranslator
+	if strings.HasSuffix(filename, ".parquet") {
+		translator = NewParquetLogTranslator(orgID, bucket, objectID)
+	} else {
+		translator = NewLogTranslator(orgID, bucket, objectID, fingerprintManager)
+	}
+
+	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+	if err != nil {
+		_ = reader.Close()
+		return nil, err
+	}
+
+	return reader, nil
+}
+
 // createLogReaderStack creates a reader stack: Translation(LogReader(file))
 func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Determine file type from extension for logging

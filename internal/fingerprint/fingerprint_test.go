@@ -15,6 +15,7 @@
 package fingerprint
 
 import (
+	"fmt"
 	"testing"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -253,7 +254,7 @@ func TestToFingerprints(t *testing.T) {
 
 func TestGenerateRowFingerprints(t *testing.T) {
 	// Example log row with CardinalHQ fields
-	row := map[string]interface{}{
+	row := map[string]any{
 		"log_message":                 "User login failed",
 		"metric_name":                 "log_events",
 		"log_level":                   "error",
@@ -263,7 +264,9 @@ func TestGenerateRowFingerprints(t *testing.T) {
 		"custom_field":                "some_value",
 	}
 
-	fingerprints := GenerateRowFingerprints(row)
+	// Create fingerprinter
+	fp := NewFieldFingerprinter()
+	fingerprints := fp.GenerateFingerprints(row)
 
 	// Should generate multiple fingerprints for different dimensions
 	assert.Greater(t, fingerprints.Cardinality(), 5, "Should generate multiple fingerprints for different fields")
@@ -288,4 +291,307 @@ func TestGenerateRowFingerprints(t *testing.T) {
 	for _, expectedFp := range expectedFingerprints.ToSlice() {
 		assert.True(t, fingerprints.Contains(expectedFp), "Should contain fingerprint %d", expectedFp)
 	}
+}
+
+// TestGenerateRowFingerprints_Comprehensive is a comprehensive regression test that validates
+// the EXACT set of fingerprints generated for a realistic log row with many fields.
+// This test ensures that optimizations to fingerprint generation don't change the output.
+func TestGenerateRowFingerprints_Comprehensive(t *testing.T) {
+	// Realistic log row with ~50 fields (typical production scenario)
+	row := map[string]any{
+		// CardinalHQ standard fields
+		"chq_timestamp":      int64(1640995200000),
+		"chq_telemetry_type": "logs",
+		"chq_name":           "log_events",
+		"chq_value":          1.0,
+		"chq_message":        "User authentication failed for user@example.com",
+		"chq_fingerprint":    int64(12345),
+
+		// Indexed dimensions (should get full processing)
+		"log_level":                   "error",
+		"metric_name":                 "log_events",
+		"resource_customer_domain":    "example.com",
+		"resource_file":               "auth.log",
+		"resource_k8s_namespace_name": "production",
+		"resource_service_name":       "auth-service",
+		"span_trace_id":               "abc123def456",
+
+		// Resource attributes (NOT in DimensionsToIndex - should only get exists fingerprints)
+		"resource_host_name":       "server01.example.com",
+		"resource_cloud_provider":  "aws",
+		"resource_cloud_region":    "us-west-2",
+		"resource_container_name":  "auth-container",
+		"resource_deployment_name": "auth-deployment",
+
+		// Scope attributes (NOT in DimensionsToIndex)
+		"scope_name":    "io.opentelemetry.logs",
+		"scope_version": "1.0.0",
+
+		// Log attributes (NOT in DimensionsToIndex - majority of fields)
+		"attr_user_id":       "user123",
+		"attr_ip_address":    "192.168.1.1",
+		"attr_request_id":    "req-456-789",
+		"attr_session_id":    "sess-abc-def",
+		"attr_method":        "POST",
+		"attr_url":           "/api/login",
+		"attr_status_code":   401,
+		"attr_response_time": 150.5,
+		"attr_user_agent":    "Mozilla/5.0",
+		"attr_referer":       "https://example.com",
+		"attr_environment":   "production",
+		"attr_version":       "v1.2.3",
+		"attr_build_number":  "12345",
+		"attr_commit_sha":    "abcdef123456",
+
+		// Additional custom fields (NOT indexed)
+		"custom_field_1":  "value1",
+		"custom_field_2":  "value2",
+		"custom_field_3":  42,
+		"custom_field_4":  true,
+		"custom_field_5":  nil, // Should be skipped
+		"custom_field_6":  3.14,
+		"custom_field_7":  "a very long string value that should still work fine",
+		"custom_field_8":  []byte("binary data"),
+		"custom_field_9":  "emoji 😀 test",
+		"custom_field_10": "unicode test ñ",
+	}
+
+	// Generate fingerprints with current implementation
+	fp := NewFieldFingerprinter()
+	fingerprints := fp.GenerateFingerprints(row)
+
+	// Manually compute expected fingerprints based on the algorithm
+	expected := mapset.NewSet[int64]()
+
+	// ALL fields get an exists fingerprint
+	for fieldName := range row {
+		if row[fieldName] != nil { // nil values are skipped
+			expected.Add(ComputeFingerprint(fieldName, ExistsRegex))
+		}
+	}
+
+	// Only DimensionsToIndex fields get value-based fingerprints
+	// 1. chq_telemetry_type - indexed dimension with trigrams
+	for _, trigram := range ToTrigrams("logs") {
+		expected.Add(ComputeFingerprint("chq_telemetry_type", trigram))
+	}
+
+	// 2. log_level - indexed dimension with trigrams
+	for _, trigram := range ToTrigrams("error") {
+		expected.Add(ComputeFingerprint("log_level", trigram))
+	}
+
+	// 3. metric_name - FULL VALUE dimension (no trigrams)
+	expected.Add(ComputeFingerprint("metric_name", "log_events"))
+
+	// 4. resource_customer_domain - indexed dimension with trigrams
+	for _, trigram := range ToTrigrams("example.com") {
+		expected.Add(ComputeFingerprint("resource_customer_domain", trigram))
+	}
+
+	// 5. resource_file - FULL VALUE dimension (no trigrams)
+	expected.Add(ComputeFingerprint("resource_file", "auth.log"))
+
+	// 6. resource_k8s_namespace_name - indexed dimension with trigrams
+	for _, trigram := range ToTrigrams("production") {
+		expected.Add(ComputeFingerprint("resource_k8s_namespace_name", trigram))
+	}
+
+	// 7. resource_service_name - indexed dimension with trigrams
+	for _, trigram := range ToTrigrams("auth-service") {
+		expected.Add(ComputeFingerprint("resource_service_name", trigram))
+	}
+
+	// 8. span_trace_id - indexed dimension with trigrams
+	for _, trigram := range ToTrigrams("abc123def456") {
+		expected.Add(ComputeFingerprint("span_trace_id", trigram))
+	}
+
+	// Verify EXACT match - same count and all fingerprints present
+	assert.Equal(t, expected.Cardinality(), fingerprints.Cardinality(),
+		"Fingerprint count mismatch - expected %d, got %d",
+		expected.Cardinality(), fingerprints.Cardinality())
+
+	assert.True(t, expected.Equal(fingerprints),
+		"Fingerprint sets don't match.\nExpected: %v\nGot: %v\nMissing: %v\nExtra: %v",
+		expected.ToSlice(),
+		fingerprints.ToSlice(),
+		expected.Difference(fingerprints).ToSlice(),
+		fingerprints.Difference(expected).ToSlice())
+}
+
+// TestGenerateRowFingerprintsWithCache_IdenticalOutput validates that the cached version
+// produces exactly the same fingerprints as the non-cached version
+func TestGenerateRowFingerprintsWithCache_IdenticalOutput(t *testing.T) {
+	// Test with multiple realistic rows to ensure cache works correctly across rows
+	rows := []map[string]any{
+		{
+			"chq_timestamp":      int64(1640995200000),
+			"chq_telemetry_type": "logs",
+			"log_level":          "error",
+			"metric_name":        "log_events",
+			"resource_file":      "auth.log",
+			"custom_field_1":     "value1",
+			"custom_field_2":     42,
+		},
+		{
+			"chq_timestamp":      int64(1640995201000),
+			"chq_telemetry_type": "logs",
+			"log_level":          "warn",
+			"metric_name":        "log_events",
+			"resource_file":      "auth.log",
+			"custom_field_1":     "value2",
+			"custom_field_3":     "new_field",
+		},
+		{
+			"chq_timestamp":            int64(1640995202000),
+			"log_level":                "info",
+			"resource_service_name":    "api-service",
+			"resource_customer_domain": "example.com",
+			"span_trace_id":            "trace123",
+			"custom_field_4":           true,
+		},
+	}
+
+	// Create fingerprinter (simulating accumulator behavior with reused instance)
+	fp := NewFieldFingerprinter()
+
+	for i, row := range rows {
+		// Generate with fresh fingerprinter for each row (simulates non-cached)
+		freshFp := NewFieldFingerprinter()
+		expectedFps := freshFp.GenerateFingerprints(row)
+
+		// Generate with shared fingerprinter (simulates cached across rows)
+		cachedFps := fp.GenerateFingerprints(row)
+
+		// They should be identical
+		assert.Equal(t, expectedFps.Cardinality(), cachedFps.Cardinality(),
+			"Row %d: fingerprint count mismatch", i)
+
+		assert.True(t, expectedFps.Equal(cachedFps),
+			"Row %d: fingerprint sets don't match.\nExpected: %v\nGot: %v\nMissing: %v\nExtra: %v",
+			i,
+			expectedFps.ToSlice(),
+			cachedFps.ToSlice(),
+			expectedFps.Difference(cachedFps).ToSlice(),
+			cachedFps.Difference(expectedFps).ToSlice())
+	}
+
+	// Verify cache was populated
+	assert.Greater(t, len(fp.existsFpCache), 0, "Exists cache should be populated")
+}
+
+// TestFieldFingerprinter_CacheEffectiveness validates that the cache
+// actually reduces computation
+func TestFieldFingerprinter_CacheEffectiveness(t *testing.T) {
+	// Create fingerprinter
+	fp := NewFieldFingerprinter()
+
+	// First row - should populate cache
+	row1 := map[string]any{
+		"chq_timestamp": int64(1640995200000),
+		"log_level":     "error",
+		"metric_name":   "log_events",
+		"custom_field":  "value1",
+	}
+
+	_ = fp.GenerateFingerprints(row1)
+
+	// Verify cache was populated
+	assert.Equal(t, 4, len(fp.existsFpCache), "Should have 4 field names cached")
+
+	// Second row with same fields - should use cache
+	row2 := map[string]any{
+		"chq_timestamp": int64(1640995201000),
+		"log_level":     "warn",
+		"metric_name":   "log_events",
+		"custom_field":  "value2",
+	}
+
+	_ = fp.GenerateFingerprints(row2)
+
+	// Cache size should not grow (same fields)
+	assert.Equal(t, 4, len(fp.existsFpCache), "Cache size should not grow with same fields")
+
+	// Third row with NEW field - should add to cache
+	row3 := map[string]any{
+		"chq_timestamp": int64(1640995202000),
+		"log_level":     "info",
+		"new_field":     "new_value",
+	}
+
+	_ = fp.GenerateFingerprints(row3)
+
+	// Cache should grow by 1
+	assert.Equal(t, 5, len(fp.existsFpCache), "Cache should grow with new field")
+}
+
+// TestFieldFingerprinter_FullValueCache validates that full-value fingerprints are cached
+func TestFieldFingerprinter_FullValueCache(t *testing.T) {
+	fp := NewFieldFingerprinter()
+
+	// metric_name and resource_file are full-value dimensions
+	row1 := map[string]any{
+		"metric_name":   "http_requests_total",
+		"resource_file": "/var/log/app.log",
+		"log_level":     "info", // Not a full-value dimension
+	}
+
+	_ = fp.GenerateFingerprints(row1)
+
+	// Should have cached 2 full-value fingerprints
+	assert.Equal(t, 2, len(fp.fullValueFpCache), "Should cache full-value fingerprints")
+
+	// Same values again - should hit cache
+	row2 := map[string]any{
+		"metric_name":   "http_requests_total",
+		"resource_file": "/var/log/app.log",
+	}
+
+	_ = fp.GenerateFingerprints(row2)
+
+	// Cache size should not grow
+	assert.Equal(t, 2, len(fp.fullValueFpCache), "Cache should not grow for same values")
+
+	// Different values - should add to cache
+	row3 := map[string]any{
+		"metric_name":   "http_errors_total",
+		"resource_file": "/var/log/error.log",
+	}
+
+	_ = fp.GenerateFingerprints(row3)
+
+	// Cache should grow by 2
+	assert.Equal(t, 4, len(fp.fullValueFpCache), "Cache should grow with new values")
+}
+
+// TestFieldFingerprinter_FullValueCacheBounded validates that cache doesn't grow beyond limit
+func TestFieldFingerprinter_FullValueCacheBounded(t *testing.T) {
+	fp := NewFieldFingerprinter()
+
+	// Fill cache to just under limit
+	for i := range maxFullValueCacheSize - 1 {
+		row := map[string]any{
+			"metric_name": fmt.Sprintf("metric_%d", i),
+		}
+		_ = fp.GenerateFingerprints(row)
+	}
+
+	assert.Equal(t, maxFullValueCacheSize-1, len(fp.fullValueFpCache), "Should have filled cache to limit-1")
+
+	// Add one more to reach limit
+	row := map[string]any{
+		"metric_name": fmt.Sprintf("metric_%d", maxFullValueCacheSize-1),
+	}
+	_ = fp.GenerateFingerprints(row)
+
+	assert.Equal(t, maxFullValueCacheSize, len(fp.fullValueFpCache), "Should have reached cache limit")
+
+	// Try to add beyond limit - should not grow
+	row = map[string]any{
+		"metric_name": "overflow_metric",
+	}
+	_ = fp.GenerateFingerprints(row)
+
+	assert.Equal(t, maxFullValueCacheSize, len(fp.fullValueFpCache), "Cache should not grow beyond limit")
 }

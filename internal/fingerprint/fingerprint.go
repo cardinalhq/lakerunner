@@ -16,7 +16,6 @@ package fingerprint
 
 import (
 	"fmt"
-	"slices"
 	"unicode/utf8"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -46,7 +45,25 @@ var (
 		"metric_name",
 		"resource_file",
 	}
+
+	// dimensionsToIndexSet is a pre-built map for O(1) lookup of indexed dimensions
+	dimensionsToIndexSet map[string]struct{}
+
+	// fullValueDimensionsSet is a pre-built map for O(1) lookup of full-value dimensions
+	fullValueDimensionsSet map[string]struct{}
 )
+
+func init() {
+	dimensionsToIndexSet = make(map[string]struct{}, len(DimensionsToIndex))
+	for _, dim := range DimensionsToIndex {
+		dimensionsToIndexSet[dim] = struct{}{}
+	}
+
+	fullValueDimensionsSet = make(map[string]struct{}, len(FullValueDimensions))
+	for _, dim := range FullValueDimensions {
+		fullValueDimensionsSet[dim] = struct{}{}
+	}
+}
 
 // ToFingerprints converts a map of tagName → slice of tagValues into a set of fingerprints.
 func ToFingerprints(tagValuesByName map[string]mapset.Set[string]) mapset.Set[int64] {
@@ -55,11 +72,11 @@ func ToFingerprints(tagValuesByName map[string]mapset.Set[string]) mapset.Set[in
 	for tagName, values := range tagValuesByName {
 		fingerprints.Add(ComputeFingerprint(tagName, ExistsRegex))
 
-		if !slices.Contains(DimensionsToIndex, tagName) {
+		if _, isIndexed := dimensionsToIndexSet[tagName]; !isIndexed {
 			continue
 		}
 
-		if slices.Contains(FullValueDimensions, tagName) {
+		if _, isFullValue := fullValueDimensionsSet[tagName]; isFullValue {
 			for _, tagValue := range values.ToSlice() {
 				fingerprints.Add(ComputeFingerprint(tagName, tagValue))
 			}
@@ -126,13 +143,47 @@ func ComputeHash(str string) int64 {
 	return h
 }
 
-// GenerateRowFingerprints extracts field values from a row and generates comprehensive fingerprints
-func GenerateRowFingerprints(row map[string]any) mapset.Set[int64] {
-	tagValuesByName := make(map[string]mapset.Set[string])
+const (
+	// maxFullValueCacheSize is the maximum number of entries in the full-value cache.
+	// When exceeded, cache lookups are skipped and values are computed directly.
+	// This prevents unbounded memory growth while still providing benefit for typical workloads.
+	maxFullValueCacheSize = 10000
+)
 
-	// Extract values for each field in the row
+// FieldFingerprinter generates fingerprints for row fields with caching.
+// Create once and reuse across rows for best performance.
+type FieldFingerprinter struct {
+	existsFpCache    map[string]int64
+	fullValueFpCache map[string]int64 // Cache for fieldName:value -> fingerprint (bounded to maxFullValueCacheSize)
+}
+
+// NewFieldFingerprinter creates a new fingerprinter with empty caches.
+func NewFieldFingerprinter() *FieldFingerprinter {
+	return &FieldFingerprinter{
+		existsFpCache:    make(map[string]int64),
+		fullValueFpCache: make(map[string]int64),
+	}
+}
+
+// GenerateFingerprints generates comprehensive fingerprints for a row.
+func (f *FieldFingerprinter) GenerateFingerprints(row map[string]any) mapset.Set[int64] {
+	fingerprints := mapset.NewSet[int64]()
+
 	for fieldName, fieldValue := range row {
 		if fieldValue == nil {
+			continue
+		}
+
+		// Get or compute the "exists" fingerprint for this field (cached)
+		existsFp, found := f.existsFpCache[fieldName]
+		if !found {
+			existsFp = ComputeFingerprint(fieldName, ExistsRegex)
+			f.existsFpCache[fieldName] = existsFp
+		}
+		fingerprints.Add(existsFp)
+
+		// Check if this field should be indexed for value-based fingerprints (O(1) lookup)
+		if _, isIndexed := dimensionsToIndexSet[fieldName]; !isIndexed {
 			continue
 		}
 
@@ -148,13 +199,34 @@ func GenerateRowFingerprints(row map[string]any) mapset.Set[int64] {
 			strValue = fmt.Sprintf("%v", v)
 		}
 
-		if strValue != "" {
-			if _, exists := tagValuesByName[fieldName]; !exists {
-				tagValuesByName[fieldName] = mapset.NewSet[string]()
+		if strValue == "" {
+			continue
+		}
+
+		// Check if this is a full-value dimension (no trigrams) - O(1) lookup
+		if _, isFullValue := fullValueDimensionsSet[fieldName]; isFullValue {
+			// Try to use cache for full-value fingerprints
+			cacheKey := fieldName + ":" + strValue
+			if fp, found := f.fullValueFpCache[cacheKey]; found {
+				fingerprints.Add(fp)
+			} else {
+				fp := ComputeFingerprint(fieldName, strValue)
+				fingerprints.Add(fp)
+				// Add to cache only if not full
+				if len(f.fullValueFpCache) < maxFullValueCacheSize {
+					f.fullValueFpCache[cacheKey] = fp
+				}
 			}
-			tagValuesByName[fieldName].Add(strValue)
+			continue
+		}
+
+		// Generate trigram fingerprints
+		trigrams := ToTrigrams(strValue)
+		for _, trigram := range trigrams {
+			fp := ComputeFingerprint(fieldName, trigram)
+			fingerprints.Add(fp)
 		}
 	}
 
-	return ToFingerprints(tagValuesByName)
+	return fingerprints
 }
