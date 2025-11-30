@@ -112,7 +112,10 @@ func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch
 		}
 	}
 
-	// Process each row
+	// Pre-allocate slice for entire batch (nil rows are rare, small overhead if present)
+	rowMaps := make([]map[string]any, 0, batch.Len())
+
+	// Process each row and build row maps
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
 		if row == nil {
@@ -135,12 +138,13 @@ func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch
 			rowMap[fieldName] = convertedValue
 		}
 
-		// Write directly to Parquet
-		if _, err := b.parquetWriter.Write([]map[string]any{rowMap}); err != nil {
-			return fmt.Errorf("failed to write row to parquet: %w", err)
-		}
-
+		rowMaps = append(rowMaps, rowMap)
 		b.rowCount++
+	}
+
+	// Write entire batch to Parquet in one call
+	if _, err := b.parquetWriter.Write(rowMaps); err != nil {
+		return fmt.Errorf("failed to write batch to parquet: %w", err)
 	}
 
 	return nil
