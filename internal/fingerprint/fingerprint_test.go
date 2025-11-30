@@ -20,7 +20,29 @@ import (
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
+
+// toRow converts a map[string]any to pipeline.Row for testing
+func toRow(m map[string]any) pipeline.Row {
+	row := make(pipeline.Row, len(m))
+	for k, v := range m {
+		row[wkk.NewRowKey(k)] = v
+	}
+	return row
+}
+
+// contains checks if a slice contains a value
+func contains(slice []int64, val int64) bool {
+	for _, v := range slice {
+		if v == val {
+			return true
+		}
+	}
+	return false
+}
 
 func TestComputeHash(t *testing.T) {
 	tests := []struct {
@@ -266,10 +288,10 @@ func TestGenerateRowFingerprints(t *testing.T) {
 
 	// Create fingerprinter
 	fp := NewFieldFingerprinter()
-	fingerprints := fp.GenerateFingerprints(row)
+	fingerprints := fp.GenerateFingerprints(toRow(row))
 
 	// Should generate multiple fingerprints for different dimensions
-	assert.Greater(t, fingerprints.Cardinality(), 5, "Should generate multiple fingerprints for different fields")
+	assert.Greater(t, len(fingerprints), 5, "Should generate multiple fingerprints for different fields")
 
 	// Test that it includes fingerprints for indexed dimensions
 	expectedFingerprints := mapset.NewSet[int64]()
@@ -289,7 +311,7 @@ func TestGenerateRowFingerprints(t *testing.T) {
 
 	// Verify some expected fingerprints are present
 	for _, expectedFp := range expectedFingerprints.ToSlice() {
-		assert.True(t, fingerprints.Contains(expectedFp), "Should contain fingerprint %d", expectedFp)
+		assert.True(t, contains(fingerprints, expectedFp), "Should contain fingerprint %d", expectedFp)
 	}
 }
 
@@ -358,7 +380,7 @@ func TestGenerateRowFingerprints_Comprehensive(t *testing.T) {
 
 	// Generate fingerprints with current implementation
 	fp := NewFieldFingerprinter()
-	fingerprints := fp.GenerateFingerprints(row)
+	fingerprints := fp.GenerateFingerprints(toRow(row))
 
 	// Manually compute expected fingerprints based on the algorithm
 	expected := mapset.NewSet[int64]()
@@ -407,17 +429,20 @@ func TestGenerateRowFingerprints_Comprehensive(t *testing.T) {
 		expected.Add(ComputeFingerprint("span_trace_id", trigram))
 	}
 
-	// Verify EXACT match - same count and all fingerprints present
-	assert.Equal(t, expected.Cardinality(), fingerprints.Cardinality(),
-		"Fingerprint count mismatch - expected %d, got %d",
-		expected.Cardinality(), fingerprints.Cardinality())
+	// Convert fingerprints slice to set for comparison
+	fingerprintsSet := mapset.NewSet(fingerprints...)
 
-	assert.True(t, expected.Equal(fingerprints),
+	// Verify EXACT match - same count and all fingerprints present
+	assert.Equal(t, expected.Cardinality(), len(fingerprints),
+		"Fingerprint count mismatch - expected %d, got %d",
+		expected.Cardinality(), len(fingerprints))
+
+	assert.True(t, expected.Equal(fingerprintsSet),
 		"Fingerprint sets don't match.\nExpected: %v\nGot: %v\nMissing: %v\nExtra: %v",
 		expected.ToSlice(),
-		fingerprints.ToSlice(),
-		expected.Difference(fingerprints).ToSlice(),
-		fingerprints.Difference(expected).ToSlice())
+		fingerprints,
+		expected.Difference(fingerprintsSet).ToSlice(),
+		fingerprintsSet.Difference(expected).ToSlice())
 }
 
 // TestGenerateRowFingerprintsWithCache_IdenticalOutput validates that the cached version
@@ -459,22 +484,26 @@ func TestGenerateRowFingerprintsWithCache_IdenticalOutput(t *testing.T) {
 	for i, row := range rows {
 		// Generate with fresh fingerprinter for each row (simulates non-cached)
 		freshFp := NewFieldFingerprinter()
-		expectedFps := freshFp.GenerateFingerprints(row)
+		expectedFps := freshFp.GenerateFingerprints(toRow(row))
 
 		// Generate with shared fingerprinter (simulates cached across rows)
-		cachedFps := fp.GenerateFingerprints(row)
+		cachedFps := fp.GenerateFingerprints(toRow(row))
+
+		// Convert to sets for comparison
+		expectedSet := mapset.NewSet(expectedFps...)
+		cachedSet := mapset.NewSet(cachedFps...)
 
 		// They should be identical
-		assert.Equal(t, expectedFps.Cardinality(), cachedFps.Cardinality(),
+		assert.Equal(t, len(expectedFps), len(cachedFps),
 			"Row %d: fingerprint count mismatch", i)
 
-		assert.True(t, expectedFps.Equal(cachedFps),
+		assert.True(t, expectedSet.Equal(cachedSet),
 			"Row %d: fingerprint sets don't match.\nExpected: %v\nGot: %v\nMissing: %v\nExtra: %v",
 			i,
-			expectedFps.ToSlice(),
-			cachedFps.ToSlice(),
-			expectedFps.Difference(cachedFps).ToSlice(),
-			cachedFps.Difference(expectedFps).ToSlice())
+			expectedFps,
+			cachedFps,
+			expectedSet.Difference(cachedSet).ToSlice(),
+			cachedSet.Difference(expectedSet).ToSlice())
 	}
 
 	// Verify cache was populated
@@ -495,7 +524,7 @@ func TestFieldFingerprinter_CacheEffectiveness(t *testing.T) {
 		"custom_field":  "value1",
 	}
 
-	_ = fp.GenerateFingerprints(row1)
+	_ = fp.GenerateFingerprints(toRow(row1))
 
 	// Verify cache was populated
 	assert.Equal(t, 4, len(fp.existsFpCache), "Should have 4 field names cached")
@@ -508,7 +537,7 @@ func TestFieldFingerprinter_CacheEffectiveness(t *testing.T) {
 		"custom_field":  "value2",
 	}
 
-	_ = fp.GenerateFingerprints(row2)
+	_ = fp.GenerateFingerprints(toRow(row2))
 
 	// Cache size should not grow (same fields)
 	assert.Equal(t, 4, len(fp.existsFpCache), "Cache size should not grow with same fields")
@@ -520,7 +549,7 @@ func TestFieldFingerprinter_CacheEffectiveness(t *testing.T) {
 		"new_field":     "new_value",
 	}
 
-	_ = fp.GenerateFingerprints(row3)
+	_ = fp.GenerateFingerprints(toRow(row3))
 
 	// Cache should grow by 1
 	assert.Equal(t, 5, len(fp.existsFpCache), "Cache should grow with new field")
@@ -537,7 +566,7 @@ func TestFieldFingerprinter_FullValueCache(t *testing.T) {
 		"log_level":     "info", // Not a full-value dimension
 	}
 
-	_ = fp.GenerateFingerprints(row1)
+	_ = fp.GenerateFingerprints(toRow(row1))
 
 	// Should have cached 2 full-value fingerprints
 	assert.Equal(t, 2, len(fp.fullValueFpCache), "Should cache full-value fingerprints")
@@ -548,7 +577,7 @@ func TestFieldFingerprinter_FullValueCache(t *testing.T) {
 		"resource_file": "/var/log/app.log",
 	}
 
-	_ = fp.GenerateFingerprints(row2)
+	_ = fp.GenerateFingerprints(toRow(row2))
 
 	// Cache size should not grow
 	assert.Equal(t, 2, len(fp.fullValueFpCache), "Cache should not grow for same values")
@@ -559,7 +588,7 @@ func TestFieldFingerprinter_FullValueCache(t *testing.T) {
 		"resource_file": "/var/log/error.log",
 	}
 
-	_ = fp.GenerateFingerprints(row3)
+	_ = fp.GenerateFingerprints(toRow(row3))
 
 	// Cache should grow by 2
 	assert.Equal(t, 4, len(fp.fullValueFpCache), "Cache should grow with new values")
@@ -574,7 +603,7 @@ func TestFieldFingerprinter_FullValueCacheBounded(t *testing.T) {
 		row := map[string]any{
 			"metric_name": fmt.Sprintf("metric_%d", i),
 		}
-		_ = fp.GenerateFingerprints(row)
+		_ = fp.GenerateFingerprints(toRow(row))
 	}
 
 	assert.Equal(t, maxFullValueCacheSize-1, len(fp.fullValueFpCache), "Should have filled cache to limit-1")
@@ -583,7 +612,7 @@ func TestFieldFingerprinter_FullValueCacheBounded(t *testing.T) {
 	row := map[string]any{
 		"metric_name": fmt.Sprintf("metric_%d", maxFullValueCacheSize-1),
 	}
-	_ = fp.GenerateFingerprints(row)
+	_ = fp.GenerateFingerprints(toRow(row))
 
 	assert.Equal(t, maxFullValueCacheSize, len(fp.fullValueFpCache), "Should have reached cache limit")
 
@@ -591,7 +620,7 @@ func TestFieldFingerprinter_FullValueCacheBounded(t *testing.T) {
 	row = map[string]any{
 		"metric_name": "overflow_metric",
 	}
-	_ = fp.GenerateFingerprints(row)
+	_ = fp.GenerateFingerprints(toRow(row))
 
 	assert.Equal(t, maxFullValueCacheSize, len(fp.fullValueFpCache), "Cache should not grow beyond limit")
 }
