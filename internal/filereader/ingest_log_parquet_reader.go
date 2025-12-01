@@ -159,52 +159,21 @@ func (r *IngestLogParquetReader) Next(ctx context.Context) (*Batch, error) {
 // underscoredPath tracks the flattened underscored path (e.g., "foo_bar_whatever")
 // schema is updated with mappings as new fields are discovered
 func flattenValueIntoRow(row pipeline.Row, dottedPath, underscoredPath string, col arrow.Array, i int, schema *ReaderSchema) {
-	switch c := col.(type) {
+	switch col.(type) {
 	case *array.Struct:
-		// Flatten struct fields
-		dt := c.DataType().(*arrow.StructType)
-		fields := dt.Fields()
-		for j, field := range fields {
-			nestedCol := c.Field(j)
-			if !nestedCol.IsNull(i) {
-				// Build nested paths: append field name to both paths
-				nestedDotted := dottedPath + "." + field.Name
-				nestedUnderscored := underscoredPath + "_" + field.Name
-				flattenValueIntoRow(row, nestedDotted, nestedUnderscored, nestedCol, i, schema)
-			}
-		}
+		// TODO: Implement struct flattening
+		// For now, drop struct fields to avoid schema mismatches with dynamic nested fields
+		return
 
 	case *array.Map:
-		// Flatten map entries
-		if !c.IsNull(i) {
-			start, end := c.ValueOffsets(i)
-			keys := c.Keys()
-			items := c.Items()
-
-			for j := start; j < end; j++ {
-				key := convertArrowValue(keys, int(j))
-				value := convertArrowValue(items, int(j))
-				if keyStr, ok := key.(string); ok {
-					// Build nested paths: append map key to both paths
-					nestedUnderscored := underscoredPath + "_" + keyStr
-					// Store the value
-					finalUnderscored := strings.ReplaceAll(nestedUnderscored, ".", "_")
-					rowKey := wkk.NewRowKeyFromBytes([]byte(finalUnderscored))
-					row[rowKey] = value
-					// Schema already complete from two-pass scan
-				}
-			}
-		}
+		// TODO: Implement map flattening
+		// For now, drop map fields to avoid schema mismatches with dynamic map keys
+		return
 
 	case *array.List:
-		// Lists are NOT flattened - store as-is (as []any)
-		val := convertListValue(c, i)
-		if val != nil {
-			finalUnderscored := strings.ReplaceAll(underscoredPath, ".", "_")
-			rowKey := wkk.NewRowKeyFromBytes([]byte(finalUnderscored))
-			row[rowKey] = val
-			// Schema already complete from two-pass scan
-		}
+		// TODO: Implement list handling
+		// For now, drop list fields
+		return
 
 	default:
 		// Leaf value - convert and store
