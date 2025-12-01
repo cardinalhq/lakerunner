@@ -67,7 +67,7 @@ func ExtractCompleteParquetSchema(ctx context.Context, pf *file.Reader, fr *pqar
 	for _, field := range arrowSchema.Fields() {
 		hasNonNull := columnStats[field.Name]
 		// Use parquet physical type if available, otherwise infer from Arrow type
-		dataType := DataTypeAny
+		var dataType DataType
 		if pqType, ok := parquetTypes[field.Name]; ok {
 			dataType = pqType
 		} else {
