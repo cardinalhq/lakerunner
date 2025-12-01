@@ -166,9 +166,9 @@ func discoverMapKeysInValue(dottedPath, underscoredPath string, col arrow.Array,
 					finalUnderscored := strings.ReplaceAll(nestedUnderscored, ".", "_")
 					finalDotted := nestedDotted
 
-					// Get the value to infer type
-					value := convertArrowValueForSchema(items, int(j))
-					dataType := inferDataTypeFromValue(value)
+					// Use the actual Arrow type from the items array
+					// instead of inferring from the converted Go value
+					dataType := arrowTypeToDataType(items.DataType())
 
 					// Add this map key as a column
 					newKey := wkk.NewRowKey(finalUnderscored)
@@ -230,25 +230,5 @@ func convertArrowValueForSchema(col arrow.Array, i int) any {
 	default:
 		// For unknown types, return string representation
 		return fmt.Sprintf("%v", c.ValueStr(i))
-	}
-}
-
-// inferDataTypeFromValue infers DataType from a Go value
-func inferDataTypeFromValue(value any) DataType {
-	switch value.(type) {
-	case string:
-		return DataTypeString
-	case int64, int, int32, int16, int8:
-		return DataTypeInt64
-	case uint64, uint, uint32, uint16, uint8:
-		return DataTypeInt64
-	case float64, float32:
-		return DataTypeFloat64
-	case bool:
-		return DataTypeBool
-	case []byte:
-		return DataTypeBytes
-	default:
-		return DataTypeAny
 	}
 }
