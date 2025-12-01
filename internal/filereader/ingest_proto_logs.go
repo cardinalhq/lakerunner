@@ -197,25 +197,21 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 	row[wkk.RowKeyCLevel] = logRecord.SeverityText()
 }
 
-// otelValueToGoValue converts an OTEL pcommon.Value to a Go value with the correct type.
+// otelValueToGoValue converts an OTEL pcommon.Value to a Go value.
+// Returns the value in its native form where possible, but uses AsString() for safety
+// when the OTEL type tag might not match actual data (handles malformed OTEL data).
+// Type conversion to match the promoted schema happens in normalizeRow().
 func otelValueToGoValue(v pcommon.Value) any {
 	switch v.Type() {
-	case pcommon.ValueTypeStr:
-		return v.Str()
-	case pcommon.ValueTypeInt:
-		return v.Int()
-	case pcommon.ValueTypeDouble:
-		return v.Double()
-	case pcommon.ValueTypeBool:
-		return v.Bool()
-	case pcommon.ValueTypeBytes:
-		return v.Bytes().AsRaw()
-	case pcommon.ValueTypeMap, pcommon.ValueTypeSlice:
-		// Convert complex types to JSON string
-		return v.AsString()
 	case pcommon.ValueTypeEmpty:
-		return ""
+		return nil
+	case pcommon.ValueTypeBytes:
+		// Bytes is safe - can't have type mismatch
+		return v.Bytes().AsRaw()
 	default:
+		// For all other types, use AsString() which never panics
+		// This handles malformed OTEL where type tag (bool/int/etc) doesn't match actual data
+		// normalizeRow() will convert the string to the correct type based on the promoted schema
 		return v.AsString()
 	}
 }
