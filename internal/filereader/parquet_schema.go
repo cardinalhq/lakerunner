@@ -18,14 +18,15 @@ import (
 	"strings"
 
 	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/file"
-	"github.com/parquet-go/parquet-go"
+	parquetgo "github.com/parquet-go/parquet-go"
 
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // extractSchemaFromParquetFile extracts schema from parquet file metadata.
-func extractSchemaFromParquetFile(pf *parquet.File) *ReaderSchema {
+func extractSchemaFromParquetFile(pf *parquetgo.File) *ReaderSchema {
 	schema := NewReaderSchema()
 
 	// Get parquet schema from file
@@ -38,7 +39,7 @@ func extractSchemaFromParquetFile(pf *parquet.File) *ReaderSchema {
 }
 
 // walkParquetSchema recursively walks the parquet schema and adds columns.
-func walkParquetSchema(schema *ReaderSchema, node parquet.Node, prefix string) {
+func walkParquetSchema(schema *ReaderSchema, node parquetgo.Node, prefix string) {
 	// Check if this node has fields (Group or Schema)
 	if !node.Leaf() {
 		fields := node.Fields()
@@ -74,7 +75,7 @@ func walkParquetSchema(schema *ReaderSchema, node parquet.Node, prefix string) {
 }
 
 // parquetTypeToDataType converts parquet type to our DataType.
-func parquetTypeToDataType(ptype parquet.Type) DataType {
+func parquetTypeToDataType(ptype parquetgo.Type) DataType {
 	// Check logical type first for ByteArray types
 	if logicalType := ptype.LogicalType(); logicalType != nil {
 		if logicalType.UTF8 != nil {
@@ -83,13 +84,13 @@ func parquetTypeToDataType(ptype parquet.Type) DataType {
 	}
 
 	switch ptype.Kind() {
-	case parquet.Boolean:
+	case parquetgo.Boolean:
 		return DataTypeBool
-	case parquet.Int32, parquet.Int64:
+	case parquetgo.Int32, parquetgo.Int64:
 		return DataTypeInt64
-	case parquet.Float, parquet.Double:
+	case parquetgo.Float, parquetgo.Double:
 		return DataTypeFloat64
-	case parquet.ByteArray, parquet.FixedLenByteArray:
+	case parquetgo.ByteArray, parquetgo.FixedLenByteArray:
 		// If no logical type was detected above, treat as bytes
 		return DataTypeBytes
 	default:
@@ -164,9 +165,56 @@ func arrowTypeToDataType(atype arrow.DataType) DataType {
 		return DataTypeBytes
 	case arrow.TIMESTAMP, arrow.DATE32, arrow.DATE64, arrow.TIME32, arrow.TIME64:
 		return DataTypeInt64
+	case arrow.NULL:
+		// NULL type means all values are null - we need parquet physical type
+		// Return Any for now, caller should check parquet metadata
+		return DataTypeAny
 	default:
 		// For complex types (list, struct, map) and unknown, use DataTypeAny
 		// These will be passed through as-is without conversion
 		return DataTypeAny
 	}
+}
+
+// buildParquetTypeMap builds a map of column name to DataType from parquet metadata.
+// This uses the actual parquet physical types, not Arrow's inferred types.
+// INT32 is promoted to Int64 for consistency.
+func buildParquetTypeMap(pf *file.Reader) map[string]DataType {
+	typeMap := make(map[string]DataType)
+
+	if pf == nil {
+		return typeMap
+	}
+
+	schema := pf.MetaData().Schema
+	for i := 0; i < schema.NumColumns(); i++ {
+		col := schema.Column(i)
+		colName := col.Name()
+
+		// Map parquet physical type to our DataType
+		physicalType := col.PhysicalType()
+
+		switch physicalType {
+		case parquet.Types.Boolean:
+			typeMap[colName] = DataTypeBool
+		case parquet.Types.Int32, parquet.Types.Int64:
+			// Promote INT32 to Int64
+			typeMap[colName] = DataTypeInt64
+		case parquet.Types.Float, parquet.Types.Double:
+			typeMap[colName] = DataTypeFloat64
+		case parquet.Types.ByteArray, parquet.Types.FixedLenByteArray:
+			// Check logical type to distinguish string from bytes
+			logicalType := col.LogicalType()
+			if logicalType != nil && logicalType.String() == "String" {
+				typeMap[colName] = DataTypeString
+			} else {
+				typeMap[colName] = DataTypeBytes
+			}
+		default:
+			// Unknown physical type - use Any
+			typeMap[colName] = DataTypeAny
+		}
+	}
+
+	return typeMap
 }

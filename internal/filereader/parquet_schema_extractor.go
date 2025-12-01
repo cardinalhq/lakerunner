@@ -31,17 +31,19 @@ import (
 // all columns, including dynamic map keys and nested structures.
 //
 // This function:
-// 1. Reads the Arrow schema to get base field definitions
-// 2. Scans ALL rows in the file to discover all map keys and nested field combinations
-// 3. Returns a complete ReaderSchema with all flattened column paths
+// 1. Reads parquet metadata to get column types (physical types from parquet schema)
+// 2. Reads Arrow schema to get structure (for nested types)
+// 3. Scans ALL rows in the file to discover all map keys and track actual data types
+// 4. Returns a complete ReaderSchema with all flattened column paths and proper types
 //
-// For maps, this discovers ALL keys present in ANY row in the file.
-// For nested structs, this recursively flattens all paths.
-// For arrays/lists, this treats them as-is (not flattened).
+// For simple types (int32, int64, string, etc): use parquet physical type
+// For maps: discover keys by scanning data, track value types
+// For nested structs: recursively flatten all paths
+// For arrays/lists: treat as-is (not flattened)
 func ExtractCompleteParquetSchema(ctx context.Context, pf *file.Reader, fr *pqarrow.FileReader) (*ReaderSchema, error) {
 	schema := NewReaderSchema()
 
-	// Get the Arrow schema (this gives us the structure but not all map keys)
+	// Get the Arrow schema for structure
 	arrowSchema, err := fr.Schema()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get arrow schema: %w", err)
@@ -50,6 +52,10 @@ func ExtractCompleteParquetSchema(ctx context.Context, pf *file.Reader, fr *pqar
 	// Extract statistics to determine which top-level columns have non-null values
 	columnStats := extractParquetStatistics(pf)
 
+	// Build map of column name to parquet physical type
+	// Use parquet metadata directly instead of Arrow inferred types
+	parquetTypes := buildParquetTypeMap(pf)
+
 	// Create a record reader to scan all rows
 	rr, err := fr.GetRecordReader(ctx, nil, nil)
 	if err != nil {
@@ -57,10 +63,17 @@ func ExtractCompleteParquetSchema(ctx context.Context, pf *file.Reader, fr *pqar
 	}
 	defer rr.Release()
 
-	// First pass: add all fields from the Arrow schema that are statically known (structs)
+	// First pass: add all fields from the Arrow schema with parquet physical types
 	for _, field := range arrowSchema.Fields() {
 		hasNonNull := columnStats[field.Name]
-		discoverFieldsFromArrowType(field, field.Name, field.Name, hasNonNull, schema)
+		// Use parquet physical type if available, otherwise infer from Arrow type
+		dataType := DataTypeAny
+		if pqType, ok := parquetTypes[field.Name]; ok {
+			dataType = pqType
+		} else {
+			dataType = arrowTypeToDataType(field.Type)
+		}
+		discoverFieldsFromArrowType(field, field.Name, field.Name, hasNonNull, dataType, schema)
 	}
 
 	// Second pass: scan all rows to discover dynamic map keys
@@ -96,15 +109,17 @@ func ExtractCompleteParquetSchema(ctx context.Context, pf *file.Reader, fr *pqar
 // discoverFieldsFromArrowType recursively discovers all static fields from an Arrow type.
 // This handles nested structs but NOT maps (map keys are dynamic and discovered by scanning data).
 // hasNonNull indicates whether the parent field has non-null values based on statistics.
-func discoverFieldsFromArrowType(field arrow.Field, dottedPath, underscoredPath string, hasNonNull bool, schema *ReaderSchema) {
+// dataType is the known type from parquet metadata for leaf fields.
+func discoverFieldsFromArrowType(field arrow.Field, dottedPath, underscoredPath string, hasNonNull bool, dataType DataType, schema *ReaderSchema) {
 	switch dt := field.Type.(type) {
 	case *arrow.StructType:
 		// Recursively discover nested struct fields
-		// Nested fields inherit hasNonNull from parent
+		// Nested fields get their types from Arrow (not parquet metadata)
 		for _, nestedField := range dt.Fields() {
 			nestedDotted := dottedPath + "." + nestedField.Name
 			nestedUnderscored := underscoredPath + "_" + nestedField.Name
-			discoverFieldsFromArrowType(nestedField, nestedDotted, nestedUnderscored, hasNonNull, schema)
+			nestedType := arrowTypeToDataType(nestedField.Type)
+			discoverFieldsFromArrowType(nestedField, nestedDotted, nestedUnderscored, hasNonNull, nestedType, schema)
 		}
 
 	case *arrow.MapType:
@@ -124,11 +139,10 @@ func discoverFieldsFromArrowType(field arrow.Field, dottedPath, underscoredPath 
 		schema.AddColumn(newKey, origKey, DataTypeAny, hasNonNull)
 
 	default:
-		// Leaf field - add to schema
+		// Leaf field - use the dataType passed in (from parquet metadata)
 		finalUnderscored := strings.ReplaceAll(underscoredPath, ".", "_")
 		newKey := wkk.NewRowKey(finalUnderscored)
 		origKey := wkk.NewRowKey(dottedPath)
-		dataType := arrowTypeToDataType(field.Type)
 		schema.AddColumn(newKey, origKey, dataType, hasNonNull)
 	}
 }
