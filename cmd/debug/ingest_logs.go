@@ -162,20 +162,17 @@ func createLogReaderStack(filename, orgID, bucket, objectID string) (filereader.
 	}
 
 	// Choose translator based on file type (same logic as production)
-	var translator filereader.RowTranslator
 	if strings.HasSuffix(filename, ".parquet") {
-		// Use specialized Parquet translator for .parquet files
-		translator = metricsprocessing.NewParquetLogTranslator(orgID, bucket, objectID)
+		// Use specialized Parquet translating reader for .parquet files
+		reader = metricsprocessing.NewParquetLogTranslatingReader(reader, orgID, bucket, objectID)
 	} else {
 		// Use standard translator for CSV, JSON, and other formats
-		translator = metricsprocessing.NewLogTranslator(orgID, bucket, objectID, nil)
-	}
-
-	// Wrap with translating reader
-	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
-	if err != nil {
-		_ = reader.Close()
-		return nil, fmt.Errorf("failed to create translating reader: %w", err)
+		translator := metricsprocessing.NewLogTranslator(orgID, bucket, objectID, nil)
+		reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+		if err != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("failed to create translating reader: %w", err)
+		}
 	}
 
 	return reader, nil

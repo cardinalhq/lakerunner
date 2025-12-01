@@ -551,17 +551,17 @@ func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fi
 		return nil, err
 	}
 
-	var translator filereader.RowTranslator
 	if strings.HasSuffix(filename, ".parquet") {
-		translator = NewParquetLogTranslator(orgID, bucket, objectID)
+		// For Parquet files, use ParquetLogTranslatingReader which properly transforms the schema
+		reader = NewParquetLogTranslatingReader(reader, orgID, bucket, objectID)
 	} else {
-		translator = NewLogTranslator(orgID, bucket, objectID, fingerprintManager)
-	}
-
-	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
-	if err != nil {
-		_ = reader.Close()
-		return nil, err
+		// For other formats, use the standard translator with TranslatingReader
+		translator := NewLogTranslator(orgID, bucket, objectID, fingerprintManager)
+		reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+		if err != nil {
+			_ = reader.Close()
+			return nil, err
+		}
 	}
 
 	return reader, nil
@@ -600,17 +600,17 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 		return nil, fmt.Errorf("failed to create log reader: %w", err)
 	}
 
-	var translator filereader.RowTranslator
 	if strings.HasSuffix(tmpFilename, ".parquet") {
-		translator = NewParquetLogTranslator(orgID, bucket, objectID)
+		// For Parquet files, use ParquetLogTranslatingReader which properly transforms the schema
+		reader = NewParquetLogTranslatingReader(reader, orgID, bucket, objectID)
 	} else {
-		translator = NewLogTranslator(orgID, bucket, objectID, p.fingerprintTenantManager)
-	}
-
-	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
-	if err != nil {
-		_ = reader.Close()
-		return nil, fmt.Errorf("failed to create translating reader: %w", err)
+		// For other formats, use the standard translator with TranslatingReader
+		translator := NewLogTranslator(orgID, bucket, objectID, p.fingerprintTenantManager)
+		reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+		if err != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("failed to create translating reader: %w", err)
+		}
 	}
 
 	return reader, nil
