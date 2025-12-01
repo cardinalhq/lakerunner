@@ -88,7 +88,8 @@ func TestIngestProtoTracesReader_SchemaExtraction_BasicTypes(t *testing.T) {
 	assert.Equal(t, DataTypeString, schema.GetColumnType("attr_string_attr"))
 	assert.Equal(t, DataTypeInt64, schema.GetColumnType("attr_int_attr"))
 	assert.Equal(t, DataTypeFloat64, schema.GetColumnType("attr_float_attr"))
-	assert.Equal(t, DataTypeBool, schema.GetColumnType("attr_bool_attr"))
+	// Booleans are converted to strings to avoid OTEL data type mismatch panics
+	assert.Equal(t, DataTypeString, schema.GetColumnType("attr_bool_attr"))
 }
 
 // TestIngestProtoTracesReader_SchemaExtraction_TypePromotion tests type promotion

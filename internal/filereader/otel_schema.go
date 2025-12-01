@@ -264,7 +264,9 @@ func otelValueTypeToDataType(vt pcommon.ValueType) DataType {
 	case pcommon.ValueTypeDouble:
 		return DataTypeFloat64
 	case pcommon.ValueTypeBool:
-		return DataTypeBool
+		// Convert bools to strings in schema because otelValueToGoValue() uses AsString()
+		// to avoid panics on malformed OTEL data where type tags don't match actual values
+		return DataTypeString
 	case pcommon.ValueTypeBytes:
 		return DataTypeBytes
 	case pcommon.ValueTypeMap:

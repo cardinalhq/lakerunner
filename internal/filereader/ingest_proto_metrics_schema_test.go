@@ -16,6 +16,10 @@ package filereader
 
 import (
 	"bytes"
+	"compress/gzip"
+	"context"
+	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -23,7 +27,37 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
+
+// gzipOpen opens a gzip file and returns an io.ReadCloser
+func gzipOpen(path string) (io.ReadCloser, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return &gzipReadCloser{gz: gz, file: f}, nil
+}
+
+type gzipReadCloser struct {
+	gz   *gzip.Reader
+	file *os.File
+}
+
+func (g *gzipReadCloser) Read(p []byte) (int, error) {
+	return g.gz.Read(p)
+}
+
+func (g *gzipReadCloser) Close() error {
+	_ = g.gz.Close()
+	return g.file.Close()
+}
 
 // TestIngestProtoMetricsReader_SchemaExtraction_BasicTypes tests that the schema extractor
 // correctly identifies different attribute types across all metrics.
@@ -102,7 +136,8 @@ func TestIngestProtoMetricsReader_SchemaExtraction_BasicTypes(t *testing.T) {
 	assert.Equal(t, DataTypeString, schema.GetColumnType("attr_string_attr"))
 	assert.Equal(t, DataTypeInt64, schema.GetColumnType("attr_int_attr"))
 	assert.Equal(t, DataTypeFloat64, schema.GetColumnType("attr_float_attr"))
-	assert.Equal(t, DataTypeBool, schema.GetColumnType("attr_bool_attr"))
+	// Booleans are converted to strings to avoid OTEL data type mismatch panics
+	assert.Equal(t, DataTypeString, schema.GetColumnType("attr_bool_attr"))
 }
 
 // TestIngestProtoMetricsReader_SchemaExtraction_TypePromotion tests type promotion
@@ -346,4 +381,91 @@ func TestIngestProtoMetricsReader_SchemaExtraction_MultipleMetricTypes(t *testin
 	assert.True(t, schema.HasColumn("attr_gauge_attr"))
 	assert.True(t, schema.HasColumn("attr_sum_attr"))
 	assert.True(t, schema.HasColumn("attr_histogram_attr"))
+}
+
+// TestIngestProtoMetricsReader_RealFile_BoolField tests loading the actual metrics_with_bool_field.binpb.gz
+// file to investigate boolean field handling issues.
+func TestIngestProtoMetricsReader_RealFile_BoolField(t *testing.T) {
+	file, err := gzipOpen("testdata/metrics_with_bool_field.binpb.gz")
+	require.NoError(t, err)
+	defer file.Close()
+
+	protoReader, err := NewIngestProtoMetricsReader(file, ReaderOptions{OrgID: "test-org", BatchSize: 1000})
+	require.NoError(t, err)
+	defer func() { _ = protoReader.Close() }()
+
+	schema := protoReader.GetSchema()
+	require.NotNil(t, schema)
+
+	// Print all columns and their types for inspection
+	columns := schema.Columns()
+	t.Logf("Schema has %d columns:", len(columns))
+	for _, col := range columns {
+		t.Logf("  %s: %v (hasNonNull=%v)", wkk.RowKeyValue(col.Name), col.DataType, col.HasNonNull)
+	}
+
+	// Verify that attr_success is now marked as string (not bool)
+	successFound := false
+	for _, col := range columns {
+		if wkk.RowKeyValue(col.Name) == "attr_success" {
+			successFound = true
+			t.Logf("attr_success type in schema: %v", col.DataType)
+			if col.DataType != DataTypeString {
+				t.Errorf("Expected attr_success to be string type, got %v", col.DataType)
+			}
+			break
+		}
+	}
+
+	if !successFound {
+		t.Error("attr_success field not found in schema")
+	}
+
+	// Now read some actual rows to see the boolean values
+	ctx := context.Background()
+	batch, err := protoReader.Next(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, batch)
+
+	t.Logf("Read batch with %d rows", batch.Len())
+
+	// Scan ALL rows to find ones with attr_success value and check types
+	successKey := wkk.NewRowKey("attr_success")
+	foundCount := 0
+	wrongTypeCount := 0
+	examplesPrinted := 0
+	for i := range batch.Len() {
+		row := batch.Get(i)
+		if val, exists := row[successKey]; exists {
+			foundCount++
+			// Check if the actual type is string (as expected now)
+			if _, isString := val.(string); !isString {
+				wrongTypeCount++
+				if examplesPrinted < 10 {
+					t.Logf("Row %d: attr_success = %v (type: %T) - EXPECTED string, GOT %T", i, val, val, val)
+					examplesPrinted++
+				}
+			} else if examplesPrinted < 5 {
+				// Show first few string values
+				t.Logf("Row %d: attr_success = %v (type: string) ✓", i, val)
+				examplesPrinted++
+			}
+		}
+	}
+
+	t.Logf("Summary: Found %d rows with attr_success field", foundCount)
+	if wrongTypeCount > 0 {
+		t.Errorf("ERROR: %d rows have attr_success with WRONG TYPE (not string)", wrongTypeCount)
+	} else if foundCount > 0 {
+		t.Logf("SUCCESS: All %d rows with attr_success have correct string type", foundCount)
+	} else {
+		t.Log("WARNING: No rows found with attr_success field despite schema having it")
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

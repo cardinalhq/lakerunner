@@ -103,7 +103,8 @@ func TestIngestProtoLogsReader_SchemaExtraction_BasicTypes(t *testing.T) {
 	assert.Equal(t, DataTypeString, schema.GetColumnType("attr_string_attr"))
 	assert.Equal(t, DataTypeInt64, schema.GetColumnType("attr_int_attr"))
 	assert.Equal(t, DataTypeFloat64, schema.GetColumnType("attr_float_attr"))
-	assert.Equal(t, DataTypeBool, schema.GetColumnType("attr_bool_attr"))
+	// Booleans are converted to strings to avoid OTEL data type mismatch panics
+	assert.Equal(t, DataTypeString, schema.GetColumnType("attr_bool_attr"))
 }
 
 // TestIngestProtoLogsReader_SchemaExtraction_TypePromotion tests that when the same
@@ -254,7 +255,8 @@ func TestIngestProtoLogsReader_SchemaExtraction_SparseAttributes(t *testing.T) {
 	assert.True(t, schema.HasColumn("attr_only_in_log3"))
 	assert.Equal(t, DataTypeString, schema.GetColumnType("attr_common_attr"))
 	assert.Equal(t, DataTypeInt64, schema.GetColumnType("attr_only_in_log1"))
-	assert.Equal(t, DataTypeBool, schema.GetColumnType("attr_only_in_log2"))
+	// Booleans are converted to strings to avoid OTEL data type mismatch panics
+	assert.Equal(t, DataTypeString, schema.GetColumnType("attr_only_in_log2"))
 	assert.Equal(t, DataTypeFloat64, schema.GetColumnType("attr_only_in_log3"))
 }
 
