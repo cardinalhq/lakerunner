@@ -240,7 +240,7 @@ func (r *IngestProtoLogsReader) TotalRowsReturned() int64 {
 
 // GetSchema returns the schema extracted from the OTEL logs.
 func (r *IngestProtoLogsReader) GetSchema() *ReaderSchema {
-	return r.schema
+	return r.schema.Copy()
 }
 
 func parseProtoToOtelLogs(reader io.Reader) (*plog.Logs, error) {

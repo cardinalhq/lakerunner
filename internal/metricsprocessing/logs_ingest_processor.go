@@ -411,19 +411,9 @@ func ProcessLogFiles(
 		finalReader = multiReader
 	}
 
-	// Get schema from reader
+	// Get schema from reader (includes all transformed columns)
 	schema := finalReader.GetSchema()
 
-	// Add columns that will be injected by LogTranslator
-	schema.AddColumn(wkk.RowKeyResourceBucketName, wkk.RowKeyResourceBucketName, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceFileName, wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceFile, wkk.RowKeyResourceFile, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceFileType, wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
 	// Add chq_id column (injected by FileSplitter when writing rows)
 	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true)
 
@@ -552,16 +542,9 @@ func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fi
 	}
 
 	if strings.HasSuffix(filename, ".parquet") {
-		// For Parquet files, use ParquetLogTranslatingReader which properly transforms the schema
 		reader = NewParquetLogTranslatingReader(reader, orgID, bucket, objectID)
 	} else {
-		// For other formats, use the standard translator with TranslatingReader
-		translator := NewLogTranslator(orgID, bucket, objectID, fingerprintManager)
-		reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
-		if err != nil {
-			_ = reader.Close()
-			return nil, err
-		}
+		reader = NewLogTranslatingReader(reader, orgID, bucket, objectID, fingerprintManager)
 	}
 
 	return reader, nil
@@ -601,16 +584,9 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 	}
 
 	if strings.HasSuffix(tmpFilename, ".parquet") {
-		// For Parquet files, use ParquetLogTranslatingReader which properly transforms the schema
 		reader = NewParquetLogTranslatingReader(reader, orgID, bucket, objectID)
 	} else {
-		// For other formats, use the standard translator with TranslatingReader
-		translator := NewLogTranslator(orgID, bucket, objectID, p.fingerprintTenantManager)
-		reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
-		if err != nil {
-			_ = reader.Close()
-			return nil, fmt.Errorf("failed to create translating reader: %w", err)
-		}
+		reader = NewLogTranslatingReader(reader, orgID, bucket, objectID, p.fingerprintTenantManager)
 	}
 
 	return reader, nil
@@ -646,20 +622,9 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	rpfEstimate := p.store.GetLogEstimate(ctx, storageProfile.OrganizationID)
 
 	// Create dateint bin manager
-	// Get schema from reader (GetSchema returns a copy)
+	// Get schema from reader (GetSchema returns a copy and includes all transformed columns)
 	schema := reader.GetSchema()
 
-	// Add columns that will be injected by LogTranslator
-	// These columns are added to every row but aren't in the OTEL schema
-	schema.AddColumn(wkk.RowKeyResourceBucketName, wkk.RowKeyResourceBucketName, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceFileName, wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceFile, wkk.RowKeyResourceFile, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceFileType, wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
 	// Add chq_id column (injected by FileSplitter when writing rows)
 	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true)
 
