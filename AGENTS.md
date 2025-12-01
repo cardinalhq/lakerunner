@@ -132,11 +132,49 @@ All source files must include AGPL v3 header:
 
 ## Architecture & Components
 
+### Critical Concept: Transactional Schemas
+
+**IMPORTANT**: Schemas in Lakerunner are **transactional** and **per-file**, NOT predetermined or global.
+
+#### Schema Discovery and Evolution
+
+1. **Raw Ingestion (binpb/JSON/CSV → Parquet)**:
+   - Read input files with diverse, unpredictable content
+   - **Discover schema FROM the actual data** (not predetermined)
+   - For OTEL binpb: resource/scope/record attributes become Parquet columns
+   - **Schema expansion during ingest only**: flatten maps/lists/structs for searchability
+   - Each input file produces its own schema based on what's actually in it
+
+2. **Schema Merging (MergesortReader)**:
+   - Multiple readers = multiple schemas (potentially different for same fields)
+   - **Merge schemas with type promotion**: string+int64→string, float64+int64→float64
+   - **Merged schema MUST be available before first row read** (same as any reader)
+   - **Normalization is REQUIRED**: converts row values to match promoted types
+   - Without normalization: type mismatches cause parquet writer to panic
+
+3. **Cooked Parquet (compaction)**:
+   - Fields already flattened when written (no additional expansion)
+   - Read schema directly from parquet metadata (use as-is)
+   - Output is pre-sorted (can go straight to mergesort if sort key matches)
+   - **Still requires normalization** during mergesort for type promotion
+
+4. **Translators (row mutation)**:
+   - Currently mutate rows without updating schema (messy)
+   - **Future**: should act like readers and provide modified schema
+   - Not yet implemented
+
+#### Key Rules for Schema Handling
+
+- **Never assume a fixed schema** - it's discovered per-file
+- **Always normalize in mergesort** - handles type conflicts across readers
+- **Schema = what's actually in the data** - not what we expect
+- **Each parquet file has its own schema** - based on its content
+
 ### Data Flow Pipeline
 
 1. **PubSub Handler** – S3 notifications via SQS or webhooks
-2. **Ingestion** – Raw files → Parquet conversion
-3. **Processing** – Compaction, rollups, cleanup
+2. **Ingestion** – Raw files → Parquet conversion (schema discovery + expansion)
+3. **Processing** – Compaction, rollups, cleanup (schema merging + normalization)
 4. **Query** – API + worker nodes serve data
 
 ### Storage Structure
@@ -252,7 +290,6 @@ Inside the container, memory and CPU limits for Go will match the constraints of
 - When working on SQL, ensure `make test-integration` passes
 - Do what has been asked; nothing more, nothing less
 - "make test-integration" should be run via the sub-agent named "integration-test-runner"
-- "make check" should be run via the sub-agent named check-runner.
 
 ## Specialized Sub-Agents
 
@@ -284,3 +321,4 @@ Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+- We are a consumer of packages, not a provider of them.  Do not keep deprecated code around, remove it.  We do not need to provide backward compatability to external callers, and will want to keep our code base consistent and clutter-free.

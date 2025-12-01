@@ -16,13 +16,15 @@ package metricsprocessing
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"maps"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
@@ -157,50 +159,42 @@ var (
 	lvlKey = wkk.NewRowKey("lvl")
 )
 
-// ParquetLogTranslator handles Parquet-specific log translation with timestamp detection and fingerprinting
-type ParquetLogTranslator struct {
-	OrgID    string
-	Bucket   string
-	ObjectID string
+// ParquetLogTranslatingReader wraps a reader and translates parquet logs to CardinalHQ format.
+// It properly transforms the schema to reflect row transformations (resource_ prefixing, etc.)
+type ParquetLogTranslatingReader struct {
+	wrapped     filereader.Reader
+	orgID       string
+	bucket      string
+	objectID    string
+	schema      *filereader.ReaderSchema
+	closed      bool
+	rowCount    int64
+	schemaBuilt bool
 }
 
-// NewParquetLogTranslator creates a new ParquetLogTranslator with the specified metadata
-func NewParquetLogTranslator(orgID, bucket, objectID string) *ParquetLogTranslator {
-	return &ParquetLogTranslator{
-		OrgID:    orgID,
-		Bucket:   bucket,
-		ObjectID: objectID,
+// NewParquetLogTranslatingReader creates a reader that translates parquet logs
+func NewParquetLogTranslatingReader(wrapped filereader.Reader, orgID, bucket, objectID string) *ParquetLogTranslatingReader {
+	// Get source schema from wrapped reader (which should be fully built in its constructor)
+	sourceSchema := wrapped.GetSchema()
+	if sourceSchema == nil {
+		sourceSchema = filereader.NewReaderSchema()
 	}
+
+	r := &ParquetLogTranslatingReader{
+		wrapped:  wrapped,
+		orgID:    orgID,
+		bucket:   bucket,
+		objectID: objectID,
+	}
+
+	// Build the transformed schema immediately in the constructor
+	r.schema = r.transformSchema(sourceSchema)
+	r.schemaBuilt = true
+
+	return r
 }
 
-// flattenValue recursively flattens nested structures into underscore-notation fields
-func (t *ParquetLogTranslator) flattenValue(prefix string, value any, result map[wkk.RowKey]any) {
-	switch v := value.(type) {
-	case map[string]any:
-		// Handle nested maps
-		for key, nestedVal := range v {
-			newPrefix := key
-			if prefix != "" {
-				newPrefix = prefix + "_" + key
-			}
-			t.flattenValue(newPrefix, nestedVal, result)
-		}
-	case []any:
-		// Handle arrays
-		for idx, elem := range v {
-			newPrefix := fmt.Sprintf("%s[%d]", prefix, idx)
-			t.flattenValue(newPrefix, elem, result)
-		}
-	case nil:
-		// Skip nil values
-		return
-	default:
-		// Store the flattened value
-		if prefix != "" {
-			result[wkk.NewRowKey(prefix)] = value
-		}
-	}
-}
+var _ filereader.Reader = (*ParquetLogTranslatingReader)(nil)
 
 // timestampResult contains detected timestamp information
 type timestampResult struct {
@@ -211,7 +205,7 @@ type timestampResult struct {
 
 // detectTimestampField attempts to find a timestamp field in the row
 // Returns both millisecond and nanosecond precision if available, plus the field name that was used
-func (t *ParquetLogTranslator) detectTimestampField(row *pipeline.Row) (timestampResult, string) {
+func detectTimestampField(row *pipeline.Row) (timestampResult, string) {
 	// Check for nanosecond precision fields first
 	nanosecondFields := []wkk.RowKey{
 		timestampNsKey,
@@ -399,7 +393,7 @@ func extractInt64(val any) (int64, bool) {
 
 // detectLevelField attempts to find a severity/level field in the row
 // Returns the level string (uppercase), a boolean indicating if found, and the field name used
-func (t *ParquetLogTranslator) detectLevelField(row *pipeline.Row) (string, bool, string) {
+func detectLevelField(row *pipeline.Row) (string, bool, string) {
 	// Check common level/severity field names
 	levelFields := []wkk.RowKey{
 		severityTextKey,
@@ -435,7 +429,7 @@ func (t *ParquetLogTranslator) detectLevelField(row *pipeline.Row) (string, bool
 
 // detectMessageField attempts to find a message field in the row
 // Returns the message string, a boolean indicating if found, and the field name used
-func (t *ParquetLogTranslator) detectMessageField(row *pipeline.Row) (string, bool, string) {
+func detectMessageField(row *pipeline.Row) (string, bool, string) {
 	// Common message field names to check (in priority order)
 	messageFields := []wkk.RowKey{
 		messageKey,
@@ -478,8 +472,10 @@ func (t *ParquetLogTranslator) detectMessageField(row *pipeline.Row) (string, bo
 	return "", false, ""
 }
 
-// TranslateRow processes Parquet rows with timestamp detection and fingerprinting
-func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) error {
+// translateParquetLogRow processes Parquet rows with timestamp detection and fingerprinting.
+// This is a standalone function that can be used by both the Reader implementation and
+// any compatibility wrappers.
+func translateParquetLogRow(ctx context.Context, row *pipeline.Row, orgID, bucket, objectID string) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
@@ -488,7 +484,7 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.R
 	specialFields := make(map[wkk.RowKey]bool)
 
 	// Detect timestamp first before any field processing
-	timestampResult, usedTimestampField := t.detectTimestampField(row)
+	timestampResult, usedTimestampField := detectTimestampField(row)
 	var timestampMs, timestampNs int64
 	if timestampResult.found {
 		timestampMs = timestampResult.ms
@@ -513,7 +509,7 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.R
 	}
 
 	// Detect message
-	message, messageFound, usedMessageField := t.detectMessageField(row)
+	message, messageFound, usedMessageField := detectMessageField(row)
 	if !messageFound {
 		message = ""
 	}
@@ -528,7 +524,7 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.R
 	}
 
 	// Detect level/severity
-	level, levelFound, usedLevelField := t.detectLevelField(row)
+	level, levelFound, usedLevelField := detectLevelField(row)
 	if !levelFound {
 		// Default to INFO if no level found
 		level = "INFO"
@@ -556,13 +552,13 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.R
 			continue
 		}
 
-		// Skip underscore fields and fields already with resource_ prefix
-		if strings.HasPrefix(keyStr, "resource_") || keyStr[0] == '_' {
-			// Remove underscore fields but keep existing resource_ fields
+		// Skip underscore fields, resource_ fields, and chq_ fields (keep them as-is)
+		if strings.HasPrefix(keyStr, "resource_") || strings.HasPrefix(keyStr, "chq_") || keyStr[0] == '_' {
+			// Remove underscore fields but keep existing resource_ and chq_ fields
 			if keyStr[0] == '_' {
 				delete(*row, key)
 			}
-			// Keep existing resource_ fields as-is
+			// Keep existing resource_ and chq_ fields as-is
 			continue
 		}
 
@@ -582,31 +578,19 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.R
 	}
 
 	// Second pass: process and add back with resource. prefix
+	// Note: Flattening is already done by IngestLogParquetReader, so all values are already flat
 	for key, value := range fieldsToProcess {
 		keyStr := wkk.RowKeyValue(key)
-
-		// If it's a nested structure, flatten it with resource. prefix
-		switch v := value.(type) {
-		case map[string]any:
-			flattened := make(map[wkk.RowKey]any)
-			t.flattenValue("resource_"+keyStr, v, flattened)
-			maps.Copy((*row), flattened)
-		case []any:
-			flattened := make(map[wkk.RowKey]any)
-			t.flattenValue("resource_"+keyStr, v, flattened)
-			maps.Copy((*row), flattened)
-		default:
-			// Simple value - add with resource_ prefix
-			(*row)[wkk.NewRowKey("resource_"+keyStr)] = value
-		}
+		// Add with resource_ prefix (no flattening needed - already done by reader)
+		(*row)[wkk.NewRowKey("resource_"+keyStr)] = value
 	}
 
 	// Add standard resource fields
-	resourceFile := getResourceFile(t.ObjectID)
-	(*row)[wkk.RowKeyResourceBucketName] = t.Bucket
-	(*row)[wkk.RowKeyResourceFileName] = "./" + t.ObjectID
+	resourceFile := getResourceFile(objectID)
+	(*row)[wkk.RowKeyResourceBucketName] = bucket
+	(*row)[wkk.RowKeyResourceFileName] = "./" + objectID
 	(*row)[wkk.RowKeyResourceFile] = resourceFile
-	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.ObjectID)
+	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(objectID)
 
 	// Extract customer domain if pattern matches
 	if customerDomain := helpers.ExtractCustomerDomain(resourceFile); customerDomain != "" {
@@ -630,4 +614,103 @@ func (t *ParquetLogTranslator) TranslateRow(ctx context.Context, row *pipeline.R
 	(*row)[wkk.RowKeyCLevel] = level
 
 	return nil
+}
+
+// Next reads and translates the next batch of rows
+func (r *ParquetLogTranslatingReader) Next(ctx context.Context) (*filereader.Batch, error) {
+	if r.closed {
+		return nil, errors.New("reader is closed")
+	}
+
+	// Get batch from wrapped reader
+	batch, err := r.wrapped.Next(ctx)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, io.EOF
+		}
+		return nil, fmt.Errorf("wrapped reader error: %w", err)
+	}
+	if batch == nil {
+		return nil, io.EOF
+	}
+
+	// Translate each row in place
+	for i := 0; i < batch.Len(); i++ {
+		row := batch.Get(i)
+		if err := translateParquetLogRow(ctx, &row, r.orgID, r.bucket, r.objectID); err != nil {
+			// Log error but don't fail the entire batch
+			// In production, we may want to track these failures
+			continue
+		}
+	}
+
+	r.rowCount += int64(batch.Len())
+	return batch, nil
+}
+
+// GetSchema returns the transformed schema
+func (r *ParquetLogTranslatingReader) GetSchema() *filereader.ReaderSchema {
+	// Schema is built in constructor, just return a copy
+	return r.schema.Copy()
+}
+
+// transformSchema applies the same field transformations to the schema that TranslateRow applies to rows
+func (r *ParquetLogTranslatingReader) transformSchema(source *filereader.ReaderSchema) *filereader.ReaderSchema {
+	transformed := filereader.NewReaderSchema()
+
+	// Process each column from source schema
+	for _, col := range source.Columns() {
+		colName := string(col.Name.Value())
+
+		// Skip underscore fields (removed by translator)
+		if strings.HasPrefix(colName, "_") {
+			continue
+		}
+
+		// Keep resource_ and chq_ fields as-is
+		if strings.HasPrefix(colName, "resource_") || strings.HasPrefix(colName, "chq_") {
+			transformed.AddColumn(col.Name, col.Name, col.DataType, col.HasNonNull)
+			continue
+		}
+
+		// All other fields get resource_ prefix
+		newName := wkk.NewRowKey("resource_" + colName)
+		transformed.AddColumn(newName, col.Name, col.DataType, col.HasNonNull)
+	}
+
+	// Add standard fields that translator adds
+	transformed.AddColumn(wkk.RowKeyResourceBucketName, wkk.RowKeyResourceBucketName, filereader.DataTypeString, true)
+	transformed.AddColumn(wkk.RowKeyResourceFileName, wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
+	transformed.AddColumn(wkk.RowKeyResourceFile, wkk.RowKeyResourceFile, filereader.DataTypeString, true)
+	transformed.AddColumn(wkk.RowKeyResourceFileType, wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
+	transformed.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
+	transformed.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
+	transformed.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
+	transformed.AddColumn(wkk.RowKeyCTimestamp, wkk.RowKeyCTimestamp, filereader.DataTypeInt64, true)
+	transformed.AddColumn(wkk.RowKeyCTsns, wkk.RowKeyCTsns, filereader.DataTypeInt64, true)
+	transformed.AddColumn(wkk.RowKeyCMessage, wkk.RowKeyCMessage, filereader.DataTypeString, true)
+	transformed.AddColumn(wkk.RowKeyCLevel, wkk.RowKeyCLevel, filereader.DataTypeString, true)
+
+	// Fields we add conditionally but must be in schema for parquet writer
+	transformed.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
+	transformed.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+
+	return transformed
+}
+
+// Close closes the wrapped reader
+func (r *ParquetLogTranslatingReader) Close() error {
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	if r.wrapped != nil {
+		return r.wrapped.Close()
+	}
+	return nil
+}
+
+// TotalRowsReturned returns the total number of rows successfully returned
+func (r *ParquetLogTranslatingReader) TotalRowsReturned() int64 {
+	return r.rowCount
 }

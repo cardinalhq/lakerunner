@@ -19,9 +19,6 @@ package filereader
 import (
 	"context"
 
-	"go.opentelemetry.io/collector/pdata/plog"
-	"go.opentelemetry.io/collector/pdata/pmetric"
-
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
@@ -42,28 +39,16 @@ type Reader interface {
 	// TotalRowsReturned returns the total number of rows that have been successfully
 	// returned via Next() calls from this reader so far.
 	TotalRowsReturned() int64
+
+	// GetSchema returns the ReaderSchema extracted from the content.  Must not return nil, and
+	// must include all columns that may be returned by Next() with the types in the schema.
+	GetSchema() *ReaderSchema
 }
 
 // RowTranslator transforms rows from one format to another.
 type RowTranslator interface {
 	// TranslateRow transforms a row in-place by modifying the provided row pointer.
 	TranslateRow(ctx context.Context, row *pipeline.Row) error
-}
-
-// OTELMetricsProvider provides access to the underlying OpenTelemetry metrics structure.
-// This is used when the original OTEL structure is needed for processing (e.g., exemplars).
-type OTELMetricsProvider interface {
-	// GetOTELMetrics returns the underlying parsed OTEL metrics structure.
-	// This allows access to exemplars and other metadata not available in the row format.
-	GetOTELMetrics() (*pmetric.Metrics, error)
-}
-
-// OTELLogsProvider provides access to the underlying OpenTelemetry logs structure.
-// This is used when the original OTEL structure is needed for processing (e.g., exemplars).
-type OTELLogsProvider interface {
-	// GetOTELLogs returns the underlying parsed OTEL logs structure.
-	// This allows access to the original log body and metadata not available in the row format.
-	GetOTELLogs() (*plog.Logs, error)
 }
 
 // Batch represents a collection of rows with clear ownership semantics.

@@ -124,7 +124,7 @@ func BenchmarkRealDataParquetWrite(b *testing.B) {
 	// Load batches from real file
 	ctx := context.Background()
 	testFile := files[0]
-	batches, totalLogs, totalBytes := loadBatchesFromFile(b, testFile)
+	batches, schema, totalLogs, totalBytes := loadBatchesFromFile(b, testFile)
 
 	b.Logf("Loaded %d batches (%d logs, %d bytes) from %s", len(batches), totalLogs, totalBytes, filepath.Base(testFile))
 	b.ResetTimer()
@@ -138,7 +138,7 @@ func BenchmarkRealDataParquetWrite(b *testing.B) {
 		sampler.Start()
 		b.StartTimer()
 
-		writer, err := factories.NewLogsWriter(tmpDir, totalLogs)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, totalLogs, parquetwriter.DefaultBackend)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -287,7 +287,7 @@ func countLogsInFile(tb testing.TB, filename string) (int64, int64) {
 }
 
 // Helper: loadBatchesFromFile loads all batches from a parquet file
-func loadBatchesFromFile(tb testing.TB, filename string) ([]*pipeline.Batch, int64, int64) {
+func loadBatchesFromFile(tb testing.TB, filename string) ([]*pipeline.Batch, *filereader.ReaderSchema, int64, int64) {
 	tb.Helper()
 
 	ctx := context.Background()
@@ -328,7 +328,10 @@ func loadBatchesFromFile(tb testing.TB, filename string) ([]*pipeline.Batch, int
 		pipeline.ReturnBatch(batch)
 	}
 
-	return batches, logs, stat.Size()
+	// Get schema from reader
+	schema := reader.GetSchema()
+
+	return batches, schema, logs, stat.Size()
 }
 
 // Helper: sumResultSizes sums file sizes from parquet writer results

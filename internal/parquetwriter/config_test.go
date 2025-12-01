@@ -17,7 +17,18 @@ package parquetwriter
 import (
 	"strings"
 	"testing"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
+
+// testSchema creates a basic schema for testing
+func testSchema() *filereader.ReaderSchema {
+	schema := filereader.NewReaderSchema()
+	schema.AddColumn(wkk.NewRowKey("test_col"), wkk.NewRowKey("test_col"), filereader.DataTypeString, true)
+	return schema
+}
 
 func TestWriterConfig_ValidateValid(t *testing.T) {
 	tests := []struct {
@@ -28,6 +39,7 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 			name: "minimal valid config",
 			config: WriterConfig{
 				TmpDir:         "/tmp",
+				Schema:         testSchema(),
 				RecordsPerFile: 100,
 			},
 		},
@@ -35,9 +47,11 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 			name: "config with group key func but no split groups",
 			config: WriterConfig{
 				TmpDir:         "/tmp",
+				Schema:         testSchema(),
 				RecordsPerFile: 100,
-				GroupKeyFunc: func(row map[string]any) any {
-					return row["group"]
+				GroupKeyFunc: func(row pipeline.Row) any {
+					groupKey := wkk.NewRowKey("group")
+					return row[groupKey]
 				},
 				NoSplitGroups: false,
 			},
@@ -46,9 +60,11 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 			name: "config with group key func and no split groups",
 			config: WriterConfig{
 				TmpDir:         "/tmp",
+				Schema:         testSchema(),
 				RecordsPerFile: 100,
-				GroupKeyFunc: func(row map[string]any) any {
-					return row["group"]
+				GroupKeyFunc: func(row pipeline.Row) any {
+					groupKey := wkk.NewRowKey("group")
+					return row[groupKey]
 				},
 				NoSplitGroups: true,
 			},
@@ -57,6 +73,7 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 			name: "config with stats provider",
 			config: WriterConfig{
 				TmpDir:         "/tmp",
+				Schema:         testSchema(),
 				RecordsPerFile: 100,
 				StatsProvider: &mockStatsProvider{
 					accumulatorFunc: func() StatsAccumulator {
@@ -69,6 +86,7 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 			name: "config with large values",
 			config: WriterConfig{
 				TmpDir:         "/very/long/path/to/tmp/directory",
+				Schema:         testSchema(),
 				RecordsPerFile: 1000000,
 			},
 		},
@@ -92,9 +110,20 @@ func TestWriterConfig_ValidateInvalid(t *testing.T) {
 		expectedField string
 	}{
 		{
+			name: "nil schema",
+			config: WriterConfig{
+				TmpDir:         "/tmp",
+				Schema:         nil,
+				RecordsPerFile: 100,
+			},
+			expectedErr:   "parquetwriter config: Schema is required and cannot be nil",
+			expectedField: "Schema",
+		},
+		{
 			name: "empty tmp dir",
 			config: WriterConfig{
 				TmpDir:         "",
+				Schema:         testSchema(),
 				RecordsPerFile: 100,
 			},
 			expectedErr:   "parquetwriter config: TmpDir cannot be empty",
@@ -104,6 +133,7 @@ func TestWriterConfig_ValidateInvalid(t *testing.T) {
 			name: "no split groups without group key func",
 			config: WriterConfig{
 				TmpDir:         "/tmp",
+				Schema:         testSchema(),
 				RecordsPerFile: 100,
 				GroupKeyFunc:   nil,
 				NoSplitGroups:  true,
@@ -143,6 +173,7 @@ func TestWriterConfig_ValidateEdgeCases(t *testing.T) {
 	t.Run("zero records per file is allowed", func(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:         "/tmp",
+			Schema:         testSchema(),
 			RecordsPerFile: 0, // Should be allowed
 		}
 		err := config.Validate()
@@ -154,6 +185,7 @@ func TestWriterConfig_ValidateEdgeCases(t *testing.T) {
 	t.Run("unlimited records per file mode (NoRecordLimitPerFile)", func(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:         "/tmp",
+			Schema:         testSchema(),
 			RecordsPerFile: NoRecordLimitPerFile, // Should be allowed - enables unlimited file mode
 		}
 		err := config.Validate()
@@ -165,6 +197,7 @@ func TestWriterConfig_ValidateEdgeCases(t *testing.T) {
 	t.Run("nil stats provider is allowed", func(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:         "/tmp",
+			Schema:         testSchema(),
 			RecordsPerFile: 100,
 			StatsProvider:  nil, // Should be allowed
 		}
@@ -283,9 +316,11 @@ func TestWriterConfig_GroupKeyFuncValidation(t *testing.T) {
 	t.Run("group key func without no split groups", func(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:         "/tmp",
+			Schema:         testSchema(),
 			RecordsPerFile: 100,
-			GroupKeyFunc: func(row map[string]any) any {
-				return row["group"]
+			GroupKeyFunc: func(row pipeline.Row) any {
+				groupKey := wkk.NewRowKey("group")
+				return row[groupKey]
 			},
 			NoSplitGroups: false, // This should be fine
 		}
@@ -298,9 +333,11 @@ func TestWriterConfig_GroupKeyFuncValidation(t *testing.T) {
 	t.Run("no split groups with group key func", func(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:         "/tmp",
+			Schema:         testSchema(),
 			RecordsPerFile: 100,
-			GroupKeyFunc: func(row map[string]any) any {
-				return row["group"]
+			GroupKeyFunc: func(row pipeline.Row) any {
+				groupKey := wkk.NewRowKey("group")
+				return row[groupKey]
 			},
 			NoSplitGroups: true, // This should be fine since GroupKeyFunc is provided
 		}
@@ -321,6 +358,7 @@ func TestWriterConfig_BoundaryValues(t *testing.T) {
 			name: "minimum positive target file size",
 			config: WriterConfig{
 				TmpDir:         "/tmp",
+				Schema:         testSchema(),
 				RecordsPerFile: 100,
 			},
 			shouldError: false,
@@ -329,6 +367,7 @@ func TestWriterConfig_BoundaryValues(t *testing.T) {
 			name: "very large target file size",
 			config: WriterConfig{
 				TmpDir:         "/tmp",
+				Schema:         testSchema(),
 				RecordsPerFile: 100,
 			},
 			shouldError: false,
@@ -337,6 +376,7 @@ func TestWriterConfig_BoundaryValues(t *testing.T) {
 			name: "single character base name",
 			config: WriterConfig{
 				TmpDir:         "/tmp",
+				Schema:         testSchema(),
 				RecordsPerFile: 100,
 			},
 			shouldError: false,
@@ -345,6 +385,7 @@ func TestWriterConfig_BoundaryValues(t *testing.T) {
 			name: "single character tmp dir",
 			config: WriterConfig{
 				TmpDir:         "/",
+				Schema:         testSchema(),
 				RecordsPerFile: 100,
 			},
 			shouldError: false,

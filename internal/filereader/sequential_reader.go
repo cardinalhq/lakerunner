@@ -35,6 +35,8 @@ type SequentialReader struct {
 	batchSize    int
 }
 
+var _ Reader = (*SequentialReader)(nil)
+
 // NewSequentialReader creates a new SequentialReader that reads from the provided readers sequentially.
 // Readers will be closed when the SequentialReader is closed.
 func NewSequentialReader(readers []Reader, batchSize int) (*SequentialReader, error) {
@@ -149,4 +151,22 @@ func (sr *SequentialReader) RemainingReaderCount() int {
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Next() from all readers.
 func (sr *SequentialReader) TotalRowsReturned() int64 {
 	return sr.rowCount
+}
+
+// GetSchema merges schemas from all child readers using the same type promotion rules as MergesortReader.
+func (sr *SequentialReader) GetSchema() *ReaderSchema {
+	mergedSchema := NewReaderSchema()
+	for _, reader := range sr.readers {
+		if reader != nil {
+			schema := reader.GetSchema()
+			if schema != nil {
+				for _, col := range schema.Columns() {
+					// Preserve the original name mapping from the reader schema
+					originalName := schema.GetOriginalName(col.Name)
+					mergedSchema.AddColumn(col.Name, originalName, col.DataType, col.HasNonNull)
+				}
+			}
+		}
+	}
+	return mergedSchema
 }

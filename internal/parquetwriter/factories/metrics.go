@@ -20,15 +20,20 @@ import (
 
 	mapset "github.com/deckarep/golang-set/v2"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // NewMetricsWriter creates a writer optimized for metrics data.
 // Metrics are ordered by metric name and grouped for efficient fingerprinting.
-func NewMetricsWriter(tmpdir string, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
+// The schema must be provided from the reader and cannot be nil.
+func NewMetricsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
 		TmpDir: tmpdir,
+		Schema: schema,
 
 		// Group by [metric name, TID] - don't split groups with same name+TID
 		GroupKeyFunc:  metricsGroupKeyFunc(),
@@ -44,16 +49,17 @@ func NewMetricsWriter(tmpdir string, recordsPerFile int64) (parquetwriter.Parque
 // metricsGroupKeyFunc returns the grouping key function for metrics.
 // Groups by [metric name, TID] only - keeps all timestamps for the same metric together
 // for efficient rollup aggregation.
-func metricsGroupKeyFunc() func(row map[string]any) any {
-	return func(row map[string]any) any {
-		name, nameOk := row["metric_name"].(string)
+func metricsGroupKeyFunc() func(row pipeline.Row) any {
+	metricNameKey := wkk.NewRowKey("metric_name")
+	return func(row pipeline.Row) any {
+		name, nameOk := row[metricNameKey].(string)
 		if !nameOk {
 			return nil
 		}
 
 		// Handle both string and int64 TID values
 		var tid int64
-		switch v := row["chq_tid"].(type) {
+		switch v := row[wkk.RowKeyCTID].(type) {
 		case int64:
 			tid = v
 		case string:
@@ -89,21 +95,23 @@ type MetricsStatsAccumulator struct {
 	first        bool
 }
 
-func (a *MetricsStatsAccumulator) Add(row map[string]any) {
+func (a *MetricsStatsAccumulator) Add(row pipeline.Row) {
 	// Track metric name for fingerprinting
-	if name, ok := row["metric_name"].(string); ok && name != "" {
+	metricNameKey := wkk.NewRowKey("metric_name")
+	if name, ok := row[metricNameKey].(string); ok && name != "" {
 		a.metricNames.Add(name)
 	}
 
 	// Track label column names for label_name_map
 	for key := range row {
-		if isLabelColumn(key) {
-			a.labelColumns.Add(key)
+		keyStr := string(key.Value())
+		if isLabelColumn(keyStr) {
+			a.labelColumns.Add(keyStr)
 		}
 	}
 
 	// Track timestamp range
-	if ts, ok := row["chq_timestamp"].(int64); ok {
+	if ts, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
 		if !a.first {
 			a.firstTS = ts
 			a.lastTS = ts
@@ -118,7 +126,7 @@ func (a *MetricsStatsAccumulator) Add(row map[string]any) {
 		}
 	} else {
 		// Debug: log when timestamp is missing or wrong type
-		if tsVal, exists := row["chq_timestamp"]; exists {
+		if tsVal, exists := row[wkk.RowKeyCTimestamp]; exists {
 			// Timestamp exists but wrong type - this could be the issue
 			fmt.Printf("DEBUG: timestamp wrong type: %T = %v\n", tsVal, tsVal)
 		} else {

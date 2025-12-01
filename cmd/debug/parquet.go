@@ -36,7 +36,6 @@ func GetParquetCmd() *cobra.Command {
 	cmd.AddCommand(getParquetCatSubCmd())
 	cmd.AddCommand(getParquetSchemaSubCmd())
 	cmd.AddCommand(getParquetSchemaRawSubCmd())
-	cmd.AddCommand(getParquetArrowCatSubCmd())
 
 	return cmd
 }

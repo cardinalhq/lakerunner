@@ -48,6 +48,8 @@ type MemorySortingReader struct {
 	sorted          bool
 }
 
+var _ Reader = (*MemorySortingReader)(nil)
+
 // rowWithKey pairs a row with its sort key for efficient sorting
 type rowWithKey struct {
 	row pipeline.Row
@@ -194,6 +196,14 @@ func (r *MemorySortingReader) Close() error {
 // TotalRowsReturned returns the number of rows that have been returned via Next().
 func (r *MemorySortingReader) TotalRowsReturned() int64 {
 	return r.rowCount
+}
+
+// GetSchema delegates to the wrapped reader.
+func (r *MemorySortingReader) GetSchema() *ReaderSchema {
+	if r.reader != nil {
+		return r.reader.GetSchema()
+	}
+	return NewReaderSchema()
 }
 
 // GetOTELMetrics implements the OTELMetricsProvider interface if the underlying reader supports it.

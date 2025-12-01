@@ -14,10 +14,12 @@
 
 package parquetwriter
 
+import "github.com/cardinalhq/lakerunner/pipeline"
+
 // StatsAccumulator collects statistics for a single output file.
 type StatsAccumulator interface {
 	// Add is called once per row written to this file.
-	Add(row map[string]any)
+	Add(row pipeline.Row)
 
 	// Finalize is called exactly once after the last row.
 	// It should return the accumulated statistics for this file.

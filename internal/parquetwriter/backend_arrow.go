@@ -16,11 +16,11 @@ package parquetwriter
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
@@ -29,6 +29,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
@@ -57,24 +58,101 @@ type ArrowBackend struct {
 	rowsSinceLastFlush int64
 
 	// Configuration
-	chunkSize int64 // Rows per record batch
+	chunkSize          int64    // Rows per record batch
+	conversionPrefixes []string // Cached prefixes for string conversion
 }
 
 // NewArrowBackend creates a new Arrow-based backend with streaming writes.
+// The schema must be provided upfront and cannot be nil. All columns are created immediately.
+// Columns marked as all-null (HasNonNull=false) are filtered out automatically.
 func NewArrowBackend(config BackendConfig) (*ArrowBackend, error) {
+	if config.Schema == nil {
+		return nil, fmt.Errorf("schema is required and cannot be nil")
+	}
+
 	chunkSize := config.ChunkSize
 	if chunkSize <= 0 {
 		chunkSize = 10000 // Default chunk size
 	}
 
+	allocator := memory.DefaultAllocator
+	columns := make(map[wkk.RowKey]*ArrowColumnBuilder)
+
+	// Get string conversion prefixes
+	conversionPrefixes := config.StringConversionPrefixes
+	if len(conversionPrefixes) == 0 {
+		conversionPrefixes = DefaultStringConversionPrefixes
+	}
+
+	// Create columns from schema, filtering out all-null columns
+	for _, col := range config.Schema.Columns() {
+		// Skip columns that are all null (HasNonNull=false)
+		if !col.HasNonNull {
+			continue
+		}
+
+		// Determine Arrow type - apply string conversion if field name matches prefixes
+		var arrowType arrow.DataType
+		fieldName := wkk.RowKeyValue(col.Name)
+		shouldConvert := false
+		for _, prefix := range conversionPrefixes {
+			if strings.HasPrefix(fieldName, prefix) {
+				shouldConvert = true
+				break
+			}
+		}
+
+		if shouldConvert {
+			// Convert to string type to match value conversion at write time
+			arrowType = arrow.BinaryTypes.String
+		} else {
+			arrowType = readerDataTypeToArrow(col.DataType)
+		}
+
+		colBuilder := &ArrowColumnBuilder{
+			name:     fieldName,
+			dataType: arrowType,
+			builder:  array.NewBuilder(allocator, arrowType),
+		}
+		colBuilder.builder.Reserve(int(chunkSize))
+		columns[col.Name] = colBuilder
+	}
+
+	if len(columns) == 0 {
+		return nil, fmt.Errorf("schema has no non-null columns")
+	}
+
 	return &ArrowBackend{
 		config:             config,
-		columns:            make(map[wkk.RowKey]*ArrowColumnBuilder),
-		allocator:          memory.DefaultAllocator,
+		columns:            columns,
+		allocator:          allocator,
 		chunkSize:          chunkSize,
+		conversionPrefixes: config.StringConversionPrefixes,
 		schemaFinalized:    false,
 		rowsSinceLastFlush: 0,
 	}, nil
+}
+
+// readerDataTypeToArrow converts a filereader.DataType to an Arrow DataType.
+func readerDataTypeToArrow(dt filereader.DataType) arrow.DataType {
+	switch dt {
+	case filereader.DataTypeBool:
+		return arrow.FixedWidthTypes.Boolean
+	case filereader.DataTypeInt64:
+		return arrow.PrimitiveTypes.Int64
+	case filereader.DataTypeFloat64:
+		return arrow.PrimitiveTypes.Float64
+	case filereader.DataTypeString:
+		return arrow.BinaryTypes.String
+	case filereader.DataTypeBytes:
+		return arrow.BinaryTypes.Binary
+	case filereader.DataTypeAny:
+		// For complex types, use string representation
+		return arrow.BinaryTypes.String
+	default:
+		// Default to string for unknown types
+		return arrow.BinaryTypes.String
+	}
 }
 
 // Name returns the backend name.
@@ -82,47 +160,79 @@ func (b *ArrowBackend) Name() string {
 	return "arrow"
 }
 
+// shouldConvertToString checks if a field should be converted to string.
+func (b *ArrowBackend) shouldConvertToString(fieldName string) bool {
+	for _, prefix := range b.conversionPrefixes {
+		if strings.HasPrefix(fieldName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// convertToStringIfNeeded converts a value to string if needed.
+func (b *ArrowBackend) convertToStringIfNeeded(fieldName string, value any) any {
+	if !b.shouldConvertToString(fieldName) {
+		return value
+	}
+
+	if value == nil {
+		return nil
+	}
+
+	if _, ok := value.(string); ok {
+		return value
+	}
+
+	// Convert based on type
+	switch v := value.(type) {
+	case int:
+		return fmt.Sprintf("%d", v)
+	case int32:
+		return fmt.Sprintf("%d", v)
+	case int64:
+		return fmt.Sprintf("%d", v)
+	case uint:
+		return fmt.Sprintf("%d", v)
+	case uint32:
+		return fmt.Sprintf("%d", v)
+	case uint64:
+		return fmt.Sprintf("%d", v)
+	case float32:
+		return fmt.Sprintf("%f", v)
+	case float64:
+		return fmt.Sprintf("%f", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 // WriteBatch appends a batch of rows to the in-memory columns.
+// All columns must be defined in the schema provided at construction.
+// Rows with unexpected columns will return an error.
 func (b *ArrowBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch) error {
 	numRows := batch.Len()
 
-	// Initialize presence tracking for ALL existing columns
+	// Initialize presence tracking for ALL schema columns
 	columnPresence := make(map[wkk.RowKey][]bool)
 	for key := range b.columns {
 		columnPresence[key] = make([]bool, numRows)
 	}
 
-	// First pass: discover new columns and track presence
+	// First pass: validate columns and track presence
 	for i := range numRows {
 		row := batch.Get(i)
 		if row == nil {
 			continue
 		}
 
-		for key, value := range row {
+		for key := range row {
 			if _, exists := b.columns[key]; !exists {
-				// New column discovered
-				if b.schemaFinalized {
-					return fmt.Errorf("ARROW BACKEND SCHEMA EVOLUTION ERROR: Cannot add new column '%s' after schema finalized at row %d (chunk_size=%d). This is a known limitation - column appeared too late in the stream. Either increase chunk size or use go-parquet backend for highly heterogeneous schemas",
-						wkk.RowKeyValue(key), b.rowCount, b.chunkSize)
-				}
-
-				col, err := b.createColumn(key, value)
-				if err != nil {
-					return fmt.Errorf("failed to create column %s: %w", wkk.RowKeyValue(key), err)
-				}
-				b.columns[key] = col
-
-				// Backfill nulls for rows already processed
-				if b.rowsSinceLastFlush > 0 {
-					for range b.rowsSinceLastFlush {
-						col.builder.AppendNull()
-					}
-				}
-
-				// Initialize presence tracking for this new column
-				presence := make([]bool, numRows)
-				columnPresence[key] = presence
+				// Column not in schema - reject the row
+				return fmt.Errorf("row contains unexpected column '%s' not in schema (row %d). Schema must be complete upfront",
+					wkk.RowKeyValue(key), b.rowCount+int64(i))
 			}
 
 			// Mark this column as present in this row
@@ -139,8 +249,10 @@ func (b *ArrowBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch) er
 				colBuilder.builder.AppendNull()
 			} else {
 				value := row[key]
-				if err := b.appendValue(colBuilder, value); err != nil {
-					return fmt.Errorf("failed to append value to column %s: %w", colBuilder.name, err)
+				// Apply string conversion if needed
+				convertedValue := b.convertToStringIfNeeded(colBuilder.name, value)
+				if err := b.appendValue(colBuilder, convertedValue); err != nil {
+					return fmt.Errorf("failed to append value to column %s at row %d: %w", colBuilder.name, b.rowCount+int64(i), err)
 				}
 			}
 		}
@@ -298,21 +410,14 @@ func (b *ArrowBackend) Close(ctx context.Context, writer io.Writer) (*BackendMet
 		}
 	}
 
-	// Calculate schema fingerprint
-	var fingerprint string
-	if b.schema != nil {
-		fingerprint = b.calculateSchemaFingerprint(b.schema)
-	}
-
 	columnCount := len(b.columns)
 
 	// Release column builders
 	b.releaseColumns()
 
 	return &BackendMetadata{
-		RowCount:          b.rowCount,
-		ColumnCount:       columnCount,
-		SchemaFingerprint: fingerprint,
+		RowCount:    b.rowCount,
+		ColumnCount: columnCount,
 		Extra: map[string]any{
 			"chunk_size": b.chunkSize,
 			"streaming":  true,
@@ -335,22 +440,6 @@ func (b *ArrowBackend) Abort() {
 	if b.tmpFilePath != "" {
 		_ = os.Remove(b.tmpFilePath)
 	}
-}
-
-// createColumn creates a new column builder for the given key and sample value.
-func (b *ArrowBackend) createColumn(key wkk.RowKey, sampleValue any) (*ArrowColumnBuilder, error) {
-	dataType := inferArrowType(sampleValue)
-
-	col := &ArrowColumnBuilder{
-		name:     wkk.RowKeyValue(key),
-		dataType: dataType,
-		builder:  array.NewBuilder(b.allocator, dataType),
-	}
-
-	// Reserve space for chunk size to avoid reallocation
-	col.builder.Reserve(int(b.chunkSize))
-
-	return col, nil
 }
 
 // appendValue appends a Go value to the appropriate Arrow builder.
@@ -426,44 +515,5 @@ func (b *ArrowBackend) releaseColumns() {
 		if col.builder != nil {
 			col.builder.Release()
 		}
-	}
-}
-
-// calculateSchemaFingerprint generates a deterministic hash of the schema.
-func (b *ArrowBackend) calculateSchemaFingerprint(schema *arrow.Schema) string {
-	h := sha256.New()
-
-	// Sort fields by name for deterministic ordering
-	fields := schema.Fields()
-	sort.Slice(fields, func(i, j int) bool {
-		return fields[i].Name < fields[j].Name
-	})
-
-	for _, field := range fields {
-		h.Write([]byte(field.Name))
-		h.Write([]byte("\n"))
-		h.Write([]byte(field.Type.String()))
-		h.Write([]byte("\n"))
-	}
-
-	return fmt.Sprintf("%x", h.Sum(nil))
-}
-
-// inferArrowType infers the Arrow data type from a Go value.
-func inferArrowType(value any) arrow.DataType {
-	switch value.(type) {
-	case bool:
-		return arrow.FixedWidthTypes.Boolean
-	case int, int32, int64:
-		return arrow.PrimitiveTypes.Int64
-	case uint, uint32, uint64:
-		return arrow.PrimitiveTypes.Uint64
-	case float32, float64:
-		return arrow.PrimitiveTypes.Float64
-	case string:
-		return arrow.BinaryTypes.String
-	default:
-		// Default to string for unknown types
-		return arrow.BinaryTypes.String
 	}
 }

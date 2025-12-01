@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -56,6 +57,7 @@ type TimeBinManager struct {
 	bins        map[int64]*TimeBin // Key is start timestamp (60s aligned)
 	tmpDir      string
 	rpfEstimate int64
+	schema      *filereader.ReaderSchema
 }
 
 // MetricIngestProcessor implements the Processor interface for raw metric ingestion
@@ -379,7 +381,26 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
-	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{
+	// Determine file type from extension for logging
+	var fileType string
+	switch {
+	case strings.HasSuffix(tmpFilename, ".binpb.gz"):
+		fileType = "binpb.gz"
+	case strings.HasSuffix(tmpFilename, ".binpb"):
+		fileType = "binpb"
+	default:
+		fileType = "unknown"
+	}
+
+	slog.Info("Reading metric file",
+		"fileType", fileType,
+		"objectID", objectID,
+		"bucket", bucket)
+
+	var reader filereader.Reader
+	var err error
+
+	reader, err = createMetricProtoReader(tmpFilename, filereader.ReaderOptions{
 		OrgID: orgID,
 	})
 	if err != nil {
@@ -398,13 +419,13 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 	}
 
 	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
-	reader, err = filereader.NewDiskSortingReader(reader, keyProvider, 1000)
+	sortedReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 	if err != nil {
 		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create sorting reader: %w", err)
 	}
 
-	return reader, nil
+	return sortedReader, nil
 }
 
 // createUnifiedReader creates a unified reader from multiple readers
@@ -435,14 +456,28 @@ func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers
 func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int64]*TimeBin, error) {
 	ll := logctx.FromContext(ctx)
 
+	// Get schema from reader (GetSchema returns a copy)
+	schema := reader.GetSchema()
+
+	// Add columns that will be injected by MetricTranslator and FileSplitter
+	// These columns are added to every row but aren't in the OTEL schema
+	schema.AddColumn(wkk.RowKeyCCustomerID, wkk.RowKeyCCustomerID, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTID, wkk.RowKeyCTID, filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true) // Added by FileSplitter
+
 	// Get RPF estimate for this org/instance
 	rpfEstimate := p.store.GetMetricEstimate(ctx, storageProfile.OrganizationID, 10000) // 10 second blocks
+
+	ll.Info("Starting file grouping with estimated records per file",
+		slog.Int64("recordsPerFile", rpfEstimate))
 
 	// Create time bin manager
 	binManager := &TimeBinManager{
 		bins:        make(map[int64]*TimeBin),
 		tmpDir:      tmpDir,
 		rpfEstimate: rpfEstimate,
+		schema:      schema,
 	}
 
 	var totalRowsProcessed int64
@@ -539,7 +574,7 @@ func (manager *TimeBinManager) getOrCreateBin(_ context.Context, binStartTs int6
 		return bin, nil
 	}
 
-	writer, err := factories.NewMetricsWriter(manager.tmpDir, manager.rpfEstimate)
+	writer, err := factories.NewMetricsWriter(manager.tmpDir, manager.schema, manager.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for time bin: %w", err)
 	}

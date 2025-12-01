@@ -306,7 +306,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	assert.Equal(t, "GET", rootSpan[wkk.NewRowKey("attr_http_method")])
 	_, hasSpanHttpStatusCode := rootSpan[wkk.NewRowKey("attr_http_status_code")]
 	assert.True(t, hasSpanHttpStatusCode)
-	assert.Equal(t, "200", rootSpan[wkk.NewRowKey("attr_http_status_code")])
+	assert.Equal(t, int64(200), rootSpan[wkk.NewRowKey("attr_http_status_code")])
 
 	dbSpan := allRows[1]
 	assert.Equal(t, "2345678901234567", dbSpan[wkk.NewRowKey("span_id")])
@@ -330,7 +330,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	assert.Equal(t, "data-processor", internalSpan[wkk.NewRowKey("attr_component")])
 	_, hasSpanRecordCount := internalSpan[wkk.NewRowKey("attr_record_count")]
 	assert.True(t, hasSpanRecordCount)
-	assert.Equal(t, "42", internalSpan[wkk.NewRowKey("attr_record_count")])
+	assert.Equal(t, int64(42), internalSpan[wkk.NewRowKey("attr_record_count")])
 
 	// Test batched reading with a new reader instance
 	protoReader2, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1000)
@@ -605,7 +605,7 @@ func TestProtoTracesReader_SyntheticEdgeCases(t *testing.T) {
 	assert.Equal(t, "Something went wrong", zeroSpan[wkk.NewRowKey("span_status_message")])
 	_, hasSpanZeroInt := zeroSpan[wkk.NewRowKey("attr_zero_int")]
 	assert.True(t, hasSpanZeroInt)
-	assert.Equal(t, "0", zeroSpan[wkk.NewRowKey("attr_zero_int")])
+	assert.Equal(t, int64(0), zeroSpan[wkk.NewRowKey("attr_zero_int")])
 	_, hasSpanEmptyString := zeroSpan[wkk.NewRowKey("attr_empty_string")]
 	assert.True(t, hasSpanEmptyString)
 	assert.Equal(t, "", zeroSpan[wkk.NewRowKey("attr_empty_string")])

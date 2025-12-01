@@ -99,6 +99,9 @@ var (
 	// RowKeyCFingerprint: "chq_fingerprint"
 	RowKeyCFingerprint = NewRowKey("chq_fingerprint")
 
+	// RowKeyCID: "chq_id"
+	RowKeyCID = NewRowKey("chq_id")
+
 	// RowKeyCLevel: "log_level"
 	RowKeyCLevel = NewRowKey("log_level")
 

@@ -42,9 +42,10 @@ import (
 //
 // Implements OTELMetricsProvider interface.
 type IngestProtoMetricsReader struct {
-	closed    bool
-	rowCount  int64
-	batchSize int
+	closed      bool
+	rowCount    int64
+	rowsSkipped int64
+	batchSize   int
 
 	// Store the original OTEL metrics for exemplar processing
 	orgId       string
@@ -55,10 +56,17 @@ type IngestProtoMetricsReader struct {
 	scopeIndex     int
 	metricIndex    int
 	datapointIndex int
+
+	// Schema extracted from all metrics
+	schema *ReaderSchema
+
+	// Cached RowKeys for attribute names (entire file scope)
+	resourceAttrCache *PrefixedRowKeyCache // "service.name" → wkk("resource_service_name")
+	scopeAttrCache    *PrefixedRowKeyCache // "name" → wkk("scope_name")
+	attrCache         *PrefixedRowKeyCache // "user.id" → wkk("attr_user_id")
 }
 
 var _ Reader = (*IngestProtoMetricsReader)(nil)
-var _ OTELMetricsProvider = (*IngestProtoMetricsReader)(nil)
 
 // NewIngestProtoMetricsReader creates a new IngestProtoMetricsReader for the given io.Reader.
 func NewIngestProtoMetricsReader(reader io.Reader, opts ReaderOptions) (*IngestProtoMetricsReader, error) {
@@ -82,10 +90,17 @@ func NewIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics, opts Reade
 		batchSize = 1000 // Default batch size
 	}
 
+	// Extract schema from all metrics (two-pass approach)
+	schema := extractSchemaFromOTELMetrics(metrics)
+
 	return &IngestProtoMetricsReader{
-		otelMetrics: metrics,
-		orgId:       opts.OrgID,
-		batchSize:   batchSize,
+		otelMetrics:       metrics,
+		orgId:             opts.OrgID,
+		batchSize:         batchSize,
+		schema:            schema,
+		resourceAttrCache: NewPrefixedRowKeyCache("resource"),
+		scopeAttrCache:    NewPrefixedRowKeyCache("scope"),
+		attrCache:         NewPrefixedRowKeyCache("attr"),
 	}, nil
 }
 
@@ -161,6 +176,11 @@ func (r *IngestProtoMetricsReader) getMetricRow(ctx context.Context, row pipelin
 						continue
 					}
 					if dropped {
+						r.rowsSkipped++
+						rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
+							attribute.String("reader", "IngestProtoMetricsReader"),
+							attribute.String("reason", "empty_metric_name"),
+						))
 						continue
 					}
 
@@ -207,21 +227,32 @@ func (r *IngestProtoMetricsReader) getDatapointCount(metric pmetric.Metric) int 
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
 func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pipeline.Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (bool, error) {
 	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.resourceAttrCache.Get(name)
 		value := v.AsString()
-		row[prefixAttributeRowKey(name, "resource")] = value
+		row[key] = value
 		return true
 	})
 
 	sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.scopeAttrCache.Get(name)
 		value := v.AsString()
-		row[prefixAttributeRowKey(name, "scope")] = value
+		row[key] = value
 		return true
 	})
 
 	row[wkk.NewRowKey("chq_scope_url")] = sm.Scope().Version()
 	row[wkk.NewRowKey("chq_scope_name")] = sm.Scope().Name()
 
-	row[wkk.RowKeyCName] = strings.ReplaceAll(metric.Name(), ".", "_")
+	metricName := strings.ReplaceAll(metric.Name(), ".", "_")
+
+	// Skip metrics with empty names - these are malformed OTEL data
+	// Check BEFORE setting the field to avoid mutating the row
+	if metricName == "" {
+		return true, nil // dropped=true, no error
+	}
+
+	row[wkk.RowKeyCName] = metricName
+
 	row[wkk.NewRowKey("chq_description")] = metric.Description()
 	row[wkk.NewRowKey("chq_unit")] = metric.Unit()
 
@@ -409,8 +440,9 @@ func summaryToDDSketch(dp pmetric.SummaryDataPoint) (*ddsketch.DDSketch, error) 
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
 func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.attrCache.Get(name)
 		value := v.AsString()
-		ret[prefixAttributeRowKey(name, "attr")] = value
+		ret[key] = value
 		return true
 	})
 
@@ -681,8 +713,9 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 // addExponentialHistogramDatapointFields adds fields from an ExponentialHistogramDataPoint to the row.
 func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.attrCache.Get(name)
 		value := v.AsString()
-		ret[prefixAttributeRowKey(name, "attr")] = value
+		ret[key] = value
 		return true
 	})
 
@@ -802,8 +835,9 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context, ret pipeline.Row, dp pmetric.SummaryDataPoint) (bool, error) {
 	// Add attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+		key := r.attrCache.Get(name)
 		value := v.AsString()
-		ret[prefixAttributeRowKey(name, "attr")] = value
+		ret[key] = value
 		return true
 	})
 
@@ -919,6 +953,11 @@ func (r *IngestProtoMetricsReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 
+// GetSchema returns the schema extracted from the OTEL metrics.
+func (r *IngestProtoMetricsReader) GetSchema() *ReaderSchema {
+	return r.schema
+}
+
 func parseProtoToOtelMetrics(reader io.Reader) (*pmetric.Metrics, error) {
 	unmarshaler := &pmetric.ProtoUnmarshaler{}
 
@@ -933,13 +972,4 @@ func parseProtoToOtelMetrics(reader io.Reader) (*pmetric.Metrics, error) {
 	}
 
 	return &metrics, nil
-}
-
-// GetOTELMetrics implements the OTELMetricsProvider interface.
-// Returns the underlying pmetric.Metrics structure for exemplar processing.
-func (r *IngestProtoMetricsReader) GetOTELMetrics() (*pmetric.Metrics, error) {
-	if r.otelMetrics == nil {
-		return nil, fmt.Errorf("no OTEL metrics available")
-	}
-	return r.otelMetrics, nil
 }

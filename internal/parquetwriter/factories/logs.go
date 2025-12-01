@@ -19,21 +19,28 @@ import (
 
 	mapset "github.com/deckarep/golang-set/v2"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // NewLogsWriter creates a writer optimized for logs data.
 // Logs need to be sorted by timestamp and can be split freely.
-func NewLogsWriter(tmpdir string, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
+// The schema must be provided from the reader and cannot be nil.
+// If backendType is empty, defaults to go-parquet backend.
+func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64, backendType parquetwriter.BackendType) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
 		TmpDir: tmpdir,
+		Schema: schema,
 
 		// Logs can be split anywhere - no grouping constraints
 		NoSplitGroups: false,
 
 		RecordsPerFile: recordsPerFile,
 		StatsProvider:  &LogsStatsProvider{},
+		BackendType:    backendType,
 	}
 
 	return parquetwriter.NewUnifiedWriter(config)
@@ -44,30 +51,23 @@ type LogsStatsProvider struct{}
 
 func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &LogsStatsAccumulator{
-		fingerprints: mapset.NewSet[int64](),
-		labelColumns: mapset.NewSet[string](),
+		fingerprints:       mapset.NewSet[int64](),
+		fieldFingerprinter: fingerprint.NewFieldFingerprinter(),
 	}
 }
 
 // LogsStatsAccumulator collects logs-specific statistics.
 type LogsStatsAccumulator struct {
-	fingerprints mapset.Set[int64]
-	labelColumns mapset.Set[string]
-	firstTS      int64
-	lastTS       int64
-	first        bool
+	fingerprints       mapset.Set[int64]
+	firstTS            int64
+	lastTS             int64
+	first              bool
+	fieldFingerprinter *fingerprint.FieldFingerprinter
 }
 
-func (a *LogsStatsAccumulator) Add(row map[string]any) {
-	// Track label column names for label_name_map
-	for key := range row {
-		if isLabelColumn(key) {
-			a.labelColumns.Add(key)
-		}
-	}
-
+func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
 	// Track timestamp range
-	if ts, ok := row["chq_timestamp"].(int64); ok {
+	if ts, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
 		if !a.first {
 			a.firstTS = ts
 			a.lastTS = ts
@@ -82,21 +82,15 @@ func (a *LogsStatsAccumulator) Add(row map[string]any) {
 		}
 	}
 
-	// Generate comprehensive fingerprints for the row
-	rowFingerprints := fingerprint.GenerateRowFingerprints(row)
-	for _, fp := range rowFingerprints.ToSlice() {
-		a.fingerprints.Add(fp)
-	}
+	fps := a.fieldFingerprinter.GenerateFingerprints(row)
+	a.fingerprints.Append(fps...)
 }
 
 func (a *LogsStatsAccumulator) Finalize() any {
-	labelNameMap := buildLabelNameMap(a.labelColumns)
-
 	return LogsFileStats{
 		FirstTS:      a.firstTS,
 		LastTS:       a.lastTS,
 		Fingerprints: a.fingerprints.ToSlice(),
-		LabelNameMap: labelNameMap,
 	}
 }
 
@@ -105,7 +99,6 @@ type LogsFileStats struct {
 	FirstTS      int64   // Earliest timestamp
 	LastTS       int64   // Latest timestamp
 	Fingerprints []int64 // Actual list of unique fingerprints in this file
-	LabelNameMap []byte  // JSON map of label column names to dotted names
 }
 
 // ValidateLogsRow checks that a row has the required fields for logs processing.

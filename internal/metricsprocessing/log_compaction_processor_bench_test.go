@@ -28,6 +28,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -127,8 +128,11 @@ func BenchmarkWriteFromReader(b *testing.B) {
 		require.NoError(b, err)
 		defer func() { _ = translatingReader.Close() }()
 
+		// Get schema from reader
+		schema := translatingReader.GetSchema()
+
 		// Create writer
-		writer, err := factories.NewLogsWriter(tmpDir, 10000)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000, parquetwriter.DefaultBackend)
 		require.NoError(b, err)
 
 		// Benchmark the write operation
@@ -221,8 +225,11 @@ func BenchmarkMemoryLeaks(b *testing.B) {
 		translatingReader, err := filereader.NewTranslatingReader(reader, translator, 1000)
 		require.NoError(b, err)
 
+		// Get schema from reader
+		schema := translatingReader.GetSchema()
+
 		// Create writer
-		writer, err := factories.NewLogsWriter(tmpDir, 10000)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000, parquetwriter.DefaultBackend)
 		require.NoError(b, err)
 
 		// Process all batches
@@ -310,8 +317,11 @@ func BenchmarkDetailedMemoryProfile(b *testing.B) {
 		stages = append(stages, "After translator creation")
 		memStats = append(memStats, mem2)
 
+		// Get schema from reader
+		schema := translatingReader.GetSchema()
+
 		// Stage 3: Create writer
-		writer, err := factories.NewLogsWriter(tmpDir, 10000)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000, parquetwriter.DefaultBackend)
 		require.NoError(b, err)
 
 		runtime.GC()

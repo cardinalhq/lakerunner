@@ -110,7 +110,10 @@ type MergesortReader struct {
 	closed        bool
 	rowCount      int64
 	batchSize     int
+	schema        *ReaderSchema // Merged schema from all readers
 }
+
+var _ Reader = (*MergesortReader)(nil)
 
 // NewMergesortReader creates a new MergesortReader that merges rows from multiple readers
 // in sorted order using the new algorithm with active reader management.
@@ -128,11 +131,16 @@ func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortK
 		batchSize:   batchSize,
 	}
 
-	// Prime all readers - read first row from each and create keys
+	// Prime all readers first - read first row from each and create keys
+	// This is important because priming causes IngestLogParquetReader to discover
+	// and add dynamic columns (from map flattening) to their schemas
 	if err := or.primeReaders(ctx); err != nil {
 		_ = or.Close() // Clean up any partially initialized state
 		return nil, err
 	}
+
+	// Merge schemas from all readers AFTER priming, when dynamic columns have been discovered
+	or.schema = mergeSchemas(readers)
 
 	return or, nil
 }
@@ -200,6 +208,16 @@ func (or *MergesortReader) Next(ctx context.Context) (*Batch, error) {
 			row[k] = v
 		}
 
+		// Apply schema normalization to ensure type consistency across readers
+		// Different readers may have different types for the same column (e.g., int64 vs float64)
+		// The merged schema contains the promoted types, so normalize to match
+		if or.schema != nil && len(or.schema.Columns()) > 0 {
+			if err := normalizeRow(ctx, row, or.schema); err != nil {
+				pipeline.ReturnBatch(batch)
+				return nil, fmt.Errorf("schema normalization failed: %w", err)
+			}
+		}
+
 		// Advance the selected reader to its next row
 		selectedReader.consume()
 		err := selectedReader.advance(ctx, or.keyProvider)
@@ -264,4 +282,32 @@ func (or *MergesortReader) TotalRowsReturned() int64 {
 // ActiveReaderCount returns the number of readers that still have data available.
 func (or *MergesortReader) ActiveReaderCount() int {
 	return len(or.activeReaders)
+}
+
+// GetSchema returns a copy of the merged schema from all child readers.
+// Returns a copy to prevent external mutation of the internal schema.
+func (or *MergesortReader) GetSchema() *ReaderSchema {
+	return or.schema.Copy()
+}
+
+// mergeSchemas merges schemas from multiple readers, performing type promotion
+// when the same column appears with different types across readers.
+func mergeSchemas(readers []Reader) *ReaderSchema {
+	merged := NewReaderSchema()
+
+	for _, reader := range readers {
+		readerSchema := reader.GetSchema()
+		if readerSchema == nil {
+			continue
+		}
+
+		// Merge each column from this reader's schema
+		for _, col := range readerSchema.Columns() {
+			// Preserve the original name mapping from the reader schema
+			originalName := readerSchema.GetOriginalName(col.Name)
+			merged.AddColumn(col.Name, originalName, col.DataType, col.HasNonNull)
+		}
+	}
+
+	return merged
 }

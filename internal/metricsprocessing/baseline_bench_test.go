@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/perftest"
 	"github.com/cardinalhq/lakerunner/internal/testdata"
@@ -93,7 +94,7 @@ func BenchmarkBaselineParquetWrite(b *testing.B) {
 	ctx := context.Background()
 
 	// Generate test batches
-	batches, totalLogs, totalBytes := generateTestBatches(b, 100000)
+	batches, schema, totalLogs, totalBytes := generateTestBatches(b, 100000)
 
 	b.ResetTimer()
 
@@ -106,7 +107,7 @@ func BenchmarkBaselineParquetWrite(b *testing.B) {
 		sampler.Start()
 		b.StartTimer()
 
-		writer, err := factories.NewLogsWriter(tmpDir, 100000)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 100000, parquetwriter.DefaultBackend)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -217,12 +218,12 @@ func BenchmarkBaselineMergeSort(b *testing.B) {
 func createTestLogParquet(b *testing.B, tmpDir string, numLogs int) (filename string, records int64, bytes int64) {
 	b.Helper()
 
-	writer, err := factories.NewLogsWriter(tmpDir, int64(numLogs))
+	batches, schema, totalLogs, totalBytes := generateTestBatches(b, numLogs)
+
+	writer, err := factories.NewLogsWriter(tmpDir, schema, int64(numLogs), parquetwriter.DefaultBackend)
 	if err != nil {
 		b.Fatal(err)
 	}
-
-	batches, totalLogs, totalBytes := generateTestBatches(b, numLogs)
 	for _, batch := range batches {
 		if err := writer.WriteBatch(batch); err != nil {
 			b.Fatal(err)
@@ -242,8 +243,23 @@ func createTestLogParquet(b *testing.B, tmpDir string, numLogs int) (filename st
 }
 
 // Helper: generateTestBatches creates test batches with realistic log data
-func generateTestBatches(b *testing.B, numLogs int) ([]*pipeline.Batch, int64, int64) {
+func generateTestBatches(b *testing.B, numLogs int) ([]*pipeline.Batch, *filereader.ReaderSchema, int64, int64) {
 	b.Helper()
+
+	// Create schema matching what testdata.GenerateLogBatch produces
+	schema := filereader.NewReaderSchema()
+	schema.AddColumn(wkk.RowKeyCTimestamp, wkk.RowKeyCTimestamp, filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.RowKeyCMessage, wkk.RowKeyCMessage, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCLevel, wkk.RowKeyCLevel, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("service_name"), wkk.NewRowKey("service_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("host_name"), wkk.NewRowKey("host_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("container_name"), wkk.NewRowKey("container_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("k8s_namespace_name"), wkk.NewRowKey("k8s_namespace_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("k8s_pod_name"), wkk.NewRowKey("k8s_pod_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("k8s_cluster_name"), wkk.NewRowKey("k8s_cluster_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("deployment_environment"), wkk.NewRowKey("deployment_environment"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
 
 	batchSize := 1000
 	numBatches := (numLogs + batchSize - 1) / batchSize
@@ -271,7 +287,7 @@ func generateTestBatches(b *testing.B, numLogs int) ([]*pipeline.Batch, int64, i
 		}
 	}
 
-	return batches, totalLogs, totalBytes
+	return batches, schema, totalLogs, totalBytes
 }
 
 // BenchmarkBaselineReadWritePipeline measures read → write pipeline
@@ -305,9 +321,12 @@ func BenchmarkBaselineReadWritePipeline(b *testing.B) {
 		}
 		timer.EndStage("read", 0, 0)
 
+		// Get schema from reader
+		schema := reader.GetSchema()
+
 		// Write stage
 		timer.StartStage("write")
-		writer, err := factories.NewLogsWriter(outputDir, recordCount)
+		writer, err := factories.NewLogsWriter(outputDir, schema, recordCount, parquetwriter.DefaultBackend)
 		if err != nil {
 			b.Fatal(err)
 		}

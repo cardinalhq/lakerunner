@@ -239,6 +239,10 @@ func (m *MockReader) TotalRowsReturned() int64 {
 	return int64(m.currentIdx)
 }
 
+func (m *MockReader) GetSchema() *ReaderSchema {
+	return NewReaderSchema()
+}
+
 func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
 	// Test to verify DiskSortingReader doesn't drop rows due to batch size boundaries
 	// This test creates exactly 1234 rows and verifies we get exactly 1234 back
@@ -320,6 +324,8 @@ func (m *manyBatchReader) Next(ctx context.Context) (*Batch, error) {
 func (m *manyBatchReader) Close() error { return nil }
 
 func (m *manyBatchReader) TotalRowsReturned() int64 { return 0 }
+
+func (m *manyBatchReader) GetSchema() *ReaderSchema { return nil }
 
 // TestWriteAndIndexAllRowsDoesNotLeakBatches verifies that batches are always
 // returned to the pool, preventing unbounded heap allocations when processing

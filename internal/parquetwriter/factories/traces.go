@@ -17,23 +17,30 @@ package factories
 import (
 	mapset "github.com/deckarep/golang-set/v2"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // NewTracesWriter creates a writer optimized for traces data.
-func NewTracesWriter(tmpdir string, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
+// The schema must be provided from the reader and cannot be nil.
+// If backendType is empty, defaults to go-parquet backend.
+func NewTracesWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64, backendType parquetwriter.BackendType) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
 		TmpDir: tmpdir,
+		Schema: schema,
 
 		// No grouping needed since slots are removed
-		GroupKeyFunc: func(row map[string]any) any {
+		GroupKeyFunc: func(row pipeline.Row) any {
 			return 0
 		},
 		NoSplitGroups: false, // Allow splitting within slots for size management
 
 		RecordsPerFile: recordsPerFile,
 		StatsProvider:  &TracesStatsProvider{},
+		BackendType:    backendType,
 	}
 
 	return parquetwriter.NewUnifiedWriter(config)
@@ -44,30 +51,33 @@ type TracesStatsProvider struct{}
 
 func (p *TracesStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &TracesStatsAccumulator{
-		fingerprints: mapset.NewSet[int64](),
-		labelColumns: mapset.NewSet[string](),
+		fingerprints:       mapset.NewSet[int64](),
+		labelColumns:       mapset.NewSet[string](),
+		fieldFingerprinter: fingerprint.NewFieldFingerprinter(),
 	}
 }
 
 // TracesStatsAccumulator collects traces-specific statistics.
 type TracesStatsAccumulator struct {
-	firstTS      int64
-	lastTS       int64
-	first        bool
-	fingerprints mapset.Set[int64]
-	labelColumns mapset.Set[string]
+	firstTS            int64
+	lastTS             int64
+	first              bool
+	fingerprints       mapset.Set[int64]
+	labelColumns       mapset.Set[string]
+	fieldFingerprinter *fingerprint.FieldFingerprinter
 }
 
-func (a *TracesStatsAccumulator) Add(row map[string]any) {
+func (a *TracesStatsAccumulator) Add(row pipeline.Row) {
 	// Track label column names for label_name_map
 	for key := range row {
-		if isLabelColumn(key) {
-			a.labelColumns.Add(key)
+		keyStr := string(key.Value())
+		if isLabelColumn(keyStr) {
+			a.labelColumns.Add(keyStr)
 		}
 	}
 
 	// Track timestamp range
-	if startTime, ok := row["chq_timestamp"].(int64); ok {
+	if startTime, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
 		if !a.first {
 			a.firstTS = startTime
 			a.lastTS = startTime
@@ -82,11 +92,8 @@ func (a *TracesStatsAccumulator) Add(row map[string]any) {
 		}
 	}
 
-	// Generate comprehensive fingerprints for the row
-	rowFingerprints := fingerprint.GenerateRowFingerprints(row)
-	for _, fp := range rowFingerprints.ToSlice() {
-		a.fingerprints.Add(fp)
-	}
+	fps := a.fieldFingerprinter.GenerateFingerprints(row)
+	a.fingerprints.Append(fps...)
 }
 
 func (a *TracesStatsAccumulator) Finalize() any {

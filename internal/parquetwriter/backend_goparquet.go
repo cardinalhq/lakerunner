@@ -16,50 +16,106 @@ package parquetwriter
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/parquet-go/parquet-go"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/schemabuilder"
 	"github.com/cardinalhq/lakerunner/pipeline"
-	"github.com/cardinalhq/lakerunner/pipeline/rowcodec"
 )
 
-// GoParquetBackend implements ParquetBackend using segmentio/parquet-go with CBOR buffering.
+// GoParquetBackend implements ParquetBackend using parquet-go, writing directly to Parquet.
 // This is the current production implementation.
 type GoParquetBackend struct {
 	config BackendConfig
 
-	// CBOR buffering for schema evolution
-	codec      rowcodec.Codec
-	bufferFile *os.File
-	encoder    rowcodec.Encoder
+	// Parquet writer state
+	tmpFile       *os.File
+	parquetWriter *parquet.GenericWriter[map[string]any]
 
-	// Dynamic schema management
-	schemaBuilder *schemabuilder.SchemaBuilder
+	// Pre-built schema from ReaderSchema
+	parquetSchema *parquet.Schema
+	// Map of column names that should be in every row
+	expectedColumns map[string]bool
+
+	// Cached column types for fast lookup (avoids iterating schema for every field)
+	nonStringColumns   map[string]bool // columns that should NOT be converted to string
+	conversionPrefixes []string
+	convertToString    map[string]bool // pre-computed map of fields that need string conversion
 
 	// Metrics
-	rowCount           int64
-	conversionPrefixes []string
+	rowCount int64
 }
 
 // NewGoParquetBackend creates a new go-parquet backend.
+// The schema must be provided upfront and cannot be nil.
+// All columns are validated against the schema during writes.
+// Columns marked as all-null (HasNonNull=false) are filtered out automatically.
 func NewGoParquetBackend(config BackendConfig) (*GoParquetBackend, error) {
-	codec, err := rowcodec.New(rowcodec.TypeDefault)
+	if config.Schema == nil {
+		return nil, fmt.Errorf("schema is required and cannot be nil")
+	}
+
+	// Build parquet schema from reader schema
+	nodes, err := schemabuilder.BuildFromReaderSchema(config.Schema)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create codec: %w", err)
+		return nil, fmt.Errorf("failed to build parquet schema: %w", err)
+	}
+
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("schema has no non-null columns")
+	}
+
+	parquetSchema := parquet.NewSchema("lakerunner", parquet.Group(nodes))
+
+	// Build map of expected column names for validation
+	expectedColumns := make(map[string]bool, len(nodes))
+	for name := range nodes {
+		expectedColumns[name] = true
+	}
+
+	// Build cache of columns that should NOT be converted to strings
+	// (int64, float64, bool types) - avoids iterating schema for every field
+	nonStringColumns := make(map[string]bool)
+	for _, col := range config.Schema.Columns() {
+		fieldName := string(col.Name.Value())
+		switch col.DataType {
+		case filereader.DataTypeInt64, filereader.DataTypeFloat64, filereader.DataTypeBool:
+			nonStringColumns[fieldName] = true
+		}
+	}
+
+	// Pre-compute which fields need string conversion based on prefixes
+	// This avoids checking prefixes for every field on every row
+	convertToString := make(map[string]bool)
+	for _, col := range config.Schema.Columns() {
+		fieldName := string(col.Name.Value())
+
+		// Skip if it's a non-string column type
+		if nonStringColumns[fieldName] {
+			continue
+		}
+
+		// Check if field matches any conversion prefix
+		for _, prefix := range config.StringConversionPrefixes {
+			if strings.HasPrefix(fieldName, prefix) {
+				convertToString[fieldName] = true
+				break
+			}
+		}
 	}
 
 	return &GoParquetBackend{
 		config:             config,
-		codec:              codec,
-		schemaBuilder:      schemabuilder.NewSchemaBuilder(),
+		parquetSchema:      parquetSchema,
+		expectedColumns:    expectedColumns,
+		nonStringColumns:   nonStringColumns,
 		conversionPrefixes: config.StringConversionPrefixes,
+		convertToString:    convertToString,
 	}, nil
 }
 
@@ -68,40 +124,50 @@ func (b *GoParquetBackend) Name() string {
 	return "go-parquet"
 }
 
-// WriteBatch writes a batch of rows to the CBOR buffer.
+// WriteBatch writes a batch of rows directly to Parquet.
+// All columns must be defined in the schema provided at construction.
+// Rows with unexpected columns will return an error.
 func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch) error {
-	// Initialize buffer file on first write
-	if b.bufferFile == nil {
-		if err := b.startNewBufferFile(); err != nil {
-			return fmt.Errorf("failed to start buffer file: %w", err)
+	// Initialize Parquet writer on first write
+	if b.parquetWriter == nil {
+		if err := b.initParquetWriter(); err != nil {
+			return fmt.Errorf("failed to initialize parquet writer: %w", err)
 		}
 	}
 
-	// Process each row
+	// Pre-allocate slice for entire batch (nil rows are rare, small overhead if present)
+	rowMaps := make([]map[string]any, 0, batch.Len())
+
+	// Process each row and build row maps
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
 		if row == nil {
 			continue
 		}
 
-		// Convert row to map[string]any for codec
-		rowMap := make(map[string]any, len(row))
+		// Convert row to map[string]any and validate against schema
+		rowMap := make(map[string]any, len(b.expectedColumns))
 		for key, value := range row {
-			fieldName := key.Value()
+			fieldName := string(key.Value())
+
+			// Validate column is in schema
+			if !b.expectedColumns[fieldName] {
+				return fmt.Errorf("row contains unexpected column '%s' not in schema (row %d). Schema must be complete upfront",
+					fieldName, b.rowCount)
+			}
+
 			// Apply string conversion if needed
-			convertedValue := b.convertToStringIfNeeded(string(fieldName), value)
-			rowMap[string(fieldName)] = convertedValue
+			convertedValue := b.convertToStringIfNeeded(fieldName, value)
+			rowMap[fieldName] = convertedValue
 		}
 
-		// Track schema evolution
-		_ = b.schemaBuilder.AddRow(rowMap)
-
-		// Encode to CBOR buffer
-		if err := b.encoder.Encode(rowMap); err != nil {
-			return fmt.Errorf("failed to encode row: %w", err)
-		}
-
+		rowMaps = append(rowMaps, rowMap)
 		b.rowCount++
+	}
+
+	// Write entire batch to Parquet in one call
+	if _, err := b.parquetWriter.Write(rowMaps); err != nil {
+		return fmt.Errorf("failed to write batch to parquet: %w", err)
 	}
 
 	return nil
@@ -109,7 +175,7 @@ func (b *GoParquetBackend) WriteBatch(ctx context.Context, batch *pipeline.Batch
 
 // Close finalizes the Parquet file and writes it to the output writer.
 func (b *GoParquetBackend) Close(ctx context.Context, writer io.Writer) (*BackendMetadata, error) {
-	if b.bufferFile == nil {
+	if b.parquetWriter == nil {
 		// No data written
 		return &BackendMetadata{
 			RowCount:    0,
@@ -117,142 +183,84 @@ func (b *GoParquetBackend) Close(ctx context.Context, writer io.Writer) (*Backen
 		}, nil
 	}
 
-	// Finalize buffer file (encoder is set to nil, not closed)
-	b.encoder = nil
+	// Close the Parquet writer (flushes all data)
+	if err := b.parquetWriter.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close parquet writer: %w", err)
+	}
+	b.parquetWriter = nil
 
-	// Sync the buffer file
-	if err := b.bufferFile.Sync(); err != nil {
-		return nil, fmt.Errorf("failed to sync buffer file: %w", err)
+	// Close temp file and reopen for reading
+	tmpFileName := b.tmpFile.Name()
+	if err := b.tmpFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close temp file: %w", err)
 	}
 
-	// Build final schema
-	nodes, err := b.schemaBuilder.Build()
+	// Copy temp file to output writer
+	tmpFile, err := os.Open(tmpFileName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build schema: %w", err)
+		return nil, fmt.Errorf("failed to reopen temp file: %w", err)
+	}
+	defer func() { _ = tmpFile.Close() }()
+
+	if _, err := io.Copy(writer, tmpFile); err != nil {
+		return nil, fmt.Errorf("failed to copy parquet data to output: %w", err)
 	}
 
-	schema := parquet.NewSchema("lakerunner", parquet.Group(nodes))
+	// Cleanup temp file
+	b.cleanupTempFile()
 
-	// Stream from CBOR buffer to Parquet
-	metadata, err := b.streamBinaryToParquet(writer, schema)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write parquet: %w", err)
-	}
-
-	// Cleanup buffer file
-	b.cleanupBufferFile()
-
-	return metadata, nil
+	return &BackendMetadata{
+		RowCount:    b.rowCount,
+		ColumnCount: len(b.parquetSchema.Fields()),
+	}, nil
 }
 
 // Abort cleans up resources without writing output.
 func (b *GoParquetBackend) Abort() {
-	b.cleanupBufferFile()
+	if b.parquetWriter != nil {
+		_ = b.parquetWriter.Close()
+		b.parquetWriter = nil
+	}
+	b.cleanupTempFile()
 }
 
-// startNewBufferFile creates a new temporary file for CBOR buffering.
-func (b *GoParquetBackend) startNewBufferFile() error {
-	tmpFile, err := os.CreateTemp(b.config.TmpDir, "goparquet-buffer-*.cbor")
+// initParquetWriter creates a temp file and initializes the Parquet writer.
+func (b *GoParquetBackend) initParquetWriter() error {
+	tmpFile, err := os.CreateTemp(b.config.TmpDir, "goparquet-*.parquet")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	encoder := b.codec.NewEncoder(tmpFile)
+	// Create Parquet writer config
+	writerConfig, err := parquet.NewWriterConfig(schemabuilder.WriterOptions(b.config.TmpDir, b.parquetSchema)...)
+	if err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+		return fmt.Errorf("failed to create writer config: %w", err)
+	}
 
-	b.bufferFile = tmpFile
-	b.encoder = encoder
-	b.schemaBuilder = schemabuilder.NewSchemaBuilder()
+	// Create Parquet writer
+	parquetWriter := parquet.NewGenericWriter[map[string]any](tmpFile, writerConfig)
+
+	b.tmpFile = tmpFile
+	b.parquetWriter = parquetWriter
 
 	return nil
 }
 
-// streamBinaryToParquet reads from CBOR buffer and writes Parquet.
-func (b *GoParquetBackend) streamBinaryToParquet(output io.Writer, schema *parquet.Schema) (*BackendMetadata, error) {
-	// Close and reopen buffer file for reading
-	bufferFileName := b.bufferFile.Name()
-	if err := b.bufferFile.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close buffer file: %w", err)
-	}
-
-	bufferFile, err := os.Open(bufferFileName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to reopen buffer file: %w", err)
-	}
-	defer func() { _ = bufferFile.Close() }()
-
-	// Create Parquet writer config
-	writerConfig, err := parquet.NewWriterConfig(schemabuilder.WriterOptions(b.config.TmpDir, schema)...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create writer config: %w", err)
-	}
-
-	// Create Parquet writer
-	writer := parquet.NewGenericWriter[map[string]any](output, writerConfig)
-	defer func() { _ = writer.Close() }()
-
-	// Decode and write rows
-	decoder := b.codec.NewDecoder(bufferFile)
-	rowsWritten := int64(0)
-
-	row := make(map[string]any) // Reuse for all decodes
-	for {
-		err := decoder.Decode(row)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			// Handle EOF from map length read
-			if err.Error() == "read map length: EOF" {
-				break
-			}
-			return nil, fmt.Errorf("failed to decode row: %w", err)
-		}
-
-		if _, err := writer.Write([]map[string]any{row}); err != nil {
-			return nil, fmt.Errorf("failed to write row to parquet: %w", err)
-		}
-		rowsWritten++
-
-		// Clear map for next decode (reuse)
-		for k := range row {
-			delete(row, k)
-		}
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close parquet writer: %w", err)
-	}
-
-	// Calculate schema fingerprint for comparison
-	fingerprint := b.calculateSchemaFingerprint(schema)
-
-	return &BackendMetadata{
-		RowCount:          rowsWritten,
-		ColumnCount:       len(schema.Fields()),
-		SchemaFingerprint: fingerprint,
-		Extra: map[string]any{
-			"buffer_file_used": true,
-		},
-	}, nil
-}
-
-// cleanupBufferFile removes the temporary CBOR file.
-func (b *GoParquetBackend) cleanupBufferFile() {
-	if b.bufferFile != nil {
-		_ = b.bufferFile.Close()
-		_ = os.Remove(b.bufferFile.Name())
-		b.bufferFile = nil
+// cleanupTempFile removes the temporary Parquet file.
+func (b *GoParquetBackend) cleanupTempFile() {
+	if b.tmpFile != nil {
+		_ = b.tmpFile.Close()
+		_ = os.Remove(b.tmpFile.Name())
+		b.tmpFile = nil
 	}
 }
 
 // shouldConvertToString checks if a field should be converted to string.
+// Uses pre-computed map for O(1) lookup instead of checking prefixes on every call.
 func (b *GoParquetBackend) shouldConvertToString(fieldName string) bool {
-	for _, prefix := range b.conversionPrefixes {
-		if strings.HasPrefix(fieldName, prefix) {
-			return true
-		}
-	}
-	return false
+	return b.convertToString[fieldName]
 }
 
 // convertToStringIfNeeded converts a value to string if needed.
@@ -292,24 +300,4 @@ func (b *GoParquetBackend) convertToStringIfNeeded(fieldName string, value any) 
 	default:
 		return fmt.Sprintf("%v", v)
 	}
-}
-
-// calculateSchemaFingerprint creates a deterministic hash of the schema.
-func (b *GoParquetBackend) calculateSchemaFingerprint(schema *parquet.Schema) string {
-	// Get field names only (types can vary in representation between backends)
-	fields := schema.Fields()
-	fieldNames := make([]string, len(fields))
-	for i, field := range fields {
-		fieldNames[i] = field.Name()
-	}
-	sort.Strings(fieldNames)
-
-	// Hash the sorted field list
-	h := sha256.New()
-	for _, name := range fieldNames {
-		h.Write([]byte(name))
-		h.Write([]byte("\n"))
-	}
-
-	return fmt.Sprintf("%x", h.Sum(nil))[:16]
 }

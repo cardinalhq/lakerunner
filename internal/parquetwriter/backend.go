@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
@@ -47,9 +48,6 @@ type BackendMetadata struct {
 	// ColumnCount is the number of columns in the final schema
 	ColumnCount int
 
-	// SchemaFingerprint is a hash of the schema for comparison
-	SchemaFingerprint string
-
 	// Implementation-specific metadata
 	Extra map[string]any
 }
@@ -63,6 +61,9 @@ const (
 
 	// BackendArrow uses Apache Arrow columnar format with streaming writes
 	BackendArrow BackendType = "arrow"
+
+	// DefaultBackend is the default backend type used when not specified
+	DefaultBackend = BackendGoParquet
 )
 
 // BackendFactory creates a ParquetBackend based on configuration.
@@ -83,4 +84,8 @@ type BackendConfig struct {
 
 	// StringConversionPrefixes for type coercion
 	StringConversionPrefixes []string
+
+	// Schema is the required upfront schema from the reader.
+	// Must not be nil. All-null columns (HasNonNull=false) are filtered out automatically.
+	Schema *filereader.ReaderSchema
 }

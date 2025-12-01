@@ -70,7 +70,8 @@ help:
 	@echo "  make coverage-html - Generate HTML coverage report and open in browser"
 	@echo ""
 	@echo "Code Quality:"
-	@echo "  make check        - Run all pre-commit checks"
+	@echo "  make check        - Run all pre-commit checks (concise output)"
+	@echo "  make check-verbose - Run all pre-commit checks (verbose output)"
 	@echo "  make lint         - Run golangci-lint"
 	@echo "  make fmt          - Format code with gofmt and goimports"
 	@echo "  make gofmt        - Format code with gofmt only"
@@ -166,7 +167,11 @@ duckdb-extensions-decompress:
 #
 # Run pre-commit checks
 #
-check: test license-check gofmt lint check-migration-integrity
+check: bin/golangci-lint
+	@./scripts/check-concise.sh
+
+check-verbose: bin/golangci-lint
+	@VERBOSE=1 ./scripts/check-concise.sh
 
 license-check:
 	go tool license-eye header check

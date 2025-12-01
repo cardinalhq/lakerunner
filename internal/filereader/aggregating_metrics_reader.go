@@ -68,6 +68,8 @@ type AggregatingMetricsReader struct {
 	firstRowIndex int    // Index in firstRowBatch (-1 if already taken)
 }
 
+var _ Reader = (*AggregatingMetricsReader)(nil)
+
 // NewAggregatingMetricsReader creates a new AggregatingMetricsReader that aggregates metrics
 // with the same [metric_name, tid, truncated_timestamp] key.
 //
@@ -623,6 +625,15 @@ func (ar *AggregatingMetricsReader) Close() error {
 // TotalRowsReturned returns the total number of aggregated rows returned via Next().
 func (ar *AggregatingMetricsReader) TotalRowsReturned() int64 {
 	return ar.rowCount
+}
+
+// GetSchema returns the schema from the wrapped reader.
+// This reader performs aggregation but does not change the schema structure.
+func (ar *AggregatingMetricsReader) GetSchema() *ReaderSchema {
+	if ar.reader != nil {
+		return ar.reader.GetSchema()
+	}
+	return NewReaderSchema()
 }
 
 // GetOTELMetrics implements the OTELMetricsProvider interface if the underlying reader supports it.

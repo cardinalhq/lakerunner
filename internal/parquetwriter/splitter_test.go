@@ -21,12 +21,34 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
+
+// testSplitterSchema creates a schema matching the test batch columns
+func testSplitterSchema() *filereader.ReaderSchema {
+	schema := filereader.NewReaderSchema()
+	// Basic test fields
+	schema.AddColumn(wkk.NewRowKey("field1"), wkk.NewRowKey("field1"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("field2"), wkk.NewRowKey("field2"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("timestamp"), wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("group"), wkk.NewRowKey("group"), filereader.DataTypeString, true)
+	// String conversion test fields
+	schema.AddColumn(wkk.NewRowKey("resource_id"), wkk.NewRowKey("resource_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("resource_name"), wkk.NewRowKey("resource_name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("attr_value"), wkk.NewRowKey("attr_value"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("regular_field"), wkk.NewRowKey("regular_field"), filereader.DataTypeInt64, true)
+	// Fingerprint test fields
+	schema.AddColumn(wkk.NewRowKey("message"), wkk.NewRowKey("message"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("resource_service_name"), wkk.NewRowKey("resource_service_name"), filereader.DataTypeString, true)
+	// Always-present fields
+	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("chq_fingerprint"), wkk.NewRowKey("chq_fingerprint"), filereader.DataTypeInt64, true)
+	return schema
+}
 
 // mockStatsProvider implements StatsProvider for testing
 type mockStatsProvider struct {
@@ -42,10 +64,10 @@ func (p *mockStatsProvider) NewAccumulator() StatsAccumulator {
 
 // mockStatsAccumulator implements StatsAccumulator for testing
 type mockStatsAccumulator struct {
-	rows []map[string]any
+	rows []pipeline.Row
 }
 
-func (a *mockStatsAccumulator) Add(row map[string]any) {
+func (a *mockStatsAccumulator) Add(row pipeline.Row) {
 	a.rows = append(a.rows, row)
 }
 
@@ -58,6 +80,7 @@ func (a *mockStatsAccumulator) Finalize() any {
 func TestNewFileSplitter(t *testing.T) {
 	config := WriterConfig{
 		TmpDir:         "/tmp",
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -78,6 +101,7 @@ func TestFileSplitterWriteBatchRows_NilBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -97,6 +121,7 @@ func TestFileSplitterWriteBatchRows_ClosedWriter(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -116,6 +141,7 @@ func TestFileSplitterWriteBatchRows_EmptyBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -129,8 +155,8 @@ func TestFileSplitterWriteBatchRows_EmptyBatch(t *testing.T) {
 	}
 
 	// Should not create any files
-	if splitter.bufferFile != nil {
-		t.Error("Expected no current buffer file for empty batch")
+	if splitter.backend != nil {
+		t.Error("Expected no backend for empty batch")
 	}
 }
 
@@ -138,6 +164,7 @@ func TestFileSplitterWriteBatchRows_SingleBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -150,9 +177,9 @@ func TestFileSplitterWriteBatchRows_SingleBatch(t *testing.T) {
 		t.Fatalf("WriteBatchRows failed: %v", err)
 	}
 
-	// Should have created a buffer file
-	if splitter.bufferFile == nil {
-		t.Error("Expected current buffer file to be created")
+	// Should have created a backend
+	if splitter.backend == nil {
+		t.Error("Expected backend to be created")
 	}
 	if splitter.currentRows != 3 {
 		t.Errorf("Expected 3 current rows, got %d", splitter.currentRows)
@@ -192,6 +219,7 @@ func TestFileSplitterWriteBatchRows_WithStats(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 		StatsProvider:  statsProvider,
 	}
@@ -230,6 +258,7 @@ func TestFileSplitterWriteBatchRows_FileSplittingByRecordCount(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 2, // Split after 2 records
 	}
 
@@ -276,6 +305,7 @@ func TestFileSplitterWriteBatchRows_UnlimitedFileMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: NoRecordLimitPerFile, // Unlimited mode
 	}
 
@@ -316,9 +346,11 @@ func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
-		GroupKeyFunc: func(row map[string]any) any {
-			return row["group"]
+		GroupKeyFunc: func(row pipeline.Row) any {
+			groupKey := wkk.NewRowKey("group")
+			return row[groupKey]
 		},
 	}
 
@@ -348,10 +380,159 @@ func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
 	}
 }
 
+func TestFileSplitterWriteBatchRows_NoSplitGroups(t *testing.T) {
+	tmpDir := t.TempDir()
+	config := WriterConfig{
+		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
+		RecordsPerFile: 5, // Small limit to trigger splits
+		GroupKeyFunc: func(row pipeline.Row) any {
+			groupKey := wkk.NewRowKey("group")
+			return row[groupKey]
+		},
+		NoSplitGroups: true,
+	}
+
+	splitter := NewFileSplitter(config)
+	ctx := context.Background()
+
+	// First batch: 3 rows of group "A"
+	batch1 := createTestBatchWithGroups(t, []string{"A", "A", "A"})
+	err := splitter.WriteBatchRows(ctx, batch1)
+	if err != nil {
+		t.Fatalf("WriteBatchRows batch1 failed: %v", err)
+	}
+
+	// Second batch: 7 more rows of group "A" - total 10 rows in group A
+	// This exceeds RecordsPerFile (5) but should NOT split because we're still in group A
+	batch2 := createTestBatchWithGroups(t, []string{"A", "A", "A", "A", "A", "A", "A"})
+	err = splitter.WriteBatchRows(ctx, batch2)
+	if err != nil {
+		t.Fatalf("WriteBatchRows batch2 failed: %v", err)
+	}
+
+	// Third batch: switch to group "B" with 8 rows
+	// This should trigger a split because group changed from A to B
+	batch3 := createTestBatchWithGroups(t, []string{"B", "B", "B", "B", "B", "B", "B", "B"})
+	err = splitter.WriteBatchRows(ctx, batch3)
+	if err != nil {
+		t.Fatalf("WriteBatchRows batch3 failed: %v", err)
+	}
+
+	// Fourth batch: 3 rows of group "C"
+	// Should trigger another split because group changed from B to C
+	batch4 := createTestBatchWithGroups(t, []string{"C", "C", "C"})
+	err = splitter.WriteBatchRows(ctx, batch4)
+	if err != nil {
+		t.Fatalf("WriteBatchRows batch4 failed: %v", err)
+	}
+
+	results, err := splitter.Close(ctx)
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Should have exactly 3 files (one per group), not split by row count
+	if len(results) != 3 {
+		t.Errorf("Expected 3 result files (one per group), got %d", len(results))
+		for i, result := range results {
+			t.Logf("  File %d: %d records", i, result.RecordCount)
+		}
+		t.FailNow()
+	}
+
+	// Verify row counts: 10 + 8 + 3 = 21 total rows
+	totalRows := int64(0)
+	for i, result := range results {
+		totalRows += result.RecordCount
+		t.Logf("File %d: %d records", i, result.RecordCount)
+	}
+
+	if totalRows != 21 {
+		t.Errorf("Expected 21 total rows across all files, got %d", totalRows)
+	}
+
+	// First file should have 10 rows (group A - not split despite exceeding RecordsPerFile)
+	if results[0].RecordCount != 10 {
+		t.Errorf("Expected first file to have 10 rows (group A), got %d", results[0].RecordCount)
+	}
+	// Second file should have 8 rows (group B)
+	if results[1].RecordCount != 8 {
+		t.Errorf("Expected second file to have 8 rows (group B), got %d", results[1].RecordCount)
+	}
+	// Third file should have 3 rows (group C)
+	if results[2].RecordCount != 3 {
+		t.Errorf("Expected third file to have 3 rows (group C), got %d", results[2].RecordCount)
+	}
+
+	// Clean up
+	for _, result := range results {
+		_ = os.Remove(result.FileName)
+	}
+}
+
+func TestFileSplitterWriteBatchRows_NoSplitGroups_SingleLargeBatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	config := WriterConfig{
+		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
+		RecordsPerFile: 5, // Small limit - but won't trigger splits within a single batch
+		GroupKeyFunc: func(row pipeline.Row) any {
+			groupKey := wkk.NewRowKey("group")
+			return row[groupKey]
+		},
+		NoSplitGroups: true,
+	}
+
+	splitter := NewFileSplitter(config)
+	ctx := context.Background()
+
+	// Single large batch with mixed groups: 10xA, 8xB, 3xC (21 total rows)
+	// With NoSplitGroups, splits only happen BETWEEN batches when both:
+	// 1. RecordsPerFile limit would be exceeded
+	// 2. Group changes
+	// Since this is a single batch with no previous file, all rows go into one file.
+	batch := createTestBatchWithGroups(t, []string{
+		"A", "A", "A", "A", "A", "A", "A", "A", "A", "A", // 10 rows of A
+		"B", "B", "B", "B", "B", "B", "B", "B", // 8 rows of B
+		"C", "C", "C", // 3 rows of C
+	})
+	err := splitter.WriteBatchRows(ctx, batch)
+	if err != nil {
+		t.Fatalf("WriteBatchRows failed: %v", err)
+	}
+
+	results, err := splitter.Close(ctx)
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Should have exactly 1 file with all 21 rows
+	// (NoSplitGroups prevents splitting WITHIN a batch)
+	if len(results) != 1 {
+		t.Errorf("Expected 1 result file, got %d", len(results))
+		for i, result := range results {
+			t.Logf("  File %d: %d records", i, result.RecordCount)
+		}
+		t.FailNow()
+	}
+
+	// Verify row count: 10 + 8 + 3 = 21 total rows
+	if results[0].RecordCount != 21 {
+		t.Errorf("Expected file to have 21 rows, got %d", results[0].RecordCount)
+	}
+
+	// Clean up
+	for _, result := range results {
+		_ = os.Remove(result.FileName)
+	}
+}
+
 func TestFileSplitterClose_MultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -390,6 +571,7 @@ func TestFileSplitterAbort(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -402,21 +584,21 @@ func TestFileSplitterAbort(t *testing.T) {
 		t.Fatalf("WriteBatchRows failed: %v", err)
 	}
 
-	// Get buffer file name before abort
+	// Get temp file name before abort
 	var fileName string
-	if splitter.bufferFile != nil {
-		fileName = splitter.bufferFile.Name()
+	if splitter.tmpFile != nil {
+		fileName = splitter.tmpFile.Name()
 	}
 
 	// Abort should clean up
 	splitter.Abort()
 
-	// Check that buffer file is cleaned up
-	if splitter.bufferFile != nil {
-		t.Error("Expected bufferFile to be nil after abort")
+	// Check that backend and temp file are cleaned up
+	if splitter.backend != nil {
+		t.Error("Expected backend to be nil after abort")
 	}
-	if splitter.encoder != nil {
-		t.Error("Expected encoder to be nil after abort")
+	if splitter.tmpFile != nil {
+		t.Error("Expected tmpFile to be nil after abort")
 	}
 	if !splitter.closed {
 		t.Error("Expected splitter to be closed after abort")
@@ -432,6 +614,7 @@ func TestFileSplitterAbort_MultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -459,6 +642,7 @@ func TestFileSplitterEmptyFileHandling(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 1,
 	}
 
@@ -499,6 +683,7 @@ func TestFileSplitterTempFileCreation(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: 100,
 	}
 
@@ -538,64 +723,26 @@ func TestFileSplitterTempFileCreation(t *testing.T) {
 
 // TestStringConversionForPrefixedFields tests that fields with configured prefixes
 // are converted to strings to avoid schema conflicts
+//
+// NOTE: String conversion logic has moved to the backend implementations (GoParquetBackend, ArrowBackend).
+// The unit tests for internal conversion methods have been removed since they're implementation details.
+// The end-to-end batch processing test below verifies the behavior still works correctly.
 func TestStringConversionForPrefixedFields(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Test with default prefixes
-	t.Run("DefaultPrefixes", func(t *testing.T) {
-		config := WriterConfig{
-			TmpDir:         tmpDir,
-			RecordsPerFile: 100,
-		}
+	// Internal conversion methods are now in backends - those unit tests removed
 
-		splitter := NewFileSplitter(config)
+	// Test with default prefixes - REMOVED (methods moved to backends)
+	// t.Run("DefaultPrefixes", func(t *testing.T) { ... })
 
-		// Test conversion methods directly
-		assert.True(t, splitter.shouldConvertToString("resource_foo"))
-		assert.True(t, splitter.shouldConvertToString("scope_bar"))
-		assert.True(t, splitter.shouldConvertToString("attr_baz"))
-		assert.False(t, splitter.shouldConvertToString("other_field"))
-		assert.False(t, splitter.shouldConvertToString("timestamp"))
-
-		// Test conversion of different types
-		assert.Equal(t, "123", splitter.convertToStringIfNeeded("resource_id", int64(123)))
-		assert.Equal(t, "45", splitter.convertToStringIfNeeded("scope_level", int32(45)))
-		assert.Equal(t, "3.14", splitter.convertToStringIfNeeded("attr_value", float64(3.14)))
-		assert.Equal(t, "already_string", splitter.convertToStringIfNeeded("attr_name", "already_string"))
-
-		// Fields without matching prefix should not be converted
-		assert.Equal(t, int64(999), splitter.convertToStringIfNeeded("other_value", int64(999)))
-		assert.Equal(t, float64(2.71), splitter.convertToStringIfNeeded("timestamp", float64(2.71)))
-
-		// Nil values should remain nil
-		assert.Nil(t, splitter.convertToStringIfNeeded("resource_nil", nil))
-	})
-
-	// Test with custom prefixes
-	t.Run("CustomPrefixes", func(t *testing.T) {
-		config := WriterConfig{
-			TmpDir:                   tmpDir,
-			RecordsPerFile:           100,
-			StringConversionPrefixes: []string{"custom_", "special_"},
-		}
-
-		splitter := NewFileSplitter(config)
-
-		// Test that custom prefixes are used instead of defaults
-		assert.True(t, splitter.shouldConvertToString("custom_field"))
-		assert.True(t, splitter.shouldConvertToString("special_value"))
-		assert.False(t, splitter.shouldConvertToString("resource_foo"))
-		assert.False(t, splitter.shouldConvertToString("log_bar"))
-
-		// Test conversion with custom prefixes
-		assert.Equal(t, "42", splitter.convertToStringIfNeeded("custom_id", int64(42)))
-		assert.Equal(t, int64(99), splitter.convertToStringIfNeeded("resource_id", int64(99)))
-	})
+	// Test with custom prefixes - REMOVED (methods moved to backends)
+	// t.Run("CustomPrefixes", func(t *testing.T) { ... })
 
 	// Test actual batch processing with mixed types
 	t.Run("BatchProcessingWithConversion", func(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:         tmpDir,
+			Schema:         testSplitterSchema(),
 			RecordsPerFile: 100,
 		}
 
@@ -677,6 +824,7 @@ func TestFileSplitter_FingerprintStringToInt64Conversion(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: NoRecordLimitPerFile,
 	}
 
@@ -720,6 +868,7 @@ func TestFileSplitter_FingerprintConversionErrors(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpDir,
+		Schema:         testSplitterSchema(),
 		RecordsPerFile: NoRecordLimitPerFile,
 	}
 

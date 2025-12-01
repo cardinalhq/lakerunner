@@ -392,29 +392,46 @@ func createReaderStack(tmpFilename, orgID, bucket, objectID string, signalType f
 	}
 
 	// Wrap with translator to add resource_* fields
-	var translator filereader.RowTranslator
+	var translatedReader filereader.Reader
 	switch signalType {
 	case filereader.SignalTypeLogs:
 		if strings.HasSuffix(tmpFilename, ".parquet") {
-			translator = metricsprocessing.NewParquetLogTranslator(orgID, bucket, objectID)
+			translatedReader = metricsprocessing.NewParquetLogTranslatingReader(reader, orgID, bucket, objectID)
 		} else {
-			translator = metricsprocessing.NewLogTranslator(orgID, bucket, objectID, fingerprintTenantManager)
+			translator := metricsprocessing.NewLogTranslator(orgID, bucket, objectID, fingerprintTenantManager)
+			var err error
+			translatedReader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+			if err != nil {
+				_ = reader.Close()
+				return nil, fmt.Errorf("failed to create translating reader: %w", err)
+			}
 		}
 	case filereader.SignalTypeMetrics:
-		translator = &metricsprocessing.MetricTranslator{
+		translator := &metricsprocessing.MetricTranslator{
 			OrgID:    orgID,
 			Bucket:   bucket,
 			ObjectID: objectID,
 		}
+		var err error
+		translatedReader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+		if err != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("failed to create translating reader: %w", err)
+		}
 	case filereader.SignalTypeTraces:
-		translator = metricsprocessing.NewTraceTranslator(orgID, bucket, objectID)
+		translator := metricsprocessing.NewTraceTranslator(orgID, bucket, objectID)
+		var err error
+		translatedReader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+		if err != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("failed to create translating reader: %w", err)
+		}
 	default:
 		_ = reader.Close()
 		return nil, fmt.Errorf("unsupported signal type: %v", signalType)
 	}
 
-	translatedReader, err := filereader.NewTranslatingReader(reader, translator, 1000)
-	if err != nil {
+	if translatedReader == nil {
 		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}

@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,13 +28,7 @@ import (
 )
 
 func TestParquetLogTranslator_TranslateRow_NilRow(t *testing.T) {
-	translator := &ParquetLogTranslator{
-		OrgID:    "test-org",
-		Bucket:   "test-bucket",
-		ObjectID: "test.parquet",
-	}
-
-	err := translator.TranslateRow(context.Background(), nil)
+	err := translateParquetLogRow(context.Background(), nil, "test-org", "test-bucket", "test.parquet")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "row cannot be nil")
 }
@@ -139,11 +134,6 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			translator := &ParquetLogTranslator{
-				OrgID:    "test-org",
-				Bucket:   "test-bucket",
-				ObjectID: "test.parquet",
-			}
 
 			// Create a copy of the row to avoid mutation
 			row := make(pipeline.Row)
@@ -152,7 +142,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 			}
 
 			beforeTranslate := time.Now()
-			err := translator.TranslateRow(context.Background(), &row)
+			err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
 			afterTranslate := time.Now()
 			require.NoError(t, err)
 
@@ -251,11 +241,6 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			translator := &ParquetLogTranslator{
-				OrgID:    "test-org",
-				Bucket:   "test-bucket",
-				ObjectID: "test.parquet",
-			}
 
 			// Create a copy of the row
 			row := make(pipeline.Row)
@@ -263,7 +248,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 				row[k] = v
 			}
 
-			err := translator.TranslateRow(context.Background(), &row)
+			err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
 			require.NoError(t, err)
 
 			// Check message was set correctly
@@ -274,75 +259,48 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 	}
 }
 
-func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.T) {
+func TestParquetLogTranslator_TranslateRow_FlattenedFields(t *testing.T) {
 	tests := []struct {
 		name     string
 		inputRow pipeline.Row
 		expected map[string]any
 	}{
 		{
-			name: "nested map structure",
+			name: "already flattened fields from reader",
 			inputRow: pipeline.Row{
-				wkk.NewRowKey("timestamp"): int64(1234567890123),
-				wkk.NewRowKey("message"):   "test message",
-				wkk.NewRowKey("metadata"): map[string]any{
-					"user": "john",
-					"details": map[string]any{
-						"age":  30,
-						"city": "NYC",
-					},
-				},
+				wkk.NewRowKey("timestamp"):      int64(1234567890123),
+				wkk.NewRowKey("message"):        "test message",
+				wkk.NewRowKey("metadata_user"):  "john",
+				wkk.NewRowKey("metadata_age"):   int64(30),
+				wkk.NewRowKey("metadata_city"):  "NYC",
+				wkk.NewRowKey("service_name"):   "api",
+				wkk.NewRowKey("service_region"): "us-west-2",
 			},
 			expected: map[string]any{
-				"resource_metadata_user":         "john",
-				"resource_metadata_details_age":  30,
-				"resource_metadata_details_city": "NYC",
+				"resource_metadata_user":  "john",
+				"resource_metadata_age":   int64(30),
+				"resource_metadata_city":  "NYC",
+				"resource_service_name":   "api",
+				"resource_service_region": "us-west-2",
 			},
 		},
 		{
-			name: "array structure",
+			name: "special fields are not prefixed",
 			inputRow: pipeline.Row{
-				wkk.NewRowKey("timestamp"): int64(1234567890123),
-				wkk.NewRowKey("message"):   "test message",
-				wkk.NewRowKey("tags"):      []any{"tag1", "tag2", "tag3"},
+				wkk.NewRowKey("timestamp"):     int64(1234567890123),
+				wkk.NewRowKey("message"):       "test message",
+				wkk.NewRowKey("chq_timestamp"): int64(1234567890123),
+				wkk.NewRowKey("chq_message"):   "test message",
+				wkk.NewRowKey("other_field"):   "value",
 			},
 			expected: map[string]any{
-				"resource_tags[0]": "tag1",
-				"resource_tags[1]": "tag2",
-				"resource_tags[2]": "tag3",
-			},
-		},
-		{
-			name: "complex nested structure",
-			inputRow: pipeline.Row{
-				wkk.NewRowKey("timestamp"): int64(1234567890123),
-				wkk.NewRowKey("message"):   "test message",
-				wkk.NewRowKey("data"): map[string]any{ // Changed from "event" to avoid message field detection
-					"type": "click",
-					"properties": map[string]any{
-						"button": "submit",
-						"coordinates": []any{
-							map[string]any{"x": 100, "y": 200},
-						},
-					},
-				},
-			},
-			expected: map[string]any{
-				"resource_data_type":                        "click",
-				"resource_data_properties_button":           "submit",
-				"resource_data_properties_coordinates[0]_x": 100,
-				"resource_data_properties_coordinates[0]_y": 200,
+				"resource_other_field": "value",
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			translator := &ParquetLogTranslator{
-				OrgID:    "test-org",
-				Bucket:   "test-bucket",
-				ObjectID: "test.parquet",
-			}
 
 			// Create a copy of the row
 			row := make(pipeline.Row)
@@ -350,10 +308,10 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 				row[k] = v
 			}
 
-			err := translator.TranslateRow(context.Background(), &row)
+			err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
 			require.NoError(t, err)
 
-			// Check that nested structures were flattened correctly
+			// Check that fields were prefixed correctly
 			for expectedKey, expectedValue := range tt.expected {
 				key := wkk.NewRowKey(expectedKey)
 				actualValue, exists := row[key]
@@ -361,29 +319,25 @@ func TestParquetLogTranslator_TranslateRow_NestedStructureFlattening(t *testing.
 				assert.Equal(t, expectedValue, actualValue, "Value mismatch for key %s", expectedKey)
 			}
 
-			// Verify original nested keys were removed
-			if _, ok := tt.inputRow[wkk.NewRowKey("metadata")]; ok {
-				_, exists := row[wkk.NewRowKey("metadata")]
-				assert.False(t, exists, "Original nested 'metadata' key should be removed")
-			}
-			if _, ok := tt.inputRow[wkk.NewRowKey("tags")]; ok {
-				_, exists := row[wkk.NewRowKey("tags")]
-				assert.False(t, exists, "Original 'tags' array key should be removed")
-			}
-			if _, ok := tt.inputRow[wkk.NewRowKey("data")]; ok {
-				_, exists := row[wkk.NewRowKey("data")]
-				assert.False(t, exists, "Original nested 'data' key should be removed")
+			// Verify original keys were removed (fields that get resource_ prefix)
+			for k := range tt.inputRow {
+				keyStr := wkk.RowKeyValue(k)
+				// Special fields and already-prefixed fields should remain unchanged
+				if keyStr == "timestamp" || keyStr == "message" ||
+					strings.HasPrefix(keyStr, "chq_") ||
+					strings.HasPrefix(keyStr, "resource_") ||
+					strings.HasPrefix(keyStr, "_") {
+					continue
+				}
+				// Other fields should be removed (they now have resource_ prefix)
+				_, exists := row[k]
+				assert.False(t, exists, "Original key %s should be removed after adding resource_ prefix", keyStr)
 			}
 		})
 	}
 }
 
 func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing.T) {
-	translator := &ParquetLogTranslator{
-		OrgID:    "test-org",
-		Bucket:   "test-bucket",
-		ObjectID: "test.parquet",
-	}
 
 	row := pipeline.Row{
 		// These should be detected and not duplicated as attributes
@@ -406,7 +360,7 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 		wkk.NewRowKey("resource_old"): "keep",
 	}
 
-	err := translator.TranslateRow(context.Background(), &row)
+	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
 	require.NoError(t, err)
 
 	// Check that special fields were not duplicated as regular attributes
@@ -440,18 +394,15 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 }
 
 func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
-	translator := &ParquetLogTranslator{
-		OrgID:    "test-org",
-		Bucket:   "test-bucket",
-		ObjectID: "logs/2024/01/data.parquet",
-	}
 
 	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"): int64(1234567890123),
 		wkk.NewRowKey("message"):   "test message",
 	}
 
-	err := translator.TranslateRow(context.Background(), &row)
+	// Use a specific objectID to verify resource fields are set correctly
+	objectID := "logs/2024/01/data.parquet"
+	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", objectID)
 	require.NoError(t, err)
 
 	// Check required CardinalhQ fields
@@ -470,7 +421,7 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 
 	fileName, exists := row[wkk.RowKeyResourceFileName]
 	assert.True(t, exists, "Should have resource_file_name")
-	assert.Equal(t, "./logs/2024/01/data.parquet", fileName)
+	assert.Equal(t, "./"+objectID, fileName)
 
 	fileType, exists := row[wkk.RowKeyResourceFileType]
 	assert.True(t, exists, "Should have resource_file_type")
@@ -478,11 +429,6 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 }
 
 func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
-	translator := &ParquetLogTranslator{
-		OrgID:    "test-org",
-		Bucket:   "test-bucket",
-		ObjectID: "test.parquet",
-	}
 
 	// Create a row with an empty key (edge case)
 	row := pipeline.Row{
@@ -491,7 +437,7 @@ func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
 		wkk.NewRowKey(""):          "value with empty key", // This should be skipped
 	}
 
-	err := translator.TranslateRow(context.Background(), &row)
+	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
 	require.NoError(t, err)
 
 	// The empty key should be skipped during processing
@@ -504,11 +450,6 @@ func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
 }
 
 func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.T) {
-	translator := &ParquetLogTranslator{
-		OrgID:    "test-org",
-		Bucket:   "test-bucket",
-		ObjectID: "test.parquet",
-	}
 
 	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"):    int64(1234567890123),
@@ -522,7 +463,7 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 		wkk.NewRowKey("duration_ms"):  float64(123.45),
 	}
 
-	err := translator.TranslateRow(context.Background(), &row)
+	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
 	require.NoError(t, err)
 
 	// Check that level was used for detection and not promoted to resource.level
@@ -544,11 +485,6 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 }
 
 func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.T) {
-	translator := &ParquetLogTranslator{
-		OrgID:    "test-org",
-		Bucket:   "test-bucket",
-		ObjectID: "syslog.parquet",
-	}
 
 	// Test case matching the user's example (sanitized)
 	row := pipeline.Row{
@@ -562,7 +498,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 		wkk.NewRowKey("__index_level_0__"): int64(14),
 	}
 
-	err := translator.TranslateRow(context.Background(), &row)
+	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
 	require.NoError(t, err)
 
 	// Verify that the timestamp was correctly used for chq_timestamp
@@ -607,11 +543,6 @@ type mockStringTimestamp struct {
 func (m mockStringTimestamp) String() string { return m.value }
 
 func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testing.T) {
-	translator := &ParquetLogTranslator{
-		OrgID:    "test-org",
-		Bucket:   "test-bucket",
-		ObjectID: "test.parquet",
-	}
 
 	row := pipeline.Row{
 		wkk.NewRowKey("timestamp"):   mockStringTimestamp{value: "2025-09-13 18:09:15"},
@@ -619,7 +550,7 @@ func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testin
 		wkk.NewRowKey("message"):     "test message",
 	}
 
-	err := translator.TranslateRow(context.Background(), &row)
+	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
 	require.NoError(t, err)
 
 	// Verify that the mock string timestamp was NOT used and we fell back to current time

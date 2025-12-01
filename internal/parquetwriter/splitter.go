@@ -17,125 +17,55 @@ package parquetwriter
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
-	"strings"
 
-	"github.com/parquet-go/parquet-go"
-
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter/schemabuilder"
 	"github.com/cardinalhq/lakerunner/pipeline"
-	"github.com/cardinalhq/lakerunner/pipeline/rowcodec"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // FileSplitter manages splitting data into multiple output files based on
 // size constraints and grouping requirements.
 type FileSplitter struct {
-	config             WriterConfig
-	currentRows        int64
-	currentGroup       any
-	conversionPrefixes []string // Cached prefixes for string conversion
+	config       WriterConfig
+	currentRows  int64
+	currentGroup any
 
-	// Binary buffering for schema evolution
-	codec        rowcodec.Codec
-	bufferFile   *os.File
-	encoder      rowcodec.Encoder
+	// Parquet backend state
+	backend      ParquetBackend
+	tmpFile      *os.File // For final file rename
 	currentStats StatsAccumulator
-
-	// Dynamic schema management per file
-	currentSchema *schemabuilder.SchemaBuilder
 
 	// Results tracking
 	results []Result
 	closed  bool
+
+	// Cached column type lookups (built once from schema)
+	int64Columns map[wkk.RowKey]bool
 }
 
 // NewFileSplitter creates a new file splitter with the given configuration.
 func NewFileSplitter(config WriterConfig) *FileSplitter {
-	// Use default codec (Binary for compatibility, can use TypeCBOR for better performance)
-	codec, err := rowcodec.New(rowcodec.TypeDefault)
-	if err != nil {
-		// This should never happen with our static configuration
-		panic(fmt.Sprintf("failed to create codec: %v", err))
+	// Build column type map once for efficient lookups during batch processing
+	int64Columns := make(map[wkk.RowKey]bool)
+	for _, col := range config.Schema.Columns() {
+		if col.DataType == filereader.DataTypeInt64 {
+			int64Columns[col.Name] = true
+		}
 	}
 
 	return &FileSplitter{
-		config:             config,
-		codec:              codec,
-		results:            make([]Result, 0),
-		conversionPrefixes: config.GetStringConversionPrefixes(),
-	}
-}
-
-// shouldConvertToString checks if a field name matches any of the configured prefixes
-// that require string conversion.
-func (s *FileSplitter) shouldConvertToString(fieldName string) bool {
-	for _, prefix := range s.conversionPrefixes {
-		if strings.HasPrefix(fieldName, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// convertToStringIfNeeded converts a value to string if the field name matches
-// one of the configured prefixes. Otherwise, returns the value unchanged.
-func (s *FileSplitter) convertToStringIfNeeded(fieldName string, value any) any {
-	if !s.shouldConvertToString(fieldName) {
-		return value
-	}
-
-	// Handle nil values
-	if value == nil {
-		return nil
-	}
-
-	// If already a string, return as-is
-	if _, ok := value.(string); ok {
-		return value
-	}
-
-	// Convert to string based on type
-	switch v := value.(type) {
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case int32:
-		return strconv.FormatInt(int64(v), 10)
-	case int16:
-		return strconv.FormatInt(int64(v), 10)
-	case int8:
-		return strconv.FormatInt(int64(v), 10)
-	case int:
-		return strconv.Itoa(v)
-	case uint64:
-		return strconv.FormatUint(v, 10)
-	case uint32:
-		return strconv.FormatUint(uint64(v), 10)
-	case uint16:
-		return strconv.FormatUint(uint64(v), 10)
-	case uint8:
-		return strconv.FormatUint(uint64(v), 10)
-	case uint:
-		return strconv.FormatUint(uint64(v), 10)
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case float32:
-		return strconv.FormatFloat(float64(v), 'f', -1, 32)
-	case bool:
-		return strconv.FormatBool(v)
-	case []byte:
-		return string(v)
-	default:
-		// For any other type (including slices, maps, etc.), use fmt.Sprint
-		return fmt.Sprint(v)
+		config:       config,
+		results:      make([]Result, 0),
+		int64Columns: int64Columns,
 	}
 }
 
 // convertFingerprintToInt64 converts chq_fingerprint from string to int64 if needed.
-// The fingerprint field must always be int64 in the schema.
-func (s *FileSplitter) convertFingerprintToInt64(value any) (any, error) {
+// Some live data accidentally uses string for this field, but we always want int64.
+func convertFingerprintToInt64(value any) (any, error) {
 	if value == nil {
 		return nil, nil
 	}
@@ -165,7 +95,7 @@ func (s *FileSplitter) convertFingerprintToInt64(value any) (any, error) {
 	case int8:
 		return int64(v), nil
 	case uint64:
-		if v > uint64(9223372036854775807) { // max int64
+		if v > 9223372036854775807 { // max int64
 			return nil, fmt.Errorf("fingerprint value %d exceeds int64 max", v)
 		}
 		return int64(v), nil
@@ -176,7 +106,7 @@ func (s *FileSplitter) convertFingerprintToInt64(value any) (any, error) {
 	case uint8:
 		return int64(v), nil
 	case uint:
-		if v > uint(9223372036854775807) {
+		if v > 9223372036854775807 {
 			return nil, fmt.Errorf("fingerprint value %d exceeds int64 max", v)
 		}
 		return int64(v), nil
@@ -209,87 +139,142 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		return nil
 	}
 
-	// Check if we need to split files BEFORE processing this batch
-	// Skip splitting if RecordsPerFile is NoRecordLimitPerFile (unlimited mode)
-	projectedRows := s.currentRows + int64(actualRowCount)
-	if s.bufferFile != nil && s.config.RecordsPerFile != NoRecordLimitPerFile && s.config.RecordsPerFile > 0 && projectedRows > s.config.RecordsPerFile {
+	// File splitting logic (BETWEEN batches only, never within a batch):
+	//
+	// Splitting happens BEFORE processing each batch and only if:
+	// 1. We have an existing file (s.backend != nil)
+	// 2. RecordsPerFile limit is set (not unlimited mode)
+	// 3. Adding this batch would exceed RecordsPerFile
+	//
+	// With NoSplitGroups enabled:
+	// - Split ONLY if the new batch has a different group key than current file
+	// - If same group, continue writing to same file even if exceeding RecordsPerFile
+	// - This keeps groups together while respecting file size limits at group boundaries
+	//
+	// Without NoSplitGroups:
+	// - Split whenever RecordsPerFile would be exceeded
+	//
+	// Note: Splitting never happens WITHIN a batch. If a batch contains multiple groups
+	// or exceeds limits, all rows still go into the current file. This ensures efficient
+	// batch processing without mid-batch file switches.
+	shouldSplit := false
+	if s.backend != nil && s.config.RecordsPerFile != NoRecordLimitPerFile && s.config.RecordsPerFile > 0 {
+		projectedRows := s.currentRows + int64(actualRowCount)
+		if projectedRows > s.config.RecordsPerFile {
+			// Check if NoSplitGroups is enabled
+			if s.config.NoSplitGroups && s.config.GroupKeyFunc != nil {
+				// Peek at first non-nil row to get the group for this batch
+				var batchGroup any
+				for i := 0; i < batch.Len(); i++ {
+					row := batch.Get(i)
+					if row != nil {
+						batchGroup = s.config.GroupKeyFunc(row)
+						break
+					}
+				}
+
+				// Only split if the group changed (or if we don't have a current group yet)
+				if s.currentGroup == nil || batchGroup != s.currentGroup {
+					shouldSplit = true
+				}
+				// Otherwise, continue writing to same file even though we exceed RecordsPerFile
+			} else {
+				// NoSplitGroups not enabled, split based on row count only
+				shouldSplit = true
+			}
+		}
+	}
+
+	if shouldSplit {
 		// Finish current file first
 		if err := s.finishCurrentFile(); err != nil {
 			return fmt.Errorf("finish current file before split: %w", err)
 		}
 	}
 
-	// Start a new binary buffer file if we don't have one
-	if s.bufferFile == nil {
-		if err := s.startNewBufferFile(); err != nil {
-			return fmt.Errorf("start new buffer file: %w", err)
+	// Start a new Parquet writer if we don't have one
+	if s.backend == nil {
+		if err := s.startNewParquetWriter(); err != nil {
+			return fmt.Errorf("start new parquet writer: %w", err)
 		}
 	}
 
-	// Process and buffer all rows
+	// Process and prepare all rows in the batch
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
 		if row == nil {
 			continue
 		}
 
-		// Convert pipeline.Row to map[string]any efficiently
-		stringRow := make(map[string]any, len(row)+1) // +1 for chq_id
+		// Convert int64 fields that might be strings (defensive measure for messy live data)
 		for key, value := range row {
-			fieldName := string(key.Value())
-			// Apply string conversion for fields with configured prefixes
-			convertedValue := s.convertToStringIfNeeded(fieldName, value)
-
-			// Special handling for chq_fingerprint: must always be int64
-			if fieldName == "chq_fingerprint" {
-				var err error
-				convertedValue, err = s.convertFingerprintToInt64(convertedValue)
-				if err != nil {
-					return fmt.Errorf("convert fingerprint for row %d: %w", i, err)
+			if s.int64Columns[key] && value != nil {
+				if str, ok := value.(string); ok {
+					converted, err := convertFingerprintToInt64(str)
+					if err != nil {
+						return fmt.Errorf("convert %s (int64 field) from string for row %d: %w", string(key.Value()), i, err)
+					}
+					row[key] = converted
 				}
 			}
-
-			stringRow[fieldName] = convertedValue
 		}
 
-		stringRow["chq_id"] = idgen.NextBase32ID()
+		// Add chq_id to the row
+		row[wkk.RowKeyCID] = idgen.NextBase32ID()
 
-		// Add to schema builder for evolution tracking
-		if err := s.currentSchema.AddRow(stringRow); err != nil {
-			return fmt.Errorf("schema validation failed: %w", err)
-		}
-
-		// Encode and write row to buffer
-		if err := s.encoder.Encode(stringRow); err != nil {
-			return fmt.Errorf("encode row: %w", err)
-		}
-
-		// Update stats and tracking
+		// Update stats and group tracking (both use Row directly now)
 		if s.currentStats != nil {
-			s.currentStats.Add(stringRow)
+			s.currentStats.Add(row)
+		}
+		if s.config.GroupKeyFunc != nil {
+			s.currentGroup = s.config.GroupKeyFunc(row)
 		}
 		s.currentRows++
+	}
 
-		// Update group tracking
-		if s.config.GroupKeyFunc != nil {
-			s.currentGroup = s.config.GroupKeyFunc(stringRow)
-		}
+	// Write entire batch to backend at once (much more efficient than row-by-row)
+	if err := s.backend.WriteBatch(context.Background(), batch); err != nil {
+		return fmt.Errorf("write batch to backend: %w", err)
 	}
 
 	return nil
 }
 
-// startNewBufferFile creates a new buffer file for row accumulation.
-// The schema will be built dynamically as rows are added.
-func (s *FileSplitter) startNewBufferFile() error {
-	// Create the binary buffer file
-	file, err := os.CreateTemp(s.config.TmpDir, "*.bin")
+// startNewParquetWriter creates a new temp file and backend.
+func (s *FileSplitter) startNewParquetWriter() error {
+	// Create temp Parquet file
+	tmpFile, err := os.CreateTemp(s.config.TmpDir, "*.parquet")
 	if err != nil {
-		return fmt.Errorf("create binary temp file: %w", err)
+		return fmt.Errorf("create parquet temp file: %w", err)
 	}
 
-	// Initialize a new schema builder for this file
-	s.currentSchema = schemabuilder.NewSchemaBuilder()
+	// Create backend configuration
+	backendConfig := BackendConfig{
+		Type:                     s.config.GetBackendType(),
+		TmpDir:                   s.config.TmpDir,
+		Schema:                   s.config.Schema,
+		ChunkSize:                s.config.GetChunkSize(),
+		StringConversionPrefixes: s.config.GetStringConversionPrefixes(),
+	}
+
+	// Create the appropriate backend
+	var backend ParquetBackend
+	switch backendConfig.Type {
+	case BackendArrow:
+		backend, err = NewArrowBackend(backendConfig)
+	case BackendGoParquet:
+		backend, err = NewGoParquetBackend(backendConfig)
+	default:
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+		return fmt.Errorf("unknown backend type: %s", backendConfig.Type)
+	}
+
+	if err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+		return fmt.Errorf("create backend: %w", err)
+	}
 
 	// Initialize stats accumulator if provider is configured
 	var stats StatsAccumulator
@@ -297,9 +282,8 @@ func (s *FileSplitter) startNewBufferFile() error {
 		stats = s.config.StatsProvider.NewAccumulator()
 	}
 
-	// Create binary encoder for writing rows
-	s.bufferFile = file
-	s.encoder = s.codec.NewEncoder(file)
+	s.tmpFile = tmpFile
+	s.backend = backend
 	s.currentStats = stats
 	s.currentRows = 0
 	// currentGroup will be set when first row is written
@@ -307,115 +291,43 @@ func (s *FileSplitter) startNewBufferFile() error {
 	return nil
 }
 
-// streamBinaryToParquet streams all buffered binary data to a new parquet file.
-// This creates the final parquet file with the evolved schema.
-func (s *FileSplitter) streamBinaryToParquet() (string, error) {
-	// Build the final schema from all accumulated rows
-	nodes, err := s.currentSchema.Build()
-	if err != nil {
-		return "", fmt.Errorf("failed to build schema: %w", err)
+// finalizeParquetFile closes the backend and returns the file name.
+func (s *FileSplitter) finalizeParquetFile() (string, error) {
+	ctx := context.Background()
+
+	// Close the backend (flushes all data to tmpFile)
+	if _, err := s.backend.Close(ctx, s.tmpFile); err != nil {
+		return "", fmt.Errorf("close backend: %w", err)
 	}
-	if len(nodes) == 0 {
-		return "", fmt.Errorf("no columns discovered for schema")
+	s.backend = nil
+
+	// Close temp file (CHECK return code since we're keeping this file)
+	tmpFileName := s.tmpFile.Name()
+	if err := s.tmpFile.Close(); err != nil {
+		return "", fmt.Errorf("close parquet temp file: %w", err)
 	}
+	s.tmpFile = nil
 
-	schema := parquet.NewSchema("lakerunner", parquet.Group(nodes))
-
-	// Create the final parquet output file
-	parquetFile, err := os.CreateTemp(s.config.TmpDir, "*.parquet")
-	if err != nil {
-		return "", fmt.Errorf("create parquet temp file: %w", err)
-	}
-	defer func() { _ = parquetFile.Close() }()
-
-	// Create parquet writer with optimized settings
-	writerConfig, err := parquet.NewWriterConfig(schemabuilder.WriterOptions(s.config.TmpDir, schema)...)
-	if err != nil {
-		return "", fmt.Errorf("create writer config: %w", err)
-	}
-
-	parquetWriter := parquet.NewGenericWriter[map[string]any](parquetFile, writerConfig)
-
-	// Close the binary encoder and sync file before reading
-	if s.encoder != nil {
-		s.encoder = nil
-	}
-
-	// Sync the file to ensure all data is written to disk
-	if err := s.bufferFile.Sync(); err != nil {
-		return "", fmt.Errorf("sync buffer file: %w", err)
-	}
-
-	// Get file size for debugging
-	stat, err := s.bufferFile.Stat()
-	if err != nil {
-		return "", fmt.Errorf("failed to stat buffer file: %w", err)
-	}
-	if stat.Size() == 0 {
-		return "", fmt.Errorf("buffer file is empty - no data was written")
-	}
-
-	// Close and reopen buffer file for reading
-	bufferFileName := s.bufferFile.Name()
-	if err := s.bufferFile.Close(); err != nil {
-		return "", fmt.Errorf("close buffer file for writing: %w", err)
-	}
-
-	bufferFile, err := os.Open(bufferFileName)
-	if err != nil {
-		return "", fmt.Errorf("reopen buffer file for reading: %w", err)
-	}
-	defer func() { _ = bufferFile.Close() }()
-
-	// Create decoder to read back the buffered rows
-	decoder := s.codec.NewDecoder(bufferFile)
-
-	// Stream all rows to parquet
-	row := make(map[string]any) // Reuse this map for all decodes
-	for {
-		err := decoder.Decode(row)
-		if err != nil {
-			if err == io.EOF {
-				break // End of file reached
-			}
-			// Handle EOF that comes from trying to read map length when no more data
-			if err.Error() == "read map length: EOF" {
-				break
-			}
-			return "", fmt.Errorf("decode row: %w", err)
-		}
-
-		// Write the row to parquet
-		if _, err := parquetWriter.Write([]map[string]any{row}); err != nil {
-			return "", fmt.Errorf("write row to parquet: %w", err)
-		}
-	}
-
-	// Close parquet writer to finalize the file
-	if err := parquetWriter.Close(); err != nil {
-		return "", fmt.Errorf("close parquet writer: %w", err)
-	}
-
-	return parquetFile.Name(), nil
+	return tmpFileName, nil
 }
 
-// finishCurrentFile streams buffered binary data to parquet and adds to results.
+// finishCurrentFile finalizes the current Parquet file and adds to results.
 func (s *FileSplitter) finishCurrentFile() error {
-	if s.bufferFile == nil {
+	if s.backend == nil {
 		return nil // No file to finish
 	}
 
-	// Only create parquet if we have rows
+	// Only finalize if we have rows
 	if s.currentRows == 0 {
-		s.cleanupCurrentBufferFile()
+		s.cleanupCurrentFile()
 		return nil
 	}
 
-	// Stream binary data to final parquet file
-	parquetFileName, err := s.streamBinaryToParquet()
+	// Finalize Parquet file
+	parquetFileName, err := s.finalizeParquetFile()
 	if err != nil {
-		s.cleanupCurrentBufferFile()
-		return fmt.Errorf("stream binary to parquet: %w", err)
+		s.cleanupCurrentFile()
+		return fmt.Errorf("finalize parquet file: %w", err)
 	}
 
 	// Get file size
@@ -439,25 +351,30 @@ func (s *FileSplitter) finishCurrentFile() error {
 		Metadata:    metadata,
 	})
 
-	// Clean up buffer file and reset state
-	s.cleanupCurrentBufferFile()
+	// Reset state (file already closed)
+	s.currentStats = nil
+	s.currentRows = 0
 
 	return nil
 }
 
-// cleanupCurrentBufferFile removes the binary buffer file and resets state.
-func (s *FileSplitter) cleanupCurrentBufferFile() {
-	if s.bufferFile != nil {
-		bufferFileName := s.bufferFile.Name()
-		_ = s.bufferFile.Close()
-		_ = os.Remove(bufferFileName)
-		s.bufferFile = nil
+// cleanupCurrentFile removes the current Parquet file and resets state.
+func (s *FileSplitter) cleanupCurrentFile() {
+	if s.backend != nil {
+		s.backend.Abort()
+		s.backend = nil
 	}
 
-	s.encoder = nil
+	if s.tmpFile != nil {
+		tmpFileName := s.tmpFile.Name()
+		_ = s.tmpFile.Close()
+		_ = os.Remove(tmpFileName)
+		s.tmpFile = nil
+	}
+
 	s.currentStats = nil
 	s.currentRows = 0
-	s.currentSchema = nil
+	// Schema is reused across files, no need to reset
 }
 
 // Close finishes the current file and returns all results.
@@ -479,8 +396,8 @@ func (s *FileSplitter) Close(ctx context.Context) ([]Result, error) {
 func (s *FileSplitter) Abort() {
 	s.closed = true
 
-	// Clean up current binary buffer file
-	s.cleanupCurrentBufferFile()
+	// Clean up current file
+	s.cleanupCurrentFile()
 
 	// Clean up any completed result files too
 	for _, result := range s.results {

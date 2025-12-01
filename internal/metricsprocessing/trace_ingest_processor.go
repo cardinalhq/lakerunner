@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -171,6 +172,7 @@ type TraceDateintBinManager struct {
 	bins        map[int32]*TraceDateintBin // Key is dateint
 	tmpDir      string
 	rpfEstimate int64
+	schema      *filereader.ReaderSchema
 }
 
 // TraceIngestProcessor implements the Processor interface for raw trace ingestion
@@ -445,6 +447,22 @@ func (p *TraceIngestProcessor) GetTargetRecordCount(ctx context.Context, groupin
 
 // createTraceReaderStack creates a reader stack: Translation(TraceReader(file))
 func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
+	// Determine file type from extension for logging
+	var fileType string
+	switch {
+	case strings.HasSuffix(tmpFilename, ".binpb.gz"):
+		fileType = "binpb.gz"
+	case strings.HasSuffix(tmpFilename, ".binpb"):
+		fileType = "binpb"
+	default:
+		fileType = "unknown"
+	}
+
+	slog.Info("Reading trace file",
+		"fileType", fileType,
+		"objectID", objectID,
+		"bucket", bucket)
+
 	reader, err := p.createTraceReader(tmpFilename, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace reader: %w", err)
@@ -455,13 +473,13 @@ func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket
 		bucket:   bucket,
 		objectID: objectID,
 	}
-	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+	translatedReader, err := filereader.NewTranslatingReader(reader, translator, 1000)
 	if err != nil {
 		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}
 
-	return reader, nil
+	return translatedReader, nil
 }
 
 func (p *TraceIngestProcessor) createTraceReader(filename, orgID string) (filereader.Reader, error) {
@@ -495,12 +513,21 @@ func (p *TraceIngestProcessor) createUnifiedTraceReader(ctx context.Context, rea
 func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*TraceDateintBin, error) {
 	ll := logctx.FromContext(ctx)
 
+	// Get schema from reader (GetSchema returns a copy)
+	schema := reader.GetSchema()
+
+	// Add columns that will be injected by TraceTranslator and FileSplitter
+	// These columns are added to every row but aren't in the OTEL schema
+	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true) // Added by FileSplitter
+
 	rpfEstimate := p.store.GetTraceEstimate(ctx, storageProfile.OrganizationID)
 
 	binManager := &TraceDateintBinManager{
 		bins:        make(map[int32]*TraceDateintBin),
 		tmpDir:      tmpDir,
 		rpfEstimate: rpfEstimate,
+		schema:      schema,
 	}
 
 	var totalRowsProcessed int64
@@ -598,7 +625,7 @@ func (manager *TraceDateintBinManager) getOrCreateBin(dateint int32) (*TraceDate
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewTracesWriter(manager.tmpDir, manager.rpfEstimate)
+	writer, err := factories.NewTracesWriter(manager.tmpDir, manager.schema, manager.rpfEstimate, parquetwriter.DefaultBackend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}

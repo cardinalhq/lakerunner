@@ -144,11 +144,11 @@ func createParquetReader(filename string, opts ReaderOptions) (Reader, error) {
 		return nil, fmt.Errorf("failed to stat parquet file: %w", err)
 	}
 
-	// Use Arrow reader only for log ingestion to handle NULL-type columns
+	// Use IngestLogParquetReader for log ingestion to handle NULL-type columns and flattening
 	if opts.SignalType == SignalTypeLogs {
 		ctx := context.Background()
 		// os.File already implements parquet.ReaderAtSeeker (io.ReaderAt + io.Seeker)
-		reader, err := NewArrowRawReader(ctx, file, opts.BatchSize)
+		reader, err := NewIngestLogParquetReader(ctx, file, opts.BatchSize)
 		if err != nil {
 			_ = file.Close()
 			return nil, err
