@@ -19,6 +19,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -205,6 +206,14 @@ func TestConvertValue(t *testing.T) {
 		// Bytes conversions
 		{"bytes to bytes", []byte("test"), DataTypeBytes, []byte("test"), false},
 		{"string to bytes", "test", DataTypeBytes, []byte("test"), false},
+
+		// Arrow Timestamp conversions
+		{"arrow.Timestamp nanoseconds to int64", arrow.Timestamp(1758397185000000000), DataTypeInt64, int64(1758397185000), false},
+		{"arrow.Timestamp milliseconds to int64", arrow.Timestamp(1758397185000), DataTypeInt64, int64(1758397185000), false},
+		{"arrow.Timestamp seconds to int64", arrow.Timestamp(1758397185), DataTypeInt64, int64(1758397185000), false},
+		{"arrow.Timestamp nanoseconds to float64", arrow.Timestamp(1758397185000000000), DataTypeFloat64, float64(1758397185000), false},
+		{"arrow.Timestamp milliseconds to float64", arrow.Timestamp(1758397185000), DataTypeFloat64, float64(1758397185000), false},
+		{"arrow.Timestamp seconds to float64", arrow.Timestamp(1758397185), DataTypeFloat64, float64(1758397185000), false},
 	}
 
 	for _, tt := range tests {
@@ -283,4 +292,40 @@ func TestReaderSchema_HasNonNull(t *testing.T) {
 	columns = schema.Columns()
 	require.Len(t, columns, 1)
 	assert.True(t, columns[0].HasNonNull, "HasNonNull should not flip back to false")
+}
+
+// TestNormalizeTimestampValue tests timestamp normalization heuristics.
+func TestNormalizeTimestampValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    int64
+		expected int64
+	}{
+		// Zero and negative values
+		{"zero", 0, 0},
+		{"negative", -100, 0},
+
+		// Seconds (< 2e9, before year 2033 in milliseconds)
+		{"seconds - 2025-11-30", 1758397185, 1758397185000},
+		{"seconds - 2000-01-01", 946684800, 946684800000},
+		{"seconds - 2030-01-01", 1893456000, 1893456000000},
+
+		// Milliseconds (between 2e9 and 1e15)
+		{"milliseconds - 2025-11-30", 1758397185000, 1758397185000},
+		{"milliseconds - 2000-01-01", 946684800000, 946684800000},
+		{"milliseconds - at threshold", 2000000000, 2000000000},
+		{"milliseconds - just above threshold", 2000000001, 2000000001},
+
+		// Nanoseconds (> 1e15, after year 2001 in nanoseconds)
+		{"nanoseconds - 2025-11-30", 1758397185000000000, 1758397185000},
+		{"nanoseconds - 2020-01-01", 1577836800000000000, 1577836800000},
+		{"nanoseconds - at threshold", 1000000000000001, 1000000000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeTimestampValue(tt.input)
+			assert.Equal(t, tt.expected, result, "normalizeTimestampValue(%d) should return %d", tt.input, tt.expected)
+		})
+	}
 }
