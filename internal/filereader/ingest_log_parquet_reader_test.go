@@ -30,7 +30,7 @@ import (
 // in both the schema and the actual row values.
 func TestIngestLogParquetReader_INT32Promotion(t *testing.T) {
 	// Use a test file with actual INT32 values (not all NULL)
-	testFile := "/tmp/test_int32.parquet"
+	testFile := "testdata/test_int32.parquet"
 
 	// Open file
 	f, err := os.Open(testFile)
