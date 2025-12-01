@@ -496,7 +496,7 @@ func (p *TraceIngestProcessor) createUnifiedTraceReader(ctx context.Context, rea
 func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*TraceDateintBin, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Get schema from reader
+	// Get schema from reader (GetSchema returns a copy)
 	schema := reader.GetSchema()
 
 	// Add columns that will be injected by TraceTranslator and FileSplitter

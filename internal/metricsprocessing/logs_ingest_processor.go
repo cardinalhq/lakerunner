@@ -651,7 +651,7 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	rpfEstimate := p.store.GetLogEstimate(ctx, storageProfile.OrganizationID)
 
 	// Create dateint bin manager
-	// Get schema from reader
+	// Get schema from reader (GetSchema returns a copy)
 	schema := reader.GetSchema()
 
 	// Add columns that will be injected by LogTranslator

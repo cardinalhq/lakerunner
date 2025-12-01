@@ -218,9 +218,10 @@ func flattenValueIntoRow(row pipeline.Row, dottedPath, underscoredPath string, c
 	}
 }
 
-// GetSchema returns the schema extracted from the Arrow metadata with flattening.
+// GetSchema returns a copy of the schema extracted from the Arrow metadata with flattening.
+// Returns a copy to prevent external mutation of the internal schema.
 func (r *IngestLogParquetReader) GetSchema() *ReaderSchema {
-	return r.readerSchema
+	return r.readerSchema.Copy()
 }
 
 // Close releases resources associated with the reader.

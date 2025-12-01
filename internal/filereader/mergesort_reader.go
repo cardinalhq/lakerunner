@@ -284,9 +284,10 @@ func (or *MergesortReader) ActiveReaderCount() int {
 	return len(or.activeReaders)
 }
 
-// GetSchema returns the merged schema from all child readers.
+// GetSchema returns a copy of the merged schema from all child readers.
+// Returns a copy to prevent external mutation of the internal schema.
 func (or *MergesortReader) GetSchema() *ReaderSchema {
-	return or.schema
+	return or.schema.Copy()
 }
 
 // mergeSchemas merges schemas from multiple readers, performing type promotion

@@ -176,6 +176,31 @@ func (s *ReaderSchema) Columns() []*ColumnSchema {
 	return result
 }
 
+// Copy returns a deep copy of the schema.
+// This is important because callers may mutate the returned schema.
+func (s *ReaderSchema) Copy() *ReaderSchema {
+	copied := &ReaderSchema{
+		columns:       make(map[wkk.RowKey]*ColumnSchema, len(s.columns)),
+		columnNameMap: make(map[wkk.RowKey]wkk.RowKey, len(s.columnNameMap)),
+	}
+
+	// Deep copy columns
+	for key, col := range s.columns {
+		copied.columns[key] = &ColumnSchema{
+			Name:       col.Name,
+			DataType:   col.DataType,
+			HasNonNull: col.HasNonNull,
+		}
+	}
+
+	// Copy name mappings
+	for k, v := range s.columnNameMap {
+		copied.columnNameMap[k] = v
+	}
+
+	return copied
+}
+
 // promoteType returns the promoted type when two types need to be merged.
 // Type promotion rules from design doc:
 // - int64 + int64 → int64

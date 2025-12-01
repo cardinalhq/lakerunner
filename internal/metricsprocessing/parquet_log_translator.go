@@ -638,20 +638,20 @@ func (r *ParquetLogTranslatingReader) Next(ctx context.Context) (*filereader.Bat
 
 // GetSchema returns the transformed schema
 func (r *ParquetLogTranslatingReader) GetSchema() *filereader.ReaderSchema {
-	if r.schemaBuilt {
-		return r.schema
+	if !r.schemaBuilt {
+		// Get source schema from wrapped reader
+		sourceSchema := r.wrapped.GetSchema()
+		if sourceSchema == nil {
+			sourceSchema = filereader.NewReaderSchema()
+		}
+
+		// Transform the schema to match what TranslateRow does to rows
+		r.schema = r.transformSchema(sourceSchema)
+		r.schemaBuilt = true
 	}
 
-	// Get source schema from wrapped reader
-	sourceSchema := r.wrapped.GetSchema()
-	if sourceSchema == nil {
-		sourceSchema = filereader.NewReaderSchema()
-	}
-
-	// Transform the schema to match what TranslateRow does to rows
-	r.schema = r.transformSchema(sourceSchema)
-	r.schemaBuilt = true
-	return r.schema
+	// Return a copy to prevent external mutation
+	return r.schema.Copy()
 }
 
 // transformSchema applies the same field transformations to the schema that TranslateRow applies to rows
