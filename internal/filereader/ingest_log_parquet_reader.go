@@ -314,6 +314,9 @@ func convertArrowValue(col arrow.Array, i int) any {
 		return convertStructValue(c, i)
 	case *array.Map:
 		return convertMapValue(c, i)
+	case *array.Null:
+		// NULL columns (all values are null) - return nil
+		return nil
 	default:
 		// For unknown types, try to get string representation
 		return fmt.Sprintf("%v", c.ValueStr(i))
