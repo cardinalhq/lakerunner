@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/apache/arrow-go/v18/arrow"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
@@ -343,9 +344,38 @@ func convertToInt64(value any) (int64, error) {
 		var i int64
 		_, err := fmt.Sscanf(v, "%d", &i)
 		return i, err
+	case arrow.Timestamp:
+		// Arrow timestamps need unit normalization to milliseconds
+		return normalizeTimestampValue(int64(v)), nil
 	default:
 		return 0, fmt.Errorf("cannot convert %T to int64", value)
 	}
+}
+
+// normalizeTimestampValue converts timestamps to milliseconds using heuristics.
+// Detects nanoseconds (> 1e15), seconds (< 2e9), and assumes milliseconds otherwise.
+// This matches the logic in csv_log_translator.go.
+func normalizeTimestampValue(ts int64) int64 {
+	if ts <= 0 {
+		return 0
+	}
+
+	// Nanoseconds (after year 2001 in nanoseconds: 1e15)
+	// Example: 1758397185000000000 (2025-11-30) > 1e15
+	if ts > 1e15 {
+		return ts / 1e6
+	}
+
+	// Seconds (before year 2033 in milliseconds: 2e9)
+	// Example: 1758397185 (2025-11-30) < 2e9
+	// Values < 2e9 are treated as seconds and converted to milliseconds
+	if ts < 2e9 {
+		return ts * 1000
+	}
+
+	// Assume milliseconds
+	// Example: 1758397185000 (2025-11-30)
+	return ts
 }
 
 // convertToFloat64 converts a value to float64.
@@ -361,6 +391,9 @@ func convertToFloat64(value any) (float64, error) {
 		var f float64
 		_, err := fmt.Sscanf(v, "%f", &f)
 		return f, err
+	case arrow.Timestamp:
+		// Arrow timestamps need unit normalization to milliseconds
+		return float64(normalizeTimestampValue(int64(v))), nil
 	default:
 		return 0, fmt.Errorf("cannot convert %T to float64", value)
 	}
