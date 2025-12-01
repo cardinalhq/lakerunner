@@ -321,3 +321,4 @@ Do what has been asked; nothing more, nothing less.
 NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+- We are a consumer of packages, not a provider of them.  Do not keep deprecated code around, remove it.  We do not need to provide backward compatability to external callers, and will want to keep our code base consistent and clutter-free.
