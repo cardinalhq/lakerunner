@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -446,6 +447,22 @@ func (p *TraceIngestProcessor) GetTargetRecordCount(ctx context.Context, groupin
 
 // createTraceReaderStack creates a reader stack: Translation(TraceReader(file))
 func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
+	// Determine file type from extension for logging
+	var fileType string
+	switch {
+	case strings.HasSuffix(tmpFilename, ".binpb.gz"):
+		fileType = "binpb.gz"
+	case strings.HasSuffix(tmpFilename, ".binpb"):
+		fileType = "binpb"
+	default:
+		fileType = "unknown"
+	}
+
+	slog.Info("Reading trace file",
+		"fileType", fileType,
+		"objectID", objectID,
+		"bucket", bucket)
+
 	reader, err := p.createTraceReader(tmpFilename, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace reader: %w", err)

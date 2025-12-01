@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -380,6 +381,22 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
+	// Determine file type from extension for logging
+	var fileType string
+	switch {
+	case strings.HasSuffix(tmpFilename, ".binpb.gz"):
+		fileType = "binpb.gz"
+	case strings.HasSuffix(tmpFilename, ".binpb"):
+		fileType = "binpb"
+	default:
+		fileType = "unknown"
+	}
+
+	slog.Info("Reading metric file",
+		"fileType", fileType,
+		"objectID", objectID,
+		"bucket", bucket)
+
 	var reader filereader.Reader
 	var err error
 
