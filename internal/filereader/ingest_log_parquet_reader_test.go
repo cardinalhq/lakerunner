@@ -29,8 +29,8 @@ import (
 // TestIngestLogParquetReader_INT32Promotion tests that INT32 columns are promoted to int64
 // in both the schema and the actual row values.
 func TestIngestLogParquetReader_INT32Promotion(t *testing.T) {
-	// Use the test file that has an INT32 column
-	testFile := "/tmp/av/syslog.parquet"
+	// Use a test file with actual INT32 values (not all NULL)
+	testFile := "/tmp/test_int32.parquet"
 
 	// Open file
 	f, err := os.Open(testFile)
@@ -42,21 +42,19 @@ func TestIngestLogParquetReader_INT32Promotion(t *testing.T) {
 	require.NoError(t, err)
 	defer reader.Close()
 
-	// 1. Check schema - INT32 columns should be reported as int64
+	// 1. Check schema - INT32 columns MUST be reported as int64
 	schema := reader.GetSchema()
 	require.NotNil(t, schema)
 
-	// Check if repeated_message exists in schema and verify it's int64
-	repeatedMessageType := schema.GetColumnType("repeated_message")
-	if repeatedMessageType != DataTypeAny {
-		// If the column exists, it MUST be int64 type
-		assert.Equal(t, DataTypeInt64, repeatedMessageType,
-			"repeated_message column should be int64 type (promoted from INT32)")
-	}
+	int32ValueType := schema.GetColumnType("int32_value")
+	assert.Equal(t, DataTypeInt64, int32ValueType,
+		"int32_value column MUST be int64 type in schema (promoted from INT32)")
 
 	// 2. Read rows and verify INT32 values are emitted as int64
-	foundRepeatedMessage := false
-	repeatedMessageKey := wkk.NewRowKey("repeated_message")
+	foundValues := false
+	int32ValueKey := wkk.NewRowKey("int32_value")
+	expectedValues := []int64{100, 200, 300, 400, 500}
+	actualValues := []int64{}
 
 	for {
 		batch, err := reader.Next(ctx)
@@ -68,21 +66,22 @@ func TestIngestLogParquetReader_INT32Promotion(t *testing.T) {
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
 
-			// Check if row has repeated_message
-			if val, ok := row[repeatedMessageKey]; ok && val != nil {
-				foundRepeatedMessage = true
-				// Value MUST be int64 type
-				_, isInt64 := val.(int64)
+			// Check if row has int32_value
+			if val, ok := row[int32ValueKey]; ok && val != nil {
+				foundValues = true
+				// Value MUST be int64 type (not int32)
+				int64Val, isInt64 := val.(int64)
 				assert.True(t, isInt64,
-					"repeated_message value should be int64 type, got %T", val)
+					"int32_value MUST be int64 type in row, got %T with value %v", val, val)
+				if isInt64 {
+					actualValues = append(actualValues, int64Val)
+				}
 			}
 		}
 	}
 
-	// Note: repeated_message might be all NULL, which is why we don't require finding it
-	if foundRepeatedMessage {
-		t.Log("Verified repeated_message values are int64")
-	} else {
-		t.Log("repeated_message column was all NULL or missing")
-	}
+	// MUST have found the values
+	require.True(t, foundValues, "MUST find int32_value in rows")
+	assert.Equal(t, expectedValues, actualValues,
+		"int32_value values MUST match expected (promoted to int64)")
 }

@@ -212,9 +212,49 @@ func flattenValueIntoRow(row pipeline.Row, dottedPath, underscoredPath string, c
 		if val != nil {
 			finalUnderscored := strings.ReplaceAll(underscoredPath, ".", "_")
 			rowKey := wkk.NewRowKeyFromBytes([]byte(finalUnderscored))
-			row[rowKey] = val
-			// Schema already complete from two-pass scan
+
+			// Promote value to match schema type if needed
+			schemaType := schema.GetColumnType(finalUnderscored)
+			promotedVal, err := promoteValueToSchemaType(val, schemaType)
+			if err == nil {
+				row[rowKey] = promotedVal
+			} else {
+				// If promotion fails, store original value and let normalization handle it
+				row[rowKey] = val
+			}
 		}
+	}
+}
+
+// promoteValueToSchemaType promotes a value to match the schema's expected type.
+// This handles INT32→int64 promotion and other necessary conversions.
+func promoteValueToSchemaType(val any, targetType DataType) (any, error) {
+	switch targetType {
+	case DataTypeInt64:
+		// Promote int32 to int64
+		switch v := val.(type) {
+		case int32:
+			return int64(v), nil
+		case int64:
+			return v, nil
+		case int:
+			return int64(v), nil
+		default:
+			return val, nil // Return as-is, normalization will handle conversion
+		}
+	case DataTypeFloat64:
+		// Promote float32 to float64
+		switch v := val.(type) {
+		case float32:
+			return float64(v), nil
+		case float64:
+			return v, nil
+		default:
+			return val, nil
+		}
+	default:
+		// No promotion needed
+		return val, nil
 	}
 }
 
