@@ -388,7 +388,7 @@ func TestIngestProtoMetricsReader_SchemaExtraction_MultipleMetricTypes(t *testin
 func TestIngestProtoMetricsReader_RealFile_BoolField(t *testing.T) {
 	file, err := gzipOpen("testdata/metrics_with_bool_field.binpb.gz")
 	require.NoError(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	protoReader, err := NewIngestProtoMetricsReader(file, ReaderOptions{OrgID: "test-org", BatchSize: 1000})
 	require.NoError(t, err)
