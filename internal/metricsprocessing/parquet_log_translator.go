@@ -174,12 +174,24 @@ type ParquetLogTranslatingReader struct {
 
 // NewParquetLogTranslatingReader creates a reader that translates parquet logs
 func NewParquetLogTranslatingReader(wrapped filereader.Reader, orgID, bucket, objectID string) *ParquetLogTranslatingReader {
-	return &ParquetLogTranslatingReader{
+	// Get source schema from wrapped reader (which should be fully built in its constructor)
+	sourceSchema := wrapped.GetSchema()
+	if sourceSchema == nil {
+		sourceSchema = filereader.NewReaderSchema()
+	}
+
+	r := &ParquetLogTranslatingReader{
 		wrapped:  wrapped,
 		orgID:    orgID,
 		bucket:   bucket,
 		objectID: objectID,
 	}
+
+	// Build the transformed schema immediately in the constructor
+	r.schema = r.transformSchema(sourceSchema)
+	r.schemaBuilt = true
+
+	return r
 }
 
 var _ filereader.Reader = (*ParquetLogTranslatingReader)(nil)
@@ -638,19 +650,7 @@ func (r *ParquetLogTranslatingReader) Next(ctx context.Context) (*filereader.Bat
 
 // GetSchema returns the transformed schema
 func (r *ParquetLogTranslatingReader) GetSchema() *filereader.ReaderSchema {
-	if !r.schemaBuilt {
-		// Get source schema from wrapped reader
-		sourceSchema := r.wrapped.GetSchema()
-		if sourceSchema == nil {
-			sourceSchema = filereader.NewReaderSchema()
-		}
-
-		// Transform the schema to match what TranslateRow does to rows
-		r.schema = r.transformSchema(sourceSchema)
-		r.schemaBuilt = true
-	}
-
-	// Return a copy to prevent external mutation
+	// Schema is built in constructor, just return a copy
 	return r.schema.Copy()
 }
 
@@ -691,8 +691,9 @@ func (r *ParquetLogTranslatingReader) transformSchema(source *filereader.ReaderS
 	transformed.AddColumn(wkk.RowKeyCMessage, wkk.RowKeyCMessage, filereader.DataTypeString, true)
 	transformed.AddColumn(wkk.RowKeyCLevel, wkk.RowKeyCLevel, filereader.DataTypeString, true)
 
-	// Optional field (only if present in data)
+	// Optional fields (only if present in data)
 	transformed.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, false)
+	transformed.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, false)
 
 	return transformed
 }

@@ -35,12 +35,12 @@ func TestIngestLogParquetReader_INT32Promotion(t *testing.T) {
 	// Open file
 	f, err := os.Open(testFile)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	ctx := context.Background()
 	reader, err := NewIngestLogParquetReader(ctx, f, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// 1. Check schema - INT32 columns MUST be reported as int64
 	schema := reader.GetSchema()

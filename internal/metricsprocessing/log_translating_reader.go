@@ -45,12 +45,34 @@ var _ filereader.Reader = (*LogTranslatingReader)(nil)
 
 // NewLogTranslatingReader creates a new reader that applies log-specific transformations.
 func NewLogTranslatingReader(wrapped filereader.Reader, orgID, bucket, objectID string, fingerprintTenantManager *fingerprint.TenantManager) *LogTranslatingReader {
+	// Get source schema from wrapped reader (which should be fully built in its constructor)
+	sourceSchema := wrapped.GetSchema()
+	if sourceSchema == nil {
+		sourceSchema = filereader.NewReaderSchema()
+	}
+
+	// Start with a copy of the source schema
+	schema := sourceSchema.Copy()
+
+	// Add columns that translateRow adds
+	schema.AddColumn(wkk.RowKeyResourceBucketName, wkk.RowKeyResourceBucketName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFileName, wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFile, wkk.RowKeyResourceFile, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceFileType, wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, false)
+	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
+	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+
 	return &LogTranslatingReader{
 		wrapped:                  wrapped,
 		orgID:                    orgID,
 		bucket:                   bucket,
 		objectID:                 objectID,
 		fingerprintTenantManager: fingerprintTenantManager,
+		schema:                   schema,
+		schemaBuilt:              true,
 	}
 }
 
@@ -135,31 +157,7 @@ func (r *LogTranslatingReader) setFingerprint(ctx context.Context, row *pipeline
 
 // GetSchema returns the schema with log-specific columns added.
 func (r *LogTranslatingReader) GetSchema() *filereader.ReaderSchema {
-	if !r.schemaBuilt {
-		// Get source schema from wrapped reader
-		sourceSchema := r.wrapped.GetSchema()
-		if sourceSchema == nil {
-			sourceSchema = filereader.NewReaderSchema()
-		}
-
-		// Start with a copy of the source schema
-		r.schema = sourceSchema.Copy()
-
-		// Add columns that translateRow adds
-		r.schema.AddColumn(wkk.RowKeyResourceBucketName, wkk.RowKeyResourceBucketName, filereader.DataTypeString, true)
-		r.schema.AddColumn(wkk.RowKeyResourceFileName, wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
-		r.schema.AddColumn(wkk.RowKeyResourceFile, wkk.RowKeyResourceFile, filereader.DataTypeString, true)
-		r.schema.AddColumn(wkk.RowKeyResourceFileType, wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
-		r.schema.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, false)
-		r.schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
-		r.schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
-		r.schema.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
-		r.schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
-
-		r.schemaBuilt = true
-	}
-
-	// Return a copy to prevent external mutation
+	// Schema is built in constructor, just return a copy
 	return r.schema.Copy()
 }
 
