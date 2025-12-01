@@ -552,13 +552,13 @@ func translateParquetLogRow(ctx context.Context, row *pipeline.Row, orgID, bucke
 			continue
 		}
 
-		// Skip underscore fields and fields already with resource_ prefix
-		if strings.HasPrefix(keyStr, "resource_") || keyStr[0] == '_' {
-			// Remove underscore fields but keep existing resource_ fields
+		// Skip underscore fields, resource_ fields, and chq_ fields (keep them as-is)
+		if strings.HasPrefix(keyStr, "resource_") || strings.HasPrefix(keyStr, "chq_") || keyStr[0] == '_' {
+			// Remove underscore fields but keep existing resource_ and chq_ fields
 			if keyStr[0] == '_' {
 				delete(*row, key)
 			}
-			// Keep existing resource_ fields as-is
+			// Keep existing resource_ and chq_ fields as-is
 			continue
 		}
 
@@ -667,8 +667,8 @@ func (r *ParquetLogTranslatingReader) transformSchema(source *filereader.ReaderS
 			continue
 		}
 
-		// Keep resource_ fields as-is
-		if strings.HasPrefix(colName, "resource_") {
+		// Keep resource_ and chq_ fields as-is
+		if strings.HasPrefix(colName, "resource_") || strings.HasPrefix(colName, "chq_") {
 			transformed.AddColumn(col.Name, col.Name, col.DataType, col.HasNonNull)
 			continue
 		}

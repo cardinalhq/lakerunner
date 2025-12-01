@@ -23,6 +23,7 @@ import (
 	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // TranslatingReader wraps another Reader and applies row transformations.
@@ -150,8 +151,20 @@ func (tr *TranslatingReader) TotalRowsReturned() int64 {
 
 // GetSchema delegates to the wrapped reader.
 func (tr *TranslatingReader) GetSchema() *ReaderSchema {
+	var schema *ReaderSchema
 	if tr.reader != nil {
-		return tr.reader.GetSchema()
+		schema = tr.reader.GetSchema()
+	} else {
+		schema = NewReaderSchema()
 	}
-	return NewReaderSchema()
+
+	// TranslatingReader is a generic wrapper that doesn't know what fields the translator adds.
+	// However, we know that translators commonly add CHQ internal fields that need to be in the schema
+	// before normalization happens (especially in MergesortReader).
+	// These columns are marked as optional (hasNonNull=false) since not all translators add them.
+	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, DataTypeString, false)
+	schema.AddColumn(wkk.RowKeyCCustomerID, wkk.RowKeyCCustomerID, DataTypeString, false)
+	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, DataTypeInt64, false)
+
+	return schema
 }
