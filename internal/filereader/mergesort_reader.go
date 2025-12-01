@@ -203,11 +203,19 @@ func (or *MergesortReader) Next(ctx context.Context) (*Batch, error) {
 		selectedReader := or.activeReaders[minIndex]
 
 		// Copy the row to the batch
-		// Rows are already normalized by their source readers (e.g., IngestLogParquetReader)
-		// so we don't normalize again here to avoid rejecting dynamic columns from map flattening
 		row := batch.AddRow()
 		for k, v := range selectedReader.currentRow {
 			row[k] = v
+		}
+
+		// Apply schema normalization to ensure type consistency across readers
+		// Different readers may have different types for the same column (e.g., int64 vs float64)
+		// The merged schema contains the promoted types, so normalize to match
+		if or.schema != nil && len(or.schema.Columns()) > 0 {
+			if err := normalizeRow(ctx, row, or.schema); err != nil {
+				pipeline.ReturnBatch(batch)
+				return nil, fmt.Errorf("schema normalization failed: %w", err)
+			}
 		}
 
 		// Advance the selected reader to its next row
