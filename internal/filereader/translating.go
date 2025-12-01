@@ -161,10 +161,10 @@ func (tr *TranslatingReader) GetSchema() *ReaderSchema {
 	// TranslatingReader is a generic wrapper that doesn't know what fields the translator adds.
 	// However, we know that translators commonly add CHQ internal fields that need to be in the schema
 	// before normalization happens (especially in MergesortReader).
-	// These columns are marked as optional (hasNonNull=false) since not all translators add them.
-	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, DataTypeString, false)
-	schema.AddColumn(wkk.RowKeyCCustomerID, wkk.RowKeyCCustomerID, DataTypeString, false)
-	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, DataTypeInt64, false)
+	// Mark as hasNonNull=true since translators add these fields (even if conditionally).
+	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCCustomerID, wkk.RowKeyCCustomerID, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, DataTypeInt64, true)
 
 	return schema
 }

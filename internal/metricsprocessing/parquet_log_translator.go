@@ -691,9 +691,9 @@ func (r *ParquetLogTranslatingReader) transformSchema(source *filereader.ReaderS
 	transformed.AddColumn(wkk.RowKeyCMessage, wkk.RowKeyCMessage, filereader.DataTypeString, true)
 	transformed.AddColumn(wkk.RowKeyCLevel, wkk.RowKeyCLevel, filereader.DataTypeString, true)
 
-	// Optional fields (only if present in data)
-	transformed.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, false)
-	transformed.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, false)
+	// Fields we add conditionally but must be in schema for parquet writer
+	transformed.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
+	transformed.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
 
 	return transformed
 }

@@ -59,7 +59,7 @@ func NewLogTranslatingReader(wrapped filereader.Reader, orgID, bucket, objectID 
 	schema.AddColumn(wkk.RowKeyResourceFileName, wkk.RowKeyResourceFileName, filereader.DataTypeString, true)
 	schema.AddColumn(wkk.RowKeyResourceFile, wkk.RowKeyResourceFile, filereader.DataTypeString, true)
 	schema.AddColumn(wkk.RowKeyResourceFileType, wkk.RowKeyResourceFileType, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, false)
+	schema.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
 	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
 	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
 	schema.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
