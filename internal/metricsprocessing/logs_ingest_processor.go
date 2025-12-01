@@ -626,21 +626,16 @@ func (p *LogIngestProcessor) createLogReader(filename, orgId string) (filereader
 }
 
 // createUnifiedLogReader creates a unified reader from multiple readers
+// Always uses MergesortReader to ensure row normalization happens
 func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
-	var finalReader filereader.Reader
-
-	if len(readers) == 1 {
-		finalReader = readers[0]
-	} else {
-		keyProvider := &filereader.TimestampSortKeyProvider{}
-		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
-		}
-		finalReader = multiReader
+	// Always use MergesortReader, even for single files
+	// This ensures rows are normalized according to the schema before writing
+	keyProvider := &filereader.TimestampSortKeyProvider{}
+	multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
 	}
-
-	return finalReader, nil
+	return multiReader, nil
 }
 
 // processRowsWithDateintBinning groups logs by dateint only (no aggregation, no time window)
