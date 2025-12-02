@@ -183,14 +183,30 @@ func TestConvertValue(t *testing.T) {
 		// Int64 conversions
 		{"int64 to int64", int64(42), DataTypeInt64, int64(42), false},
 		{"int to int64", 42, DataTypeInt64, int64(42), false},
+		{"int32 to int64", int32(42), DataTypeInt64, int64(42), false},
+		{"int16 to int64", int16(42), DataTypeInt64, int64(42), false},
+		{"int8 to int64", int8(42), DataTypeInt64, int64(42), false},
+		{"uint64 to int64", uint64(42), DataTypeInt64, int64(42), false},
+		{"uint32 to int64", uint32(42), DataTypeInt64, int64(42), false},
+		{"uint16 to int64", uint16(42), DataTypeInt64, int64(42), false},
+		{"uint8 to int64", uint8(42), DataTypeInt64, int64(42), false},
 		{"float64 to int64", 3.14, DataTypeInt64, int64(3), false},
+		{"float32 to int64", float32(3.14), DataTypeInt64, int64(3), false},
 		{"string to int64", "123", DataTypeInt64, int64(123), false},
 		{"invalid string to int64", "abc", DataTypeInt64, int64(0), true},
 
 		// Float64 conversions
 		{"float64 to float64", 3.14, DataTypeFloat64, 3.14, false},
+		{"float32 to float64", float32(3.14), DataTypeFloat64, float64(float32(3.14)), false},
 		{"int64 to float64", int64(42), DataTypeFloat64, float64(42), false},
 		{"int to float64", 42, DataTypeFloat64, float64(42), false},
+		{"int32 to float64", int32(42), DataTypeFloat64, float64(42), false},
+		{"int16 to float64", int16(42), DataTypeFloat64, float64(42), false},
+		{"int8 to float64", int8(42), DataTypeFloat64, float64(42), false},
+		{"uint64 to float64", uint64(42), DataTypeFloat64, float64(42), false},
+		{"uint32 to float64", uint32(42), DataTypeFloat64, float64(42), false},
+		{"uint16 to float64", uint16(42), DataTypeFloat64, float64(42), false},
+		{"uint8 to float64", uint8(42), DataTypeFloat64, float64(42), false},
 		{"string to float64", "3.14", DataTypeFloat64, 3.14, false},
 		{"invalid string to float64", "abc", DataTypeFloat64, float64(0), true},
 
@@ -202,6 +218,12 @@ func TestConvertValue(t *testing.T) {
 		{"string to bool (0)", "0", DataTypeBool, false, false},
 		{"int64 to bool (non-zero)", int64(42), DataTypeBool, true, false},
 		{"int64 to bool (zero)", int64(0), DataTypeBool, false, false},
+		{"int32 to bool (non-zero)", int32(42), DataTypeBool, true, false},
+		{"int32 to bool (zero)", int32(0), DataTypeBool, false, false},
+		{"uint64 to bool (non-zero)", uint64(42), DataTypeBool, true, false},
+		{"uint64 to bool (zero)", uint64(0), DataTypeBool, false, false},
+		{"float64 to bool (non-zero)", float64(3.14), DataTypeBool, true, false},
+		{"float64 to bool (zero)", float64(0), DataTypeBool, false, false},
 
 		// Bytes conversions
 		{"bytes to bytes", []byte("test"), DataTypeBytes, []byte("test"), false},
