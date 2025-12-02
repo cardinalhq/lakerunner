@@ -694,6 +694,7 @@ func (r *ParquetLogTranslatingReader) transformSchema(source *filereader.ReaderS
 	// Fields we add conditionally but must be in schema for parquet writer
 	transformed.AddColumn(wkk.RowKeyResourceCustomerDomain, wkk.RowKeyResourceCustomerDomain, filereader.DataTypeString, true)
 	transformed.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
+	transformed.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true) // Added by FileSplitter
 
 	return transformed
 }
