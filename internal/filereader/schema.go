@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"go.opentelemetry.io/otel/attribute"
@@ -370,6 +371,9 @@ func convertToInt64(value any) (int64, error) {
 	case int8:
 		return int64(v), nil
 	case uint64:
+		if v > math.MaxInt64 {
+			return 0, fmt.Errorf("uint64 value %d overflows int64", v)
+		}
 		return int64(v), nil
 	case uint32:
 		return int64(v), nil
@@ -420,6 +424,8 @@ func normalizeTimestampValue(ts int64) int64 {
 }
 
 // convertToFloat64 converts a value to float64.
+// Note: Large uint64/int64 values (>2^53) may lose precision when converted to float64,
+// as float64 only has 53 bits of mantissa. This is acceptable for observability data.
 func convertToFloat64(value any) (float64, error) {
 	switch v := value.(type) {
 	case float64:

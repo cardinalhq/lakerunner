@@ -194,6 +194,7 @@ func TestConvertValue(t *testing.T) {
 		{"float32 to int64", float32(3.14), DataTypeInt64, int64(3), false},
 		{"string to int64", "123", DataTypeInt64, int64(123), false},
 		{"invalid string to int64", "abc", DataTypeInt64, int64(0), true},
+		{"uint64 overflow to int64", uint64(1 << 63), DataTypeInt64, int64(0), true}, // exceeds MaxInt64
 
 		// Float64 conversions
 		{"float64 to float64", 3.14, DataTypeFloat64, 3.14, false},
