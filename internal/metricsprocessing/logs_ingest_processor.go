@@ -43,6 +43,9 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // DateintBin represents a file group containing logs for a specific dateint
@@ -133,6 +136,8 @@ func validateLogIngestMessages(key messages.IngestKey, msgs []*messages.ObjStore
 
 // Process implements the Processor interface and performs raw log ingestion
 func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.IngestKey, msgs []*messages.ObjStoreNotificationMessage, partition int32, offset int64) error {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/metricsprocessing")
+
 	ll := logctx.FromContext(ctx).With(
 		slog.String("organizationID", key.OrganizationID.String()),
 		slog.Int("instanceNum", int(key.InstanceNum)))
@@ -155,13 +160,25 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		}
 	}()
 
+	ctx, storageSpan := tracer.Start(ctx, "logs.ingest.setup_storage")
+	storageSpan.SetAttributes(
+		attribute.String("organization_id", key.OrganizationID.String()),
+		attribute.Int("instance_num", int(key.InstanceNum)),
+	)
+
 	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
 	if err != nil {
+		storageSpan.RecordError(err)
+		storageSpan.SetStatus(codes.Error, "failed to get storage profile")
+		storageSpan.End()
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
 	inputClient, err := cloudstorage.NewClient(ctx, p.cmgr, srcProfile)
 	if err != nil {
+		storageSpan.RecordError(err)
+		storageSpan.SetStatus(codes.Error, "failed to create input client")
+		storageSpan.End()
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
@@ -169,18 +186,28 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	if p.config.Logs.Ingestion.SingleInstanceMode {
 		dstProfile, err = p.storageProvider.GetLowestInstanceStorageProfile(ctx, srcProfile.OrganizationID, srcProfile.Bucket)
 		if err != nil {
+			storageSpan.RecordError(err)
+			storageSpan.SetStatus(codes.Error, "failed to get lowest instance profile")
+			storageSpan.End()
 			return fmt.Errorf("get lowest instance storage profile: %w", err)
 		}
 	}
 
 	outputClient, err := cloudstorage.NewClient(ctx, p.cmgr, dstProfile)
 	if err != nil {
+		storageSpan.RecordError(err)
+		storageSpan.SetStatus(codes.Error, "failed to create output client")
+		storageSpan.End()
 		return fmt.Errorf("create storage client: %w", err)
 	}
+	storageSpan.End()
 
 	var readers []filereader.Reader
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
+
+	ctx, downloadSpan := tracer.Start(ctx, "logs.ingest.download_files")
+	downloadSpan.SetAttributes(attribute.Int("file_count", len(msgs)))
 
 	for _, msg := range msgs {
 
@@ -209,6 +236,12 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		totalInputSize += msg.FileSize
 	}
 
+	downloadSpan.SetAttributes(
+		attribute.Int("files_downloaded", len(readers)),
+		attribute.Int64("total_input_size", totalInputSize),
+	)
+	downloadSpan.End()
+
 	defer func() {
 		for _, reader := range readersToClose {
 			if closeErr := reader.Close(); closeErr != nil {
@@ -222,15 +255,26 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		return nil
 	}
 
+	ctx, readerSpan := tracer.Start(ctx, "logs.ingest.create_unified_reader")
 	finalReader, err := p.createUnifiedLogReader(ctx, readers)
 	if err != nil {
+		readerSpan.RecordError(err)
+		readerSpan.SetStatus(codes.Error, "failed to create unified reader")
+		readerSpan.End()
 		return fmt.Errorf("failed to create unified reader: %w", err)
 	}
+	readerSpan.End()
 
+	ctx, processSpan := tracer.Start(ctx, "logs.ingest.process_rows")
 	dateintBins, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
+		processSpan.RecordError(err)
+		processSpan.SetStatus(codes.Error, "failed to process rows")
+		processSpan.End()
 		return fmt.Errorf("failed to process rows: %w", err)
 	}
+	processSpan.SetAttributes(attribute.Int("dateint_bins", len(dateintBins)))
+	processSpan.End()
 
 	if len(dateintBins) == 0 {
 		ll.Info("No output files generated")
@@ -240,10 +284,16 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	// Get schema from reader for label name mapping
 	schema := finalReader.GetSchema()
 
+	ctx, uploadSpan := tracer.Start(ctx, "logs.ingest.upload_segments")
 	segmentParams, err := p.uploadAndCreateLogSegments(ctx, outputClient, dateintBins, schema, dstProfile)
 	if err != nil {
+		uploadSpan.RecordError(err)
+		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
+		uploadSpan.End()
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
+	uploadSpan.SetAttributes(attribute.Int("segment_count", len(segmentParams)))
+	uploadSpan.End()
 
 	// Create kafka offset info for tracking
 	kafkaOffsets := []lrdb.KafkaOffsetInfo{{
@@ -254,6 +304,13 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	}}
 
 	criticalCtx := context.WithoutCancel(ctx)
+	ctx, dbSpan := tracer.Start(ctx, "logs.ingest.insert_segments")
+	dbSpan.SetAttributes(
+		attribute.Int("segment_count", len(segmentParams)),
+		attribute.Int("kafka.partition", int(partition)),
+		attribute.Int64("kafka.offset", offset),
+	)
+
 	if err := p.store.InsertLogSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
 		segmentIDs := make([]int64, len(segmentParams))
 		var totalRecords, totalSize int64
@@ -262,6 +319,10 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 			totalRecords += seg.RecordCount
 			totalSize += seg.FileSize
 		}
+
+		dbSpan.RecordError(err)
+		dbSpan.SetStatus(codes.Error, "failed to insert segments")
+		dbSpan.End()
 
 		ll.Error("Failed to insert log segments with Kafka offsets",
 			slog.Any("error", err),
@@ -272,8 +333,12 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 
 		return fmt.Errorf("failed to insert log segments with Kafka offsets: %w", err)
 	}
+	dbSpan.End()
 
 	if p.kafkaProducer != nil {
+		_, kafkaSpan := tracer.Start(ctx, "logs.ingest.publish_compaction")
+		kafkaSpan.SetAttributes(attribute.Int("message_count", len(segmentParams)))
+
 		compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerLogsCompact)
 
 		for _, segParams := range segmentParams {
@@ -292,6 +357,9 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 
 			compactionMsgBytes, err := compactionNotification.Marshal()
 			if err != nil {
+				kafkaSpan.RecordError(err)
+				kafkaSpan.SetStatus(codes.Error, "failed to marshal compaction message")
+				kafkaSpan.End()
 				return fmt.Errorf("failed to marshal log compaction notification: %w", err)
 			}
 
@@ -301,11 +369,15 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 			}
 
 			if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
+				kafkaSpan.RecordError(err)
+				kafkaSpan.SetStatus(codes.Error, "failed to send to kafka")
+				kafkaSpan.End()
 				return fmt.Errorf("failed to send log compaction notification to Kafka: %w", err)
 			} else {
 				ll.Debug("Sent log compaction notification", slog.Any("message", compactionNotification))
 			}
 		}
+		kafkaSpan.End()
 	}
 
 	// Calculate output metrics for telemetry
