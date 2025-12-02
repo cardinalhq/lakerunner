@@ -30,6 +30,10 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
@@ -43,9 +47,6 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 )
 
 // DateintBin represents a file group containing logs for a specific dateint
