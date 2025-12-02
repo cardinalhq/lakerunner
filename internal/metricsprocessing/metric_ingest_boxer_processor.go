@@ -30,19 +30,18 @@ import (
 
 // MetricIngestBoxerProcessor implements the Processor interface for boxing metric ingestion bundles
 type MetricIngestBoxerProcessor struct {
-	kafkaProducer fly.Producer
-	store         BoxerStore
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newMetricIngestBoxerProcessor creates a new metric ingestion boxer processor instance
 func newMetricIngestBoxerProcessor(
 	cfg *config.Config,
-	kafkaProducer fly.Producer, store BoxerStore) *MetricIngestBoxerProcessor {
+	_ fly.Producer,
+	store BoxerStore) *MetricIngestBoxerProcessor {
 	return &MetricIngestBoxerProcessor{
-		kafkaProducer: kafkaProducer,
-		store:         store,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 

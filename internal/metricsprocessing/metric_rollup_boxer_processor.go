@@ -30,20 +30,19 @@ import (
 
 // MetricRollupBoxerProcessor implements the Processor interface for boxing metric rollup bundles
 type MetricRollupBoxerProcessor struct {
-	kafkaProducer fly.Producer
-	store         BoxerStore
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newMetricBoxerProcessor creates a new metric boxer processor instance
 func newMetricBoxerProcessor(
 	_ context.Context,
 	cfg *config.Config,
-	kafkaProducer fly.Producer, store BoxerStore) *MetricRollupBoxerProcessor {
+	_ fly.Producer,
+	store BoxerStore) *MetricRollupBoxerProcessor {
 	return &MetricRollupBoxerProcessor{
-		kafkaProducer: kafkaProducer,
-		store:         store,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 

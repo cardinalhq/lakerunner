@@ -34,21 +34,19 @@ import (
 // GetLogEstimate() from the store. The actual compaction operations (GetLogSeg,
 // CompactLogSegments, etc.) are performed by the compaction processor itself.
 type LogCompactionBoxerProcessor struct {
-	store         BoxerStore
-	kafkaProducer fly.Producer
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newLogCompactionBoxerProcessor creates a new log compaction boxer processor
 func newLogCompactionBoxerProcessor(
 	cfg *config.Config,
-	producer fly.Producer,
+	_ fly.Producer,
 	store BoxerStore,
 ) *LogCompactionBoxerProcessor {
 	return &LogCompactionBoxerProcessor{
-		store:         store,
-		kafkaProducer: producer,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 
