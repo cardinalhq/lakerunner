@@ -30,19 +30,18 @@ import (
 
 // TraceCompactionBoxerProcessor implements the Processor interface for boxing trace compaction bundles
 type TraceCompactionBoxerProcessor struct {
-	kafkaProducer fly.Producer
-	store         BoxerStore
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newTraceCompactionBoxerProcessor creates a new trace compaction boxer processor instance
 func newTraceCompactionBoxerProcessor(
 	cfg *config.Config,
-	kafkaProducer fly.Producer, store BoxerStore) *TraceCompactionBoxerProcessor {
+	_ fly.Producer,
+	store BoxerStore) *TraceCompactionBoxerProcessor {
 	return &TraceCompactionBoxerProcessor{
-		kafkaProducer: kafkaProducer,
-		store:         store,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 

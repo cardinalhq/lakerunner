@@ -30,19 +30,18 @@ import (
 
 // MetricCompactionBoxerProcessor implements the Processor interface for boxing metric compaction bundles
 type MetricCompactionBoxerProcessor struct {
-	kafkaProducer fly.Producer
-	store         BoxerStore
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newMetricCompactionBoxerProcessor creates a new metric compaction boxer processor instance
 func newMetricCompactionBoxerProcessor(
 	cfg *config.Config,
-	kafkaProducer fly.Producer, store BoxerStore) *MetricCompactionBoxerProcessor {
+	_ fly.Producer,
+	store BoxerStore) *MetricCompactionBoxerProcessor {
 	return &MetricCompactionBoxerProcessor{
-		kafkaProducer: kafkaProducer,
-		store:         store,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 

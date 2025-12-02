@@ -30,19 +30,18 @@ import (
 
 // LogIngestBoxerProcessor implements the Processor interface for boxing log ingestion bundles
 type LogIngestBoxerProcessor struct {
-	kafkaProducer fly.Producer
-	store         BoxerStore
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newLogIngestBoxerProcessor creates a new log ingestion boxer processor instance
 func newLogIngestBoxerProcessor(
 	cfg *config.Config,
-	kafkaProducer fly.Producer, store BoxerStore) *LogIngestBoxerProcessor {
+	_ fly.Producer,
+	store BoxerStore) *LogIngestBoxerProcessor {
 	return &LogIngestBoxerProcessor{
-		kafkaProducer: kafkaProducer,
-		store:         store,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 

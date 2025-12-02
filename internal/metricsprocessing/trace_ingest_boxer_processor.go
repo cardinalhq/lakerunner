@@ -30,19 +30,18 @@ import (
 
 // TraceIngestBoxerProcessor implements the Processor interface for boxing trace ingestion bundles
 type TraceIngestBoxerProcessor struct {
-	kafkaProducer fly.Producer
-	store         BoxerStore
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newTraceIngestBoxerProcessor creates a new trace ingestion boxer processor instance
 func newTraceIngestBoxerProcessor(
 	cfg *config.Config,
-	kafkaProducer fly.Producer, store BoxerStore) *TraceIngestBoxerProcessor {
+	_ fly.Producer,
+	store BoxerStore) *TraceIngestBoxerProcessor {
 	return &TraceIngestBoxerProcessor{
-		kafkaProducer: kafkaProducer,
-		store:         store,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 
