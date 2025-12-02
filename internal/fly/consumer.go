@@ -163,14 +163,16 @@ func NewConsumerWithOptions(opts ...ConsumerOption) Consumer {
 
 func (c *kafkaConsumer) Consume(ctx context.Context, handler MessageHandler) error {
 	// Log consumer startup details
-	slog.Debug("Starting Kafka consumer consumption loop",
+	slog.Info("Starting Kafka consumer consumption loop",
 		slog.String("topic", c.config.Topic),
 		slog.String("consumerGroup", c.config.GroupID),
 		slog.Int64("startOffset", c.config.StartOffset),
 		slog.Int("batchSize", c.config.BatchSize),
 		slog.Duration("maxWait", c.config.MaxWait),
 		slog.Int("minBytes", c.config.MinBytes),
-		slog.Int("maxBytes", c.config.MaxBytes))
+		slog.Int("maxBytes", c.config.MaxBytes),
+		slog.Bool("autoCommit", c.config.AutoCommit),
+		slog.Bool("commitBatch", c.config.CommitBatch))
 
 	batch := make([]ConsumedMessage, 0, c.config.BatchSize)
 
