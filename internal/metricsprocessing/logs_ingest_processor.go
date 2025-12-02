@@ -485,9 +485,6 @@ func ProcessLogFiles(
 						slog.Any("error", err))
 				} else {
 					totalRowsProcessed++
-					if totalRowsProcessed%2000 == 0 {
-						ll.Info("Processed log rows", slog.Int64("totalRowsProcessed", totalRowsProcessed))
-					}
 				}
 
 				pipeline.ReturnBatch(singleRowBatch)
