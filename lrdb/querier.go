@@ -103,6 +103,13 @@ type Querier interface {
 	// Updates or inserts a single pack estimate for any signal type
 	UpsertPackEstimate(ctx context.Context, arg UpsertPackEstimateParams) error
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
+	WorkQueueAdd(ctx context.Context, arg WorkQueueAddParams) (WorkQueue, error)
+	WorkQueueClaim(ctx context.Context, arg WorkQueueClaimParams) (WorkQueue, error)
+	WorkQueueCleanup(ctx context.Context, heartbeatTimeout time.Duration) error
+	WorkQueueComplete(ctx context.Context, arg WorkQueueCompleteParams) error
+	WorkQueueDepth(ctx context.Context, taskName string) (int64, error)
+	WorkQueueFail(ctx context.Context, arg WorkQueueFailParams) (int32, error)
+	WorkQueueHeartbeat(ctx context.Context, arg WorkQueueHeartbeatParams) error
 	batchInsertLogSegsDirect(ctx context.Context, arg []batchInsertLogSegsDirectParams) *batchInsertLogSegsDirectBatchResults
 	batchInsertTraceSegsDirect(ctx context.Context, arg []batchInsertTraceSegsDirectParams) *batchInsertTraceSegsDirectBatchResults
 	insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
