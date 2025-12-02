@@ -176,9 +176,10 @@ func arrowTypeToDataType(atype arrow.DataType) DataType {
 	}
 }
 
-// buildParquetTypeMap builds a map of column name to DataType from parquet metadata.
+// buildParquetTypeMap builds a map of underscored column path to DataType from parquet metadata.
 // This uses the actual parquet physical types, not Arrow's inferred types.
 // INT32 is promoted to Int64 for consistency.
+// The key is the column path with dots replaced by underscores (e.g., "foo.bar.baz" -> "foo_bar_baz").
 func buildParquetTypeMap(pf *file.Reader) map[string]DataType {
 	typeMap := make(map[string]DataType)
 
@@ -189,30 +190,34 @@ func buildParquetTypeMap(pf *file.Reader) map[string]DataType {
 	schema := pf.MetaData().Schema
 	for i := 0; i < schema.NumColumns(); i++ {
 		col := schema.Column(i)
-		colName := col.Name()
+		// Use full path with underscores as key to avoid collisions between
+		// top-level columns and nested columns with the same leaf name.
+		// e.g., "error" vs "pushconfig_status.Response.error" become
+		// "error" vs "pushconfig_status_Response_error"
+		colKey := strings.ReplaceAll(col.Path(), ".", "_")
 
 		// Map parquet physical type to our DataType
 		physicalType := col.PhysicalType()
 
 		switch physicalType {
 		case parquet.Types.Boolean:
-			typeMap[colName] = DataTypeBool
+			typeMap[colKey] = DataTypeBool
 		case parquet.Types.Int32, parquet.Types.Int64:
 			// Promote INT32 to Int64
-			typeMap[colName] = DataTypeInt64
+			typeMap[colKey] = DataTypeInt64
 		case parquet.Types.Float, parquet.Types.Double:
-			typeMap[colName] = DataTypeFloat64
+			typeMap[colKey] = DataTypeFloat64
 		case parquet.Types.ByteArray, parquet.Types.FixedLenByteArray:
 			// Check logical type to distinguish string from bytes
 			logicalType := col.LogicalType()
 			if logicalType != nil && logicalType.String() == "String" {
-				typeMap[colName] = DataTypeString
+				typeMap[colKey] = DataTypeString
 			} else {
-				typeMap[colName] = DataTypeBytes
+				typeMap[colKey] = DataTypeBytes
 			}
 		default:
 			// Unknown physical type - use Any
-			typeMap[colName] = DataTypeAny
+			typeMap[colKey] = DataTypeAny
 		}
 	}
 
