@@ -25,6 +25,9 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // LogIngestConsumer handles log ingest bundles from boxer
@@ -71,10 +74,22 @@ func NewLogIngestConsumer(
 
 // ProcessMessage implements MessageProcessor interface
 func (c *LogIngestConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/metricsprocessing")
+	ctx, span := tracer.Start(ctx, "logs.ingest.bundle")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("kafka.topic", msg.Topic),
+		attribute.Int("kafka.partition", msg.Partition),
+		attribute.Int64("kafka.offset", msg.Offset),
+	)
+
 	ll := logctx.FromContext(ctx)
 
 	var bundle messages.LogIngestBundle
 	if err := bundle.Unmarshal(msg.Value); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to unmarshal bundle")
 		ll.Info("Dropping message that failed to unmarshal as bundle", slog.Any("error", err))
 		return nil // Don't fail the batch, just skip this message
 	}
@@ -87,13 +102,26 @@ func (c *LogIngestConsumer) ProcessMessage(ctx context.Context, msg fly.Consumed
 	firstMsg := bundle.Messages[0]
 	key := firstMsg.GroupingKey().(messages.IngestKey)
 
+	span.SetAttributes(
+		attribute.String("organization_id", key.OrganizationID.String()),
+		attribute.Int("instance_num", int(key.InstanceNum)),
+		attribute.Int("message_count", len(bundle.Messages)),
+	)
+
 	ll.Info("Processing log ingest bundle",
 		slog.String("organizationID", key.OrganizationID.String()),
 		slog.Int("instanceNum", int(key.InstanceNum)),
 		slog.Int("messageCount", len(bundle.Messages)))
 
 	// ProcessBundle will insert the Kafka offsets into the database as part of its transaction
-	return c.processor.ProcessBundle(ctx, key, bundle.Messages, int32(msg.Partition), msg.Offset)
+	if err := c.processor.ProcessBundle(ctx, key, bundle.Messages, int32(msg.Partition), msg.Offset); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to process bundle")
+		return err
+	}
+
+	span.SetStatus(codes.Ok, "bundle processed successfully")
+	return nil
 }
 
 // GetTopic implements MessageProcessor interface

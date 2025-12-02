@@ -41,9 +41,6 @@ var (
 	meter = otel.Meter("github.com/cardinalhq/lakerunner")
 
 	myInstanceID int64
-
-	//nolint:unused
-	existsGauge metric.Int64Gauge
 )
 
 func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Context, func() error, error) {
@@ -107,7 +104,6 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 			return otelShutdown(ctx)
 		}
 	} else {
-		// Configure slog even when OTEL is disabled
 		logger = slog.New(slog.NewTextHandler(os.Stdout, opts)).With(
 			slog.String("service", servicename),
 			slog.Int64("instanceID", myInstanceID),
@@ -123,7 +119,6 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 
 // startProcessMemoryMetrics registers observable gauges for process memory metrics
 func startProcessMemoryMetrics(_ context.Context) {
-	// Get current process handle once
 	pid := int32(os.Getpid())
 	proc, err := process.NewProcess(pid)
 	if err != nil {
@@ -158,7 +153,6 @@ func startProcessMemoryMetrics(_ context.Context) {
 		func(_ context.Context, observer metric.Observer) error {
 			memInfo, err := proc.MemoryInfo()
 			if err != nil {
-				// Log at debug level to avoid spam
 				slog.Debug("failed to get process memory info", "error", err)
 				return nil // Don't propagate error to avoid breaking metrics collection
 			}
