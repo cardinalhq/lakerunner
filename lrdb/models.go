@@ -230,3 +230,18 @@ type TraceSeg struct {
 	Published      bool                      `json:"published"`
 	LabelNameMap   []byte                    `json:"label_name_map"`
 }
+
+type WorkQueue struct {
+	ID             int64          `json:"id"`
+	TaskName       string         `json:"task_name"`
+	OrganizationID uuid.UUID      `json:"organization_id"`
+	InstanceNum    int16          `json:"instance_num"`
+	Spec           map[string]any `json:"spec"`
+	Tries          int32          `json:"tries"`
+	ClaimedBy      int64          `json:"claimed_by"`
+	ClaimedAt      *time.Time     `json:"claimed_at"`
+	HeartbeatedAt  *time.Time     `json:"heartbeated_at"`
+	Failed         bool           `json:"failed"`
+	FailedReason   *string        `json:"failed_reason"`
+	CreatedAt      time.Time      `json:"created_at"`
+}
