@@ -16,6 +16,8 @@ package workqueue
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,4 +54,14 @@ func Depth(ctx context.Context, db EnqueueDB, taskName string) (int64, error) {
 // Cleanup releases work items claimed by dead workers (based on heartbeat timeout).
 func Cleanup(ctx context.Context, db EnqueueDB, heartbeatTimeout time.Duration) error {
 	return db.WorkQueueCleanup(ctx, heartbeatTimeout)
+}
+
+// AddBundle adds a work item to the queue using a JSON-serialized bundle.
+// The bundleBytes are unmarshaled into a map[string]any for the spec field.
+func AddBundle(ctx context.Context, db EnqueueDB, taskName string, organizationID uuid.UUID, instanceNum int16, bundleBytes []byte) (int64, error) {
+	var spec map[string]any
+	if err := json.Unmarshal(bundleBytes, &spec); err != nil {
+		return 0, fmt.Errorf("failed to unmarshal bundle: %w", err)
+	}
+	return Add(ctx, db, taskName, organizationID, instanceNum, spec)
 }

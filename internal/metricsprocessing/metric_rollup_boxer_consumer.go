@@ -24,6 +24,7 @@ import (
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // BoxerStore defines the interface required by all boxer processors.
@@ -34,6 +35,9 @@ type BoxerStore interface {
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
 	GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64
+	WorkQueueAdd(ctx context.Context, arg lrdb.WorkQueueAddParams) (lrdb.WorkQueue, error)
+	WorkQueueDepth(ctx context.Context, taskName string) (int64, error)
+	WorkQueueCleanup(ctx context.Context, heartbeatTimeout time.Duration) error
 }
 
 // MetricRollupBoxerConsumer handles metric rollup bundling using CommonConsumer

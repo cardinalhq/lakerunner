@@ -25,6 +25,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -85,19 +86,14 @@ func (p *LogCompactionBoxerProcessor) Process(ctx context.Context, group *accumu
 		return fmt.Errorf("failed to marshal log compaction bundle: %w", err)
 	}
 
-	// Create Kafka message key for proper partitioning
-	kafkaMessage := fly.Message{
-		Value: bundleBytes,
+	// Enqueue bundle to work queue
+	workID, err := workqueue.AddBundle(ctx, p.store, config.BoxerTaskCompactLogs, group.Key.OrganizationID, group.Key.InstanceNum, bundleBytes)
+	if err != nil {
+		return fmt.Errorf("failed to enqueue bundle to work queue: %w", err)
 	}
 
-	// Send to compaction topic
-	compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicSegmentsLogsCompact)
-	if err := p.kafkaProducer.Send(ctx, compactionTopic, kafkaMessage); err != nil {
-		return fmt.Errorf("failed to send log compaction bundle to Kafka: %w", err)
-	}
-
-	ll.Info("Successfully sent log compaction bundle",
-		slog.String("topic", compactionTopic),
+	ll.Info("Successfully enqueued log compaction bundle to work queue",
+		slog.Int64("workID", workID),
 		slog.Int("bundleSize", len(bundle.Messages)))
 
 	return nil
