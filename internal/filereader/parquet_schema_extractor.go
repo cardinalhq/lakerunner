@@ -78,6 +78,21 @@ func ExtractCompleteParquetSchema(ctx context.Context, pf *file.Reader, fr *pqar
 	// Second pass: DISABLED - no longer scanning for dynamic map keys
 	// TODO: Re-enable map/struct/list flattening with proper two-pass schema discovery
 	// For now, we only extract scalar fields from the Arrow schema (first pass above)
+	//
+	// IMPORTANT: When re-enabling two-pass scanning, the proper fix is to NOT reuse
+	// the same FileReader for both schema discovery and actual reading. Instead:
+	//
+	// 1. Open file fresh, scan all rows to discover schema, close completely
+	// 2. Re-open file fresh for actual reading
+	//
+	// The current approach of creating two RecordReaders from the same FileReader
+	// may cause issues because:
+	// - FileReader may maintain internal state/position
+	// - RecordReaders may share resources with their parent FileReader
+	// - "Releasing" a RecordReader might not fully reset the FileReader's state
+	//
+	// Proper implementation would require changing the function signature to accept
+	// a file path or factory function instead of pre-opened readers.
 
 	return schema, nil
 }
