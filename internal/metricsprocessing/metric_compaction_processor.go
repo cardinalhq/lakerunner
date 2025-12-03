@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,6 +33,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -154,27 +156,7 @@ func (p *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context,
 	return segments, nil
 }
 
-func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.CompactionKey) error {
-	ll := logctx.FromContext(ctx)
-
-	var kafkaOffsets []lrdb.KafkaOffsetInfo
-	if kafkaCommitData != nil {
-		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
-				ConsumerGroup: kafkaCommitData.ConsumerGroup,
-				Topic:         kafkaCommitData.Topic,
-				PartitionID:   partition,
-				Offsets:       []int64{offset},
-			})
-
-			ll.Debug("Updating Kafka consumer group offset",
-				slog.String("consumerGroup", kafkaCommitData.ConsumerGroup),
-				slog.String("topic", kafkaCommitData.Topic),
-				slog.Int("partition", int(partition)),
-				slog.Int64("newOffset", offset))
-		}
-	}
-
+func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, key messages.CompactionKey) error {
 	oldRecords := make([]lrdb.CompactMetricSegsOld, len(oldSegments))
 	for i, seg := range oldSegments {
 		oldRecords[i] = lrdb.CompactMetricSegsOld{
@@ -208,7 +190,7 @@ func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
-	if err := p.store.CompactMetricSegments(ctx, params, kafkaOffsets); err != nil {
+	if err := p.store.CompactMetricSegments(ctx, params); err != nil {
 		ll := logctx.FromContext(ctx)
 
 		// Log unique keys for debugging database failures
@@ -266,6 +248,34 @@ func (p *MetricCompactionProcessor) markSegmentsAsCompacted(ctx context.Context,
 		InstanceNum:    key.InstanceNum,
 		SegmentIds:     segmentIDs,
 	})
+}
+
+// ProcessBundleFromQueue processes a metric compaction bundle from the work queue
+func (p *MetricCompactionProcessor) ProcessBundleFromQueue(ctx context.Context, workItem workqueue.Workable) error {
+	ll := logctx.FromContext(ctx)
+
+	// Extract bundle from work item spec
+	var bundle messages.MetricCompactionBundle
+	specBytes, err := json.Marshal(workItem.Spec())
+	if err != nil {
+		return fmt.Errorf("failed to marshal work item spec: %w", err)
+	}
+
+	if err := json.Unmarshal(specBytes, &bundle); err != nil {
+		return fmt.Errorf("failed to unmarshal metric compaction bundle: %w", err)
+	}
+
+	if len(bundle.Messages) == 0 {
+		ll.Info("Skipping empty bundle")
+		return nil
+	}
+
+	// Extract key from first message
+	firstMsg := bundle.Messages[0]
+	key := firstMsg.GroupingKey().(messages.CompactionKey)
+
+	// Call the existing ProcessBundle with 0 for partition and offset (not needed anymore)
+	return p.ProcessBundle(ctx, key, bundle.Messages, 0, 0)
 }
 
 // ProcessBundle processes a compaction bundle directly (simplified interface)
@@ -390,15 +400,7 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		return nil
 	}
 
-	kafkaCommitData := &KafkaCommitData{
-		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsCompact),
-		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsCompact),
-		Offsets: map[int32]int64{
-			partition: offset,
-		},
-	}
-
-	if err := p.atomicDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, key); err != nil {
+	if err := p.atomicDatabaseUpdate(ctx, activeSegments, newSegments, key); err != nil {
 		ll.Error("Failed to perform atomic database update for metric compaction, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),

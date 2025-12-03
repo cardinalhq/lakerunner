@@ -467,7 +467,7 @@ func (m *benchMockMetricIngestStore) GetMetricEstimate(ctx context.Context, orga
 	return 1000 // Return a reasonable estimate
 }
 
-func (m *benchMockMetricIngestStore) InsertMetricSegmentsBatch(ctx context.Context, segments []lrdb.InsertMetricSegmentParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error {
+func (m *benchMockMetricIngestStore) InsertMetricSegmentsBatch(ctx context.Context, segments []lrdb.InsertMetricSegmentParams) error {
 	return nil // No-op for benchmarking
 }
 
@@ -489,6 +489,26 @@ func (m *benchMockMetricIngestStore) CleanupKafkaOffsets(ctx context.Context, pa
 
 func (m *benchMockMetricIngestStore) InsertKafkaOffsets(ctx context.Context, params lrdb.InsertKafkaOffsetsParams) error {
 	return nil // No-op for benchmarking
+}
+
+func (m *benchMockMetricIngestStore) WorkQueueClaim(ctx context.Context, arg lrdb.WorkQueueClaimParams) (lrdb.WorkQueue, error) {
+	return lrdb.WorkQueue{}, nil // No-op for benchmarking
+}
+
+func (m *benchMockMetricIngestStore) WorkQueueComplete(ctx context.Context, arg lrdb.WorkQueueCompleteParams) error {
+	return nil // No-op for benchmarking
+}
+
+func (m *benchMockMetricIngestStore) WorkQueueFail(ctx context.Context, arg lrdb.WorkQueueFailParams) (int32, error) {
+	return 0, nil // No-op for benchmarking
+}
+
+func (m *benchMockMetricIngestStore) WorkQueueHeartbeat(ctx context.Context, arg lrdb.WorkQueueHeartbeatParams) error {
+	return nil // No-op for benchmarking
+}
+
+func (m *benchMockMetricIngestStore) WorkQueueDepthAll(ctx context.Context) ([]lrdb.WorkQueueDepthAllRow, error) {
+	return []lrdb.WorkQueueDepthAllRow{}, nil // No-op for benchmarking
 }
 
 // Helper function to write from reader (similar to logs benchmark)

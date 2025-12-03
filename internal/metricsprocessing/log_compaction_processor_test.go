@@ -37,8 +37,8 @@ func (m *MockLogCompactionStore) GetLogSeg(ctx context.Context, params lrdb.GetL
 	return args.Get(0).(lrdb.LogSeg), args.Error(1)
 }
 
-func (m *MockLogCompactionStore) CompactLogSegments(ctx context.Context, params lrdb.CompactLogSegsParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error {
-	args := m.Called(ctx, params, kafkaOffsets)
+func (m *MockLogCompactionStore) CompactLogSegments(ctx context.Context, params lrdb.CompactLogSegsParams) error {
+	args := m.Called(ctx, params)
 	return args.Error(0)
 }
 
@@ -68,6 +68,26 @@ func (m *MockLogCompactionStore) InsertKafkaOffsets(ctx context.Context, params 
 func (m *MockLogCompactionStore) GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64 {
 	args := m.Called(ctx, orgID)
 	return args.Get(0).(int64)
+}
+
+func (m *MockLogCompactionStore) WorkQueueClaim(ctx context.Context, arg lrdb.WorkQueueClaimParams) (lrdb.WorkQueue, error) {
+	return lrdb.WorkQueue{}, nil
+}
+
+func (m *MockLogCompactionStore) WorkQueueComplete(ctx context.Context, arg lrdb.WorkQueueCompleteParams) error {
+	return nil
+}
+
+func (m *MockLogCompactionStore) WorkQueueFail(ctx context.Context, arg lrdb.WorkQueueFailParams) (int32, error) {
+	return 0, nil
+}
+
+func (m *MockLogCompactionStore) WorkQueueHeartbeat(ctx context.Context, arg lrdb.WorkQueueHeartbeatParams) error {
+	return nil
+}
+
+func (m *MockLogCompactionStore) WorkQueueDepthAll(ctx context.Context) ([]lrdb.WorkQueueDepthAllRow, error) {
+	return []lrdb.WorkQueueDepthAllRow{}, nil
 }
 
 func TestLogCompactionProcessor_New(t *testing.T) {

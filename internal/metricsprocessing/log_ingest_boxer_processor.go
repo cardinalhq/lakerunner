@@ -21,27 +21,23 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // LogIngestBoxerProcessor implements the Processor interface for boxing log ingestion bundles
 type LogIngestBoxerProcessor struct {
-	kafkaProducer fly.Producer
-	store         BoxerStore
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newLogIngestBoxerProcessor creates a new log ingestion boxer processor instance
-func newLogIngestBoxerProcessor(
-	cfg *config.Config,
-	kafkaProducer fly.Producer, store BoxerStore) *LogIngestBoxerProcessor {
+func newLogIngestBoxerProcessor(cfg *config.Config, store BoxerStore) *LogIngestBoxerProcessor {
 	return &LogIngestBoxerProcessor{
-		kafkaProducer: kafkaProducer,
-		store:         store,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 
@@ -75,14 +71,10 @@ func (b *LogIngestBoxerProcessor) Process(ctx context.Context, group *accumulati
 		return fmt.Errorf("failed to marshal log ingest bundle: %w", err)
 	}
 
-	bundleMessage := fly.Message{
-		Value: bundleBytes,
-	}
-
-	// Send bundle to ingestion processing topic
-	ingestionTopic := b.config.TopicRegistry.GetTopic(config.TopicSegmentsLogsIngest)
-	if err := b.kafkaProducer.Send(ctx, ingestionTopic, bundleMessage); err != nil {
-		return fmt.Errorf("failed to send bundle to processing topic: %w", err)
+	// Enqueue bundle to work queue
+	workID, err := workqueue.AddBundle(ctx, b.store, config.BoxerTaskIngestLogs, group.Key.OrganizationID, group.Key.InstanceNum, bundleBytes)
+	if err != nil {
+		return fmt.Errorf("failed to enqueue bundle to work queue: %w", err)
 	}
 
 	// Persist Kafka offsets to prevent duplicate processing on restart
@@ -103,8 +95,8 @@ func (b *LogIngestBoxerProcessor) Process(ctx context.Context, group *accumulati
 		}
 	}
 
-	ll.Info("Successfully sent log ingestion bundle to processing topic",
-		slog.String("topic", ingestionTopic),
+	ll.Info("Successfully enqueued log ingestion bundle to work queue",
+		slog.Int64("workID", workID),
 		slog.Int("bundledMessages", len(bundle.Messages)))
 
 	return nil

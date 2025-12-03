@@ -16,105 +16,45 @@ package metricsprocessing
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
+	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/fly"
-	"github.com/cardinalhq/lakerunner/internal/fly/messages"
-	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 )
 
-// LogCompactionConsumer consumes LogCompactionBundle messages from boxer
+// LogCompactionConsumer handles log compaction bundles from the work queue
 type LogCompactionConsumer struct {
-	*WorkerConsumer
-	processor     *LogCompactionProcessor
-	topic         string
-	consumerGroup string
+	*QueueWorkerConsumer
+	processor *LogCompactionProcessor
 }
 
-// NewLogCompactionConsumer creates a consumer that processes LogCompactionBundle messages from boxer
+// NewLogCompactionConsumer creates a new log compaction consumer that processes bundles from the work queue
 func NewLogCompactionConsumer(
 	ctx context.Context,
-	factory *fly.Factory,
 	cfg *config.Config,
 	store LogCompactionStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) (*LogCompactionConsumer, error) {
+	// Create processor without Kafka producer (no longer needed for work queue)
 	processor := NewLogCompactionProcessor(store, storageProvider, cmgr, cfg)
 
-	topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsLogsCompact)
-	consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsLogsCompact)
-	consumer, err := factory.CreateConsumer(topic, consumerGroup)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
-	}
+	// Create work queue manager
+	workerID := time.Now().UnixNano() // Unique worker ID
+	manager := workqueue.NewManager(
+		store,
+		workerID,
+		config.BoxerTaskCompactLogs,
+		workqueue.WithHeartbeatInterval(time.Minute),
+		workqueue.WithMaxRetries(5),
+	)
 
-	c := &LogCompactionConsumer{
-		processor:     processor,
-		topic:         topic,
-		consumerGroup: consumerGroup,
-	}
+	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskCompactLogs)
 
-	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
-
-	return c, nil
-}
-
-// ProcessMessage implements MessageProcessor interface
-func (c *LogCompactionConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
-	ll := logctx.FromContext(ctx)
-
-	var bundle messages.LogCompactionBundle
-	if err := bundle.Unmarshal(msg.Value); err != nil {
-		ll.Info("Dropping message that failed to unmarshal as bundle", slog.Any("error", err))
-		return nil // Don't fail the batch, just skip this message
-	}
-
-	if len(bundle.Messages) == 0 {
-		ll.Info("Dropping empty message bundle")
-		return nil
-	}
-
-	// Defensive check: Skip bundles with too many segments
-	const maxSegmentsPerBundle = 75
-	if len(bundle.Messages) > maxSegmentsPerBundle {
-		firstMsg := bundle.Messages[0]
-		key := firstMsg.GroupingKey().(messages.LogCompactionKey)
-		ll.Warn("Skipping oversized bundle - too many segments",
-			slog.String("organizationID", key.OrganizationID.String()),
-			slog.Int("dateint", int(key.DateInt)),
-			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("segmentCount", len(bundle.Messages)),
-			slog.Int("maxSegments", maxSegmentsPerBundle))
-		return nil // Skip this bundle but don't fail
-	}
-
-	firstMsg := bundle.Messages[0]
-	key := firstMsg.GroupingKey().(messages.LogCompactionKey)
-
-	ll.Info("Processing compaction bundle",
-		slog.String("organizationID", key.OrganizationID.String()),
-		slog.Int("dateint", int(key.DateInt)),
-		slog.Int("instanceNum", int(key.InstanceNum)),
-		slog.Int("messageCount", len(bundle.Messages)))
-
-	if err := c.processor.ProcessBundle(ctx, key, bundle.Messages, int32(msg.Partition), msg.Offset); err != nil {
-		return fmt.Errorf("failed to process bundle: %w", err)
-	}
-
-	return nil
-}
-
-// GetTopic implements MessageProcessor interface
-func (c *LogCompactionConsumer) GetTopic() string {
-	return c.topic
-}
-
-// GetConsumerGroup implements MessageProcessor interface
-func (c *LogCompactionConsumer) GetConsumerGroup() string {
-	return c.consumerGroup
+	return &LogCompactionConsumer{
+		QueueWorkerConsumer: queueConsumer,
+		processor:           processor,
+	}, nil
 }

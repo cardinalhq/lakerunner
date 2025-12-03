@@ -21,27 +21,23 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // TraceCompactionBoxerProcessor implements the Processor interface for boxing trace compaction bundles
 type TraceCompactionBoxerProcessor struct {
-	kafkaProducer fly.Producer
-	store         BoxerStore
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newTraceCompactionBoxerProcessor creates a new trace compaction boxer processor instance
-func newTraceCompactionBoxerProcessor(
-	cfg *config.Config,
-	kafkaProducer fly.Producer, store BoxerStore) *TraceCompactionBoxerProcessor {
+func newTraceCompactionBoxerProcessor(cfg *config.Config, store BoxerStore) *TraceCompactionBoxerProcessor {
 	return &TraceCompactionBoxerProcessor{
-		kafkaProducer: kafkaProducer,
-		store:         store,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 
@@ -74,17 +70,14 @@ func (b *TraceCompactionBoxerProcessor) Process(ctx context.Context, group *accu
 		return fmt.Errorf("failed to marshal compaction bundle: %w", err)
 	}
 
-	bundleMessage := fly.Message{
-		Value: msgBytes,
+	// Enqueue bundle to work queue
+	workID, err := workqueue.AddBundle(ctx, b.store, config.BoxerTaskCompactTraces, group.Key.OrganizationID, group.Key.InstanceNum, msgBytes)
+	if err != nil {
+		return fmt.Errorf("failed to enqueue bundle to work queue: %w", err)
 	}
 
-	compactionTopic := b.config.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact)
-	if err := b.kafkaProducer.Send(ctx, compactionTopic, bundleMessage); err != nil {
-		return fmt.Errorf("failed to send compaction bundle to compaction topic: %w", err)
-	}
-
-	ll.Info("Successfully sent compaction bundle to compaction topic",
-		slog.String("topic", compactionTopic),
+	ll.Info("Successfully enqueued trace compaction bundle to work queue",
+		slog.Int64("workID", workID),
 		slog.Int("bundledMessages", len(bundle.Messages)))
 
 	return nil

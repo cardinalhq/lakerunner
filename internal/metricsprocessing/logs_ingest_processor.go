@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -29,6 +30,11 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -43,9 +49,6 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 )
 
 // DateintBin represents a file group containing logs for a specific dateint
@@ -295,23 +298,11 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	uploadSpan.SetAttributes(attribute.Int("segment_count", len(segmentParams)))
 	uploadSpan.End()
 
-	// Create kafka offset info for tracking
-	kafkaOffsets := []lrdb.KafkaOffsetInfo{{
-		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsLogsIngest),
-		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsLogsIngest),
-		PartitionID:   partition,
-		Offsets:       []int64{offset},
-	}}
-
 	criticalCtx := context.WithoutCancel(ctx)
 	ctx, dbSpan := tracer.Start(ctx, "logs.ingest.insert_segments")
-	dbSpan.SetAttributes(
-		attribute.Int("segment_count", len(segmentParams)),
-		attribute.Int("kafka.partition", int(partition)),
-		attribute.Int64("kafka.offset", offset),
-	)
+	dbSpan.SetAttributes(attribute.Int("segment_count", len(segmentParams)))
 
-	if err := p.store.InsertLogSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
+	if err := p.store.InsertLogSegmentsBatch(criticalCtx, segmentParams); err != nil {
 		segmentIDs := make([]int64, len(segmentParams))
 		var totalRecords, totalSize int64
 		for i, seg := range segmentParams {
@@ -335,47 +326,45 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	}
 	dbSpan.End()
 
-	if p.kafkaProducer != nil {
-		_, kafkaSpan := tracer.Start(ctx, "logs.ingest.publish_compaction")
-		kafkaSpan.SetAttributes(attribute.Int("message_count", len(segmentParams)))
+	_, kafkaSpan := tracer.Start(ctx, "logs.ingest.publish_compaction")
+	kafkaSpan.SetAttributes(attribute.Int("message_count", len(segmentParams)))
 
-		compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerLogsCompact)
+	compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerLogsCompact)
 
-		for _, segParams := range segmentParams {
-			compactionNotification := messages.LogCompactionMessage{
-				Version:        1,
-				OrganizationID: segParams.OrganizationID,
-				DateInt:        segParams.Dateint,
-				SegmentID:      segParams.SegmentID,
-				InstanceNum:    segParams.InstanceNum,
-				Records:        segParams.RecordCount,
-				FileSize:       segParams.FileSize,
-				StartTs:        segParams.StartTs,
-				EndTs:          segParams.EndTs,
-				QueuedAt:       time.Now(),
-			}
+	for _, segParams := range segmentParams {
+		compactionNotification := messages.LogCompactionMessage{
+			Version:        1,
+			OrganizationID: segParams.OrganizationID,
+			DateInt:        segParams.Dateint,
+			SegmentID:      segParams.SegmentID,
+			InstanceNum:    segParams.InstanceNum,
+			Records:        segParams.RecordCount,
+			FileSize:       segParams.FileSize,
+			StartTs:        segParams.StartTs,
+			EndTs:          segParams.EndTs,
+			QueuedAt:       time.Now(),
+		}
 
-			compactionMsgBytes, err := compactionNotification.Marshal()
-			if err != nil {
-				kafkaSpan.RecordError(err)
-				kafkaSpan.SetStatus(codes.Error, "failed to marshal compaction message")
-				kafkaSpan.End()
-				return fmt.Errorf("failed to marshal log compaction notification: %w", err)
-			}
+		compactionMsgBytes, err := compactionNotification.Marshal()
+		if err != nil {
+			kafkaSpan.RecordError(err)
+			kafkaSpan.SetStatus(codes.Error, "failed to marshal compaction message")
+			kafkaSpan.End()
+			return fmt.Errorf("failed to marshal log compaction notification: %w", err)
+		}
 
-			compactionMessage := fly.Message{
-				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.InstanceNum, segParams.StartTs/300000),
-				Value: compactionMsgBytes,
-			}
+		compactionMessage := fly.Message{
+			Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.InstanceNum, segParams.StartTs/300000),
+			Value: compactionMsgBytes,
+		}
 
-			if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
-				kafkaSpan.RecordError(err)
-				kafkaSpan.SetStatus(codes.Error, "failed to send to kafka")
-				kafkaSpan.End()
-				return fmt.Errorf("failed to send log compaction notification to Kafka: %w", err)
-			} else {
-				ll.Debug("Sent log compaction notification", slog.Any("message", compactionNotification))
-			}
+		if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
+			kafkaSpan.RecordError(err)
+			kafkaSpan.SetStatus(codes.Error, "failed to send to kafka")
+			kafkaSpan.End()
+			return fmt.Errorf("failed to send log compaction notification to Kafka: %w", err)
+		} else {
+			ll.Debug("Sent log compaction notification", slog.Any("message", compactionNotification))
 		}
 		kafkaSpan.End()
 	}
@@ -395,6 +384,34 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		slog.Int("outputSegments", len(segmentParams)))
 
 	return nil
+}
+
+// ProcessBundleFromQueue implements the BundleProcessor interface for work queue integration
+func (p *LogIngestProcessor) ProcessBundleFromQueue(ctx context.Context, workItem workqueue.Workable) error {
+	ll := logctx.FromContext(ctx)
+
+	// Extract bundle from work item spec
+	var bundle messages.LogIngestBundle
+	specBytes, err := json.Marshal(workItem.Spec())
+	if err != nil {
+		return fmt.Errorf("failed to marshal work item spec: %w", err)
+	}
+
+	if err := json.Unmarshal(specBytes, &bundle); err != nil {
+		return fmt.Errorf("failed to unmarshal log ingest bundle: %w", err)
+	}
+
+	if len(bundle.Messages) == 0 {
+		ll.Info("Skipping empty bundle")
+		return nil
+	}
+
+	// Extract key from first message
+	firstMsg := bundle.Messages[0]
+	key := firstMsg.GroupingKey().(messages.IngestKey)
+
+	// Call the existing ProcessBundle with 0 for partition and offset (not needed anymore)
+	return p.ProcessBundle(ctx, key, bundle.Messages, 0, 0)
 }
 
 // GetTargetRecordCount returns the target file size limit (5MB) for accumulation

@@ -75,24 +75,8 @@ func TestInsertMetricSegmentsBatch(t *testing.T) {
 		},
 	}
 
-	// Prepare kafka offsets for tracking (non-contiguous values)
-	kafkaOffsets := []lrdb.KafkaOffsetInfo{
-		{
-			ConsumerGroup: "metrics-consumer",
-			Topic:         "metrics-topic",
-			PartitionID:   0,
-			Offsets:       []int64{1000, 1003, 1005, 1007, 1012}, // gaps in sequence
-		},
-		{
-			ConsumerGroup: "metrics-consumer",
-			Topic:         "metrics-topic",
-			PartitionID:   1,
-			Offsets:       []int64{2000, 2010, 2015}, // larger gaps
-		},
-	}
-
 	// Insert batch
-	err := db.InsertMetricSegmentsBatch(ctx, segments, kafkaOffsets)
+	err := db.InsertMetricSegmentsBatch(ctx, segments)
 	require.NoError(t, err)
 
 	// Verify metric segments were inserted
@@ -119,25 +103,6 @@ func TestInsertMetricSegmentsBatch(t *testing.T) {
 	assert.Equal(t, int64(1002), seg2.SegmentID)
 	assert.Equal(t, int64(150), seg2.RecordCount)
 	assert.Equal(t, int64(2048), seg2.FileSize)
-
-	// Verify kafka offsets were tracked (with gaps preserved)
-	offsets1, err := db.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
-		ConsumerGroup: "metrics-consumer",
-		Topic:         "metrics-topic",
-		PartitionID:   0,
-		MinOffset:     1004,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, []int64{1005, 1007, 1012}, offsets1) // gaps preserved
-
-	offsets2, err := db.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
-		ConsumerGroup: "metrics-consumer",
-		Topic:         "metrics-topic",
-		PartitionID:   1,
-		MinOffset:     2001,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, []int64{2010, 2015}, offsets2) // gaps preserved
 }
 
 func TestInsertMetricSegmentsBatch_EmptyOffsets(t *testing.T) {
@@ -169,18 +134,8 @@ func TestInsertMetricSegmentsBatch_EmptyOffsets(t *testing.T) {
 		},
 	}
 
-	// Empty kafka offsets (should be skipped)
-	kafkaOffsets := []lrdb.KafkaOffsetInfo{
-		{
-			ConsumerGroup: "metrics-consumer",
-			Topic:         "metrics-topic",
-			PartitionID:   0,
-			Offsets:       []int64{}, // Empty offsets
-		},
-	}
-
-	// Should succeed even with empty offsets
-	err := db.InsertMetricSegmentsBatch(ctx, segments, kafkaOffsets)
+	// Insert batch
+	err := db.InsertMetricSegmentsBatch(ctx, segments)
 	require.NoError(t, err)
 
 	// Verify metric segment was inserted
@@ -194,16 +149,6 @@ func TestInsertMetricSegmentsBatch_EmptyOffsets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, insertedSegs, 1)
 	assert.Equal(t, int64(2001), insertedSegs[0].SegmentID)
-
-	// Verify no kafka offsets were tracked
-	offsets, err := db.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
-		ConsumerGroup: "metrics-consumer",
-		Topic:         "metrics-topic",
-		PartitionID:   0,
-		MinOffset:     0,
-	})
-	require.NoError(t, err)
-	assert.Empty(t, offsets)
 }
 
 func TestCompactMetricSegments(t *testing.T) {
@@ -253,7 +198,7 @@ func TestCompactMetricSegments(t *testing.T) {
 	}
 
 	// Insert the old segments first
-	err := db.InsertMetricSegmentsBatch(ctx, oldSegments, nil)
+	err := db.InsertMetricSegmentsBatch(ctx, oldSegments)
 	require.NoError(t, err)
 
 	// Prepare compaction parameters
@@ -280,18 +225,8 @@ func TestCompactMetricSegments(t *testing.T) {
 		CreatedBy: lrdb.CreatedByCompact,
 	}
 
-	// Kafka offsets for the compacted data (non-contiguous)
-	kafkaOffsets := []lrdb.KafkaOffsetInfo{
-		{
-			ConsumerGroup: "compact-consumer",
-			Topic:         "metrics-topic",
-			PartitionID:   0,
-			Offsets:       []int64{5000, 5005, 5010, 5020},
-		},
-	}
-
 	// Perform compaction
-	err = db.CompactMetricSegments(ctx, compactParams, kafkaOffsets)
+	err = db.CompactMetricSegments(ctx, compactParams)
 	require.NoError(t, err)
 
 	// Verify old segments are marked as compacted
@@ -322,16 +257,6 @@ func TestCompactMetricSegments(t *testing.T) {
 	assert.Equal(t, int64(110), newSegs[0].RecordCount)
 	assert.True(t, newSegs[0].Compacted)
 	assert.True(t, newSegs[0].Published)
-
-	// Verify kafka offsets were tracked
-	offsets, err := db.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
-		ConsumerGroup: "compact-consumer",
-		Topic:         "metrics-topic",
-		PartitionID:   0,
-		MinOffset:     5005,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, []int64{5005, 5010, 5020}, offsets)
 }
 
 func TestRollupMetricSegments(t *testing.T) {
@@ -382,7 +307,7 @@ func TestRollupMetricSegments(t *testing.T) {
 	}
 
 	// Insert the source segments
-	err := db.InsertMetricSegmentsBatch(ctx, sourceSegments, nil)
+	err := db.InsertMetricSegmentsBatch(ctx, sourceSegments)
 	require.NoError(t, err)
 
 	// Prepare rollup parameters
@@ -415,18 +340,8 @@ func TestRollupMetricSegments(t *testing.T) {
 		},
 	}
 
-	// Kafka offsets for the rollup (non-contiguous)
-	kafkaOffsets := []lrdb.KafkaOffsetInfo{
-		{
-			ConsumerGroup: "rollup-consumer",
-			Topic:         "metrics-topic",
-			PartitionID:   2,
-			Offsets:       []int64{7000, 7100, 7200, 7500},
-		},
-	}
-
 	// Perform rollup
-	err = db.RollupMetricSegments(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords, kafkaOffsets)
+	err = db.RollupMetricSegments(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords)
 	require.NoError(t, err)
 
 	// Verify source segments are marked as rolled up
@@ -459,14 +374,4 @@ func TestRollupMetricSegments(t *testing.T) {
 	assert.False(t, targetSegs[0].Rolledup)
 	assert.True(t, targetSegs[0].Published)
 	assert.Equal(t, lrdb.CreatedByRollup, targetSegs[0].CreatedBy)
-
-	// Verify kafka offsets were tracked
-	offsets, err := db.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
-		ConsumerGroup: "rollup-consumer",
-		Topic:         "metrics-topic",
-		PartitionID:   2,
-		MinOffset:     7100,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, []int64{7100, 7200, 7500}, offsets)
 }

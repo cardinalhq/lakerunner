@@ -108,14 +108,34 @@ func (m *MockMetricCompactionStore) GetMetricSeg(ctx context.Context, params lrd
 	return args.Get(0).(lrdb.MetricSeg), args.Error(1)
 }
 
-func (m *MockMetricCompactionStore) CompactMetricSegments(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error {
-	args := m.Called(ctx, params, kafkaOffsets)
+func (m *MockMetricCompactionStore) CompactMetricSegments(ctx context.Context, params lrdb.CompactMetricSegsParams) error {
+	args := m.Called(ctx, params)
 	return args.Error(0)
 }
 
 func (m *MockMetricCompactionStore) MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error {
 	args := m.Called(ctx, params)
 	return args.Error(0)
+}
+
+func (m *MockMetricCompactionStore) WorkQueueClaim(ctx context.Context, arg lrdb.WorkQueueClaimParams) (lrdb.WorkQueue, error) {
+	return lrdb.WorkQueue{}, nil
+}
+
+func (m *MockMetricCompactionStore) WorkQueueComplete(ctx context.Context, arg lrdb.WorkQueueCompleteParams) error {
+	return nil
+}
+
+func (m *MockMetricCompactionStore) WorkQueueFail(ctx context.Context, arg lrdb.WorkQueueFailParams) (int32, error) {
+	return 0, nil
+}
+
+func (m *MockMetricCompactionStore) WorkQueueHeartbeat(ctx context.Context, arg lrdb.WorkQueueHeartbeatParams) error {
+	return nil
+}
+
+func (m *MockMetricCompactionStore) WorkQueueDepthAll(ctx context.Context) ([]lrdb.WorkQueueDepthAllRow, error) {
+	return []lrdb.WorkQueueDepthAllRow{}, nil
 }
 
 func TestCommonConsumer_Close(t *testing.T) {

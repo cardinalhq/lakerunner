@@ -94,28 +94,18 @@ func init() {
 
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
-			kafkaFactory := fly.NewFactory(&cfg.Kafka)
-			slog.Info("Starting logs ingestion worker (processing from boxer)")
+			slog.Info("Starting logs ingestion worker (processing from PostgreSQL work queue)")
 
-			consumer, err := metricsprocessing.NewLogIngestConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
+			kafkaFactory := fly.NewFactory(&cfg.Kafka)
+			consumer, err := metricsprocessing.NewLogIngestConsumer(ctx, cfg, kafkaFactory, mdb, sp, cmgr)
 			if err != nil {
-				return fmt.Errorf("failed to create Kafka ingest consumer: %w", err)
+				return fmt.Errorf("failed to create work queue consumer: %w", err)
 			}
 			defer func() {
 				if err := consumer.Close(); err != nil {
-					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
+					slog.Error("Error closing work queue consumer", slog.Any("error", err))
 				}
 			}()
-
-			// Start offset skip checker for live flushing support
-			topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsLogsIngest)
-			consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsLogsIngest)
-			stopSkipChecker, err := StartOffsetSkipChecker(ctx, cfg, mdb, consumerGroup, topic)
-			if err != nil {
-				slog.Warn("Failed to start offset skip checker", slog.Any("error", err))
-			} else {
-				defer stopSkipChecker()
-			}
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
