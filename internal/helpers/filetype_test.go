@@ -153,6 +153,22 @@ func TestExtractCustomerDomain(t *testing.T) {
 			input:    ".",
 			expected: ".",
 		},
+		// Real-world patterns with timestamps containing dots
+		{
+			name:     "vitechinc.com pattern with timestamp dots",
+			input:    "vitechinc.com-abu-hirw8pmdunp-1736355841.4503462_2025-12-03-045149_controller",
+			expected: "vitechinc.com",
+		},
+		{
+			name:     "hubinternational.com pattern with timestamp dots",
+			input:    "hubinternational.com-abu-6fqwfyfeb55a6baaa-1760715893.4401085_2025-12-03-051227_controller",
+			expected: "hubinternational.com",
+		},
+		{
+			name:     "rubrik.com pattern with timestamp dots and region",
+			input:    "rubrik.com-abu-a6m9p3g8dnw4de0de-1748363120.6530867_2025-12-03-030919_aws-ca-central-1",
+			expected: "rubrik.com",
+		},
 	}
 
 	for _, tt := range tests {

@@ -20,7 +20,14 @@ import (
 	"strings"
 )
 
-var nonLetter = regexp.MustCompile("[^A-Za-z]+")
+var (
+	nonLetter = regexp.MustCompile("[^A-Za-z]+")
+	// Match a domain at the start of the string, immediately followed by "-" or "_".
+	// Capture only the domain part.
+	domainWithSepRe = regexp.MustCompile(`^((?:[A-Za-z0-9-]+\.)+[A-Za-z]+)[-_]`)
+	// Match a string that is *only* a domain (no separator or suffix).
+	domainOnlyRe = regexp.MustCompile(`^((?:[A-Za-z0-9-]+\.)+[A-Za-z]+)$`)
+)
 
 // GetFileType extracts a normalized file type from a file path.
 // It removes the extension and non-letter characters from the filename.
@@ -38,29 +45,30 @@ func GetFileType(p string) string {
 
 // ExtractCustomerDomain attempts to extract a customer domain from a resource file name.
 // It expects patterns like: domain.com-rest-of-stuff or foo-bar.example.com_rest_of_stuff
-// Returns the domain part by finding the first separator (hyphen or underscore) after the
-// last dot (TLD). This handles hyphenated domains correctly.
-// If no separator found after the TLD, returns the whole string.
+// The domain is assumed to be at the start of the string.
 func ExtractCustomerDomain(resourceFile string) string {
 	if resourceFile == "" {
 		return ""
 	}
 
-	// Find the last dot (should be before the TLD)
-	lastDotIdx := strings.LastIndex(resourceFile, ".")
-	if lastDotIdx == -1 {
-		// No dot found - not a domain
-		return ""
+	// Special case for just a dot
+	if resourceFile == "." {
+		return "."
 	}
 
-	// Look for the first separator (hyphen or underscore) after the last dot
-	afterDot := resourceFile[lastDotIdx+1:]
-	sepIdx := strings.IndexAny(afterDot, "-_")
-	if sepIdx == -1 {
-		// No separator after the last dot, return the whole string
-		return resourceFile
+	// 1) Domain followed by "-" or "_" (take the last such match, conceptually)
+	if matches := domainWithSepRe.FindAllStringSubmatchIndex(resourceFile, -1); len(matches) > 0 {
+		last := matches[len(matches)-1]
+		// last[2], last[3] are the start/end of the first capturing group
+		start, end := last[2], last[3]
+		return resourceFile[start:end]
 	}
 
-	// Return everything up to (but not including) the separator
-	return resourceFile[:lastDotIdx+1+sepIdx]
+	// 2) Entire string is just a domain (no separator)
+	if m := domainOnlyRe.FindStringSubmatch(resourceFile); m != nil {
+		return m[1]
+	}
+
+	// 3) No recognizable domain pattern
+	return ""
 }
