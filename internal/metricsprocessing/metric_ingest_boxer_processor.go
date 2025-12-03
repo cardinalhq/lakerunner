@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
@@ -35,10 +34,7 @@ type MetricIngestBoxerProcessor struct {
 }
 
 // newMetricIngestBoxerProcessor creates a new metric ingestion boxer processor instance
-func newMetricIngestBoxerProcessor(
-	cfg *config.Config,
-	_ fly.Producer,
-	store BoxerStore) *MetricIngestBoxerProcessor {
+func newMetricIngestBoxerProcessor(cfg *config.Config, store BoxerStore) *MetricIngestBoxerProcessor {
 	return &MetricIngestBoxerProcessor{
 		store:  store,
 		config: cfg,

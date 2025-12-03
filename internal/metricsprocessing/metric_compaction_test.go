@@ -94,8 +94,8 @@ func (m *mockCompactionStore) GetMetricSeg(ctx context.Context, params lrdb.GetM
 	return args.Get(0).(lrdb.MetricSeg), args.Error(1)
 }
 
-func (m *mockCompactionStore) CompactMetricSegments(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error {
-	args := m.Called(ctx, params, kafkaOffsets)
+func (m *mockCompactionStore) CompactMetricSegments(ctx context.Context, params lrdb.CompactMetricSegsParams) error {
+	args := m.Called(ctx, params)
 	return args.Error(0)
 }
 
@@ -125,6 +125,22 @@ func (m *mockCompactionStore) MarkMetricSegsCompactedByKeys(ctx context.Context,
 func (m *mockCompactionStore) GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64 {
 	args := m.Called(ctx, orgID, frequencyMs)
 	return args.Get(0).(int64)
+}
+
+func (m *mockCompactionStore) WorkQueueClaim(ctx context.Context, arg lrdb.WorkQueueClaimParams) (lrdb.WorkQueue, error) {
+	return lrdb.WorkQueue{}, nil
+}
+
+func (m *mockCompactionStore) WorkQueueComplete(ctx context.Context, arg lrdb.WorkQueueCompleteParams) error {
+	return nil
+}
+
+func (m *mockCompactionStore) WorkQueueFail(ctx context.Context, arg lrdb.WorkQueueFailParams) (int32, error) {
+	return 0, nil
+}
+
+func (m *mockCompactionStore) WorkQueueHeartbeat(ctx context.Context, arg lrdb.WorkQueueHeartbeatParams) error {
+	return nil
 }
 
 // Removed unused mockStorageProvider
@@ -345,26 +361,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 			CreatedBy: lrdb.CreatedByCompact,
 		}
 
-		mockStore.On("CompactMetricSegments", ctx, expectedParams, mock.MatchedBy(func(offsets []lrdb.KafkaOffsetInfo) bool {
-			// Check that offsets contain expected data (don't care about order since sorting is tested separately)
-			if len(offsets) != 3 {
-				return false
-			}
-
-			// Check all expected offsets are present
-			offsetMap := make(map[int32][]int64)
-			for _, offset := range offsets {
-				if offset.Topic != "test-topic" || offset.ConsumerGroup != "test-group" {
-					return false
-				}
-				offsetMap[offset.PartitionID] = offset.Offsets
-			}
-
-			// Each partition should have one offset (the highest one that was committed)
-			return len(offsetMap[0]) == 1 && offsetMap[0][0] == 100 &&
-				len(offsetMap[1]) == 1 && offsetMap[1][0] == 200 &&
-				len(offsetMap[2]) == 1 && offsetMap[2][0] == 150
-		})).Return(nil).Once()
+		mockStore.On("CompactMetricSegments", ctx, expectedParams).Return(nil).Once()
 
 		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, kafkaCommitData, key)
 
@@ -403,7 +400,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 			CreatedBy: lrdb.CreatedByCompact,
 		}
 
-		mockStore.On("CompactMetricSegments", ctx, expectedParams, []lrdb.KafkaOffsetInfo(nil)).Return(nil).Once()
+		mockStore.On("CompactMetricSegments", ctx, expectedParams).Return(nil).Once()
 
 		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, nil, key)
 
@@ -423,7 +420,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 	t.Run("database operation error", func(t *testing.T) {
 		expectedError := assert.AnError
 
-		mockStore.On("CompactMetricSegments", ctx, mock.Anything, []lrdb.KafkaOffsetInfo(nil)).Return(expectedError).Once()
+		mockStore.On("CompactMetricSegments", ctx, mock.Anything).Return(expectedError).Once()
 
 		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, nil, key)
 

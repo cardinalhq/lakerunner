@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
@@ -35,10 +34,7 @@ type LogIngestBoxerProcessor struct {
 }
 
 // newLogIngestBoxerProcessor creates a new log ingestion boxer processor instance
-func newLogIngestBoxerProcessor(
-	cfg *config.Config,
-	_ fly.Producer,
-	store BoxerStore) *LogIngestBoxerProcessor {
+func newLogIngestBoxerProcessor(cfg *config.Config, store BoxerStore) *LogIngestBoxerProcessor {
 	return &LogIngestBoxerProcessor{
 		store:  store,
 		config: cfg,

@@ -19,13 +19,15 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // MetricIngestStore defines database operations needed for metric ingestion
 type MetricIngestStore interface {
 	OffsetTrackerStore
-	InsertMetricSegmentsBatch(ctx context.Context, segments []lrdb.InsertMetricSegmentParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error
+	workqueue.DB
+	InsertMetricSegmentsBatch(ctx context.Context, segments []lrdb.InsertMetricSegmentParams) error
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 	BatchUpsertExemplarMetrics(ctx context.Context, batch []lrdb.BatchUpsertExemplarMetricsParams) *lrdb.BatchUpsertExemplarMetricsBatchResults
 	UpsertServiceIdentifier(ctx context.Context, arg lrdb.UpsertServiceIdentifierParams) (lrdb.UpsertServiceIdentifierRow, error)
@@ -34,7 +36,8 @@ type MetricIngestStore interface {
 // LogIngestStore defines database operations needed for log ingestion
 type LogIngestStore interface {
 	OffsetTrackerStore
-	InsertLogSegmentsBatch(ctx context.Context, segments []lrdb.InsertLogSegmentParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error
+	workqueue.DB
+	InsertLogSegmentsBatch(ctx context.Context, segments []lrdb.InsertLogSegmentParams) error
 	GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64
 	BatchUpsertExemplarLogs(ctx context.Context, batch []lrdb.BatchUpsertExemplarLogsParams) *lrdb.BatchUpsertExemplarLogsBatchResults
 	UpsertServiceIdentifier(ctx context.Context, arg lrdb.UpsertServiceIdentifierParams) (lrdb.UpsertServiceIdentifierRow, error)
@@ -43,7 +46,8 @@ type LogIngestStore interface {
 // TraceIngestStore defines database operations needed for trace ingestion
 type TraceIngestStore interface {
 	OffsetTrackerStore
-	InsertTraceSegmentsBatch(ctx context.Context, segments []lrdb.InsertTraceSegmentParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error
+	workqueue.DB
+	InsertTraceSegmentsBatch(ctx context.Context, segments []lrdb.InsertTraceSegmentParams) error
 	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
 	BatchUpsertExemplarTraces(ctx context.Context, batch []lrdb.BatchUpsertExemplarTracesParams) *lrdb.BatchUpsertExemplarTracesBatchResults
 	UpsertServiceIdentifier(ctx context.Context, arg lrdb.UpsertServiceIdentifierParams) (lrdb.UpsertServiceIdentifierRow, error)
@@ -52,8 +56,9 @@ type TraceIngestStore interface {
 // LogCompactionStore defines database operations needed for log compaction
 type LogCompactionStore interface {
 	OffsetTrackerStore
+	workqueue.DB
 	GetLogSeg(ctx context.Context, params lrdb.GetLogSegParams) (lrdb.LogSeg, error)
-	CompactLogSegments(ctx context.Context, params lrdb.CompactLogSegsParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error
+	CompactLogSegments(ctx context.Context, params lrdb.CompactLogSegsParams) error
 	MarkLogSegsCompactedByKeys(ctx context.Context, params lrdb.MarkLogSegsCompactedByKeysParams) error
 	GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64
 }
@@ -61,8 +66,9 @@ type LogCompactionStore interface {
 // MetricCompactionStore defines database operations needed for metric compaction
 type MetricCompactionStore interface {
 	OffsetTrackerStore
+	workqueue.DB
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
-	CompactMetricSegments(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error
+	CompactMetricSegments(ctx context.Context, params lrdb.CompactMetricSegsParams) error
 	MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 }
@@ -70,8 +76,9 @@ type MetricCompactionStore interface {
 // TraceCompactionStore defines database operations needed for trace compaction
 type TraceCompactionStore interface {
 	OffsetTrackerStore
+	workqueue.DB
 	GetTraceSeg(ctx context.Context, params lrdb.GetTraceSegParams) (lrdb.TraceSeg, error)
-	CompactTraceSegments(ctx context.Context, params lrdb.CompactTraceSegsParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error
+	CompactTraceSegments(ctx context.Context, params lrdb.CompactTraceSegsParams) error
 	MarkTraceSegsCompactedByKeys(ctx context.Context, params lrdb.MarkTraceSegsCompactedByKeysParams) error
 	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
 }

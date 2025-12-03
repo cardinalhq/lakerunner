@@ -27,12 +27,10 @@ type KafkaOffsetInfo struct {
 	Offsets       []int64
 }
 
-// InsertMetricSegmentsBatch inserts multiple metric segments and tracks kafka offsets
-// using the new kafka_offset_tracker table
+// InsertMetricSegmentsBatch inserts multiple metric segments
 func (q *Store) InsertMetricSegmentsBatch(
 	ctx context.Context,
 	segments []InsertMetricSegmentParams,
-	kafkaOffsets []KafkaOffsetInfo,
 ) error {
 	return q.execTx(ctx, func(s *Store) error {
 		// Group segments by org/dateint to ensure partitions efficiently
@@ -84,35 +82,14 @@ func (q *Store) InsertMetricSegmentsBatch(
 			}
 		}
 
-		// Insert kafka offsets into the new tracker table
-		for _, offset := range kafkaOffsets {
-			if len(offset.Offsets) == 0 {
-				continue // Skip empty offset arrays
-			}
-
-			err := s.InsertKafkaOffsets(ctx, InsertKafkaOffsetsParams{
-				ConsumerGroup: offset.ConsumerGroup,
-				Topic:         offset.Topic,
-				PartitionID:   offset.PartitionID,
-				Offsets:       offset.Offsets,
-				CreatedAt:     nil, // Use default (now())
-			})
-			if err != nil {
-				return fmt.Errorf("insert kafka offsets for %s/%s/%d: %w",
-					offset.ConsumerGroup, offset.Topic, offset.PartitionID, err)
-			}
-		}
-
 		return nil
 	})
 }
 
-// CompactMetricSegments marks old segments as compacted, inserts new compacted segments,
-// and tracks kafka offsets using the new kafka_offset_tracker table
+// CompactMetricSegments marks old segments as compacted and inserts new compacted segments
 func (q *Store) CompactMetricSegments(
 	ctx context.Context,
 	params CompactMetricSegsParams,
-	kafkaOffsets []KafkaOffsetInfo,
 ) error {
 	return q.execTx(ctx, func(s *Store) error {
 		// Mark old segments as compacted if any
@@ -175,38 +152,17 @@ func (q *Store) CompactMetricSegments(
 			}
 		}
 
-		// Insert kafka offsets into the new tracker table
-		for _, offset := range kafkaOffsets {
-			if len(offset.Offsets) == 0 {
-				continue // Skip empty offset arrays
-			}
-
-			err := s.InsertKafkaOffsets(ctx, InsertKafkaOffsetsParams{
-				ConsumerGroup: offset.ConsumerGroup,
-				Topic:         offset.Topic,
-				PartitionID:   offset.PartitionID,
-				Offsets:       offset.Offsets,
-				CreatedAt:     nil, // Use default (now())
-			})
-			if err != nil {
-				return fmt.Errorf("insert kafka offsets for %s/%s/%d: %w",
-					offset.ConsumerGroup, offset.Topic, offset.PartitionID, err)
-			}
-		}
-
 		return nil
 	})
 }
 
-// RollupMetricSegments marks source segments as rolled up, inserts new rollup segments,
-// and tracks kafka offsets using the new kafka_offset_tracker table
+// RollupMetricSegments marks source segments as rolled up and inserts new rollup segments
 func (q *Store) RollupMetricSegments(
 	ctx context.Context,
 	sourceParams RollupSourceParams,
 	targetParams RollupTargetParams,
 	sourceSegmentIDs []int64,
 	newRecords []RollupNewRecord,
-	kafkaOffsets []KafkaOffsetInfo,
 ) error {
 	return q.execTx(ctx, func(s *Store) error {
 		// Mark source segments as rolled up if any
@@ -260,25 +216,6 @@ func (q *Store) RollupMetricSegments(
 			})
 			if insertErr != nil {
 				return insertErr
-			}
-		}
-
-		// Insert kafka offsets into the new tracker table
-		for _, offset := range kafkaOffsets {
-			if len(offset.Offsets) == 0 {
-				continue // Skip empty offset arrays
-			}
-
-			err := s.InsertKafkaOffsets(ctx, InsertKafkaOffsetsParams{
-				ConsumerGroup: offset.ConsumerGroup,
-				Topic:         offset.Topic,
-				PartitionID:   offset.PartitionID,
-				Offsets:       offset.Offsets,
-				CreatedAt:     nil, // Use default (now())
-			})
-			if err != nil {
-				return fmt.Errorf("insert kafka offsets for %s/%s/%d: %w",
-					offset.ConsumerGroup, offset.Topic, offset.PartitionID, err)
 			}
 		}
 

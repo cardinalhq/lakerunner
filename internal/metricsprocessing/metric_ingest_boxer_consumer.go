@@ -36,12 +36,7 @@ func NewMetricIngestBoxerConsumer(
 	store BoxerStore,
 	factory *fly.Factory,
 ) (*MetricIngestBoxerConsumer, error) {
-	producer, err := factory.CreateProducer()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
-	}
-
-	processor := newMetricIngestBoxerProcessor(cfg, producer, store)
+	processor := newMetricIngestBoxerProcessor(cfg, store)
 
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{

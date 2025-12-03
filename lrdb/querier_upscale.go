@@ -20,22 +20,22 @@ import (
 
 type LogSegmentUpserter interface {
 	InsertLogSegment(ctx context.Context, params InsertLogSegmentParams) error
-	InsertLogSegmentsBatch(ctx context.Context, segments []InsertLogSegmentParams, kafkaOffsets []KafkaOffsetInfo) error
-	CompactLogSegments(ctx context.Context, params CompactLogSegsParams, kafkaOffsets []KafkaOffsetInfo) error
+	InsertLogSegmentsBatch(ctx context.Context, segments []InsertLogSegmentParams) error
+	CompactLogSegments(ctx context.Context, params CompactLogSegsParams) error
 }
 
 type MetricSegmentInserter interface {
 	InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error
-	InsertMetricSegmentsBatch(ctx context.Context, segments []InsertMetricSegmentParams, kafkaOffsets []KafkaOffsetInfo) error
+	InsertMetricSegmentsBatch(ctx context.Context, segments []InsertMetricSegmentParams) error
 	CompactMetricSegs(ctx context.Context, args CompactMetricSegsParams) error
-	CompactMetricSegments(ctx context.Context, params CompactMetricSegsParams, kafkaOffsets []KafkaOffsetInfo) error
-	RollupMetricSegments(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord, kafkaOffsets []KafkaOffsetInfo) error
+	CompactMetricSegments(ctx context.Context, params CompactMetricSegsParams) error
+	RollupMetricSegments(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord) error
 }
 
 type TraceSegmentInserter interface {
 	InsertTraceSegment(ctx context.Context, params InsertTraceSegmentParams) error
-	InsertTraceSegmentsBatch(ctx context.Context, segments []InsertTraceSegmentParams, kafkaOffsets []KafkaOffsetInfo) error
-	CompactTraceSegments(ctx context.Context, params CompactTraceSegsParams, kafkaOffsets []KafkaOffsetInfo) error
+	InsertTraceSegmentsBatch(ctx context.Context, segments []InsertTraceSegmentParams) error
+	CompactTraceSegments(ctx context.Context, params CompactTraceSegsParams) error
 }
 
 type QuerierFull interface {

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
@@ -35,10 +34,7 @@ type TraceCompactionBoxerProcessor struct {
 }
 
 // newTraceCompactionBoxerProcessor creates a new trace compaction boxer processor instance
-func newTraceCompactionBoxerProcessor(
-	cfg *config.Config,
-	_ fly.Producer,
-	store BoxerStore) *TraceCompactionBoxerProcessor {
+func newTraceCompactionBoxerProcessor(cfg *config.Config, store BoxerStore) *TraceCompactionBoxerProcessor {
 	return &TraceCompactionBoxerProcessor{
 		store:  store,
 		config: cfg,

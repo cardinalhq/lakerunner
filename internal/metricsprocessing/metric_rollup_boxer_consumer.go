@@ -53,14 +53,7 @@ func NewMetricBoxerConsumer(
 	factory *fly.Factory,
 ) (*MetricRollupBoxerConsumer, error) {
 
-	// Create Kafka producer for sending rollup bundles
-	producer, err := factory.CreateProducer()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
-	}
-
-	// Create MetricBoxer processor
-	processor := newMetricBoxerProcessor(ctx, cfg, producer, store)
+	processor := newMetricBoxerProcessor(cfg, store)
 
 	// Get the accumulation time based on rollup frequencies
 	// We'll use the longest accumulation time as a default

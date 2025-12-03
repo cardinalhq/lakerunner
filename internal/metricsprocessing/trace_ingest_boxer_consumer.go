@@ -37,14 +37,7 @@ func NewTraceIngestBoxerConsumer(
 	factory *fly.Factory,
 ) (*TraceIngestBoxerConsumer, error) {
 
-	// Create Kafka producer for sending trace ingestion bundles
-	producer, err := factory.CreateProducer()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
-	}
-
-	// Create TraceIngestBoxer processor
-	processor := newTraceIngestBoxerProcessor(cfg, producer, store)
+	processor := newTraceIngestBoxerProcessor(cfg, store)
 
 	// Set up timing - use shorter accumulation for ingestion since it's more time-sensitive
 	maxAccumulationTime := 2 * time.Minute

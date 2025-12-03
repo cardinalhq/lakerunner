@@ -29,7 +29,6 @@ import (
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -94,28 +93,17 @@ func init() {
 
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
-			kafkaFactory := fly.NewFactory(&cfg.Kafka)
-			slog.Info("Starting metrics compaction consumer")
+			slog.Info("Starting metrics compaction worker (processing from PostgreSQL work queue)")
 
-			consumer, err := metricsprocessing.NewMetricCompactionConsumer(ctx, cfg, kafkaFactory, mdb, sp, cmgr)
+			consumer, err := metricsprocessing.NewMetricCompactionConsumer(ctx, cfg, mdb, sp, cmgr)
 			if err != nil {
-				return fmt.Errorf("failed to create Kafka consumer: %w", err)
+				return fmt.Errorf("failed to create work queue consumer: %w", err)
 			}
 			defer func() {
 				if err := consumer.Close(); err != nil {
-					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
+					slog.Error("Error closing work queue consumer", slog.Any("error", err))
 				}
 			}()
-
-			// Start offset skip checker for live flushing support
-			topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsMetricsCompact)
-			consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsCompact)
-			stopSkipChecker, err := StartOffsetSkipChecker(ctx, cfg, mdb, consumerGroup, topic)
-			if err != nil {
-				slog.Warn("Failed to start offset skip checker", slog.Any("error", err))
-			} else {
-				defer stopSkipChecker()
-			}
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 

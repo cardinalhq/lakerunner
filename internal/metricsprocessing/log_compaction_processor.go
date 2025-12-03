@@ -33,6 +33,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -57,6 +58,34 @@ func NewLogCompactionProcessor(
 		cmgr:            cmgr,
 		config:          cfg,
 	}
+}
+
+// ProcessBundleFromQueue processes a log compaction bundle from the work queue
+func (p *LogCompactionProcessor) ProcessBundleFromQueue(ctx context.Context, workItem workqueue.Workable) error {
+	ll := logctx.FromContext(ctx)
+
+	// Extract bundle from work item spec
+	var bundle messages.LogCompactionBundle
+	specBytes, err := json.Marshal(workItem.Spec())
+	if err != nil {
+		return fmt.Errorf("failed to marshal work item spec: %w", err)
+	}
+
+	if err := json.Unmarshal(specBytes, &bundle); err != nil {
+		return fmt.Errorf("failed to unmarshal log compaction bundle: %w", err)
+	}
+
+	if len(bundle.Messages) == 0 {
+		ll.Info("Skipping empty bundle")
+		return nil
+	}
+
+	// Extract key from first message
+	firstMsg := bundle.Messages[0]
+	key := firstMsg.GroupingKey().(messages.LogCompactionKey)
+
+	// Call the existing ProcessBundle with 0 for partition and offset (not needed anymore)
+	return p.ProcessBundle(ctx, key, bundle.Messages, 0, 0)
 }
 
 // ProcessBundle processes a compaction bundle directly (simplified interface)
@@ -311,24 +340,6 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.LogSeg, kafkaCommitData *KafkaCommitData, key messages.LogCompactionKey) error {
 	ll := logctx.FromContext(ctx)
 
-	var kafkaOffsets []lrdb.KafkaOffsetInfo
-	if kafkaCommitData != nil {
-		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
-				ConsumerGroup: kafkaCommitData.ConsumerGroup,
-				Topic:         kafkaCommitData.Topic,
-				PartitionID:   partition,
-				Offsets:       []int64{offset},
-			})
-
-			ll.Debug("Updating Kafka consumer group offset",
-				slog.String("consumerGroup", kafkaCommitData.ConsumerGroup),
-				slog.String("topic", kafkaCommitData.Topic),
-				slog.Int("partition", int(partition)),
-				slog.Int64("newOffset", offset))
-		}
-	}
-
 	oldRecords := make([]lrdb.CompactLogSegsOld, len(oldSegments))
 	for i, seg := range oldSegments {
 		oldRecords[i] = lrdb.CompactLogSegsOld{
@@ -362,7 +373,7 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
-	if err := p.store.CompactLogSegments(ctx, params, kafkaOffsets); err != nil {
+	if err := p.store.CompactLogSegments(ctx, params); err != nil {
 		ll.Error("Failed CompactLogSegments",
 			slog.Any("error", err),
 			slog.String("organization_id", key.OrganizationID.String()),
