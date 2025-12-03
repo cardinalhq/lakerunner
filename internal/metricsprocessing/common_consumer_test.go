@@ -134,6 +134,10 @@ func (m *MockMetricCompactionStore) WorkQueueHeartbeat(ctx context.Context, arg 
 	return nil
 }
 
+func (m *MockMetricCompactionStore) WorkQueueDepthAll(ctx context.Context) ([]lrdb.WorkQueueDepthAllRow, error) {
+	return []lrdb.WorkQueueDepthAllRow{}, nil
+}
+
 func TestCommonConsumer_Close(t *testing.T) {
 	// Test that Close properly closes the done channel and ticker
 	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{

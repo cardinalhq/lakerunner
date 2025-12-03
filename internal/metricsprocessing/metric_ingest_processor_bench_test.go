@@ -507,6 +507,10 @@ func (m *benchMockMetricIngestStore) WorkQueueHeartbeat(ctx context.Context, arg
 	return nil // No-op for benchmarking
 }
 
+func (m *benchMockMetricIngestStore) WorkQueueDepthAll(ctx context.Context) ([]lrdb.WorkQueueDepthAllRow, error) {
+	return []lrdb.WorkQueueDepthAllRow{}, nil // No-op for benchmarking
+}
+
 // Helper function to write from reader (similar to logs benchmark)
 func writeFromMetricReader(ctx context.Context, reader filereader.Reader, writer interface{ WriteBatch(*pipeline.Batch) error }) error {
 	for {

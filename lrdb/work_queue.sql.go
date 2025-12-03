@@ -149,6 +149,39 @@ func (q *Queries) WorkQueueDepth(ctx context.Context, taskName string) (int64, e
 	return depth, err
 }
 
+const workQueueDepthAll = `-- name: WorkQueueDepthAll :many
+SELECT task_name, COUNT(*) as depth
+  FROM work_queue
+ WHERE claimed_by = -1
+   AND failed = false
+ GROUP BY task_name
+`
+
+type WorkQueueDepthAllRow struct {
+	TaskName string `json:"task_name"`
+	Depth    int64  `json:"depth"`
+}
+
+func (q *Queries) WorkQueueDepthAll(ctx context.Context) ([]WorkQueueDepthAllRow, error) {
+	rows, err := q.db.Query(ctx, workQueueDepthAll)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkQueueDepthAllRow
+	for rows.Next() {
+		var i WorkQueueDepthAllRow
+		if err := rows.Scan(&i.TaskName, &i.Depth); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const workQueueFail = `-- name: WorkQueueFail :one
 UPDATE work_queue
    SET claimed_by     = -1,

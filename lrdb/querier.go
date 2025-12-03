@@ -102,6 +102,7 @@ type Querier interface {
 	WorkQueueCleanup(ctx context.Context, heartbeatTimeout time.Duration) error
 	WorkQueueComplete(ctx context.Context, arg WorkQueueCompleteParams) error
 	WorkQueueDepth(ctx context.Context, taskName string) (int64, error)
+	WorkQueueDepthAll(ctx context.Context) ([]WorkQueueDepthAllRow, error)
 	WorkQueueFail(ctx context.Context, arg WorkQueueFailParams) (int32, error)
 	WorkQueueHeartbeat(ctx context.Context, arg WorkQueueHeartbeatParams) error
 	batchInsertLogSegsDirect(ctx context.Context, arg []batchInsertLogSegsDirectParams) *batchInsertLogSegsDirectBatchResults

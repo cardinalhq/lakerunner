@@ -67,12 +67,20 @@ func TestService_GetMetrics_Boxer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create mock lag monitor
+			// Create mock monitors
 			mockLagMonitor := &MockLagMonitor{}
+			mockQueueDepthMonitor := &MockQueueDepthMonitor{}
 
 			// Set up expectations for lookups
 			for taskServiceType, depth := range tt.taskDepths {
-				mockLagMonitor.On("GetQueueDepth", taskServiceType).Return(depth, nil)
+				// If it's a worker service, set up queueDepthMonitor expectations
+				if strings.HasPrefix(taskServiceType, "worker-") {
+					taskName := strings.TrimPrefix(taskServiceType, "worker-")
+					mockQueueDepthMonitor.On("GetQueueDepth", taskName).Return(depth, nil)
+				} else {
+					// Otherwise use lagMonitor for boxer services
+					mockLagMonitor.On("GetQueueDepth", taskServiceType).Return(depth, nil)
+				}
 			}
 
 			// For error cases with unknown tasks
@@ -81,9 +89,10 @@ func TestService_GetMetrics_Boxer(t *testing.T) {
 				mockLagMonitor.On("GetQueueDepth", tt.metricName).Return(int64(0), assert.AnError)
 			}
 
-			// Create service with mock
+			// Create service with mocks
 			service := &Service{
-				lagMonitor: mockLagMonitor,
+				lagMonitor:        mockLagMonitor,
+				queueDepthMonitor: mockQueueDepthMonitor,
 			}
 
 			// Create request
@@ -115,6 +124,7 @@ func TestService_GetMetrics_Boxer(t *testing.T) {
 			}
 
 			mockLagMonitor.AssertExpectations(t)
+			mockQueueDepthMonitor.AssertExpectations(t)
 		})
 	}
 }

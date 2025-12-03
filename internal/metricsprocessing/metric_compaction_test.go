@@ -143,6 +143,10 @@ func (m *mockCompactionStore) WorkQueueHeartbeat(ctx context.Context, arg lrdb.W
 	return nil
 }
 
+func (m *mockCompactionStore) WorkQueueDepthAll(ctx context.Context) ([]lrdb.WorkQueueDepthAllRow, error) {
+	return []lrdb.WorkQueueDepthAllRow{}, nil
+}
+
 // Removed unused mockStorageProvider
 
 func TestMarkSegmentsAsCompacted(t *testing.T) {
