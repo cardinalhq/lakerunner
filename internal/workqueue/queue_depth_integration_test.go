@@ -22,11 +22,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/internal/dbopen"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -35,8 +35,7 @@ func TestWorkQueueDepthAll_UsesIndex(t *testing.T) {
 	ctx := context.Background()
 
 	// Connect to test database
-	connStr := lrdb.LRDBConnStr()
-	pool, err := pgxpool.New(ctx, connStr)
+	pool, err := lrdb.ConnectTolrdb(ctx, dbopen.SkipMigrationCheck())
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -48,7 +47,7 @@ func TestWorkQueueDepthAll_UsesIndex(t *testing.T) {
 		TaskName:       config.BoxerTaskIngestLogs,
 		OrganizationID: orgID,
 		InstanceNum:    1,
-		Spec:           []byte(`{}`),
+		Spec:           map[string]any{},
 	})
 	require.NoError(t, err)
 
@@ -56,7 +55,7 @@ func TestWorkQueueDepthAll_UsesIndex(t *testing.T) {
 		TaskName:       config.BoxerTaskCompactMetrics,
 		OrganizationID: orgID,
 		InstanceNum:    1,
-		Spec:           []byte(`{}`),
+		Spec:           map[string]any{},
 	})
 	require.NoError(t, err)
 
@@ -92,8 +91,7 @@ func TestWorkQueueDepthAll_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Connect to test database
-	connStr := lrdb.LRDBConnStr()
-	pool, err := pgxpool.New(ctx, connStr)
+	pool, err := lrdb.ConnectTolrdb(ctx, dbopen.SkipMigrationCheck())
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -113,7 +111,7 @@ func TestWorkQueueDepthAll_Integration(t *testing.T) {
 				TaskName:       taskName,
 				OrganizationID: orgID,
 				InstanceNum:    int16(i),
-				Spec:           []byte(`{}`),
+				Spec:           map[string]any{},
 			})
 			require.NoError(t, err)
 		}

@@ -75,6 +75,8 @@ const (
 	legacyTablesSyncPeriod     time.Duration = 5 * time.Minute
 	metricEstimateUpdatePeriod time.Duration = 10 * time.Minute
 	pubsubCleanupPeriod        time.Duration = 120 * time.Minute
+	workQueueCleanupPeriod     time.Duration = 2 * time.Minute
+	workQueueHeartbeatTimeout  time.Duration = 5 * time.Minute
 )
 
 type sweeper struct {
@@ -220,6 +222,18 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		slog.Info("Starting data expiry cleanup goroutine", slog.Duration("period", expiryCleanupPeriod))
 		if err := periodicLoop(ctx, expiryCleanupPeriod, func(c context.Context) error {
 			return runExpiryCleanup(c, cdb, mdb, cmd.cfg)
+		}); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	})
+
+	// Work queue cleanup (releases work from dead workers)
+	wg.Go(func() {
+		slog.Info("Starting work queue cleanup goroutine",
+			slog.Duration("period", workQueueCleanupPeriod),
+			slog.Duration("heartbeatTimeout", workQueueHeartbeatTimeout))
+		if err := periodicLoop(ctx, workQueueCleanupPeriod, func(c context.Context) error {
+			return runWorkQueueCleanup(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
