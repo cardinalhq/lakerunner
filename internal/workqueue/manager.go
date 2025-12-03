@@ -35,6 +35,7 @@ type DB interface {
 	WorkQueueComplete(ctx context.Context, arg lrdb.WorkQueueCompleteParams) error
 	WorkQueueFail(ctx context.Context, arg lrdb.WorkQueueFailParams) (int32, error)
 	WorkQueueHeartbeat(ctx context.Context, arg lrdb.WorkQueueHeartbeatParams) error
+	WorkQueueDepthAll(ctx context.Context) ([]lrdb.WorkQueueDepthAllRow, error)
 }
 
 // Manager drives fetching items from the DB and heartbeating them.
@@ -180,9 +181,13 @@ func (m *Manager) getWorkItem(ctx context.Context) (*WorkItem, error) {
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// No work available - sleep to avoid hammering the database
+			time.Sleep(1 * time.Second)
 			return nil, nil
 		}
 		if strings.Contains(err.Error(), "23P01") {
+			// Serialization failure - sleep to avoid hammering the database
+			time.Sleep(1 * time.Second)
 			return nil, nil
 		}
 		return nil, err

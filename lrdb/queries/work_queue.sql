@@ -68,3 +68,10 @@ SELECT COUNT(*) as depth
  WHERE task_name = @task_name
    AND claimed_by = -1
    AND failed = false;
+
+-- name: WorkQueueDepthAll :many
+SELECT task_name, COUNT(*) as depth
+  FROM work_queue
+ WHERE claimed_by = -1
+   AND failed = false
+ GROUP BY task_name;

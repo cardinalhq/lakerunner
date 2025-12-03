@@ -33,32 +33,43 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
-// LagMonitorInterface defines the methods needed for Kafka lag monitoring
+// LagMonitorInterface defines the methods needed for Kafka lag monitoring (boxer services)
 type LagMonitorInterface interface {
 	GetDetailedMetrics() []fly.ConsumerGroupInfo
 	GetQueueDepth(serviceType string) (int64, error)
 	IsHealthy() bool
 }
 
+// QueueDepthMonitorInterface defines the methods needed for PostgreSQL work queue monitoring (worker services)
+type QueueDepthMonitorInterface interface {
+	GetQueueDepth(taskName string) (int64, error)
+	IsHealthy() bool
+}
+
 type Service struct {
 	UnimplementedExternalScalerServer
-	grpcPort      int
-	healthCheck   *health.Server
-	lagMonitor    LagMonitorInterface
-	kafkaExporter *KafkaMetricsExporter
-	scalingConfig *config.ScalingConfig
+	grpcPort          int
+	healthCheck       *health.Server
+	lagMonitor        LagMonitorInterface        // Kafka lag monitor for boxer services
+	queueDepthMonitor QueueDepthMonitorInterface // PostgreSQL queue depth monitor for worker services
+	kafkaExporter     *KafkaMetricsExporter
+	scalingConfig     *config.ScalingConfig
 }
 
 type Config struct {
-	GRPCPort      int
-	LagMonitor    LagMonitorInterface
-	ScalingConfig *config.ScalingConfig // Scaling configuration from main config
-	TopicRegistry *config.TopicRegistry // Topic registry for service name lookup
+	GRPCPort          int
+	LagMonitor        LagMonitorInterface        // Kafka lag monitor for boxer services
+	QueueDepthMonitor QueueDepthMonitorInterface // PostgreSQL queue depth monitor for worker services
+	ScalingConfig     *config.ScalingConfig      // Scaling configuration from main config
+	TopicRegistry     *config.TopicRegistry      // Topic registry for service name lookup
 }
 
 func NewService(_ context.Context, cfg Config) (*Service, error) {
 	if cfg.LagMonitor == nil {
-		return nil, errors.New("lag monitor is required")
+		return nil, errors.New("Kafka lag monitor is required")
+	}
+	if cfg.QueueDepthMonitor == nil {
+		return nil, errors.New("queue depth monitor is required")
 	}
 
 	// Use scaling config if provided, otherwise use defaults
@@ -69,10 +80,11 @@ func NewService(_ context.Context, cfg Config) (*Service, error) {
 	}
 
 	s := &Service{
-		grpcPort:      cfg.GRPCPort,
-		healthCheck:   health.NewServer(),
-		lagMonitor:    cfg.LagMonitor,
-		scalingConfig: scalingConfig,
+		grpcPort:          cfg.GRPCPort,
+		healthCheck:       health.NewServer(),
+		lagMonitor:        cfg.LagMonitor,
+		queueDepthMonitor: cfg.QueueDepthMonitor,
+		scalingConfig:     scalingConfig,
 	}
 
 	// Initialize Kafka metrics exporter if lag monitor is provided and OTEL is enabled
@@ -88,9 +100,27 @@ func NewService(_ context.Context, cfg Config) (*Service, error) {
 func (s *Service) Close() {}
 
 func (s *Service) getQueueDepth(_ context.Context, serviceType string) (int64, error) {
+	// Route to appropriate monitor based on service type
+	// Worker services use PostgreSQL work queue
+	// Boxer services use Kafka consumer lag
+	if strings.HasPrefix(serviceType, "worker-") {
+		// Map worker service type to task name
+		// worker-ingest-logs -> ingest-logs
+		// worker-compact-metrics -> compact-metrics
+		// worker-rollup-metrics -> rollup-metrics
+		taskName := strings.TrimPrefix(serviceType, "worker-")
+
+		depth, err := s.queueDepthMonitor.GetQueueDepth(taskName)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get queue depth for worker %s: %w", serviceType, err)
+		}
+		return depth, nil
+	}
+
+	// Boxer services use Kafka lag monitor
 	depth, err := s.lagMonitor.GetQueueDepth(serviceType)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get queue depth for %s: %w", serviceType, err)
+		return 0, fmt.Errorf("failed to get queue depth for boxer %s: %w", serviceType, err)
 	}
 
 	return depth, nil
@@ -151,7 +181,7 @@ func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActive
 		return s.isBoxerActive(ctx, req.ScalerMetadata)
 	}
 
-	depth, err := s.lagMonitor.GetQueueDepth(serviceType)
+	depth, err := s.getQueueDepth(ctx, serviceType)
 	isActive := err == nil && depth > 0
 
 	// Debug: Log response
@@ -305,7 +335,7 @@ func (s *Service) GetMetrics(ctx context.Context, req *GetMetricsRequest) (*GetM
 		"namespace", req.ScaledObjectRef.Namespace)
 
 	serviceType := req.MetricName
-	depth, err := s.lagMonitor.GetQueueDepth(serviceType)
+	depth, err := s.getQueueDepth(ctx, serviceType)
 	if err != nil {
 		ll.Error("GetMetrics: Failed to get queue depth",
 			"serviceType", serviceType,

@@ -83,6 +83,11 @@ func (m *mockDB) WorkQueueHeartbeat(ctx context.Context, arg lrdb.WorkQueueHeart
 	return nil
 }
 
+func (m *mockDB) WorkQueueDepthAll(ctx context.Context) ([]lrdb.WorkQueueDepthAllRow, error) {
+	// Not needed for manager tests, return empty
+	return []lrdb.WorkQueueDepthAllRow{}, nil
+}
+
 func TestNewManager(t *testing.T) {
 	db := &mockDB{}
 	mgr := NewManager(db, 123, "test-task")

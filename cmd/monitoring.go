@@ -32,6 +32,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/externalscaler"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 var (
@@ -102,7 +104,7 @@ func runMonitoringServe(_ context.Context) error {
 	scalerConfig.ScalingConfig = &appConfig.Scaling
 	scalerConfig.TopicRegistry = appConfig.TopicRegistry
 
-	// Create consumer lag monitor using the convenience function
+	// Create Kafka consumer lag monitor for boxer services
 	lagMonitor, err := fly.NewConsumerLagMonitor(
 		appConfig,
 		30*time.Second, // Poll every 30 seconds
@@ -112,12 +114,39 @@ func runMonitoringServe(_ context.Context) error {
 		return err
 	}
 
-	// Start the lag monitor polling
+	// Start the Kafka lag monitor polling
 	go lagMonitor.Start(doneCtx)
 
-	// Provide the lag monitor to external scaler
+	// Provide the Kafka lag monitor to external scaler (for boxer services)
 	scalerConfig.LagMonitor = lagMonitor
 	slog.Info("Kafka lag monitor integrated with external scaler")
+
+	// Create PostgreSQL work queue depth monitor for worker services
+	mdb, err := lrdb.LRDBStore(doneCtx)
+	if err != nil {
+		slog.Error("Failed to open LRDB store", "error", err)
+		return err
+	}
+
+	queueDepthMonitor, err := workqueue.NewQueueDepthMonitor(
+		mdb,
+		30*time.Second, // Poll every 30 seconds
+	)
+	if err != nil {
+		slog.Error("Failed to create work queue depth monitor", "error", err)
+		return err
+	}
+
+	// Start the queue depth monitor polling
+	go func() {
+		if err := queueDepthMonitor.Start(doneCtx); err != nil {
+			slog.Error("Queue depth monitor stopped", slog.Any("error", err))
+		}
+	}()
+
+	// Provide the queue depth monitor to external scaler (for worker services)
+	scalerConfig.QueueDepthMonitor = queueDepthMonitor
+	slog.Info("PostgreSQL work queue depth monitor integrated with external scaler")
 
 	slog.Info("Starting KEDA external scaler service",
 		"grpc_port", monitoringGRPCPort,

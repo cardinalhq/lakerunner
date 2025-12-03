@@ -86,6 +86,10 @@ func (m *MockLogCompactionStore) WorkQueueHeartbeat(ctx context.Context, arg lrd
 	return nil
 }
 
+func (m *MockLogCompactionStore) WorkQueueDepthAll(ctx context.Context) ([]lrdb.WorkQueueDepthAllRow, error) {
+	return []lrdb.WorkQueueDepthAllRow{}, nil
+}
+
 func TestLogCompactionProcessor_New(t *testing.T) {
 	store := &MockLogCompactionStore{}
 	processor := NewLogCompactionProcessor(store, nil, nil, getTestConfig())
