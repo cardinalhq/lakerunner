@@ -36,12 +36,7 @@ func NewTraceCompactionBoxerConsumer(
 	store BoxerStore,
 	factory *fly.Factory,
 ) (*TraceCompactionBoxerConsumer, error) {
-	producer, err := factory.CreateProducer()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
-	}
-
-	processor := newTraceCompactionBoxerProcessor(cfg, producer, store)
+	processor := newTraceCompactionBoxerProcessor(cfg, store)
 
 	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{

@@ -19,12 +19,10 @@ import (
 	"fmt"
 )
 
-// InsertLogSegmentsBatch inserts multiple log segments and tracks kafka offsets
-// using the new kafka_offset_tracker table
+// InsertLogSegmentsBatch inserts multiple log segments
 func (q *Store) InsertLogSegmentsBatch(
 	ctx context.Context,
 	segments []InsertLogSegmentParams,
-	kafkaOffsets []KafkaOffsetInfo,
 ) error {
 	return q.execTx(ctx, func(s *Store) error {
 		// Ensure partitions exist for all segments
@@ -54,35 +52,14 @@ func (q *Store) InsertLogSegmentsBatch(
 			}
 		}
 
-		// Insert kafka offsets into the new tracker table
-		for _, offset := range kafkaOffsets {
-			if len(offset.Offsets) == 0 {
-				continue // Skip empty offset arrays
-			}
-
-			err := s.InsertKafkaOffsets(ctx, InsertKafkaOffsetsParams{
-				ConsumerGroup: offset.ConsumerGroup,
-				Topic:         offset.Topic,
-				PartitionID:   offset.PartitionID,
-				Offsets:       offset.Offsets,
-				CreatedAt:     nil, // Use default (now())
-			})
-			if err != nil {
-				return fmt.Errorf("insert kafka offsets for %s/%s/%d: %w",
-					offset.ConsumerGroup, offset.Topic, offset.PartitionID, err)
-			}
-		}
-
 		return nil
 	})
 }
 
-// CompactLogSegments marks old log segments as compacted, inserts new compacted segments,
-// and tracks kafka offsets using the new kafka_offset_tracker table
+// CompactLogSegments marks old log segments as compacted and inserts new compacted segments
 func (q *Store) CompactLogSegments(
 	ctx context.Context,
 	params CompactLogSegsParams,
-	kafkaOffsets []KafkaOffsetInfo,
 ) error {
 	return q.execTx(ctx, func(s *Store) error {
 		// Mark old segments as compacted if any
@@ -138,25 +115,6 @@ func (q *Store) CompactLogSegments(
 			})
 			if insertErr != nil {
 				return insertErr
-			}
-		}
-
-		// Insert kafka offsets into the new tracker table
-		for _, offset := range kafkaOffsets {
-			if len(offset.Offsets) == 0 {
-				continue // Skip empty offset arrays
-			}
-
-			err := s.InsertKafkaOffsets(ctx, InsertKafkaOffsetsParams{
-				ConsumerGroup: offset.ConsumerGroup,
-				Topic:         offset.Topic,
-				PartitionID:   offset.PartitionID,
-				Offsets:       offset.Offsets,
-				CreatedAt:     nil, // Use default (now())
-			})
-			if err != nil {
-				return fmt.Errorf("insert kafka offsets for %s/%s/%d: %w",
-					offset.ConsumerGroup, offset.Topic, offset.PartitionID, err)
 			}
 		}
 

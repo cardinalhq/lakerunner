@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -353,15 +355,8 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
 
-	// Create kafka offset info for tracking
-	kafkaOffsets := []lrdb.KafkaOffsetInfo{{
-		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesIngest),
-		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsTracesIngest),
-		PartitionID:   partition,
-		Offsets:       []int64{offset},
-	}}
 	criticalCtx := context.WithoutCancel(ctx)
-	if err := p.store.InsertTraceSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
+	if err := p.store.InsertTraceSegmentsBatch(criticalCtx, segmentParams); err != nil {
 		// Log detailed segment information for debugging
 		segmentIDs := make([]int64, len(segmentParams))
 		var totalRecords, totalSize int64
@@ -438,6 +433,34 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 		slog.Int("outputSegments", len(segmentParams)))
 
 	return nil
+}
+
+// ProcessBundleFromQueue implements the BundleProcessor interface for work queue integration
+func (p *TraceIngestProcessor) ProcessBundleFromQueue(ctx context.Context, workItem workqueue.Workable) error {
+	ll := logctx.FromContext(ctx)
+
+	// Extract bundle from work item spec
+	var bundle messages.TraceIngestBundle
+	specBytes, err := json.Marshal(workItem.Spec())
+	if err != nil {
+		return fmt.Errorf("failed to marshal work item spec: %w", err)
+	}
+
+	if err := json.Unmarshal(specBytes, &bundle); err != nil {
+		return fmt.Errorf("failed to unmarshal trace ingest bundle: %w", err)
+	}
+
+	if len(bundle.Messages) == 0 {
+		ll.Info("Skipping empty bundle")
+		return nil
+	}
+
+	// Extract key from first message
+	firstMsg := bundle.Messages[0]
+	key := firstMsg.GroupingKey().(messages.IngestKey)
+
+	// Call the existing ProcessBundle with 0 for partition and offset (not needed anymore)
+	return p.ProcessBundle(ctx, key, bundle.Messages, 0, 0)
 }
 
 // GetTargetRecordCount returns the target file size limit (5MB) for accumulation

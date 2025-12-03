@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,6 +33,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -56,6 +58,34 @@ func NewTraceCompactionProcessor(
 		cmgr:            cmgr,
 		config:          cfg,
 	}
+}
+
+// ProcessBundleFromQueue processes a trace compaction bundle from the work queue
+func (p *TraceCompactionProcessor) ProcessBundleFromQueue(ctx context.Context, workItem workqueue.Workable) error {
+	ll := logctx.FromContext(ctx)
+
+	// Extract bundle from work item spec
+	var bundle messages.TraceCompactionBundle
+	specBytes, err := json.Marshal(workItem.Spec())
+	if err != nil {
+		return fmt.Errorf("failed to marshal work item spec: %w", err)
+	}
+
+	if err := json.Unmarshal(specBytes, &bundle); err != nil {
+		return fmt.Errorf("failed to unmarshal trace compaction bundle: %w", err)
+	}
+
+	if len(bundle.Messages) == 0 {
+		ll.Info("Skipping empty bundle")
+		return nil
+	}
+
+	// Extract key from first message
+	firstMsg := bundle.Messages[0]
+	key := firstMsg.GroupingKey().(messages.TraceCompactionKey)
+
+	// Call the existing ProcessBundle with 0 for partition and offset (not needed anymore)
+	return p.ProcessBundle(ctx, key, bundle.Messages, 0, 0)
 }
 
 // ProcessBundle processes a bundle of trace compaction messages directly
@@ -315,20 +345,6 @@ func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Cont
 func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.TraceSeg, key messages.TraceCompactionKey, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx)
 
-	var kafkaOffsets []lrdb.KafkaOffsetInfo
-	kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
-		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesCompact),
-		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact),
-		PartitionID:   partition,
-		Offsets:       []int64{offset},
-	})
-
-	ll.Debug("Updating Kafka consumer group offset",
-		slog.String("consumerGroup", p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesCompact)),
-		slog.String("topic", p.config.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact)),
-		slog.Int("partition", int(partition)),
-		slog.Int64("newOffset", offset))
-
 	oldRecords := make([]lrdb.CompactTraceSegsOld, len(oldSegments))
 	for i, seg := range oldSegments {
 		oldRecords[i] = lrdb.CompactTraceSegsOld{
@@ -361,7 +377,7 @@ func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context
 		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
-	if err := p.store.CompactTraceSegments(ctx, params, kafkaOffsets); err != nil {
+	if err := p.store.CompactTraceSegments(ctx, params); err != nil {
 		ll.Error("Failed CompactTraceSegments",
 			slog.Any("error", err),
 			slog.String("organization_id", key.OrganizationID.String()),

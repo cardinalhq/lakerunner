@@ -41,7 +41,7 @@ import (
 // MetricRollupStore defines database operations needed for rollups
 type MetricRollupStore interface {
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
-	RollupMetricSegments(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord, kafkaOffsets []lrdb.KafkaOffsetInfo) error
+	RollupMetricSegments(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
 	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
 	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
 	InsertKafkaOffsets(ctx context.Context, params lrdb.InsertKafkaOffsetsParams) error
@@ -383,8 +383,6 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 
 // atomicDatabaseUpdate performs the atomic transaction for rollup completion
 func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.RollupKey) error {
-	ll := logctx.FromContext(ctx)
-
 	sourceSegmentIDs := make([]int64, len(oldSegments))
 	for i, seg := range oldSegments {
 		sourceSegmentIDs[i] = seg.SegmentID
@@ -417,25 +415,7 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 		SortVersion:    lrdb.CurrentMetricSortVersion,
 	}
 
-	var kafkaOffsets []lrdb.KafkaOffsetInfo
-	if kafkaCommitData != nil {
-		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
-				Topic:         kafkaCommitData.Topic,
-				PartitionID:   partition,
-				ConsumerGroup: kafkaCommitData.ConsumerGroup,
-				Offsets:       []int64{offset},
-			})
-
-			ll.Info("Updating Kafka consumer group offset for rollup",
-				slog.String("consumerGroup", kafkaCommitData.ConsumerGroup),
-				slog.String("topic", kafkaCommitData.Topic),
-				slog.Int("partition", int(partition)),
-				slog.Int64("newOffset", offset))
-		}
-	}
-
-	if err := r.store.RollupMetricSegments(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords, kafkaOffsets); err != nil {
+	if err := r.store.RollupMetricSegments(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords); err != nil {
 		ll := logctx.FromContext(ctx)
 
 		// Log unique keys for debugging database failures

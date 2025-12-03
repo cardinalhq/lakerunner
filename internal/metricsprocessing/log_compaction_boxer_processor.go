@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
@@ -39,11 +38,7 @@ type LogCompactionBoxerProcessor struct {
 }
 
 // newLogCompactionBoxerProcessor creates a new log compaction boxer processor
-func newLogCompactionBoxerProcessor(
-	cfg *config.Config,
-	_ fly.Producer,
-	store BoxerStore,
-) *LogCompactionBoxerProcessor {
+func newLogCompactionBoxerProcessor(cfg *config.Config, store BoxerStore) *LogCompactionBoxerProcessor {
 	return &LogCompactionBoxerProcessor{
 		store:  store,
 		config: cfg,
