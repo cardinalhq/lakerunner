@@ -75,8 +75,6 @@ func (m *QueueDepthMonitor) observeQueueDepth(ctx context.Context, observer metr
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	fmt.Printf("DEBUG: observeQueueDepth callback invoked, lastDepths=%v\n", m.lastDepths)
-
 	// Report all known task types, even if depth is 0
 	allTasks := []string{
 		config.BoxerTaskIngestLogs,
