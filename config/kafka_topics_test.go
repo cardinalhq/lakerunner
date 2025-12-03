@@ -142,12 +142,9 @@ func TestTopicRegistry_GetAllServiceMappings(t *testing.T) {
 	registry := NewTopicRegistry("lakerunner")
 	mappings := registry.GetAllServiceMappings()
 
-	// Should have mappings for all service types
+	// Should have mappings for all boxer service types (workers consume from PostgreSQL queue)
 	expectedServiceTypes := []string{
 		"boxer-ingest-logs", "boxer-ingest-metrics", "boxer-ingest-traces",
-		"worker-ingest-logs", "worker-ingest-metrics", "worker-ingest-traces",
-		"worker-compact-logs", "worker-compact-metrics", "worker-compact-traces",
-		"worker-rollup-metrics",
 		"boxer-compact-logs", "boxer-compact-metrics", "boxer-compact-traces",
 		"boxer-rollup-metrics",
 	}
@@ -209,18 +206,11 @@ func TestTopicRegistry_GetAllTopics(t *testing.T) {
 	registry := NewTopicRegistry("lakerunner")
 	topics := registry.GetAllTopics()
 
-	// Should contain all expected topics
+	// Should contain all boxer topics (workers consume from PostgreSQL queue)
 	expectedTopics := []string{
 		"lakerunner.objstore.ingest.logs",
 		"lakerunner.objstore.ingest.metrics",
 		"lakerunner.objstore.ingest.traces",
-		"lakerunner.segments.logs.ingest",
-		"lakerunner.segments.metrics.ingest",
-		"lakerunner.segments.traces.ingest",
-		"lakerunner.segments.logs.compact",
-		"lakerunner.segments.metrics.compact",
-		"lakerunner.segments.traces.compact",
-		"lakerunner.segments.metrics.rollup",
 		"lakerunner.boxer.logs.compact",
 		"lakerunner.boxer.metrics.compact",
 		"lakerunner.boxer.traces.compact",
@@ -237,10 +227,10 @@ func TestTopicRegistry_GetAllTopics(t *testing.T) {
 func TestTopicRegistry_ServiceTypeLookups(t *testing.T) {
 	registry := NewTopicRegistry("lakerunner")
 
-	// Test successful lookups
-	topic, found := registry.GetTopicByServiceType("worker-ingest-logs")
-	assert.True(t, found, "Should find topic for worker-ingest-logs service")
-	assert.Equal(t, "lakerunner.segments.logs.ingest", topic)
+	// Test successful lookups for boxer services (workers consume from PostgreSQL queue)
+	topic, found := registry.GetTopicByServiceType("boxer-ingest-logs")
+	assert.True(t, found, "Should find topic for boxer-ingest-logs service")
+	assert.Equal(t, "lakerunner.objstore.ingest.logs", topic)
 
 	consumerGroup, found := registry.GetConsumerGroupByServiceType("boxer-rollup-metrics")
 	assert.True(t, found, "Should find consumer group for boxer-rollup-metrics service")
@@ -260,7 +250,7 @@ func TestTopicRegistry_ServiceTypeLookups(t *testing.T) {
 func TestTopicRegistry_GenerateKafkaSyncConfig(t *testing.T) {
 	registry := NewTopicRegistry("lakerunner")
 
-	// Create a config similar to our new format
+	// Create a config with only boxer topics (workers consume from PostgreSQL queue)
 	kafkaConfig := KafkaTopicsConfig{
 		TopicPrefix: "lakerunner",
 		Defaults: TopicCreationConfig{
@@ -273,10 +263,10 @@ func TestTopicRegistry_GenerateKafkaSyncConfig(t *testing.T) {
 			},
 		},
 		Topics: map[string]TopicCreationConfig{
-			"worker-ingest-logs": {
+			"boxer-ingest-logs": {
 				PartitionCount: testIntPtr(32),
 			},
-			"worker-compact-logs": {
+			"boxer-compact-logs": {
 				PartitionCount: testIntPtr(4),
 				Options: map[string]interface{}{
 					"cleanup.policy": "compact,delete",
@@ -300,18 +290,11 @@ func TestTopicRegistry_GenerateKafkaSyncConfig(t *testing.T) {
 	assert.Equal(t, "10485760", syncConfig.Defaults.TopicConfig["max.message.bytes"])
 	assert.Equal(t, "604800000", syncConfig.Defaults.TopicConfig["retention.ms"])
 
-	// Verify we have all expected topics
+	// Verify we have all boxer topics (workers consume from PostgreSQL queue)
 	expectedTopicNames := []string{
 		"lakerunner.objstore.ingest.logs",
 		"lakerunner.objstore.ingest.metrics",
 		"lakerunner.objstore.ingest.traces",
-		"lakerunner.segments.logs.ingest",
-		"lakerunner.segments.metrics.ingest",
-		"lakerunner.segments.traces.ingest",
-		"lakerunner.segments.logs.compact",
-		"lakerunner.segments.metrics.compact",
-		"lakerunner.segments.traces.compact",
-		"lakerunner.segments.metrics.rollup",
 		"lakerunner.boxer.logs.compact",
 		"lakerunner.boxer.metrics.compact",
 		"lakerunner.boxer.traces.compact",
@@ -326,14 +309,14 @@ func TestTopicRegistry_GenerateKafkaSyncConfig(t *testing.T) {
 		topicsByName[topic.Name] = topic
 	}
 
-	// Check worker-ingest-logs has custom partition count
-	ingestLogs := topicsByName["lakerunner.segments.logs.ingest"]
-	assert.Equal(t, 32, ingestLogs.PartitionCount, "worker-ingest-logs should have custom partition count")
+	// Check boxer-ingest-logs has custom partition count
+	ingestLogs := topicsByName["lakerunner.objstore.ingest.logs"]
+	assert.Equal(t, 32, ingestLogs.PartitionCount, "boxer-ingest-logs should have custom partition count")
 
-	// Check worker-compact-logs has custom partition count and options
-	compactLogs := topicsByName["lakerunner.segments.logs.compact"]
-	assert.Equal(t, 4, compactLogs.PartitionCount, "worker-compact-logs should have custom partition count")
-	assert.Equal(t, "compact,delete", compactLogs.TopicConfig["cleanup.policy"], "worker-compact-logs should have custom cleanup policy")
+	// Check boxer-compact-logs has custom partition count and options
+	compactLogs := topicsByName["lakerunner.boxer.logs.compact"]
+	assert.Equal(t, 4, compactLogs.PartitionCount, "boxer-compact-logs should have custom partition count")
+	assert.Equal(t, "compact,delete", compactLogs.TopicConfig["cleanup.policy"], "boxer-compact-logs should have custom cleanup policy")
 
 	// Check boxer-compact-metrics has custom options
 	boxerMetrics := topicsByName["lakerunner.boxer.metrics.compact"]
@@ -375,7 +358,7 @@ defaults:
   options:
     "cleanup.policy": "delete"
 workers:
-  worker-ingest-logs:
+  boxer-ingest-logs:
     partitionCount: 16
     options:
       "segment.ms": "3600000"
@@ -392,13 +375,13 @@ workers:
 	override, err := LoadKafkaTopicsOverride(tmpFile.Name())
 	require.NoError(t, err)
 
-	// Verify parsing
+	// Verify parsing (using boxer topics since workers consume from PostgreSQL queue)
 	assert.Equal(t, 2, override.Version)
 	assert.Equal(t, 8, *override.Defaults.PartitionCount)
 	assert.Equal(t, 1, *override.Defaults.ReplicationFactor)
 	assert.Equal(t, "delete", override.Defaults.Options["cleanup.policy"])
-	assert.Equal(t, 16, *override.Workers["worker-ingest-logs"].PartitionCount)
-	assert.Equal(t, "3600000", override.Workers["worker-ingest-logs"].Options["segment.ms"])
+	assert.Equal(t, 16, *override.Workers["boxer-ingest-logs"].PartitionCount)
+	assert.Equal(t, "3600000", override.Workers["boxer-ingest-logs"].Options["segment.ms"])
 }
 
 func TestLoadKafkaTopicsOverride_InvalidVersion(t *testing.T) {
@@ -469,7 +452,7 @@ func TestMergeKafkaTopicsOverride(t *testing.T) {
 			},
 		},
 		Topics: map[string]TopicCreationConfig{
-			"worker-ingest-logs": {
+			"boxer-ingest-logs": {
 				PartitionCount: testIntPtr(32),
 			},
 		},
@@ -485,10 +468,10 @@ func TestMergeKafkaTopicsOverride(t *testing.T) {
 			},
 		},
 		Workers: map[string]TopicCreationOverrideConfig{
-			"worker-ingest-logs": { // Override existing topic
+			"boxer-ingest-logs": { // Override existing topic
 				PartitionCount: testIntPtr(64),
 			},
-			"worker-ingest-metrics": { // Add new topic
+			"boxer-ingest-metrics": { // Add new topic
 				PartitionCount: testIntPtr(12),
 			},
 		},
@@ -506,9 +489,9 @@ func TestMergeKafkaTopicsOverride(t *testing.T) {
 	assert.Equal(t, "1209600000", result.Defaults.Options["retention.ms"])   // Overridden
 	assert.Equal(t, "5242880", result.Defaults.Options["max.message.bytes"]) // Added from override
 
-	// Verify topics merge
-	assert.Equal(t, 64, *result.Topics["worker-ingest-logs"].PartitionCount)    // Overridden
-	assert.Equal(t, 12, *result.Topics["worker-ingest-metrics"].PartitionCount) // Added from override
+	// Verify topics merge (using boxer topics since workers consume from PostgreSQL queue)
+	assert.Equal(t, 64, *result.Topics["boxer-ingest-logs"].PartitionCount)    // Overridden
+	assert.Equal(t, 12, *result.Topics["boxer-ingest-metrics"].PartitionCount) // Added from override
 }
 
 // testIntPtr helper function for tests (renamed to avoid conflict with config.go)
