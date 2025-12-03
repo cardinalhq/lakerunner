@@ -62,8 +62,19 @@ func (w *WorkItem) Complete() error {
 		workItem: w,
 		resp:     make(chan error, 1),
 	}
-	w.mgr.completeWork <- req
-	return <-req.resp
+
+	select {
+	case w.mgr.completeWork <- req:
+	case <-w.mgr.done:
+		return errors.New("work queue manager is shut down")
+	}
+
+	select {
+	case err := <-req.resp:
+		return err
+	case <-w.mgr.done:
+		return errors.New("work queue manager is shut down")
+	}
 }
 
 // Fail marks the work item as failed, releases it back to the queue, and increments the retry counter.
@@ -83,8 +94,19 @@ func (w *WorkItem) Fail(reason *string) error {
 		failedReason: reason,
 		resp:         make(chan error, 1),
 	}
-	w.mgr.failWork <- req
-	return <-req.resp
+
+	select {
+	case w.mgr.failWork <- req:
+	case <-w.mgr.done:
+		return errors.New("work queue manager is shut down")
+	}
+
+	select {
+	case err := <-req.resp:
+		return err
+	case <-w.mgr.done:
+		return errors.New("work queue manager is shut down")
+	}
 }
 
 // ID returns the unique identifier for the work item.
