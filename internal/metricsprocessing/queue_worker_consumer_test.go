@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -173,7 +174,7 @@ func TestQueueWorkerConsumer_Run_ProcessesWorkItem(t *testing.T) {
 					TaskName:       "test-task",
 					OrganizationID: testOrgID,
 					InstanceNum:    5,
-					Spec:           map[string]any{"key": "value"},
+					Spec:           json.RawMessage(`{"key": "value"}`),
 					Tries:          0,
 					ClaimedBy:      123,
 				}, nil
@@ -238,7 +239,7 @@ func TestQueueWorkerConsumer_Run_FailsWorkItemOnProcessError(t *testing.T) {
 					TaskName:       "test-task",
 					OrganizationID: testOrgID,
 					InstanceNum:    5,
-					Spec:           map[string]any{},
+					Spec:           json.RawMessage(`{}`),
 					Tries:          0,
 					ClaimedBy:      123,
 				}, nil
@@ -368,7 +369,7 @@ func TestQueueWorkerConsumer_Run_MultipleWorkItems(t *testing.T) {
 					TaskName:       "test-task",
 					OrganizationID: testOrgID,
 					InstanceNum:    5,
-					Spec:           map[string]any{},
+					Spec:           json.RawMessage(`{}`),
 					Tries:          0,
 					ClaimedBy:      123,
 				}, nil

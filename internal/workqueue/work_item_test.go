@@ -15,6 +15,7 @@
 package workqueue
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -23,11 +24,7 @@ import (
 
 func TestWorkItem_Accessors(t *testing.T) {
 	testOrgID := uuid.New()
-	testSpec := map[string]any{
-		"key1": "value1",
-		"key2": 123,
-		"key3": true,
-	}
+	testSpec := json.RawMessage(`{"key1": "value1", "key2": 123, "key3": true}`)
 
 	wi := &WorkItem{
 		id:             100,
@@ -94,10 +91,8 @@ func TestWorkItem_Fail_AlreadyClosed(t *testing.T) {
 	assert.NoError(t, err, "Failing already closed item should be idempotent")
 }
 
-func TestWorkItem_Spec_Mutation(t *testing.T) {
-	testSpec := map[string]any{
-		"key1": "value1",
-	}
+func TestWorkItem_Spec_ReturnsRawBytes(t *testing.T) {
+	testSpec := json.RawMessage(`{"key1": "value1"}`)
 
 	wi := &WorkItem{
 		id:       100,
@@ -105,12 +100,9 @@ func TestWorkItem_Spec_Mutation(t *testing.T) {
 		spec:     testSpec,
 	}
 
-	// Get the spec and mutate it
+	// Verify the spec returns the same raw bytes
 	spec := wi.Spec()
-	spec["key2"] = "value2"
-
-	// Verify the mutation affects the work item (it's not a copy)
-	assert.Equal(t, "value2", wi.spec["key2"])
+	assert.Equal(t, testSpec, spec)
 }
 
 func TestWorkItem_Workable_Interface(t *testing.T) {

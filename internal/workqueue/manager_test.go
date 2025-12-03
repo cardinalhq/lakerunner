@@ -16,6 +16,7 @@ package workqueue
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -129,7 +130,7 @@ func TestManagerRequestWork_NoWorkAvailable(t *testing.T) {
 
 func TestManagerRequestWork_WorkAvailable(t *testing.T) {
 	testOrgID := uuid.New()
-	testSpec := map[string]any{"key": "value"}
+	testSpec := json.RawMessage(`{"key": "value"}`)
 
 	db := &mockDB{
 		claimFunc: func(ctx context.Context, arg lrdb.WorkQueueClaimParams) (lrdb.WorkQueue, error) {
@@ -222,7 +223,7 @@ func TestManagerHeartbeat(t *testing.T) {
 				TaskName:       "test-task",
 				OrganizationID: testOrgID,
 				InstanceNum:    5,
-				Spec:           map[string]any{},
+				Spec:           json.RawMessage(`{}`),
 				Tries:          0,
 				ClaimedBy:      123,
 			}, nil
@@ -297,7 +298,7 @@ func TestManagerHeartbeat_Error(t *testing.T) {
 				TaskName:       "test-task",
 				OrganizationID: testOrgID,
 				InstanceNum:    5,
-				Spec:           map[string]any{},
+				Spec:           json.RawMessage(`{}`),
 				Tries:          0,
 				ClaimedBy:      123,
 			}, nil
@@ -342,7 +343,7 @@ func TestManagerCompleteWork(t *testing.T) {
 				TaskName:       "test-task",
 				OrganizationID: testOrgID,
 				InstanceNum:    5,
-				Spec:           map[string]any{},
+				Spec:           json.RawMessage(`{}`),
 				Tries:          0,
 				ClaimedBy:      123,
 			}, nil
@@ -385,7 +386,7 @@ func TestManagerFailWork(t *testing.T) {
 				TaskName:       "test-task",
 				OrganizationID: testOrgID,
 				InstanceNum:    5,
-				Spec:           map[string]any{},
+				Spec:           json.RawMessage(`{}`),
 				Tries:          0,
 				ClaimedBy:      123,
 			}, nil
@@ -427,7 +428,7 @@ func TestManagerWaitForOutstandingWork(t *testing.T) {
 				TaskName:       "test-task",
 				OrganizationID: testOrgID,
 				InstanceNum:    5,
-				Spec:           map[string]any{},
+				Spec:           json.RawMessage(`{}`),
 				Tries:          0,
 				ClaimedBy:      123,
 			}, nil
@@ -469,7 +470,7 @@ func TestManagerWaitForOutstandingWork_Timeout(t *testing.T) {
 				TaskName:       "test-task",
 				OrganizationID: testOrgID,
 				InstanceNum:    5,
-				Spec:           map[string]any{},
+				Spec:           json.RawMessage(`{}`),
 				Tries:          0,
 				ClaimedBy:      123,
 			}, nil
@@ -511,7 +512,7 @@ func TestManagerMultipleWorkItems(t *testing.T) {
 				TaskName:       "test-task",
 				OrganizationID: testOrgID,
 				InstanceNum:    5,
-				Spec:           map[string]any{},
+				Spec:           json.RawMessage(`{}`),
 				Tries:          0,
 				ClaimedBy:      123,
 			}, nil

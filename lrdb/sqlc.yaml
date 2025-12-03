@@ -45,3 +45,4 @@ sql:
           - {column: "lrdb_exemplar_logs.source", go_type: {type: "ExemplarSource"}}
           - {column: "lrdb_exemplar_metrics.source", go_type: {type: "ExemplarSource"}}
           - {column: "lrdb_exemplar_traces.source", go_type: {type: "ExemplarSource"}}
+          - {column: "work_queue.spec", go_type: {type: "RawMessage", import: "encoding/json"}}

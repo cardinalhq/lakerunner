@@ -34,11 +34,15 @@ type EnqueueDB interface {
 
 // Add adds a new work item to the queue.
 func Add(ctx context.Context, db EnqueueDB, taskName string, organizationID uuid.UUID, instanceNum int16, spec map[string]any) (int64, error) {
+	specBytes, err := json.Marshal(spec)
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal spec: %w", err)
+	}
 	wq, err := db.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
 		TaskName:       taskName,
 		OrganizationID: organizationID,
 		InstanceNum:    instanceNum,
-		Spec:           spec,
+		Spec:           specBytes,
 	})
 	if err != nil {
 		return 0, err
@@ -57,11 +61,16 @@ func Cleanup(ctx context.Context, db EnqueueDB, heartbeatTimeout time.Duration) 
 }
 
 // AddBundle adds a work item to the queue using a JSON-serialized bundle.
-// The bundleBytes are unmarshaled into a map[string]any for the spec field.
+// The bundleBytes are stored directly as the spec field to preserve numeric precision.
 func AddBundle(ctx context.Context, db EnqueueDB, taskName string, organizationID uuid.UUID, instanceNum int16, bundleBytes []byte) (int64, error) {
-	var spec map[string]any
-	if err := json.Unmarshal(bundleBytes, &spec); err != nil {
-		return 0, fmt.Errorf("failed to unmarshal bundle: %w", err)
+	wq, err := db.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
+		TaskName:       taskName,
+		OrganizationID: organizationID,
+		InstanceNum:    instanceNum,
+		Spec:           bundleBytes,
+	})
+	if err != nil {
+		return 0, err
 	}
-	return Add(ctx, db, taskName, organizationID, instanceNum, spec)
+	return wq.ID, nil
 }

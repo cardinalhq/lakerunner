@@ -16,6 +16,7 @@ package workqueue
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -81,7 +82,11 @@ func TestAdd(t *testing.T) {
 				assert.Equal(t, "test-task", arg.TaskName)
 				assert.Equal(t, testOrgID, arg.OrganizationID)
 				assert.Equal(t, int16(5), arg.InstanceNum)
-				assert.Equal(t, testSpec, arg.Spec)
+				// Verify JSON content by unmarshaling
+				var decoded map[string]any
+				err := json.Unmarshal(arg.Spec, &decoded)
+				require.NoError(t, err)
+				assert.Equal(t, testSpec, decoded)
 				return lrdb.WorkQueue{ID: 123}, nil
 			},
 			expectedID:  123,
@@ -223,7 +228,8 @@ func TestAdd_NilSpec(t *testing.T) {
 
 	db := &mockEnqueueDB{
 		addFunc: func(ctx context.Context, arg lrdb.WorkQueueAddParams) (lrdb.WorkQueue, error) {
-			assert.Nil(t, arg.Spec)
+			// nil map marshals to "null" JSON
+			assert.Equal(t, json.RawMessage("null"), arg.Spec)
 			return lrdb.WorkQueue{ID: 100}, nil
 		},
 	}
@@ -239,8 +245,8 @@ func TestAdd_EmptySpec(t *testing.T) {
 
 	db := &mockEnqueueDB{
 		addFunc: func(ctx context.Context, arg lrdb.WorkQueueAddParams) (lrdb.WorkQueue, error) {
-			assert.NotNil(t, arg.Spec)
-			assert.Empty(t, arg.Spec)
+			// empty map marshals to "{}" JSON
+			assert.Equal(t, json.RawMessage("{}"), arg.Spec)
 			return lrdb.WorkQueue{ID: 100}, nil
 		},
 	}
@@ -263,7 +269,16 @@ func TestAdd_ComplexSpec(t *testing.T) {
 
 	db := &mockEnqueueDB{
 		addFunc: func(ctx context.Context, arg lrdb.WorkQueueAddParams) (lrdb.WorkQueue, error) {
-			assert.Equal(t, complexSpec, arg.Spec)
+			// Verify the JSON roundtrips correctly
+			var decoded map[string]any
+			err := json.Unmarshal(arg.Spec, &decoded)
+			require.NoError(t, err)
+			assert.Equal(t, "value", decoded["strings"])
+			assert.Equal(t, float64(123), decoded["numbers"]) // JSON numbers decode as float64
+			assert.Equal(t, true, decoded["bools"])
+			assert.Equal(t, map[string]any{"inner": "value"}, decoded["nested"])
+			assert.Equal(t, []any{float64(1), float64(2), float64(3)}, decoded["arrays"])
+			assert.Nil(t, decoded["nulls"])
 			return lrdb.WorkQueue{ID: 100}, nil
 		},
 	}

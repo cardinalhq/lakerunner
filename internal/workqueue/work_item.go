@@ -15,6 +15,7 @@
 package workqueue
 
 import (
+	"encoding/json"
 	"errors"
 
 	"github.com/google/uuid"
@@ -26,7 +27,7 @@ type WorkItem struct {
 	taskName       string
 	organizationID uuid.UUID
 	instanceNum    int16
-	spec           map[string]any
+	spec           json.RawMessage
 	tries          int32
 
 	closed bool
@@ -41,7 +42,7 @@ type Workable interface {
 	TaskName() string
 	OrganizationID() uuid.UUID
 	InstanceNum() int16
-	Spec() map[string]any
+	Spec() json.RawMessage
 	Tries() int32
 }
 
@@ -129,8 +130,8 @@ func (w *WorkItem) InstanceNum() int16 {
 	return w.instanceNum
 }
 
-// Spec returns the work specification as a JSONB map.
-func (w *WorkItem) Spec() map[string]any {
+// Spec returns the work specification as raw JSON bytes.
+func (w *WorkItem) Spec() json.RawMessage {
 	return w.spec
 }
 

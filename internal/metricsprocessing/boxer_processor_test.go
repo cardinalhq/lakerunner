@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -41,7 +42,7 @@ type addedBundle struct {
 	taskName       string
 	organizationID uuid.UUID
 	instanceNum    int16
-	spec           map[string]any
+	spec           json.RawMessage
 }
 
 func (m *mockBoxerStore) WorkQueueAdd(ctx context.Context, arg lrdb.WorkQueueAddParams) (lrdb.WorkQueue, error) {

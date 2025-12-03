@@ -7,6 +7,7 @@ package lrdb
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/google/uuid"
 	"time"
@@ -28,10 +29,10 @@ RETURNING id, task_name, organization_id, instance_num, spec, tries, claimed_by,
 `
 
 type WorkQueueAddParams struct {
-	TaskName       string         `json:"task_name"`
-	OrganizationID uuid.UUID      `json:"organization_id"`
-	InstanceNum    int16          `json:"instance_num"`
-	Spec           map[string]any `json:"spec"`
+	TaskName       string          `json:"task_name"`
+	OrganizationID uuid.UUID       `json:"organization_id"`
+	InstanceNum    int16           `json:"instance_num"`
+	Spec           json.RawMessage `json:"spec"`
 }
 
 func (q *Queries) WorkQueueAdd(ctx context.Context, arg WorkQueueAddParams) (WorkQueue, error) {
