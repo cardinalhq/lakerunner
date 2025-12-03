@@ -206,15 +206,7 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 		return nil
 	}
 
-	kafkaCommitData := &KafkaCommitData{
-		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsLogsCompact),
-		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsLogsCompact),
-		Offsets: map[int32]int64{
-			partition: offset,
-		},
-	}
-
-	if err := p.atomicLogDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, key); err != nil {
+	if err := p.atomicLogDatabaseUpdate(ctx, activeSegments, newSegments, key); err != nil {
 		ll.Error("Failed to perform atomic database update, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -337,7 +329,7 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 	return segments, nil
 }
 
-func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.LogSeg, kafkaCommitData *KafkaCommitData, key messages.LogCompactionKey) error {
+func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.LogSeg, key messages.LogCompactionKey) error {
 	ll := logctx.FromContext(ctx)
 
 	oldRecords := make([]lrdb.CompactLogSegsOld, len(oldSegments))

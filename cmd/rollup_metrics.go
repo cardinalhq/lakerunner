@@ -97,25 +97,16 @@ func init() {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			// Create Kafka factory
 			kafkaFactory := fly.NewFactory(&cfg.Kafka)
-
-			// Create Kafka-based rollup consumer (now consumes bundles from boxer)
 			consumer, err := metricsprocessing.NewMetricRollupConsumer(ctx, cfg, kafkaFactory, mdb, sp, cmgr)
 			if err != nil {
-				return fmt.Errorf("failed to create rollup consumer: %w", err)
+				return fmt.Errorf("failed to create work queue consumer: %w", err)
 			}
-			defer func() { _ = consumer.Close() }()
-
-			// Start offset skip checker for live flushing support
-			topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsMetricsRollup)
-			consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsRollup)
-			stopSkipChecker, err := StartOffsetSkipChecker(ctx, cfg, mdb, consumerGroup, topic)
-			if err != nil {
-				slog.Warn("Failed to start offset skip checker", slog.Any("error", err))
-			} else {
-				defer stopSkipChecker()
-			}
+			defer func() {
+				if err := consumer.Close(); err != nil {
+					slog.Error("Error closing work queue consumer", slog.Any("error", err))
+				}
+			}()
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
