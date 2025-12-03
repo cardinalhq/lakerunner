@@ -18,6 +18,7 @@ package workqueue
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestWorkQueueDepthAll_UsesIndex(t *testing.T) {
 		TaskName:       config.BoxerTaskIngestLogs,
 		OrganizationID: orgID,
 		InstanceNum:    1,
-		Spec:           map[string]any{},
+		Spec:           json.RawMessage("{}"),
 	})
 	require.NoError(t, err)
 
@@ -55,7 +56,7 @@ func TestWorkQueueDepthAll_UsesIndex(t *testing.T) {
 		TaskName:       config.BoxerTaskCompactMetrics,
 		OrganizationID: orgID,
 		InstanceNum:    1,
-		Spec:           map[string]any{},
+		Spec:           json.RawMessage("{}"),
 	})
 	require.NoError(t, err)
 
@@ -126,7 +127,7 @@ func TestWorkQueueDepthAll_Integration(t *testing.T) {
 				TaskName:       taskName,
 				OrganizationID: orgID,
 				InstanceNum:    int16(i),
-				Spec:           map[string]any{},
+				Spec:           json.RawMessage("{}"),
 			})
 			require.NoError(t, err)
 		}
