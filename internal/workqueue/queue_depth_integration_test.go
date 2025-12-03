@@ -59,8 +59,11 @@ func TestWorkQueueDepthAll_UsesIndex(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Get the query plan
-	var plan string
+	// Disable sequential scans to force index usage (table is too small for planner to choose index)
+	_, err = pool.Exec(ctx, "SET enable_seqscan = off")
+	require.NoError(t, err)
+
+	// Get the full query plan
 	query := `
 		EXPLAIN
 		SELECT task_name, COUNT(*) as depth
@@ -69,17 +72,29 @@ func TestWorkQueueDepthAll_UsesIndex(t *testing.T) {
 		   AND failed = false
 		 GROUP BY task_name
 	`
-	err = pool.QueryRow(ctx, query).Scan(&plan)
+	rows, err := pool.Query(ctx, query)
 	require.NoError(t, err)
+	defer rows.Close()
+
+	var planLines []string
+	for rows.Next() {
+		var line string
+		err = rows.Scan(&line)
+		require.NoError(t, err)
+		planLines = append(planLines, line)
+	}
+	require.NoError(t, rows.Err())
+
+	fullPlan := strings.Join(planLines, "\n")
 
 	// Verify the plan uses an index scan
 	// The query should use idx_work_queue_monitoring or idx_work_queue_claim
-	planLower := strings.ToLower(plan)
+	planLower := strings.ToLower(fullPlan)
 	hasIndexScan := strings.Contains(planLower, "index scan") ||
 		strings.Contains(planLower, "index only scan") ||
 		strings.Contains(planLower, "bitmap index scan")
 
-	assert.True(t, hasIndexScan, "Query plan should use an index scan, got: %s", plan)
+	assert.True(t, hasIndexScan, "Query plan should use an index scan, got:\n%s", fullPlan)
 
 	// Clean up
 	_, err = pool.Exec(ctx, "DELETE FROM work_queue WHERE organization_id = $1", orgID)

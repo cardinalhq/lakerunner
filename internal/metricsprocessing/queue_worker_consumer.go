@@ -18,10 +18,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
 )
+
+const shutdownTimeout = 30 * time.Second
 
 // BundleProcessor defines the interface for processing a bundle from the work queue
 type BundleProcessor interface {
@@ -61,14 +64,14 @@ func (c *QueueWorkerConsumer) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			ll.Info("Context cancelled, shutting down queue worker")
-			return c.manager.WaitForOutstandingWork(ctx)
+			return c.waitForShutdown()
 
 		default:
 			workItem, err := c.manager.RequestWork(ctx)
 			if err != nil {
 				if ctx.Err() != nil {
 					// Context cancelled, exit gracefully
-					return c.manager.WaitForOutstandingWork(ctx)
+					return c.waitForShutdown()
 				}
 				ll.Error("Failed to request work", slog.Any("error", err))
 				continue
@@ -136,4 +139,11 @@ func (c *QueueWorkerConsumer) Close() error {
 	// The manager doesn't have an explicit Close method,
 	// shutdown is handled by context cancellation
 	return nil
+}
+
+// waitForShutdown waits for outstanding work to complete with a fresh context
+func (c *QueueWorkerConsumer) waitForShutdown() error {
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	return c.manager.WaitForOutstandingWork(ctx)
 }
