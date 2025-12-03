@@ -161,8 +161,7 @@ func (s *Service) startGRPCServer(ctx context.Context) error {
 func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActiveResponse, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Debug: Log incoming request
-	ll.Info("IsActive called",
+	ll.Debug("IsActive called",
 		"name", req.Name,
 		"namespace", req.Namespace,
 		"metadata", req.ScalerMetadata)
@@ -184,8 +183,7 @@ func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActive
 	depth, err := s.getQueueDepth(ctx, serviceType)
 	isActive := err == nil && depth > 0
 
-	// Debug: Log response
-	ll.Info("IsActive response",
+	ll.Debug("IsActive response",
 		"serviceType", serviceType,
 		"queueDepth", depth,
 		"isActive", isActive,
@@ -230,8 +228,7 @@ func (s *Service) StreamIsActive(req *ScaledObjectRef, stream grpc.ServerStreami
 func (s *Service) GetMetricSpec(ctx context.Context, req *ScaledObjectRef) (*GetMetricSpecResponse, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Debug: Log incoming request
-	ll.Info("GetMetricSpec called",
+	ll.Debug("GetMetricSpec called",
 		"name", req.Name,
 		"namespace", req.Namespace,
 		"metadata", req.ScalerMetadata)
@@ -266,8 +263,7 @@ func (s *Service) GetMetricSpec(ctx context.Context, req *ScaledObjectRef) (*Get
 		},
 	}
 
-	// Debug: Log response
-	ll.Info("GetMetricSpec response",
+	ll.Debug("GetMetricSpec response",
 		"serviceType", serviceType,
 		"metricName", serviceType,
 		"targetSize", target,
@@ -317,7 +313,7 @@ func (s *Service) getBoxerMetricSpecs(ctx context.Context, metadata map[string]s
 		MetricSpecs: metricSpecs,
 	}
 
-	ll.Info("getBoxerMetricSpecs response",
+	ll.Debug("getBoxerMetricSpecs response",
 		"tasks", boxerTasks,
 		"metricSpecsCount", len(metricSpecs),
 		"metricSpecs", metricSpecs)
@@ -328,8 +324,7 @@ func (s *Service) getBoxerMetricSpecs(ctx context.Context, metadata map[string]s
 func (s *Service) GetMetrics(ctx context.Context, req *GetMetricsRequest) (*GetMetricsResponse, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Debug: Log incoming request
-	ll.Info("GetMetrics called",
+	ll.Debug("GetMetrics called",
 		"metricName", req.MetricName,
 		"scaledObjectName", req.ScaledObjectRef.Name,
 		"namespace", req.ScaledObjectRef.Namespace)
@@ -353,8 +348,7 @@ func (s *Service) GetMetrics(ctx context.Context, req *GetMetricsRequest) (*GetM
 		},
 	}
 
-	// Debug: Log response
-	ll.Info("GetMetrics response",
+	ll.Debug("GetMetrics response",
 		"serviceType", serviceType,
 		"metricName", req.MetricName,
 		"queueDepth", depth,
