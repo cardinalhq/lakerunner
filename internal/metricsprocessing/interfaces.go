@@ -25,7 +25,6 @@ import (
 
 // MetricIngestStore defines database operations needed for metric ingestion
 type MetricIngestStore interface {
-	OffsetTrackerStore
 	workqueue.DB
 	InsertMetricSegmentsBatch(ctx context.Context, segments []lrdb.InsertMetricSegmentParams) error
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
@@ -35,7 +34,6 @@ type MetricIngestStore interface {
 
 // LogIngestStore defines database operations needed for log ingestion
 type LogIngestStore interface {
-	OffsetTrackerStore
 	workqueue.DB
 	InsertLogSegmentsBatch(ctx context.Context, segments []lrdb.InsertLogSegmentParams) error
 	GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64
@@ -45,7 +43,6 @@ type LogIngestStore interface {
 
 // TraceIngestStore defines database operations needed for trace ingestion
 type TraceIngestStore interface {
-	OffsetTrackerStore
 	workqueue.DB
 	InsertTraceSegmentsBatch(ctx context.Context, segments []lrdb.InsertTraceSegmentParams) error
 	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
@@ -55,7 +52,6 @@ type TraceIngestStore interface {
 
 // LogCompactionStore defines database operations needed for log compaction
 type LogCompactionStore interface {
-	OffsetTrackerStore
 	workqueue.DB
 	GetLogSeg(ctx context.Context, params lrdb.GetLogSegParams) (lrdb.LogSeg, error)
 	CompactLogSegments(ctx context.Context, params lrdb.CompactLogSegsParams) error
@@ -65,7 +61,6 @@ type LogCompactionStore interface {
 
 // MetricCompactionStore defines database operations needed for metric compaction
 type MetricCompactionStore interface {
-	OffsetTrackerStore
 	workqueue.DB
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
 	CompactMetricSegments(ctx context.Context, params lrdb.CompactMetricSegsParams) error
@@ -75,7 +70,6 @@ type MetricCompactionStore interface {
 
 // TraceCompactionStore defines database operations needed for trace compaction
 type TraceCompactionStore interface {
-	OffsetTrackerStore
 	workqueue.DB
 	GetTraceSeg(ctx context.Context, params lrdb.GetTraceSegParams) (lrdb.TraceSeg, error)
 	CompactTraceSegments(ctx context.Context, params lrdb.CompactTraceSegsParams) error

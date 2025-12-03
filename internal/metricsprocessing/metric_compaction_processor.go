@@ -156,7 +156,7 @@ func (p *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context,
 	return segments, nil
 }
 
-func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.CompactionKey) error {
+func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, key messages.CompactionKey) error {
 	oldRecords := make([]lrdb.CompactMetricSegsOld, len(oldSegments))
 	for i, seg := range oldSegments {
 		oldRecords[i] = lrdb.CompactMetricSegsOld{
@@ -400,15 +400,7 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		return nil
 	}
 
-	kafkaCommitData := &KafkaCommitData{
-		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsCompact),
-		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsCompact),
-		Offsets: map[int32]int64{
-			partition: offset,
-		},
-	}
-
-	if err := p.atomicDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, key); err != nil {
+	if err := p.atomicDatabaseUpdate(ctx, activeSegments, newSegments, key); err != nil {
 		ll.Error("Failed to perform atomic database update for metric compaction, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),

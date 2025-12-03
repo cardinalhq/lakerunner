@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -35,11 +36,13 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // MetricRollupStore defines database operations needed for rollups
 type MetricRollupStore interface {
+	workqueue.DB
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
 	RollupMetricSegments(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
 	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
@@ -265,15 +268,7 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		return nil
 	}
 
-	kafkaCommitData := &KafkaCommitData{
-		Topic:         r.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsRollup),
-		ConsumerGroup: r.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsRollup),
-		Offsets: map[int32]int64{
-			partition: offset,
-		},
-	}
-
-	if err := r.atomicDatabaseUpdate(ctx, segments, newSegments, kafkaCommitData, key); err != nil {
+	if err := r.atomicDatabaseUpdate(ctx, segments, newSegments, key); err != nil {
 		ll.Error("Failed to perform atomic database update for metric rollup, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -307,6 +302,39 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		slog.Int64("outputFileSize", totalSize))
 
 	return nil
+}
+
+// ProcessBundleFromQueue implements the BundleProcessor interface for work queue integration
+func (r *MetricRollupProcessor) ProcessBundleFromQueue(ctx context.Context, workItem workqueue.Workable) error {
+	ll := logctx.FromContext(ctx)
+
+	// Extract bundle from work item spec
+	var bundle messages.MetricRollupBundle
+	specBytes, err := json.Marshal(workItem.Spec())
+	if err != nil {
+		return fmt.Errorf("failed to marshal work item spec: %w", err)
+	}
+
+	if err := json.Unmarshal(specBytes, &bundle); err != nil {
+		return fmt.Errorf("failed to unmarshal metric rollup bundle: %w", err)
+	}
+
+	if len(bundle.Messages) == 0 {
+		ll.Info("Skipping empty bundle")
+		return nil
+	}
+
+	firstMsg := bundle.Messages[0]
+	ll.Info("Processing rollup bundle from queue",
+		slog.String("organizationID", firstMsg.OrganizationID.String()),
+		slog.Int("dateint", int(firstMsg.DateInt)),
+		slog.Int("sourceFrequencyMs", int(firstMsg.SourceFrequencyMs)),
+		slog.Int("targetFrequencyMs", int(firstMsg.TargetFrequencyMs)),
+		slog.Int("instanceNum", int(firstMsg.InstanceNum)),
+		slog.Int("messageCount", len(bundle.Messages)))
+
+	// ProcessBundle no longer needs partition/offset since we don't track Kafka offsets
+	return r.ProcessBundle(ctx, &bundle, 0, 0)
 }
 
 // uploadAndCreateRollupSegments uploads the rollup files and creates new segment records at target frequency
@@ -382,7 +410,7 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 }
 
 // atomicDatabaseUpdate performs the atomic transaction for rollup completion
-func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.RollupKey) error {
+func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, key messages.RollupKey) error {
 	sourceSegmentIDs := make([]int64, len(oldSegments))
 	for i, seg := range oldSegments {
 		sourceSegmentIDs[i] = seg.SegmentID

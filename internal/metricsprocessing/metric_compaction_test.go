@@ -321,16 +321,6 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 	}
 
 	t.Run("successful update with Kafka offsets", func(t *testing.T) {
-		kafkaCommitData := &KafkaCommitData{
-			Topic:         "test-topic",
-			ConsumerGroup: "test-group",
-			Offsets: map[int32]int64{
-				0: 100,
-				1: 200,
-				2: 150,
-			},
-		}
-
 		expectedParams := lrdb.CompactMetricSegsParams{
 			OrganizationID: orgID,
 			Dateint:        20240101,
@@ -363,7 +353,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 
 		mockStore.On("CompactMetricSegments", ctx, expectedParams).Return(nil).Once()
 
-		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, kafkaCommitData, key)
+		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, key)
 
 		require.NoError(t, err)
 		mockStore.AssertExpectations(t)
@@ -402,14 +392,14 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 
 		mockStore.On("CompactMetricSegments", ctx, expectedParams).Return(nil).Once()
 
-		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, nil, key)
+		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, key)
 
 		require.NoError(t, err)
 		mockStore.AssertExpectations(t)
 	})
 
 	t.Run("error when no new segments", func(t *testing.T) {
-		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, []lrdb.MetricSeg{}, nil, key)
+		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, []lrdb.MetricSeg{}, key)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no new segments to insert")
@@ -422,7 +412,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 
 		mockStore.On("CompactMetricSegments", ctx, mock.Anything).Return(expectedError).Once()
 
-		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, nil, key)
+		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, key)
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, expectedError)
