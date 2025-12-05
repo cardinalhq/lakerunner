@@ -54,7 +54,7 @@ func (q *Queries) GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsPara
 }
 
 const getLogSeg = `-- name: GetLogSeg :one
-SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids
 FROM log_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -92,6 +92,7 @@ func (q *Queries) GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, e
 		&i.Compacted,
 		&i.Published,
 		&i.LabelNameMap,
+		&i.StreamIds,
 	)
 	return i, err
 }
@@ -163,6 +164,44 @@ func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmen
 	return items, nil
 }
 
+const listLogStreamIDs = `-- name: ListLogStreamIDs :many
+SELECT DISTINCT unnest(stream_ids)::text AS stream_id
+FROM log_seg
+WHERE organization_id = $1
+  AND dateint >= $2
+  AND dateint <= $3
+  AND published = true
+  AND stream_ids IS NOT NULL
+`
+
+type ListLogStreamIDsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	StartDateint   int32     `json:"start_dateint"`
+	EndDateint     int32     `json:"end_dateint"`
+}
+
+// Returns distinct stream IDs for an organization within a time range.
+// Used by /api/v1/logs/series endpoint (Loki-compatible).
+func (q *Queries) ListLogStreamIDs(ctx context.Context, arg ListLogStreamIDsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listLogStreamIDs, arg.OrganizationID, arg.StartDateint, arg.EndDateint)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var stream_id string
+		if err := rows.Scan(&stream_id); err != nil {
+			return nil, err
+		}
+		items = append(items, stream_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markLogSegsCompactedByKeys = `-- name: MarkLogSegsCompactedByKeys :exec
 UPDATE log_seg
 SET compacted = true
@@ -203,7 +242,8 @@ INSERT INTO log_seg (
   fingerprints,
   published,
   compacted,
-  label_name_map
+  label_name_map,
+  stream_ids
 )
 VALUES (
   $1,
@@ -217,7 +257,8 @@ VALUES (
   $10::bigint[],
   $11,
   $12,
-  $13
+  $13,
+  $14::text[]
 )
 `
 
@@ -235,6 +276,7 @@ type InsertLogSegmentParams struct {
 	Published      bool      `json:"published"`
 	Compacted      bool      `json:"compacted"`
 	LabelNameMap   []byte    `json:"label_name_map"`
+	StreamIds      []string  `json:"stream_ids"`
 }
 
 func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error {
@@ -252,6 +294,7 @@ func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 		arg.Published,
 		arg.Compacted,
 		arg.LabelNameMap,
+		arg.StreamIds,
 	)
 	return err
 }

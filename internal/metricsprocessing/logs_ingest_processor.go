@@ -932,6 +932,7 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			Published:      true,  // Mark ingested segments as published
 			Compacted:      false, // New segments are not compacted
 			LabelNameMap:   labelNameMap,
+			StreamIds:      stats.StreamIDs,
 		}
 
 		segmentParams = append(segmentParams, params)

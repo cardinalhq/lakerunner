@@ -52,6 +52,7 @@ type LogsStatsProvider struct{}
 func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &LogsStatsAccumulator{
 		fingerprints:       mapset.NewSet[int64](),
+		streamIDs:          mapset.NewSet[string](),
 		fieldFingerprinter: fingerprint.NewFieldFingerprinter(),
 	}
 }
@@ -59,6 +60,7 @@ func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 // LogsStatsAccumulator collects logs-specific statistics.
 type LogsStatsAccumulator struct {
 	fingerprints       mapset.Set[int64]
+	streamIDs          mapset.Set[string]
 	firstTS            int64
 	lastTS             int64
 	first              bool
@@ -84,6 +86,11 @@ func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
 
 	fps := a.fieldFingerprinter.GenerateFingerprints(row)
 	a.fingerprints.Append(fps...)
+
+	// Track stream_id if present
+	if streamID, ok := row[wkk.RowKeyCStreamID].(string); ok && streamID != "" {
+		a.streamIDs.Add(streamID)
+	}
 }
 
 func (a *LogsStatsAccumulator) Finalize() any {
@@ -91,14 +98,16 @@ func (a *LogsStatsAccumulator) Finalize() any {
 		FirstTS:      a.firstTS,
 		LastTS:       a.lastTS,
 		Fingerprints: a.fingerprints.ToSlice(),
+		StreamIDs:    a.streamIDs.ToSlice(),
 	}
 }
 
 // LogsFileStats contains statistics about a logs file.
 type LogsFileStats struct {
-	FirstTS      int64   // Earliest timestamp
-	LastTS       int64   // Latest timestamp
-	Fingerprints []int64 // Actual list of unique fingerprints in this file
+	FirstTS      int64    // Earliest timestamp
+	LastTS       int64    // Latest timestamp
+	Fingerprints []int64  // Actual list of unique fingerprints in this file
+	StreamIDs    []string // Unique stream identifiers in this file
 }
 
 // ValidateLogsRow checks that a row has the required fields for logs processing.

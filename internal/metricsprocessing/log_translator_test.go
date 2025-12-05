@@ -17,7 +17,11 @@ package metricsprocessing
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/pipeline"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 func Test_getResourceFile(t *testing.T) {
@@ -81,6 +85,72 @@ func Test_getResourceFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := getResourceFile(tt.objectid)
 			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestLogTranslatingReader_setStreamID(t *testing.T) {
+	tests := []struct {
+		name           string
+		inputRow       pipeline.Row
+		customerDomain string
+		expectedID     string
+		shouldBeSet    bool
+	}{
+		{
+			name:           "customer domain takes priority",
+			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: "my-service"},
+			customerDomain: "customer.example.com",
+			expectedID:     "customer.example.com",
+			shouldBeSet:    true,
+		},
+		{
+			name:           "falls back to resource_service_name",
+			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: "my-service"},
+			customerDomain: "",
+			expectedID:     "my-service",
+			shouldBeSet:    true,
+		},
+		{
+			name:           "omits if neither present",
+			inputRow:       pipeline.Row{},
+			customerDomain: "",
+			expectedID:     "",
+			shouldBeSet:    false,
+		},
+		{
+			name:           "omits if service name is empty string",
+			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: ""},
+			customerDomain: "",
+			expectedID:     "",
+			shouldBeSet:    false,
+		},
+		{
+			name:           "customer domain overrides service name",
+			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: "fallback-service"},
+			customerDomain: "primary-domain",
+			expectedID:     "primary-domain",
+			shouldBeSet:    true,
+		},
+	}
+
+	r := &LogTranslatingReader{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := make(pipeline.Row)
+			for k, v := range tt.inputRow {
+				row[k] = v
+			}
+
+			r.setStreamID(&row, tt.customerDomain)
+
+			streamID, exists := row[wkk.RowKeyCStreamID]
+			if tt.shouldBeSet {
+				assert.True(t, exists, "stream_id should be set")
+				assert.Equal(t, tt.expectedID, streamID, "stream_id value mismatch")
+			} else {
+				assert.False(t, exists, "stream_id should not be set")
+			}
 		})
 	}
 }
