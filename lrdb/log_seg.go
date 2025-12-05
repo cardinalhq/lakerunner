@@ -43,4 +43,5 @@ type CompactLogSegsNew struct {
 	FileSize     int64
 	Fingerprints []int64
 	LabelNameMap []byte
+	StreamIds    []string
 }

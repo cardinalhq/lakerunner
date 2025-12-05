@@ -309,6 +309,7 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			Fingerprints: stats.Fingerprints,
 			CreatedBy:    lrdb.CreatedByCompact,
 			LabelNameMap: mergedLabelMap,
+			StreamIds:    stats.StreamIDs,
 		}
 
 		segments = append(segments, segment)
@@ -349,6 +350,7 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 			FileSize:     seg.FileSize,
 			Fingerprints: seg.Fingerprints,
 			LabelNameMap: seg.LabelNameMap,
+			StreamIds:    seg.StreamIds,
 		}
 	}
 

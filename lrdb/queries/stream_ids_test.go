@@ -252,4 +252,83 @@ func TestLogSegStreamIDs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, streamIDs, 0)
 	})
+
+	t.Run("compaction preserves stream_ids", func(t *testing.T) {
+		orgID6 := uuid.New()
+
+		// Insert two source segments with stream_ids
+		err := store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID6,
+			Dateint:        dateint,
+			SegmentID:      2001,
+			InstanceNum:    1,
+			StartTs:        now.UnixMilli(),
+			EndTs:          now.Add(time.Hour).UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{201},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"source-service-a", "source-service-b"},
+		})
+		require.NoError(t, err)
+
+		err = store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID6,
+			Dateint:        dateint,
+			SegmentID:      2002,
+			InstanceNum:    1,
+			StartTs:        now.UnixMilli(),
+			EndTs:          now.Add(time.Hour).UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{202},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"source-service-c"},
+		})
+		require.NoError(t, err)
+
+		// Run compaction - this marks old segments and inserts new compacted segment
+		err = store.CompactLogSegments(ctx, lrdb.CompactLogSegsParams{
+			OrganizationID: orgID6,
+			Dateint:        dateint,
+			InstanceNum:    1,
+			OldRecords: []lrdb.CompactLogSegsOld{
+				{SegmentID: 2001},
+				{SegmentID: 2002},
+			},
+			NewRecords: []lrdb.CompactLogSegsNew{
+				{
+					SegmentID:    3001,
+					StartTs:      now.UnixMilli(),
+					EndTs:        now.Add(time.Hour).UnixMilli(),
+					RecordCount:  20,
+					FileSize:     2048,
+					Fingerprints: []int64{201, 202},
+					StreamIds:    []string{"source-service-a", "source-service-b", "source-service-c"},
+				},
+			},
+			CreatedBy: lrdb.CreatedByCompact,
+		})
+		require.NoError(t, err)
+
+		// Query stream_ids - should return the compacted segment's stream_ids
+		streamIDs, err := store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+			OrganizationID: orgID6,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+		})
+		require.NoError(t, err)
+
+		sort.Strings(streamIDs)
+
+		// Compacted segment should have all 3 stream_ids
+		assert.Contains(t, streamIDs, "source-service-a")
+		assert.Contains(t, streamIDs, "source-service-b")
+		assert.Contains(t, streamIDs, "source-service-c")
+		assert.Len(t, streamIDs, 3)
+	})
 }
