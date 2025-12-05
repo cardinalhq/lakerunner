@@ -20,10 +20,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 func TestLokiSeriesResponse_Format(t *testing.T) {
 	// Test that the response format matches Loki's expected format
+	streamIDKey := string(wkk.RowKeyCStreamID.Value())
 	tests := []struct {
 		name     string
 		response LokiSeriesResponse
@@ -42,22 +45,22 @@ func TestLokiSeriesResponse_Format(t *testing.T) {
 			response: LokiSeriesResponse{
 				Status: "success",
 				Data: []map[string]string{
-					{"stream_id": "my-service"},
+					{streamIDKey: "my-service"},
 				},
 			},
-			expected: `{"status":"success","data":[{"stream_id":"my-service"}]}`,
+			expected: `{"status":"success","data":[{"` + streamIDKey + `":"my-service"}]}`,
 		},
 		{
 			name: "multiple streams",
 			response: LokiSeriesResponse{
 				Status: "success",
 				Data: []map[string]string{
-					{"stream_id": "service-a"},
-					{"stream_id": "service-b"},
-					{"stream_id": "customer.domain.com"},
+					{streamIDKey: "service-a"},
+					{streamIDKey: "service-b"},
+					{streamIDKey: "customer.domain.com"},
 				},
 			},
-			expected: `{"status":"success","data":[{"stream_id":"service-a"},{"stream_id":"service-b"},{"stream_id":"customer.domain.com"}]}`,
+			expected: `{"status":"success","data":[{"` + streamIDKey + `":"service-a"},{"` + streamIDKey + `":"service-b"},{"` + streamIDKey + `":"customer.domain.com"}]}`,
 		},
 	}
 
@@ -72,7 +75,8 @@ func TestLokiSeriesResponse_Format(t *testing.T) {
 
 func TestLokiSeriesResponse_Unmarshal(t *testing.T) {
 	// Test that clients can unmarshal the response correctly
-	input := `{"status":"success","data":[{"stream_id":"service-a"},{"stream_id":"service-b"}]}`
+	streamIDKey := string(wkk.RowKeyCStreamID.Value())
+	input := `{"status":"success","data":[{"` + streamIDKey + `":"service-a"},{"` + streamIDKey + `":"service-b"}]}`
 
 	var response LokiSeriesResponse
 	err := json.Unmarshal([]byte(input), &response)
@@ -80,8 +84,8 @@ func TestLokiSeriesResponse_Unmarshal(t *testing.T) {
 
 	assert.Equal(t, "success", response.Status)
 	require.Len(t, response.Data, 2)
-	assert.Equal(t, "service-a", response.Data[0]["stream_id"])
-	assert.Equal(t, "service-b", response.Data[1]["stream_id"])
+	assert.Equal(t, "service-a", response.Data[0][streamIDKey])
+	assert.Equal(t, "service-b", response.Data[1][streamIDKey])
 }
 
 func TestLogsSeriesPayload_Structure(t *testing.T) {

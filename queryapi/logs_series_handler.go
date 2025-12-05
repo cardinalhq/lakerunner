@@ -28,6 +28,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // logsSeriesPayload is the request payload for /api/v1/logs/series
@@ -109,9 +110,10 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Convert to Loki-compatible format
+	streamIDKey := string(wkk.RowKeyCStreamID.Value())
 	data := make([]map[string]string, 0, len(streamIDs))
 	for _, streamID := range streamIDs {
-		data = append(data, map[string]string{"stream_id": streamID})
+		data = append(data, map[string]string{streamIDKey: streamID})
 	}
 
 	resp := LokiSeriesResponse{

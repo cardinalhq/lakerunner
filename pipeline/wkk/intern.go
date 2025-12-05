@@ -249,6 +249,6 @@ var (
 	// RowKeyAttrURLTemplate: "attr_url_template"
 	RowKeyAttrURLTemplate = NewRowKey("attr_url_template")
 
-	// RowKeyCStreamID: "chq_stream_id" - derived stream identifier for log series
-	RowKeyCStreamID = NewRowKey("chq_stream_id")
+	// RowKeyCStreamID: "stream_id" - derived stream identifier for log series
+	RowKeyCStreamID = NewRowKey("stream_id")
 )
