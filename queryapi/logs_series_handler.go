@@ -102,6 +102,8 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 		OrganizationID: p.OrgUUID,
 		StartDateint:   startDateint,
 		EndDateint:     endDateint,
+		StartTs:        p.StartTs,
+		EndTs:          p.EndTs,
 	})
 	if err != nil {
 		slog.Error("ListLogStreamIDs failed", "org", p.OrgUUID, "error", err)

@@ -170,6 +170,7 @@ FROM log_seg
 WHERE organization_id = $1
   AND dateint >= $2
   AND dateint <= $3
+  AND ts_range && int8range($4, $5, '[)')
   AND published = true
   AND stream_ids IS NOT NULL
 `
@@ -178,12 +179,20 @@ type ListLogStreamIDsParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	StartDateint   int32     `json:"start_dateint"`
 	EndDateint     int32     `json:"end_dateint"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
 }
 
 // Returns distinct stream IDs for an organization within a time range.
 // Used by /api/v1/logs/series endpoint (Loki-compatible).
 func (q *Queries) ListLogStreamIDs(ctx context.Context, arg ListLogStreamIDsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listLogStreamIDs, arg.OrganizationID, arg.StartDateint, arg.EndDateint)
+	rows, err := q.db.Query(ctx, listLogStreamIDs,
+		arg.OrganizationID,
+		arg.StartDateint,
+		arg.EndDateint,
+		arg.StartTs,
+		arg.EndTs,
+	)
 	if err != nil {
 		return nil, err
 	}

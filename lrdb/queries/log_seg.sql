@@ -124,5 +124,6 @@ FROM log_seg
 WHERE organization_id = @organization_id
   AND dateint >= @start_dateint
   AND dateint <= @end_dateint
+  AND ts_range && int8range(@start_ts, @end_ts, '[)')
   AND published = true
   AND stream_ids IS NOT NULL;
