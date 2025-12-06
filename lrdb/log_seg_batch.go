@@ -103,6 +103,7 @@ func (q *Store) CompactLogSegments(
 					Published:      true,
 					Compacted:      true,
 					LabelNameMap:   r.LabelNameMap,
+					StreamIds:      r.StreamIds,
 				}
 			}
 

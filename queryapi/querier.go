@@ -547,6 +547,7 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	mux.HandleFunc("/api/v1/logs/tags", q.apiKeyMiddleware(q.handleListLogQLTags))
 	mux.HandleFunc("/api/v1/logs/tagvalues", q.apiKeyMiddleware(q.handleGetLogTagValues))
 	mux.HandleFunc("/api/v1/logs/query", q.apiKeyMiddleware(q.handleLogQuery))
+	mux.HandleFunc("/api/v1/logs/series", q.apiKeyMiddleware(q.handleListLogSeries))
 
 	mux.HandleFunc("/api/v1/spans/tags", q.apiKeyMiddleware(q.handleListSpanTags))
 	mux.HandleFunc("/api/v1/spans/tagvalues", q.apiKeyMiddleware(q.handleGetSpanTagValues))

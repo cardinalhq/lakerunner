@@ -11,7 +11,8 @@ INSERT INTO log_seg (
   fingerprints,
   published,
   compacted,
-  label_name_map
+  label_name_map,
+  stream_ids
 )
 VALUES (
   @organization_id,
@@ -25,7 +26,8 @@ VALUES (
   @fingerprints::bigint[],
   @published,
   @compacted,
-  @label_name_map
+  @label_name_map,
+  @stream_ids::text[]
 );
 
 -- name: GetLogSeg :one
@@ -49,7 +51,8 @@ INSERT INTO log_seg (
   fingerprints,
   published,
   compacted,
-  label_name_map
+  label_name_map,
+  stream_ids
 )
 VALUES (
   @organization_id,
@@ -63,7 +66,8 @@ VALUES (
   @fingerprints::bigint[],
   @published,
   @compacted,
-  @label_name_map
+  @label_name_map,
+  @stream_ids::text[]
 );
 
 -- name: MarkLogSegsCompactedByKeys :exec
@@ -111,3 +115,15 @@ WHERE organization_id = @organization_id
   AND dateint = @dateint
   AND segment_id = ANY(@segment_ids::BIGINT[])
   AND label_name_map IS NOT NULL;
+
+-- name: ListLogStreamIDs :many
+-- Returns distinct stream IDs for an organization within a time range.
+-- Used by /api/v1/logs/series endpoint (Loki-compatible).
+SELECT DISTINCT unnest(stream_ids)::text AS stream_id
+FROM log_seg
+WHERE organization_id = @organization_id
+  AND dateint >= @start_dateint
+  AND dateint <= @end_dateint
+  AND ts_range && int8range(@start_ts, @end_ts, '[)')
+  AND published = true
+  AND stream_ids IS NOT NULL;

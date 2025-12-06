@@ -568,3 +568,123 @@ func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testin
 	assert.True(t, hasMockTimestamp, "Mock timestamp should be promoted to resource attribute")
 	assert.Equal(t, mockStringTimestamp{value: "2025-09-13 18:09:15"}, mockTimestampValue)
 }
+
+func TestSetStreamID(t *testing.T) {
+	tests := []struct {
+		name           string
+		inputRow       pipeline.Row
+		customerDomain string
+		expectedID     string
+		shouldBeSet    bool
+	}{
+		{
+			name:           "customer domain takes priority",
+			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: "my-service"},
+			customerDomain: "customer.example.com",
+			expectedID:     "customer.example.com",
+			shouldBeSet:    true,
+		},
+		{
+			name:           "falls back to resource_service_name",
+			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: "my-service"},
+			customerDomain: "",
+			expectedID:     "my-service",
+			shouldBeSet:    true,
+		},
+		{
+			name:           "omits if neither present",
+			inputRow:       pipeline.Row{},
+			customerDomain: "",
+			expectedID:     "",
+			shouldBeSet:    false,
+		},
+		{
+			name:           "omits if service name is empty string",
+			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: ""},
+			customerDomain: "",
+			expectedID:     "",
+			shouldBeSet:    false,
+		},
+		{
+			name:           "customer domain overrides service name",
+			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: "fallback-service"},
+			customerDomain: "primary-domain",
+			expectedID:     "primary-domain",
+			shouldBeSet:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := make(pipeline.Row)
+			for k, v := range tt.inputRow {
+				row[k] = v
+			}
+
+			setStreamID(&row, tt.customerDomain)
+
+			streamID, exists := row[wkk.RowKeyCStreamID]
+			if tt.shouldBeSet {
+				assert.True(t, exists, "stream_id should be set")
+				assert.Equal(t, tt.expectedID, streamID, "stream_id value mismatch")
+			} else {
+				assert.False(t, exists, "stream_id should not be set")
+			}
+		})
+	}
+}
+
+func TestParquetLogTranslator_StreamIDIntegration(t *testing.T) {
+	// Test that stream_id is derived during full translation
+	// Using a resource file pattern that extracts customer domain
+	// The objectID path "logs/Support/customer.domain.com/data.parquet" should extract "customer.domain.com"
+	objectID := "logs/Support/customer.domain.com/data.parquet"
+	row := pipeline.Row{
+		wkk.NewRowKey("timestamp"):    int64(1234567890123),
+		wkk.NewRowKey("message"):      "test message",
+		wkk.RowKeyResourceServiceName: "fallback-service",
+	}
+
+	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", objectID)
+	require.NoError(t, err)
+
+	// Customer domain should be extracted from the path and used as stream_id
+	streamID, exists := row[wkk.RowKeyCStreamID]
+	assert.True(t, exists, "stream_id should be set")
+	assert.Equal(t, "customer.domain.com", streamID, "stream_id should be customer domain")
+}
+
+func TestParquetLogTranslator_StreamIDFallbackToServiceName(t *testing.T) {
+	// Test that stream_id falls back to service_name when customer domain is not available
+	objectID := "logs/2024/01/data.parquet" // No Support folder, no customer domain extraction
+	row := pipeline.Row{
+		wkk.NewRowKey("timestamp"):    int64(1234567890123),
+		wkk.NewRowKey("message"):      "test message",
+		wkk.RowKeyResourceServiceName: "my-service",
+	}
+
+	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", objectID)
+	require.NoError(t, err)
+
+	// Should fall back to resource_service_name
+	streamID, exists := row[wkk.RowKeyCStreamID]
+	assert.True(t, exists, "stream_id should be set")
+	assert.Equal(t, "my-service", streamID, "stream_id should be service name as fallback")
+}
+
+func TestParquetLogTranslator_StreamIDOmittedWhenNoSource(t *testing.T) {
+	// Test that stream_id is omitted when neither customer domain nor service name is available
+	objectID := "logs/2024/01/data.parquet" // No Support folder, no customer domain extraction
+	row := pipeline.Row{
+		wkk.NewRowKey("timestamp"): int64(1234567890123),
+		wkk.NewRowKey("message"):   "test message",
+		// No resource_service_name
+	}
+
+	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", objectID)
+	require.NoError(t, err)
+
+	// stream_id should not be set
+	_, exists := row[wkk.RowKeyCStreamID]
+	assert.False(t, exists, "stream_id should not be set when neither source is available")
+}
