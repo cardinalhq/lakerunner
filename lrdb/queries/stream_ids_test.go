@@ -62,6 +62,8 @@ func TestLogSegStreamIDs(t *testing.T) {
 			OrganizationID: orgID,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
 
@@ -116,6 +118,8 @@ func TestLogSegStreamIDs(t *testing.T) {
 			OrganizationID: orgID2,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
 
@@ -174,6 +178,8 @@ func TestLogSegStreamIDs(t *testing.T) {
 			OrganizationID: orgID3,
 			StartDateint:   dateint1,
 			EndDateint:     dateint1,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
 		assert.Len(t, streamIDs, 1)
@@ -184,6 +190,8 @@ func TestLogSegStreamIDs(t *testing.T) {
 			OrganizationID: orgID3,
 			StartDateint:   dateint1,
 			EndDateint:     dateint2,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
 		assert.Len(t, streamIDs, 2)
@@ -217,6 +225,8 @@ func TestLogSegStreamIDs(t *testing.T) {
 			OrganizationID: orgID4,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
 		assert.Len(t, streamIDs, 0)
@@ -248,6 +258,8 @@ func TestLogSegStreamIDs(t *testing.T) {
 			OrganizationID: orgID5,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
 		assert.Len(t, streamIDs, 0)
@@ -320,6 +332,8 @@ func TestLogSegStreamIDs(t *testing.T) {
 			OrganizationID: orgID6,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
 
@@ -330,5 +344,135 @@ func TestLogSegStreamIDs(t *testing.T) {
 		assert.Contains(t, streamIDs, "source-service-b")
 		assert.Contains(t, streamIDs, "source-service-c")
 		assert.Len(t, streamIDs, 3)
+	})
+
+	t.Run("timestamp range filtering works correctly", func(t *testing.T) {
+		orgID7 := uuid.New()
+
+		// Create three segments at different time windows on the same day
+		// Segment 1: 00:00 - 01:00
+		seg1Start := time.Date(2025, 8, 28, 0, 0, 0, 0, time.UTC)
+		seg1End := time.Date(2025, 8, 28, 1, 0, 0, 0, time.UTC)
+
+		// Segment 2: 02:00 - 03:00
+		seg2Start := time.Date(2025, 8, 28, 2, 0, 0, 0, time.UTC)
+		seg2End := time.Date(2025, 8, 28, 3, 0, 0, 0, time.UTC)
+
+		// Segment 3: 04:00 - 05:00
+		seg3Start := time.Date(2025, 8, 28, 4, 0, 0, 0, time.UTC)
+		seg3End := time.Date(2025, 8, 28, 5, 0, 0, 0, time.UTC)
+
+		err := store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID7,
+			Dateint:        dateint,
+			SegmentID:      4001,
+			InstanceNum:    1,
+			StartTs:        seg1Start.UnixMilli(),
+			EndTs:          seg1End.UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{401},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"early-morning-service"},
+		})
+		require.NoError(t, err)
+
+		err = store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID7,
+			Dateint:        dateint,
+			SegmentID:      4002,
+			InstanceNum:    1,
+			StartTs:        seg2Start.UnixMilli(),
+			EndTs:          seg2End.UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{402},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"mid-morning-service"},
+		})
+		require.NoError(t, err)
+
+		err = store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID7,
+			Dateint:        dateint,
+			SegmentID:      4003,
+			InstanceNum:    1,
+			StartTs:        seg3Start.UnixMilli(),
+			EndTs:          seg3End.UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{403},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"late-morning-service"},
+		})
+		require.NoError(t, err)
+
+		// Query for 00:30 - 00:45 (only overlaps segment 1)
+		streamIDs, err := store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+			OrganizationID: orgID7,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        time.Date(2025, 8, 28, 0, 30, 0, 0, time.UTC).UnixMilli(),
+			EndTs:          time.Date(2025, 8, 28, 0, 45, 0, 0, time.UTC).UnixMilli(),
+		})
+		require.NoError(t, err)
+		assert.Len(t, streamIDs, 1)
+		assert.Contains(t, streamIDs, "early-morning-service")
+
+		// Query for 01:30 - 02:30 (only overlaps segment 2)
+		streamIDs, err = store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+			OrganizationID: orgID7,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        time.Date(2025, 8, 28, 1, 30, 0, 0, time.UTC).UnixMilli(),
+			EndTs:          time.Date(2025, 8, 28, 2, 30, 0, 0, time.UTC).UnixMilli(),
+		})
+		require.NoError(t, err)
+		assert.Len(t, streamIDs, 1)
+		assert.Contains(t, streamIDs, "mid-morning-service")
+
+		// Query for 00:00 - 03:00 (overlaps segments 1 and 2)
+		streamIDs, err = store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+			OrganizationID: orgID7,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        time.Date(2025, 8, 28, 0, 0, 0, 0, time.UTC).UnixMilli(),
+			EndTs:          time.Date(2025, 8, 28, 3, 0, 0, 0, time.UTC).UnixMilli(),
+		})
+		require.NoError(t, err)
+		assert.Len(t, streamIDs, 2)
+		assert.Contains(t, streamIDs, "early-morning-service")
+		assert.Contains(t, streamIDs, "mid-morning-service")
+
+		// Query for 00:00 - 06:00 (overlaps all segments)
+		streamIDs, err = store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+			OrganizationID: orgID7,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        time.Date(2025, 8, 28, 0, 0, 0, 0, time.UTC).UnixMilli(),
+			EndTs:          time.Date(2025, 8, 28, 6, 0, 0, 0, time.UTC).UnixMilli(),
+		})
+		require.NoError(t, err)
+		assert.Len(t, streamIDs, 3)
+		assert.Contains(t, streamIDs, "early-morning-service")
+		assert.Contains(t, streamIDs, "mid-morning-service")
+		assert.Contains(t, streamIDs, "late-morning-service")
+
+		// Query for 10:00 - 11:00 (no overlap)
+		streamIDs, err = store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+			OrganizationID: orgID7,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        time.Date(2025, 8, 28, 10, 0, 0, 0, time.UTC).UnixMilli(),
+			EndTs:          time.Date(2025, 8, 28, 11, 0, 0, 0, time.UTC).UnixMilli(),
+		})
+		require.NoError(t, err)
+		assert.Len(t, streamIDs, 0)
 	})
 }
