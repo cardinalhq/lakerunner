@@ -199,11 +199,11 @@ func (q *Queries) ListLogStreamIDs(ctx context.Context, arg ListLogStreamIDsPara
 	defer rows.Close()
 	var items []string
 	for rows.Next() {
-		var stream_id string
-		if err := rows.Scan(&stream_id); err != nil {
+		var streamID string
+		if err := rows.Scan(&streamID); err != nil {
 			return nil, err
 		}
-		items = append(items, stream_id)
+		items = append(items, streamID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
