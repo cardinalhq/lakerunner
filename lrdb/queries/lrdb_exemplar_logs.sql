@@ -19,4 +19,13 @@ DO UPDATE SET
   END
 RETURNING (created_at = updated_at) as is_new;
 
- 
+-- name: GetExemplarLogsByFingerprints :many
+-- Fetches log exemplars for a set of fingerprints within an organization.
+-- Returns the exemplar data along with service identifier information.
+SELECT
+  el.fingerprint,
+  el.exemplar
+FROM lrdb_exemplar_logs el
+JOIN lrdb_service_identifiers si ON el.service_identifier_id = si.id
+WHERE el.organization_id = @organization_id::uuid
+  AND el.fingerprint = ANY(@fingerprints::bigint[]);

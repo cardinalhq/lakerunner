@@ -4,3 +4,51 @@
 // source: lrdb_exemplar_logs.sql
 
 package lrdb
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
+
+const getExemplarLogsByFingerprints = `-- name: GetExemplarLogsByFingerprints :many
+SELECT
+  el.fingerprint,
+  el.exemplar
+FROM lrdb_exemplar_logs el
+JOIN lrdb_service_identifiers si ON el.service_identifier_id = si.id
+WHERE el.organization_id = $1::uuid
+  AND el.fingerprint = ANY($2::bigint[])
+`
+
+type GetExemplarLogsByFingerprintsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Fingerprints   []int64   `json:"fingerprints"`
+}
+
+type GetExemplarLogsByFingerprintsRow struct {
+	Fingerprint int64          `json:"fingerprint"`
+	Exemplar    map[string]any `json:"exemplar"`
+}
+
+// Fetches log exemplars for a set of fingerprints within an organization.
+// Returns the exemplar data along with service identifier information.
+func (q *Queries) GetExemplarLogsByFingerprints(ctx context.Context, arg GetExemplarLogsByFingerprintsParams) ([]GetExemplarLogsByFingerprintsRow, error) {
+	rows, err := q.db.Query(ctx, getExemplarLogsByFingerprints, arg.OrganizationID, arg.Fingerprints)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetExemplarLogsByFingerprintsRow
+	for rows.Next() {
+		var i GetExemplarLogsByFingerprintsRow
+		if err := rows.Scan(&i.Fingerprint, &i.Exemplar); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
