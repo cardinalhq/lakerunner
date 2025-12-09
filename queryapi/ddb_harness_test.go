@@ -25,6 +25,7 @@ import (
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
+	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/logql"
 )
@@ -138,12 +139,8 @@ func TestValidateLogQLAgainstExemplar_AggregateRateCounter(t *testing.T) {
 		t.Fatalf("ValidateLogQLAgainstExemplar: %v", err)
 	}
 
-	if res == nil {
-		t.Fatalf("nil result")
-	}
-	if !res.IsAggregate {
-		t.Fatalf("expected aggregate path (sum(...)), got non-aggregate")
-	}
+	require.NotNil(t, res, "nil result")
+	require.True(t, res.IsAggregate, "expected aggregate path (sum(...)), got non-aggregate")
 	if res.InsertedRows <= 0 {
 		t.Fatalf("expected >0 inserted rows, got %d", res.InsertedRows)
 	}

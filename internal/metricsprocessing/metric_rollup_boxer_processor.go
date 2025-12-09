@@ -21,28 +21,23 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // MetricRollupBoxerProcessor implements the Processor interface for boxing metric rollup bundles
 type MetricRollupBoxerProcessor struct {
-	kafkaProducer fly.Producer
-	store         BoxerStore
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newMetricBoxerProcessor creates a new metric boxer processor instance
-func newMetricBoxerProcessor(
-	_ context.Context,
-	cfg *config.Config,
-	kafkaProducer fly.Producer, store BoxerStore) *MetricRollupBoxerProcessor {
+func newMetricBoxerProcessor(cfg *config.Config, store BoxerStore) *MetricRollupBoxerProcessor {
 	return &MetricRollupBoxerProcessor{
-		kafkaProducer: kafkaProducer,
-		store:         store,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 
@@ -81,18 +76,14 @@ func (b *MetricRollupBoxerProcessor) Process(ctx context.Context, group *accumul
 		return fmt.Errorf("failed to marshal rollup bundle: %w", err)
 	}
 
-	bundleMessage := fly.Message{
-		Value: msgBytes,
+	// Enqueue bundle to work queue
+	workID, err := workqueue.AddBundle(ctx, b.store, config.BoxerTaskRollupMetrics, group.Key.OrganizationID, group.Key.InstanceNum, msgBytes)
+	if err != nil {
+		return fmt.Errorf("failed to enqueue bundle to work queue: %w", err)
 	}
 
-	// Send to rollup topic
-	rollupTopic := b.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsRollup)
-	if err := b.kafkaProducer.Send(ctx, rollupTopic, bundleMessage); err != nil {
-		return fmt.Errorf("failed to send rollup bundle to rollup topic: %w", err)
-	}
-
-	ll.Info("Successfully sent rollup bundle to rollup topic",
-		slog.String("topic", rollupTopic),
+	ll.Info("Successfully enqueued metric rollup bundle to work queue",
+		slog.Int64("workID", workID),
 		slog.Int("bundledMessages", len(bundle.Messages)))
 
 	return nil

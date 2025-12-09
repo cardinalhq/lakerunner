@@ -25,11 +25,8 @@ type Querier interface {
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
 	CallExpirePublishedByIngestCutoff(ctx context.Context, arg CallExpirePublishedByIngestCutoffParams) (int64, error)
 	CallFindOrgPartition(ctx context.Context, arg CallFindOrgPartitionParams) (string, error)
-	CleanupKafkaOffsetSkipsByAge(ctx context.Context, createdBefore time.Time) (int64, error)
 	CleanupKafkaOffsets(ctx context.Context, arg CleanupKafkaOffsetsParams) (int64, error)
 	CleanupKafkaOffsetsByAge(ctx context.Context, createdBefore time.Time) (int64, error)
-	DeleteKafkaOffsetSkip(ctx context.Context, arg DeleteKafkaOffsetSkipParams) error
-	DeleteKafkaOffsetSkipsForGroup(ctx context.Context, consumerGroup string) (int64, error)
 	// Retrieves all pack estimates for a specific signal type
 	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
 	// Retrieves all existing pack estimates for EWMA calculations across all signals
@@ -37,8 +34,6 @@ type Querier interface {
 	// Fetches log exemplars for a set of fingerprints within an organization.
 	// Returns the exemplar data along with service identifier information.
 	GetExemplarLogsByFingerprints(ctx context.Context, arg GetExemplarLogsByFingerprintsParams) ([]GetExemplarLogsByFingerprintsRow, error)
-	GetKafkaOffsetSkips(ctx context.Context, arg GetKafkaOffsetSkipsParams) ([]GetKafkaOffsetSkipsRow, error)
-	GetKafkaOffsetSkipsForGroup(ctx context.Context, consumerGroup string) ([]GetKafkaOffsetSkipsForGroupRow, error)
 	GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsParams) ([]GetLabelNameMapsRow, error)
 	GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error)
 	GetLogSegmentsForDownload(ctx context.Context, arg GetLogSegmentsForDownloadParams) ([]LogSeg, error)
@@ -52,7 +47,6 @@ type Querier interface {
 	GetTraceLabelNameMaps(ctx context.Context, arg GetTraceLabelNameMapsParams) ([]GetTraceLabelNameMapsRow, error)
 	GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (TraceSeg, error)
 	GetTraceSegmentsForDownload(ctx context.Context, arg GetTraceSegmentsForDownloadParams) ([]TraceSeg, error)
-	InsertKafkaOffsetSkip(ctx context.Context, arg InsertKafkaOffsetSkipParams) error
 	InsertKafkaOffsets(ctx context.Context, arg InsertKafkaOffsetsParams) error
 	KafkaOffsetsAfter(ctx context.Context, arg KafkaOffsetsAfterParams) ([]int64, error)
 	// Extract tag keys from label_name_map in log_seg table
@@ -61,6 +55,9 @@ type Querier interface {
 	// Includes today's and yesterday's dateint for partition pruning
 	ListLogQLTags(ctx context.Context, arg ListLogQLTagsParams) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
+	// Returns distinct stream IDs for an organization within a time range.
+	// Used by /api/v1/logs/series endpoint (Loki-compatible).
+	ListLogStreamIDs(ctx context.Context, arg ListLogStreamIDsParams) ([]string, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	// Extract tag keys from label_name_map in metric_seg table for a specific metric
 	// Filters by metric fingerprint to return tags only for the requested metric
@@ -106,6 +103,14 @@ type Querier interface {
 	// Updates or inserts a single pack estimate for any signal type
 	UpsertPackEstimate(ctx context.Context, arg UpsertPackEstimateParams) error
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
+	WorkQueueAdd(ctx context.Context, arg WorkQueueAddParams) (WorkQueue, error)
+	WorkQueueClaim(ctx context.Context, arg WorkQueueClaimParams) (WorkQueue, error)
+	WorkQueueCleanup(ctx context.Context, heartbeatTimeout time.Duration) error
+	WorkQueueComplete(ctx context.Context, arg WorkQueueCompleteParams) error
+	WorkQueueDepth(ctx context.Context, taskName string) (int64, error)
+	WorkQueueDepthAll(ctx context.Context) ([]WorkQueueDepthAllRow, error)
+	WorkQueueFail(ctx context.Context, arg WorkQueueFailParams) (int32, error)
+	WorkQueueHeartbeat(ctx context.Context, arg WorkQueueHeartbeatParams) error
 	batchInsertLogSegsDirect(ctx context.Context, arg []batchInsertLogSegsDirectParams) *batchInsertLogSegsDirectBatchResults
 	batchInsertTraceSegsDirect(ctx context.Context, arg []batchInsertTraceSegsDirectParams) *batchInsertTraceSegsDirectBatchResults
 	insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error

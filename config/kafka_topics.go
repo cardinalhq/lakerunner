@@ -21,33 +21,17 @@ import (
 
 // Topic keys for semantic access to topics
 const (
-	TopicObjstoreIngestLogs     = "objstore.ingest.logs"
-	TopicObjstoreIngestMetrics  = "objstore.ingest.metrics"
-	TopicObjstoreIngestTraces   = "objstore.ingest.traces"
-	TopicSegmentsLogsIngest     = "segments.logs.ingest"
-	TopicSegmentsMetricsIngest  = "segments.metrics.ingest"
-	TopicSegmentsTracesIngest   = "segments.traces.ingest"
-	TopicSegmentsLogsCompact    = "segments.logs.compact"
-	TopicSegmentsMetricsCompact = "segments.metrics.compact"
-	TopicSegmentsTracesCompact  = "segments.traces.compact"
-	TopicSegmentsMetricsRollup  = "segments.metrics.rollup"
-	TopicBoxerLogsCompact       = "boxer.logs.compact"
-	TopicBoxerMetricsCompact    = "boxer.metrics.compact"
-	TopicBoxerTracesCompact     = "boxer.traces.compact"
-	TopicBoxerMetricsRollup     = "boxer.metrics.rollup"
+	TopicObjstoreIngestLogs    = "objstore.ingest.logs"
+	TopicObjstoreIngestMetrics = "objstore.ingest.metrics"
+	TopicObjstoreIngestTraces  = "objstore.ingest.traces"
+	TopicBoxerLogsCompact      = "boxer.logs.compact"
+	TopicBoxerMetricsCompact   = "boxer.metrics.compact"
+	TopicBoxerTracesCompact    = "boxer.traces.compact"
+	TopicBoxerMetricsRollup    = "boxer.metrics.rollup"
 )
 
 // Consumer group suffixes - these define the single consumer group for each topic+worker combination
 const (
-	// Worker consumer groups
-	ConsumerGroupSegmentsLogsIngest    = "segments.logs.ingest"
-	ConsumerGroupSegmentsMetricsIngest = "segments.metrics.ingest"
-	ConsumerGroupSegmentsTracesIngest  = "segments.traces.ingest"
-	ConsumerGroupCompactLogs           = "compact.logs"
-	ConsumerGroupCompactMetrics        = "compact.metrics"
-	ConsumerGroupCompactTraces         = "compact.traces"
-	ConsumerGroupRollupMetrics         = "rollup.metrics"
-
 	// Boxer consumer groups
 	ConsumerGroupIngestLogs          = "ingest.logs"
 	ConsumerGroupIngestMetrics       = "ingest.metrics"
@@ -89,15 +73,6 @@ func NewTopicRegistry(prefix string) *TopicRegistry {
 		prefix: prefix,
 		specs:  make(map[string]TopicSpec),
 	}
-
-	// Workers read from the boxed items, and process them as a single unit.
-	tr.registerTopic(TopicSegmentsLogsIngest, ConsumerGroupSegmentsLogsIngest, ServiceTypeWorkerIngestLogs)
-	tr.registerTopic(TopicSegmentsMetricsIngest, ConsumerGroupSegmentsMetricsIngest, ServiceTypeWorkerIngestMetrics)
-	tr.registerTopic(TopicSegmentsTracesIngest, ConsumerGroupSegmentsTracesIngest, ServiceTypeWorkerIngestTraces)
-	tr.registerTopic(TopicSegmentsLogsCompact, ConsumerGroupCompactLogs, ServiceTypeWorkerCompactLogs)
-	tr.registerTopic(TopicSegmentsMetricsCompact, ConsumerGroupCompactMetrics, ServiceTypeWorkerCompactMetrics)
-	tr.registerTopic(TopicSegmentsTracesCompact, ConsumerGroupCompactTraces, ServiceTypeWorkerCompactTraces)
-	tr.registerTopic(TopicSegmentsMetricsRollup, ConsumerGroupRollupMetrics, ServiceTypeWorkerRollupMetrics)
 
 	// Boxer-ingest services read from objstore topics (raw events from pubsub)
 	tr.registerTopic(TopicObjstoreIngestLogs, ConsumerGroupIngestLogs, ServiceTypeBoxerIngestLogs)

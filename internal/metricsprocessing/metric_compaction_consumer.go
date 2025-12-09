@@ -16,107 +16,43 @@ package metricsprocessing
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
+	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/fly"
-	"github.com/cardinalhq/lakerunner/internal/fly/messages"
-	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 )
 
-// MetricCompactionConsumer consumes MetricCompactionBundle messages from boxer
+// MetricCompactionConsumer handles metric compaction bundles from the work queue
 type MetricCompactionConsumer struct {
-	*WorkerConsumer
-	processor     *MetricCompactionProcessor
-	topic         string
-	consumerGroup string
+	*QueueWorkerConsumer
+	processor *MetricCompactionProcessor
 }
 
-// NewMetricCompactionConsumer creates a consumer that processes MetricCompactionBundle messages from boxer
+// NewMetricCompactionConsumer creates a new metric compaction consumer that processes bundles from the work queue
 func NewMetricCompactionConsumer(
 	ctx context.Context,
 	cfg *config.Config,
-	factory *fly.Factory,
 	store MetricCompactionStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) (*MetricCompactionConsumer, error) {
 	processor := NewMetricCompactionProcessor(store, storageProvider, cmgr, cfg)
 
-	topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsMetricsCompact)
-	consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsCompact)
-	consumer, err := factory.CreateConsumer(topic, consumerGroup)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
-	}
+	workerID := time.Now().UnixNano() // Unique worker ID
+	manager := workqueue.NewManager(
+		store,
+		workerID,
+		config.BoxerTaskCompactMetrics,
+		workqueue.WithHeartbeatInterval(time.Minute),
+		workqueue.WithMaxRetries(5),
+	)
 
-	c := &MetricCompactionConsumer{
-		processor:     processor,
-		topic:         topic,
-		consumerGroup: consumerGroup,
-	}
+	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskCompactMetrics)
 
-	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
-
-	return c, nil
-}
-
-// ProcessMessage implements MessageProcessor interface
-func (c *MetricCompactionConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
-	ll := logctx.FromContext(ctx)
-
-	var bundle messages.MetricCompactionBundle
-	if err := bundle.Unmarshal(msg.Value); err != nil {
-		ll.Info("Dropping message that failed to unmarshal as bundle", slog.Any("error", err))
-		return nil // Don't fail the batch, just skip this message
-	}
-
-	if len(bundle.Messages) == 0 {
-		ll.Info("Dropping empty message bundle")
-		return nil
-	}
-
-	// Defensive check: Skip bundles with too many segments
-	const maxSegmentsPerBundle = 75
-	if len(bundle.Messages) > maxSegmentsPerBundle {
-		firstMsg := bundle.Messages[0]
-		key := firstMsg.GroupingKey().(messages.CompactionKey)
-		ll.Warn("Skipping oversized bundle - too many segments",
-			slog.String("organizationID", key.OrganizationID.String()),
-			slog.Int("dateint", int(key.DateInt)),
-			slog.Int("frequencyMs", int(key.FrequencyMs)),
-			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("segmentCount", len(bundle.Messages)),
-			slog.Int("maxSegments", maxSegmentsPerBundle))
-		return nil // Skip this bundle but don't fail
-	}
-
-	firstMsg := bundle.Messages[0]
-	key := firstMsg.GroupingKey().(messages.CompactionKey)
-
-	ll.Info("Processing compaction bundle",
-		slog.String("organizationID", key.OrganizationID.String()),
-		slog.Int("dateint", int(key.DateInt)),
-		slog.Int("frequencyMs", int(key.FrequencyMs)),
-		slog.Int("instanceNum", int(key.InstanceNum)),
-		slog.Int("messageCount", len(bundle.Messages)))
-
-	if err := c.processor.ProcessBundle(ctx, key, bundle.Messages, int32(msg.Partition), msg.Offset); err != nil {
-		return fmt.Errorf("failed to process bundle: %w", err)
-	}
-
-	return nil
-}
-
-// GetTopic implements MessageProcessor interface
-func (c *MetricCompactionConsumer) GetTopic() string {
-	return c.topic
-}
-
-// GetConsumerGroup implements MessageProcessor interface
-func (c *MetricCompactionConsumer) GetConsumerGroup() string {
-	return c.consumerGroup
+	return &MetricCompactionConsumer{
+		QueueWorkerConsumer: queueConsumer,
+		processor:           processor,
+	}, nil
 }

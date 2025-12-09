@@ -36,15 +36,7 @@ func NewMetricCompactionBoxerConsumer(
 	store BoxerStore,
 	factory *fly.Factory,
 ) (*MetricCompactionBoxerConsumer, error) {
-
-	// Create Kafka producer for sending compaction bundles
-	producer, err := factory.CreateProducer()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
-	}
-
-	// Create MetricCompactionBoxer processor
-	processor := newMetricCompactionBoxerProcessor(cfg, producer, store)
+	processor := newMetricCompactionBoxerProcessor(cfg, store)
 
 	// Set up timing - use shorter accumulation for compaction since it's more time-sensitive
 	maxAccumulationTime := 2 * time.Minute

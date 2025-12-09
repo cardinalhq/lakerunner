@@ -85,16 +85,9 @@ func TestNewFileSplitter(t *testing.T) {
 	}
 
 	splitter := NewFileSplitter(config)
-
-	if splitter == nil {
-		t.Fatal("NewFileSplitter returned nil")
-	}
-	if splitter.closed {
-		t.Error("Expected splitter to not be closed initially")
-	}
-	if len(splitter.results) != 0 {
-		t.Error("Expected results to be empty initially")
-	}
+	require.NotNil(t, splitter, "NewFileSplitter returned nil")
+	require.False(t, splitter.closed, "Expected splitter to not be closed initially")
+	require.Empty(t, splitter.results, "Expected results to be empty initially")
 }
 
 func TestFileSplitterWriteBatchRows_NilBatch(t *testing.T) {

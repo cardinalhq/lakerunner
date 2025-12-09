@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -33,21 +33,15 @@ import (
 // GetLogEstimate() from the store. The actual compaction operations (GetLogSeg,
 // CompactLogSegments, etc.) are performed by the compaction processor itself.
 type LogCompactionBoxerProcessor struct {
-	store         BoxerStore
-	kafkaProducer fly.Producer
-	config        *config.Config
+	store  BoxerStore
+	config *config.Config
 }
 
 // newLogCompactionBoxerProcessor creates a new log compaction boxer processor
-func newLogCompactionBoxerProcessor(
-	cfg *config.Config,
-	producer fly.Producer,
-	store BoxerStore,
-) *LogCompactionBoxerProcessor {
+func newLogCompactionBoxerProcessor(cfg *config.Config, store BoxerStore) *LogCompactionBoxerProcessor {
 	return &LogCompactionBoxerProcessor{
-		store:         store,
-		kafkaProducer: producer,
-		config:        cfg,
+		store:  store,
+		config: cfg,
 	}
 }
 
@@ -85,19 +79,14 @@ func (p *LogCompactionBoxerProcessor) Process(ctx context.Context, group *accumu
 		return fmt.Errorf("failed to marshal log compaction bundle: %w", err)
 	}
 
-	// Create Kafka message key for proper partitioning
-	kafkaMessage := fly.Message{
-		Value: bundleBytes,
+	// Enqueue bundle to work queue
+	workID, err := workqueue.AddBundle(ctx, p.store, config.BoxerTaskCompactLogs, group.Key.OrganizationID, group.Key.InstanceNum, bundleBytes)
+	if err != nil {
+		return fmt.Errorf("failed to enqueue bundle to work queue: %w", err)
 	}
 
-	// Send to compaction topic
-	compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicSegmentsLogsCompact)
-	if err := p.kafkaProducer.Send(ctx, compactionTopic, kafkaMessage); err != nil {
-		return fmt.Errorf("failed to send log compaction bundle to Kafka: %w", err)
-	}
-
-	ll.Info("Successfully sent log compaction bundle",
-		slog.String("topic", compactionTopic),
+	ll.Info("Successfully enqueued log compaction bundle to work queue",
+		slog.Int64("workID", workID),
 		slog.Int("bundleSize", len(bundle.Messages)))
 
 	return nil

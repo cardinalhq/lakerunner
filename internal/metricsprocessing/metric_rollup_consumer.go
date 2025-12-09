@@ -16,16 +16,13 @@ package metricsprocessing
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly"
-	"github.com/cardinalhq/lakerunner/internal/fly/messages"
-	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 )
 
 // Rollup accumulation times to avoid import cycle with config package
@@ -36,85 +33,41 @@ var rollupAccumulationTimes = map[int32]time.Duration{
 	1_200_000: 5 * time.Minute,   // 20m->1h: wait max 5 minutes
 }
 
-// MetricRollupConsumer consumes MetricRollupBundle messages from boxer
+// MetricRollupConsumer handles metric rollup bundles from the work queue
 type MetricRollupConsumer struct {
-	*WorkerConsumer
-	processor     *MetricRollupProcessor
-	topic         string
-	consumerGroup string
+	*QueueWorkerConsumer
+	processor *MetricRollupProcessor
 }
 
-// NewMetricRollupConsumer creates a consumer that processes MetricRollupBundle messages from boxer
+// NewMetricRollupConsumer creates a new metric rollup consumer that processes bundles from the work queue
 func NewMetricRollupConsumer(
 	ctx context.Context,
 	cfg *config.Config,
-	factory *fly.Factory,
+	kafkaFactory *fly.Factory,
 	store MetricRollupStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) (*MetricRollupConsumer, error) {
-	producer, err := factory.CreateProducer()
+	kafkaProducer, err := kafkaFactory.CreateProducer()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
+		return nil, err
 	}
 
-	processor := newMetricRollupProcessor(cfg, store, storageProvider, cmgr, producer)
+	processor := newMetricRollupProcessor(cfg, store, storageProvider, cmgr, kafkaProducer)
 
-	topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsMetricsRollup)
-	consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsRollup)
-	consumer, err := factory.CreateConsumer(topic, consumerGroup)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
-	}
+	workerID := time.Now().UnixNano() // Unique worker ID
+	manager := workqueue.NewManager(
+		store,
+		workerID,
+		config.BoxerTaskRollupMetrics,
+		workqueue.WithHeartbeatInterval(time.Minute),
+		workqueue.WithMaxRetries(5),
+	)
 
-	c := &MetricRollupConsumer{
-		processor:     processor,
-		topic:         topic,
-		consumerGroup: consumerGroup,
-	}
+	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskRollupMetrics)
 
-	c.WorkerConsumer = NewWorkerConsumer(consumer, c, store)
-
-	return c, nil
-}
-
-// ProcessMessage implements MessageProcessor interface
-func (c *MetricRollupConsumer) ProcessMessage(ctx context.Context, msg fly.ConsumedMessage) error {
-	ll := logctx.FromContext(ctx)
-
-	var bundle messages.MetricRollupBundle
-	if err := bundle.Unmarshal(msg.Value); err != nil {
-		ll.Info("Dropping message that failed to unmarshal as bundle", slog.Any("error", err))
-		return nil
-	}
-
-	if len(bundle.Messages) == 0 {
-		ll.Info("Dropping empty message bundle")
-		return nil
-	}
-
-	firstMsg := bundle.Messages[0]
-	ll.Info("Processing rollup bundle",
-		slog.String("organizationID", firstMsg.OrganizationID.String()),
-		slog.Int("dateint", int(firstMsg.DateInt)),
-		slog.Int("sourceFrequencyMs", int(firstMsg.SourceFrequencyMs)),
-		slog.Int("targetFrequencyMs", int(firstMsg.TargetFrequencyMs)),
-		slog.Int("instanceNum", int(firstMsg.InstanceNum)),
-		slog.Int("messageCount", len(bundle.Messages)))
-
-	if err := c.processor.ProcessBundle(ctx, &bundle, int32(msg.Partition), msg.Offset); err != nil {
-		return fmt.Errorf("failed to process bundle: %w", err)
-	}
-
-	return nil
-}
-
-// GetTopic implements MessageProcessor interface
-func (c *MetricRollupConsumer) GetTopic() string {
-	return c.topic
-}
-
-// GetConsumerGroup implements MessageProcessor interface
-func (c *MetricRollupConsumer) GetConsumerGroup() string {
-	return c.consumerGroup
+	return &MetricRollupConsumer{
+		QueueWorkerConsumer: queueConsumer,
+		processor:           processor,
+	}, nil
 }
