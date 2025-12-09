@@ -34,6 +34,9 @@ type Querier interface {
 	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
 	// Retrieves all existing pack estimates for EWMA calculations across all signals
 	GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error)
+	// Fetches log exemplars for a set of fingerprints within an organization.
+	// Returns the exemplar data along with service identifier information.
+	GetExemplarLogsByFingerprints(ctx context.Context, arg GetExemplarLogsByFingerprintsParams) ([]GetExemplarLogsByFingerprintsRow, error)
 	GetKafkaOffsetSkips(ctx context.Context, arg GetKafkaOffsetSkipsParams) ([]GetKafkaOffsetSkipsRow, error)
 	GetKafkaOffsetSkipsForGroup(ctx context.Context, consumerGroup string) ([]GetKafkaOffsetSkipsForGroupRow, error)
 	GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsParams) ([]GetLabelNameMapsRow, error)

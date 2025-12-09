@@ -531,6 +531,54 @@ func (q *QuerierService) handleListServiceMetrics(w http.ResponseWriter, r *http
 	_ = json.NewEncoder(w).Encode(map[string][]string{"metrics": metrics})
 }
 
+type exemplarLogsRequest struct {
+	Fingerprints []int64 `json:"fingerprints"`
+}
+
+func (q *QuerierService) handleGetExemplarLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "only POST method is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	orgUUID, ok := GetOrgIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "organization ID not found in context", http.StatusInternalServerError)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer func() { _ = r.Body.Close() }()
+
+	var req exemplarLogsRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Fingerprints) == 0 {
+		http.Error(w, "fingerprints array is required and cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	exemplars, err := q.mdb.GetExemplarLogsByFingerprints(r.Context(), lrdb.GetExemplarLogsByFingerprintsParams{
+		OrganizationID: orgUUID,
+		Fingerprints:   req.Fingerprints,
+	})
+	if err != nil {
+		slog.Error("GetExemplarLogsByFingerprints failed", slog.Any("error", err))
+		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"exemplars": exemplars})
+}
+
 func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
@@ -547,6 +595,7 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	mux.HandleFunc("/api/v1/logs/tags", q.apiKeyMiddleware(q.handleListLogQLTags))
 	mux.HandleFunc("/api/v1/logs/tagvalues", q.apiKeyMiddleware(q.handleGetLogTagValues))
 	mux.HandleFunc("/api/v1/logs/query", q.apiKeyMiddleware(q.handleLogQuery))
+	mux.HandleFunc("/api/v1/logs/exemplars", q.apiKeyMiddleware(q.handleGetExemplarLogs))
 
 	mux.HandleFunc("/api/v1/spans/tags", q.apiKeyMiddleware(q.handleListSpanTags))
 	mux.HandleFunc("/api/v1/spans/tagvalues", q.apiKeyMiddleware(q.handleGetSpanTagValues))
