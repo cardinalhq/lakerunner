@@ -335,7 +335,7 @@ ORDER BY column_index;
 		if err := rows.Scan(&name, &typ); err != nil {
 			return err
 		}
-		cols = append(cols, colDef{Name: name, Type: normalizeDuckType(typ)})
+		cols = append(cols, colDef{Name: name, Type: typ})
 		idx[name] = i
 		i++
 	}
@@ -355,9 +355,9 @@ func (s *DDBSink) diffMissing(incoming map[string]string) map[string]string {
 	defer s.schemaMu.RUnlock()
 
 	out := make(map[string]string)
-	for name, typ := range incoming {
+	for name := range incoming {
 		if _, ok := s.schema.index[name]; !ok {
-			out[name] = normalizeDuckType(typ)
+			out[name] = "VARCHAR"
 		}
 	}
 	// Never try to add duplicates for anchor/system columns:
@@ -423,7 +423,7 @@ func (s *DDBSink) probeParquetSchemaList(ctx context.Context, paths []string) (m
 		if typ == "" {
 			typ = "VARCHAR"
 		}
-		out[name] = normalizeDuckType(typ)
+		out[name] = normalizeColumnType(name, typ)
 	}
 	return out, nil
 }
@@ -456,32 +456,6 @@ func escape(path string) string {
 	return strings.ReplaceAll(path, `'`, `''`)
 }
 
-func normalizeDuckType(t string) string {
-	u := strings.ToUpper(strings.TrimSpace(t))
-	switch u {
-	case "DOUBLE", "DOUBLE PRECISION", "FLOAT8":
-		return "DOUBLE"
-	case "FLOAT", "FLOAT4", "REAL":
-		return "REAL"
-	case "BIGINT", "INT8", "LONG":
-		return "BIGINT"
-	case "INTEGER", "INT", "INT4":
-		return "INTEGER"
-	case "SMALLINT", "INT2":
-		return "SMALLINT"
-	case "TINYINT", "INT1":
-		return "TINYINT"
-	case "BOOLEAN", "BOOL":
-		return "BOOLEAN"
-	case "TIMESTAMP", "TIMESTAMP_NS", "TIMESTAMP_MS", "TIMESTAMP_S":
-		return "TIMESTAMP"
-	case "BLOB", "BYTEA", "VARBINARY":
-		return "BLOB"
-	case "DECIMAL":
-		return "DECIMAL"
-	}
-	if strings.Contains(u, "VARCHAR") || strings.Contains(u, "STRING") || strings.Contains(u, "UTF8") {
-		return "VARCHAR"
-	}
-	return u
+func normalizeColumnType(_, _ string) string {
+	return "VARCHAR"
 }
