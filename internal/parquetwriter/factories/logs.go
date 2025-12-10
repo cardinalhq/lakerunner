@@ -27,7 +27,8 @@ import (
 )
 
 // NewLogsWriter creates a writer optimized for logs data.
-// Logs need to be sorted by timestamp and can be split freely.
+// Logs are sorted by [service_identifier, fingerprint, timestamp] and grouped
+// by [service_identifier, fingerprint] to keep related log entries together.
 // The schema must be provided from the reader and cannot be nil.
 // If backendType is empty, defaults to go-parquet backend.
 func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64, backendType parquetwriter.BackendType) (parquetwriter.ParquetWriter, error) {
@@ -35,8 +36,9 @@ func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFil
 		TmpDir: tmpdir,
 		Schema: schema,
 
-		// Logs can be split anywhere - no grouping constraints
-		NoSplitGroups: false,
+		// Group by [service_identifier, fingerprint] - don't split groups with same service+fingerprint
+		GroupKeyFunc:  logsGroupKeyFunc(),
+		NoSplitGroups: true,
 
 		RecordsPerFile: recordsPerFile,
 		StatsProvider:  &LogsStatsProvider{},
@@ -44,6 +46,32 @@ func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFil
 	}
 
 	return parquetwriter.NewUnifiedWriter(config)
+}
+
+// logsGroupKeyFunc returns the grouping key function for logs.
+// Groups by [service_identifier, fingerprint] - keeps all timestamps for the same
+// service+fingerprint together for efficient querying.
+// service_identifier is resource_customer_domain if set, otherwise resource_service_name.
+func logsGroupKeyFunc() func(row pipeline.Row) any {
+	return func(row pipeline.Row) any {
+		// Get service identifier: customer_domain takes priority, then service_name, then empty
+		serviceIdentifier := ""
+		if domain, ok := row[wkk.RowKeyResourceCustomerDomain].(string); ok && domain != "" {
+			serviceIdentifier = domain
+		} else if serviceName, ok := row[wkk.RowKeyResourceServiceName].(string); ok && serviceName != "" {
+			serviceIdentifier = serviceName
+		}
+
+		// Get fingerprint
+		fingerprint, fpOk := row[wkk.RowKeyCFingerprint].(int64)
+		if !fpOk {
+			// If no fingerprint, still group by service identifier
+			return serviceIdentifier
+		}
+
+		// Group by [service_identifier, fingerprint]
+		return fmt.Sprintf("%s:%d", serviceIdentifier, fingerprint)
+	}
 }
 
 // LogsStatsProvider collects timestamp and fingerprint statistics for logs files.

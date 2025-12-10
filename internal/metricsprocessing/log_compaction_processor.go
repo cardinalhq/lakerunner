@@ -351,6 +351,7 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 			Fingerprints: seg.Fingerprints,
 			LabelNameMap: seg.LabelNameMap,
 			StreamIds:    seg.StreamIds,
+			SortVersion:  lrdb.CurrentLogSortVersion,
 		}
 	}
 

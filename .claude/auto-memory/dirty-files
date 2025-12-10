@@ -1,0 +1,4 @@
+/Users/mgraff/git/github/cardinalhq/lakerunner/internal/filereader/sort_log.go [6af693f6: Simplify log sort key to [service_identifier, timestamp]]
+/Users/mgraff/git/github/cardinalhq/lakerunner/lrdb/log_seg.go [6af693f6: Simplify log sort key to [service_identifier, timestamp]]
+/Users/mgraff/git/github/cardinalhq/lakerunner/internal/filereader/sort_log_test.go [6af693f6: Simplify log sort key to [service_identifier, timestamp]]
+/Users/mgraff/git/github/cardinalhq/lakerunner/AGENTS.md [6af693f6: Simplify log sort key to [service_identifier, timestamp]]

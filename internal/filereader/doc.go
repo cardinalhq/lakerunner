@@ -124,7 +124,7 @@
 //
 // DiskSortingReader - For larger datasets (moderate memory usage, 2x disk I/O):
 //
-//	reader := NewDiskSortingReader(rawReader, &TimestampSortKeyProvider{})
+//	reader := NewDiskSortingReader(rawReader, &LogSortKeyProvider{})
 //
 // MergesortReader - For merging multiple already-sorted sources (low memory, streaming):
 //

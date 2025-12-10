@@ -12,7 +12,7 @@ import (
 )
 
 const getLogSegmentsForDownload = `-- name: GetLogSegmentsForDownload :many
-SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids, sort_version
 FROM log_seg
 WHERE organization_id = $1
   AND dateint >= $2
@@ -61,6 +61,7 @@ func (q *Queries) GetLogSegmentsForDownload(ctx context.Context, arg GetLogSegme
 			&i.Published,
 			&i.LabelNameMap,
 			&i.StreamIds,
+			&i.SortVersion,
 		); err != nil {
 			return nil, err
 		}

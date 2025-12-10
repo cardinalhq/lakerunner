@@ -18,6 +18,23 @@ import (
 	"github.com/google/uuid"
 )
 
+// Sort version constants for log segments
+const (
+	// LogSortVersionUnknown indicates the file's sort order is unknown or unsorted (legacy files)
+	LogSortVersionUnknown = 0
+	// LogSortVersionTimestamp indicates the file is sorted by [timestamp] only (legacy)
+	LogSortVersionTimestamp = 1
+	// LogSortVersionServiceTimestamp indicates the file is sorted by
+	// [resource_customer_domain OR resource_service_name, timestamp]
+	LogSortVersionServiceTimestamp = 2
+)
+
+// Current log sort configuration - single source of truth for all log sorting
+const (
+	// CurrentLogSortVersion is the sort version used for all newly created log segments
+	CurrentLogSortVersion = LogSortVersionServiceTimestamp
+)
+
 // CompactLogSegsParams defines the parameters for log segment compaction with Kafka offsets
 type CompactLogSegsParams struct {
 	OrganizationID uuid.UUID
@@ -44,4 +61,5 @@ type CompactLogSegsNew struct {
 	Fingerprints []int64
 	LabelNameMap []byte
 	StreamIds    []string
+	SortVersion  int16
 }

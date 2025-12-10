@@ -12,7 +12,8 @@ INSERT INTO log_seg (
   published,
   compacted,
   label_name_map,
-  stream_ids
+  stream_ids,
+  sort_version
 )
 VALUES (
   @organization_id,
@@ -27,7 +28,8 @@ VALUES (
   @published,
   @compacted,
   @label_name_map,
-  @stream_ids::text[]
+  @stream_ids::text[],
+  @sort_version
 );
 
 -- name: GetLogSeg :one
@@ -52,7 +54,8 @@ INSERT INTO log_seg (
   published,
   compacted,
   label_name_map,
-  stream_ids
+  stream_ids,
+  sort_version
 )
 VALUES (
   @organization_id,
@@ -67,7 +70,8 @@ VALUES (
   @published,
   @compacted,
   @label_name_map,
-  @stream_ids::text[]
+  @stream_ids::text[],
+  @sort_version
 );
 
 -- name: MarkLogSegsCompactedByKeys :exec
