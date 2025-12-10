@@ -487,17 +487,11 @@ func ProcessLogFiles(
 		}
 	}()
 
-	// Create unified reader
-	var finalReader filereader.Reader
-	if len(readers) == 1 {
-		finalReader = readers[0]
-	} else {
-		keyProvider := &filereader.LogSortKeyProvider{}
-		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
-		}
-		finalReader = multiReader
+	// Create unified reader - always use MergesortReader to ensure proper sorting
+	keyProvider := &filereader.LogSortKeyProvider{}
+	finalReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
 	}
 
 	// Get schema from reader (includes all transformed columns)
