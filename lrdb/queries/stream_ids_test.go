@@ -30,6 +30,15 @@ import (
 	"github.com/cardinalhq/lakerunner/testhelpers"
 )
 
+// extractStreamValues extracts the stream values from ListLogStreamsRow results.
+func extractStreamValues(rows []lrdb.ListLogStreamsRow) []string {
+	var values []string
+	for _, row := range rows {
+		values = append(values, row.StreamValue)
+	}
+	return values
+}
+
 func TestLogSegStreamIDs(t *testing.T) {
 	ctx := context.Background()
 	store := testhelpers.NewTestLRDBStore(t)
@@ -37,6 +46,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 	orgID := uuid.New()
 	dateint := int32(20250828)
 	now := time.Now()
+	streamIDField := "resource_service_name"
 
 	t.Run("insert and query stream_ids", func(t *testing.T) {
 		// Insert a log segment with stream_ids
@@ -54,11 +64,12 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      []string{"service-a", "service-b"},
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
 		// Query stream_ids
-		streamIDs, err := store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err := store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
@@ -67,6 +78,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 		})
 		require.NoError(t, err)
 
+		streamIDs := extractStreamValues(rows)
 		// Sort for consistent comparison
 		sort.Strings(streamIDs)
 
@@ -93,6 +105,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      []string{"customer-x.com", "api-service"},
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
@@ -110,11 +123,12 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      []string{"customer-y.com", "api-service"}, // api-service is duplicate
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
 		// Query stream_ids - should be deduplicated
-		streamIDs, err := store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err := store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID2,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
@@ -123,6 +137,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 		})
 		require.NoError(t, err)
 
+		streamIDs := extractStreamValues(rows)
 		sort.Strings(streamIDs)
 
 		// Should have 3 unique stream_ids (api-service deduplicated)
@@ -152,6 +167,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      []string{"day1-service"},
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
@@ -170,11 +186,12 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      []string{"day2-service"},
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
 		// Query only dateint1
-		streamIDs, err := store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err := store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID3,
 			StartDateint:   dateint1,
 			EndDateint:     dateint1,
@@ -182,11 +199,12 @@ func TestLogSegStreamIDs(t *testing.T) {
 			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
+		streamIDs := extractStreamValues(rows)
 		assert.Len(t, streamIDs, 1)
 		assert.Contains(t, streamIDs, "day1-service")
 
 		// Query both dateints
-		streamIDs, err = store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err = store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID3,
 			StartDateint:   dateint1,
 			EndDateint:     dateint2,
@@ -194,6 +212,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
+		streamIDs = extractStreamValues(rows)
 		assert.Len(t, streamIDs, 2)
 		assert.Contains(t, streamIDs, "day1-service")
 		assert.Contains(t, streamIDs, "day2-service")
@@ -217,11 +236,12 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      false, // Unpublished
 			Compacted:      false,
 			StreamIds:      []string{"unpublished-service"},
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
 		// Query stream_ids - should return empty
-		streamIDs, err := store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err := store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID4,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
@@ -229,7 +249,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
-		assert.Len(t, streamIDs, 0)
+		assert.Len(t, rows, 0)
 	})
 
 	t.Run("null stream_ids handled correctly", func(t *testing.T) {
@@ -250,11 +270,12 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      nil, // No stream_ids
+			StreamIDField:  nil, // No stream_id_field
 		})
 		require.NoError(t, err)
 
 		// Query stream_ids - should return empty (segment excluded due to NULL stream_ids)
-		streamIDs, err := store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err := store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID5,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
@@ -262,7 +283,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
 		})
 		require.NoError(t, err)
-		assert.Len(t, streamIDs, 0)
+		assert.Len(t, rows, 0)
 	})
 
 	t.Run("compaction preserves stream_ids", func(t *testing.T) {
@@ -283,6 +304,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      []string{"source-service-a", "source-service-b"},
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
@@ -300,6 +322,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      []string{"source-service-c"},
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
@@ -314,13 +337,14 @@ func TestLogSegStreamIDs(t *testing.T) {
 			},
 			NewRecords: []lrdb.CompactLogSegsNew{
 				{
-					SegmentID:    3001,
-					StartTs:      now.UnixMilli(),
-					EndTs:        now.Add(time.Hour).UnixMilli(),
-					RecordCount:  20,
-					FileSize:     2048,
-					Fingerprints: []int64{201, 202},
-					StreamIds:    []string{"source-service-a", "source-service-b", "source-service-c"},
+					SegmentID:     3001,
+					StartTs:       now.UnixMilli(),
+					EndTs:         now.Add(time.Hour).UnixMilli(),
+					RecordCount:   20,
+					FileSize:      2048,
+					Fingerprints:  []int64{201, 202},
+					StreamIds:     []string{"source-service-a", "source-service-b", "source-service-c"},
+					StreamIdField: &streamIDField,
 				},
 			},
 			CreatedBy: lrdb.CreatedByCompact,
@@ -328,7 +352,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 		require.NoError(t, err)
 
 		// Query stream_ids - should return the compacted segment's stream_ids
-		streamIDs, err := store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err := store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID6,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
@@ -337,6 +361,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 		})
 		require.NoError(t, err)
 
+		streamIDs := extractStreamValues(rows)
 		sort.Strings(streamIDs)
 
 		// Compacted segment should have all 3 stream_ids
@@ -376,6 +401,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      []string{"early-morning-service"},
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
@@ -393,6 +419,7 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      []string{"mid-morning-service"},
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
@@ -410,11 +437,12 @@ func TestLogSegStreamIDs(t *testing.T) {
 			Published:      true,
 			Compacted:      false,
 			StreamIds:      []string{"late-morning-service"},
+			StreamIDField:  &streamIDField,
 		})
 		require.NoError(t, err)
 
 		// Query for 00:30 - 00:45 (only overlaps segment 1)
-		streamIDs, err := store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err := store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID7,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
@@ -422,11 +450,12 @@ func TestLogSegStreamIDs(t *testing.T) {
 			EndTs:          time.Date(2025, 8, 28, 0, 45, 0, 0, time.UTC).UnixMilli(),
 		})
 		require.NoError(t, err)
+		streamIDs := extractStreamValues(rows)
 		assert.Len(t, streamIDs, 1)
 		assert.Contains(t, streamIDs, "early-morning-service")
 
 		// Query for 01:30 - 02:30 (only overlaps segment 2)
-		streamIDs, err = store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err = store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID7,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
@@ -434,11 +463,12 @@ func TestLogSegStreamIDs(t *testing.T) {
 			EndTs:          time.Date(2025, 8, 28, 2, 30, 0, 0, time.UTC).UnixMilli(),
 		})
 		require.NoError(t, err)
+		streamIDs = extractStreamValues(rows)
 		assert.Len(t, streamIDs, 1)
 		assert.Contains(t, streamIDs, "mid-morning-service")
 
 		// Query for 00:00 - 03:00 (overlaps segments 1 and 2)
-		streamIDs, err = store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err = store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID7,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
@@ -446,12 +476,13 @@ func TestLogSegStreamIDs(t *testing.T) {
 			EndTs:          time.Date(2025, 8, 28, 3, 0, 0, 0, time.UTC).UnixMilli(),
 		})
 		require.NoError(t, err)
+		streamIDs = extractStreamValues(rows)
 		assert.Len(t, streamIDs, 2)
 		assert.Contains(t, streamIDs, "early-morning-service")
 		assert.Contains(t, streamIDs, "mid-morning-service")
 
 		// Query for 00:00 - 06:00 (overlaps all segments)
-		streamIDs, err = store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err = store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID7,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
@@ -459,13 +490,14 @@ func TestLogSegStreamIDs(t *testing.T) {
 			EndTs:          time.Date(2025, 8, 28, 6, 0, 0, 0, time.UTC).UnixMilli(),
 		})
 		require.NoError(t, err)
+		streamIDs = extractStreamValues(rows)
 		assert.Len(t, streamIDs, 3)
 		assert.Contains(t, streamIDs, "early-morning-service")
 		assert.Contains(t, streamIDs, "mid-morning-service")
 		assert.Contains(t, streamIDs, "late-morning-service")
 
 		// Query for 10:00 - 11:00 (no overlap)
-		streamIDs, err = store.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+		rows, err = store.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 			OrganizationID: orgID7,
 			StartDateint:   dateint,
 			EndDateint:     dateint,
@@ -473,6 +505,6 @@ func TestLogSegStreamIDs(t *testing.T) {
 			EndTs:          time.Date(2025, 8, 28, 11, 0, 0, 0, time.UTC).UnixMilli(),
 		})
 		require.NoError(t, err)
-		assert.Len(t, streamIDs, 0)
+		assert.Len(t, rows, 0)
 	})
 }
