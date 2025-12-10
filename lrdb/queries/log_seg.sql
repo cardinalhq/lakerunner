@@ -13,6 +13,7 @@ INSERT INTO log_seg (
   compacted,
   label_name_map,
   stream_ids,
+  stream_id_field,
   sort_version
 )
 VALUES (
@@ -29,6 +30,7 @@ VALUES (
   @compacted,
   @label_name_map,
   @stream_ids::text[],
+  @stream_id_field,
   @sort_version
 );
 
@@ -55,6 +57,7 @@ INSERT INTO log_seg (
   compacted,
   label_name_map,
   stream_ids,
+  stream_id_field,
   sort_version
 )
 VALUES (
@@ -71,6 +74,7 @@ VALUES (
   @compacted,
   @label_name_map,
   @stream_ids::text[],
+  @stream_id_field,
   @sort_version
 );
 
@@ -120,14 +124,19 @@ WHERE organization_id = @organization_id
   AND segment_id = ANY(@segment_ids::BIGINT[])
   AND label_name_map IS NOT NULL;
 
--- name: ListLogStreamIDs :many
--- Returns distinct stream IDs for an organization within a time range.
+-- name: ListLogStreams :many
+-- Returns distinct stream values with their source field for an organization within a time range.
 -- Used by /api/v1/logs/series endpoint (Loki-compatible).
-SELECT DISTINCT unnest(stream_ids)::text AS stream_id
+-- Returns both the field name (resource_customer_domain, resource_service_name, or stream_id for legacy)
+-- and the distinct values for that field.
+SELECT DISTINCT
+    stream_id_field AS field_name,
+    unnest(stream_ids)::text AS stream_value
 FROM log_seg
 WHERE organization_id = @organization_id
   AND dateint >= @start_dateint
   AND dateint <= @end_dateint
   AND ts_range && int8range(@start_ts, @end_ts, '[)')
   AND published = true
-  AND stream_ids IS NOT NULL;
+  AND stream_ids IS NOT NULL
+  AND stream_id_field IS NOT NULL;

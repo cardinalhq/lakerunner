@@ -80,7 +80,7 @@ type LogsStatsProvider struct{}
 func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &LogsStatsAccumulator{
 		fingerprints:       mapset.NewSet[int64](),
-		streamIDs:          mapset.NewSet[string](),
+		streamValues:       mapset.NewSet[string](),
 		fieldFingerprinter: fingerprint.NewFieldFingerprinter(),
 	}
 }
@@ -88,11 +88,13 @@ func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 // LogsStatsAccumulator collects logs-specific statistics.
 type LogsStatsAccumulator struct {
 	fingerprints       mapset.Set[int64]
-	streamIDs          mapset.Set[string]
+	streamValues       mapset.Set[string]
+	streamIdField      string // "resource_customer_domain", "resource_service_name", or empty
 	firstTS            int64
 	lastTS             int64
 	first              bool
 	fieldFingerprinter *fingerprint.FieldFingerprinter
+	missingFieldCount  int64
 }
 
 func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
@@ -115,33 +117,59 @@ func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
 	fps := a.fieldFingerprinter.GenerateFingerprints(row)
 	a.fingerprints.Append(fps...)
 
-	// Track stream_id if present
-	if streamID, ok := row[wkk.RowKeyCStreamID].(string); ok && streamID != "" {
-		a.streamIDs.Add(streamID)
+	// Track stream field and values with priority:
+	// resource_customer_domain > resource_service_name
+	customerDomainField := wkk.RowKeyValue(wkk.RowKeyResourceCustomerDomain)
+	serviceNameField := wkk.RowKeyValue(wkk.RowKeyResourceServiceName)
+
+	if domain, ok := row[wkk.RowKeyResourceCustomerDomain].(string); ok && domain != "" {
+		// Highest priority: resource_customer_domain
+		if a.streamIdField != customerDomainField {
+			// Upgrade to higher priority field - clear previous values
+			a.streamIdField = customerDomainField
+			a.streamValues.Clear()
+		}
+		a.streamValues.Add(domain)
+	} else if serviceName, ok := row[wkk.RowKeyResourceServiceName].(string); ok && serviceName != "" {
+		// Second priority: resource_service_name (only if we haven't seen customer_domain)
+		if a.streamIdField == "" {
+			a.streamIdField = serviceNameField
+		}
+		if a.streamIdField == serviceNameField {
+			a.streamValues.Add(serviceName)
+		}
+		// If streamIdField is customer_domain, ignore service_name values
+	} else {
+		// Neither field present
+		a.missingFieldCount++
 	}
 }
 
 func (a *LogsStatsAccumulator) Finalize() any {
+	var streamIdField *string
+	var streamValues []string
+
+	if a.streamIdField != "" && a.streamValues.Cardinality() > 0 {
+		streamIdField = &a.streamIdField
+		streamValues = a.streamValues.ToSlice()
+	}
+
 	return LogsFileStats{
-		FirstTS:      a.firstTS,
-		LastTS:       a.lastTS,
-		Fingerprints: a.fingerprints.ToSlice(),
-		StreamIDs:    a.streamIDs.ToSlice(),
+		FirstTS:                 a.firstTS,
+		LastTS:                  a.lastTS,
+		Fingerprints:            a.fingerprints.ToSlice(),
+		StreamIdField:           streamIdField,
+		StreamValues:            streamValues,
+		MissingStreamFieldCount: a.missingFieldCount,
 	}
 }
 
 // LogsFileStats contains statistics about a logs file.
 type LogsFileStats struct {
-	FirstTS      int64    // Earliest timestamp
-	LastTS       int64    // Latest timestamp
-	Fingerprints []int64  // Actual list of unique fingerprints in this file
-	StreamIDs    []string // Unique stream identifiers in this file
-}
-
-// ValidateLogsRow checks that a row has the required fields for logs processing.
-func ValidateLogsRow(row map[string]any) error {
-	if _, ok := row["chq_timestamp"]; !ok {
-		return fmt.Errorf("missing required field: chq_timestamp")
-	}
-	return nil
+	FirstTS                 int64    // Earliest timestamp
+	LastTS                  int64    // Latest timestamp
+	Fingerprints            []int64  // Actual list of unique fingerprints in this file
+	StreamIdField           *string  // The field used for stream identification (resource_customer_domain or resource_service_name)
+	StreamValues            []string // Unique values from the stream field
+	MissingStreamFieldCount int64    // Count of rows missing stream identification fields
 }

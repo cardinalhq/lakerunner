@@ -282,6 +282,11 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			return nil, fmt.Errorf("unexpected metadata type: %T", result.Metadata)
 		}
 
+		// Emit metric for rows missing stream identification field
+		if stats.MissingStreamFieldCount > 0 {
+			factories.StreamFieldMissingCounter.Add(ctx, stats.MissingStreamFieldCount)
+		}
+
 		objectPath := helpers.MakeDBObjectID(key.OrganizationID, profile.CollectorName, key.DateInt, p.getHourFromTimestamp(stats.FirstTS), segmentID, "logs")
 		if err := client.UploadObject(ctx, profile.Bucket, objectPath, result.FileName); err != nil {
 			return nil, fmt.Errorf("upload file %s: %w", result.FileName, err)
@@ -302,14 +307,15 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 				Upper:     pgtype.Int8{Int64: stats.LastTS + 1, Valid: true},
 				Valid:     true,
 			},
-			RecordCount:  result.RecordCount,
-			FileSize:     result.FileSize,
-			Published:    true,
-			Compacted:    true,
-			Fingerprints: stats.Fingerprints,
-			CreatedBy:    lrdb.CreatedByCompact,
-			LabelNameMap: mergedLabelMap,
-			StreamIds:    stats.StreamIDs,
+			RecordCount:   result.RecordCount,
+			FileSize:      result.FileSize,
+			Published:     true,
+			Compacted:     true,
+			Fingerprints:  stats.Fingerprints,
+			CreatedBy:     lrdb.CreatedByCompact,
+			LabelNameMap:  mergedLabelMap,
+			StreamIds:     stats.StreamValues,
+			StreamIDField: stats.StreamIdField,
 		}
 
 		segments = append(segments, segment)
@@ -343,15 +349,16 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 	newRecords := make([]lrdb.CompactLogSegsNew, len(newSegments))
 	for i, seg := range newSegments {
 		newRecords[i] = lrdb.CompactLogSegsNew{
-			SegmentID:    seg.SegmentID,
-			StartTs:      seg.TsRange.Lower.Int64,
-			EndTs:        seg.TsRange.Upper.Int64,
-			RecordCount:  seg.RecordCount,
-			FileSize:     seg.FileSize,
-			Fingerprints: seg.Fingerprints,
-			LabelNameMap: seg.LabelNameMap,
-			StreamIds:    seg.StreamIds,
-			SortVersion:  lrdb.CurrentLogSortVersion,
+			SegmentID:     seg.SegmentID,
+			StartTs:       seg.TsRange.Lower.Int64,
+			EndTs:         seg.TsRange.Upper.Int64,
+			RecordCount:   seg.RecordCount,
+			FileSize:      seg.FileSize,
+			Fingerprints:  seg.Fingerprints,
+			LabelNameMap:  seg.LabelNameMap,
+			StreamIds:     seg.StreamIds,
+			StreamIdField: seg.StreamIDField,
+			SortVersion:   lrdb.CurrentLogSortVersion,
 		}
 	}
 

@@ -397,10 +397,8 @@ func TestGenerateRowFingerprints_Comprehensive(t *testing.T) {
 	// 3. metric_name - FULL VALUE dimension (no trigrams)
 	expected.Add(ComputeFingerprint("metric_name", "log_events"))
 
-	// 4. resource_customer_domain - indexed dimension with trigrams
-	for _, trigram := range ToTrigrams("example.com") {
-		expected.Add(ComputeFingerprint("resource_customer_domain", trigram))
-	}
+	// 4. resource_customer_domain - FULL VALUE dimension (no trigrams)
+	expected.Add(ComputeFingerprint("resource_customer_domain", "example.com"))
 
 	// 5. resource_file - FULL VALUE dimension (no trigrams)
 	expected.Add(ComputeFingerprint("resource_file", "auth.log"))
@@ -410,10 +408,8 @@ func TestGenerateRowFingerprints_Comprehensive(t *testing.T) {
 		expected.Add(ComputeFingerprint("resource_k8s_namespace_name", trigram))
 	}
 
-	// 7. resource_service_name - indexed dimension with trigrams
-	for _, trigram := range ToTrigrams("auth-service") {
-		expected.Add(ComputeFingerprint("resource_service_name", trigram))
-	}
+	// 7. resource_service_name - FULL VALUE dimension (no trigrams)
+	expected.Add(ComputeFingerprint("resource_service_name", "auth-service"))
 
 	// 8. span_trace_id - indexed dimension with trigrams
 	for _, trigram := range ToTrigrams("abc123def456") {

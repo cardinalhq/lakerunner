@@ -25,60 +25,107 @@ import (
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
-func TestLogsStatsAccumulator_StreamIDTracking(t *testing.T) {
+func TestLogsStatsAccumulator_StreamFieldTracking(t *testing.T) {
+	customerDomainField := wkk.RowKeyValue(wkk.RowKeyResourceCustomerDomain)
+	serviceNameField := wkk.RowKeyValue(wkk.RowKeyResourceServiceName)
+
 	tests := []struct {
-		name              string
-		rows              []pipeline.Row
-		expectedStreamIDs []string
+		name                      string
+		rows                      []pipeline.Row
+		expectedStreamIdField     *string
+		expectedStreamValues      []string
+		expectedMissingFieldCount int64
 	}{
 		{
-			name: "tracks single stream_id",
+			name: "tracks resource_customer_domain",
 			rows: []pipeline.Row{
-				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyCStreamID: "service-a"},
+				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyResourceCustomerDomain: "example.com"},
 			},
-			expectedStreamIDs: []string{"service-a"},
+			expectedStreamIdField:     stringPtr(customerDomainField),
+			expectedStreamValues:      []string{"example.com"},
+			expectedMissingFieldCount: 0,
 		},
 		{
-			name: "tracks multiple unique stream_ids",
+			name: "tracks resource_service_name when no customer_domain",
 			rows: []pipeline.Row{
-				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyCStreamID: "service-a"},
-				{wkk.RowKeyCTimestamp: int64(1234567890124), wkk.RowKeyCStreamID: "service-b"},
-				{wkk.RowKeyCTimestamp: int64(1234567890125), wkk.RowKeyCStreamID: "service-c"},
+				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyResourceServiceName: "my-service"},
 			},
-			expectedStreamIDs: []string{"service-a", "service-b", "service-c"},
+			expectedStreamIdField:     stringPtr(serviceNameField),
+			expectedStreamValues:      []string{"my-service"},
+			expectedMissingFieldCount: 0,
 		},
 		{
-			name: "deduplicates stream_ids",
+			name: "customer_domain takes priority over service_name",
 			rows: []pipeline.Row{
-				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyCStreamID: "service-a"},
-				{wkk.RowKeyCTimestamp: int64(1234567890124), wkk.RowKeyCStreamID: "service-a"},
-				{wkk.RowKeyCTimestamp: int64(1234567890125), wkk.RowKeyCStreamID: "service-b"},
-				{wkk.RowKeyCTimestamp: int64(1234567890126), wkk.RowKeyCStreamID: "service-b"},
+				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyResourceServiceName: "my-service"},
+				{wkk.RowKeyCTimestamp: int64(1234567890124), wkk.RowKeyResourceCustomerDomain: "example.com"},
 			},
-			expectedStreamIDs: []string{"service-a", "service-b"},
+			expectedStreamIdField:     stringPtr(customerDomainField),
+			expectedStreamValues:      []string{"example.com"},
+			expectedMissingFieldCount: 0,
 		},
 		{
-			name: "ignores rows without stream_id",
+			name: "tracks multiple unique values for same field",
 			rows: []pipeline.Row{
-				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyCStreamID: "service-a"},
-				{wkk.RowKeyCTimestamp: int64(1234567890124)}, // No stream_id
-				{wkk.RowKeyCTimestamp: int64(1234567890125), wkk.RowKeyCStreamID: "service-b"},
+				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyResourceCustomerDomain: "example.com"},
+				{wkk.RowKeyCTimestamp: int64(1234567890124), wkk.RowKeyResourceCustomerDomain: "other.com"},
+				{wkk.RowKeyCTimestamp: int64(1234567890125), wkk.RowKeyResourceCustomerDomain: "example.com"}, // duplicate
 			},
-			expectedStreamIDs: []string{"service-a", "service-b"},
+			expectedStreamIdField:     stringPtr(customerDomainField),
+			expectedStreamValues:      []string{"example.com", "other.com"},
+			expectedMissingFieldCount: 0,
 		},
 		{
-			name: "ignores empty stream_id",
+			name: "clears service_name values when customer_domain appears",
 			rows: []pipeline.Row{
-				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyCStreamID: "service-a"},
-				{wkk.RowKeyCTimestamp: int64(1234567890124), wkk.RowKeyCStreamID: ""}, // Empty string
-				{wkk.RowKeyCTimestamp: int64(1234567890125), wkk.RowKeyCStreamID: "service-b"},
+				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyResourceServiceName: "service-a"},
+				{wkk.RowKeyCTimestamp: int64(1234567890124), wkk.RowKeyResourceServiceName: "service-b"},
+				{wkk.RowKeyCTimestamp: int64(1234567890125), wkk.RowKeyResourceCustomerDomain: "example.com"},
 			},
-			expectedStreamIDs: []string{"service-a", "service-b"},
+			expectedStreamIdField:     stringPtr(customerDomainField),
+			expectedStreamValues:      []string{"example.com"}, // service-a and service-b cleared
+			expectedMissingFieldCount: 0,
 		},
 		{
-			name:              "handles no rows with stream_id",
-			rows:              []pipeline.Row{{wkk.RowKeyCTimestamp: int64(1234567890123)}},
-			expectedStreamIDs: []string{},
+			name: "ignores service_name after customer_domain seen",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyResourceCustomerDomain: "example.com"},
+				{wkk.RowKeyCTimestamp: int64(1234567890124), wkk.RowKeyResourceServiceName: "my-service"}, // ignored
+			},
+			expectedStreamIdField:     stringPtr(customerDomainField),
+			expectedStreamValues:      []string{"example.com"},
+			expectedMissingFieldCount: 0,
+		},
+		{
+			name: "counts missing fields",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890123)}, // missing both
+				{wkk.RowKeyCTimestamp: int64(1234567890124), wkk.RowKeyResourceCustomerDomain: "example.com"},
+				{wkk.RowKeyCTimestamp: int64(1234567890125)}, // missing both
+			},
+			expectedStreamIdField:     stringPtr(customerDomainField),
+			expectedStreamValues:      []string{"example.com"},
+			expectedMissingFieldCount: 2,
+		},
+		{
+			name: "all rows missing fields",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890123)},
+				{wkk.RowKeyCTimestamp: int64(1234567890124)},
+			},
+			expectedStreamIdField:     nil,
+			expectedStreamValues:      nil,
+			expectedMissingFieldCount: 2,
+		},
+		{
+			name: "ignores empty string values",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890123), wkk.RowKeyResourceCustomerDomain: ""},
+				{wkk.RowKeyCTimestamp: int64(1234567890124), wkk.RowKeyResourceServiceName: ""},
+			},
+			expectedStreamIdField:     nil,
+			expectedStreamValues:      nil,
+			expectedMissingFieldCount: 2,
 		},
 	}
 
@@ -95,12 +142,28 @@ func TestLogsStatsAccumulator_StreamIDTracking(t *testing.T) {
 			stats, ok := result.(LogsFileStats)
 			require.True(t, ok, "Finalize should return LogsFileStats")
 
-			// Sort both slices for comparison
-			actualIDs := stats.StreamIDs
-			sort.Strings(actualIDs)
-			sort.Strings(tt.expectedStreamIDs)
+			// Check stream field
+			if tt.expectedStreamIdField == nil {
+				assert.Nil(t, stats.StreamIdField, "StreamIdField should be nil")
+			} else {
+				require.NotNil(t, stats.StreamIdField, "StreamIdField should not be nil")
+				assert.Equal(t, *tt.expectedStreamIdField, *stats.StreamIdField, "StreamIdField mismatch")
+			}
 
-			assert.Equal(t, tt.expectedStreamIDs, actualIDs, "stream IDs mismatch")
+			// Check stream values
+			if tt.expectedStreamValues == nil {
+				assert.Nil(t, stats.StreamValues, "StreamValues should be nil")
+			} else {
+				actualValues := stats.StreamValues
+				sort.Strings(actualValues)
+				expectedValues := make([]string, len(tt.expectedStreamValues))
+				copy(expectedValues, tt.expectedStreamValues)
+				sort.Strings(expectedValues)
+				assert.Equal(t, expectedValues, actualValues, "StreamValues mismatch")
+			}
+
+			// Check missing field count
+			assert.Equal(t, tt.expectedMissingFieldCount, stats.MissingStreamFieldCount, "MissingStreamFieldCount mismatch")
 		})
 	}
 }
@@ -111,9 +174,9 @@ func TestLogsStatsAccumulator_FingerprintsAndTimestamps(t *testing.T) {
 
 	// Add rows with timestamps
 	rows := []pipeline.Row{
-		{wkk.RowKeyCTimestamp: int64(1234567890100), wkk.RowKeyCStreamID: "service-a"},
-		{wkk.RowKeyCTimestamp: int64(1234567890200), wkk.RowKeyCStreamID: "service-b"},
-		{wkk.RowKeyCTimestamp: int64(1234567890050), wkk.RowKeyCStreamID: "service-c"}, // Earlier timestamp
+		{wkk.RowKeyCTimestamp: int64(1234567890100), wkk.RowKeyResourceServiceName: "service-a"},
+		{wkk.RowKeyCTimestamp: int64(1234567890200), wkk.RowKeyResourceServiceName: "service-b"},
+		{wkk.RowKeyCTimestamp: int64(1234567890050), wkk.RowKeyResourceServiceName: "service-c"}, // Earlier timestamp
 	}
 
 	for _, row := range rows {
@@ -130,17 +193,27 @@ func TestLogsStatsAccumulator_FingerprintsAndTimestamps(t *testing.T) {
 }
 
 func TestLogsFileStats_Structure(t *testing.T) {
+	field := "resource_service_name"
 	stats := LogsFileStats{
-		FirstTS:      1234567890000,
-		LastTS:       1234567890999,
-		Fingerprints: []int64{100, 200, 300},
-		StreamIDs:    []string{"service-a", "service-b"},
+		FirstTS:                 1234567890000,
+		LastTS:                  1234567890999,
+		Fingerprints:            []int64{100, 200, 300},
+		StreamIdField:           &field,
+		StreamValues:            []string{"service-a", "service-b"},
+		MissingStreamFieldCount: 5,
 	}
 
 	assert.Equal(t, int64(1234567890000), stats.FirstTS)
 	assert.Equal(t, int64(1234567890999), stats.LastTS)
 	assert.Len(t, stats.Fingerprints, 3)
-	assert.Len(t, stats.StreamIDs, 2)
-	assert.Contains(t, stats.StreamIDs, "service-a")
-	assert.Contains(t, stats.StreamIDs, "service-b")
+	require.NotNil(t, stats.StreamIdField)
+	assert.Equal(t, "resource_service_name", *stats.StreamIdField)
+	assert.Len(t, stats.StreamValues, 2)
+	assert.Contains(t, stats.StreamValues, "service-a")
+	assert.Contains(t, stats.StreamValues, "service-b")
+	assert.Equal(t, int64(5), stats.MissingStreamFieldCount)
+}
+
+func stringPtr(s string) *string {
+	return &s
 }

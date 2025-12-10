@@ -201,31 +201,41 @@ func TestFilterToTrigramQuery_IndexedVsNonIndexedFields(t *testing.T) {
 		name          string
 		fieldName     string
 		isIndexed     bool
-		expectedFpMin int // Minimum expected fingerprints
+		isFullValue   bool // full-value dimensions only get 1 fingerprint (no trigrams)
+		expectedFpMin int  // Minimum expected fingerprints
+		expectedFpMax int  // Maximum expected fingerprints (0 = no max)
 	}{
 		{
-			name:          "indexed_field_resource_service_name",
+			name:          "indexed_field_resource_service_name_full_value",
 			fieldName:     "resource.service.name",
 			isIndexed:     true,
-			expectedFpMin: 2, // Trigrams from "test": "tes" and "est"
+			isFullValue:   true,
+			expectedFpMin: 1, // Full-value dimension: just the exists fingerprint for contains
+			expectedFpMax: 1,
 		},
 		{
 			name:          "non_indexed_field_log_source",
 			fieldName:     "log.source",
 			isIndexed:     false,
+			isFullValue:   false,
 			expectedFpMin: 1, // Just the exists fingerprint
+			expectedFpMax: 1,
 		},
 		{
 			name:          "indexed_field_log_level",
 			fieldName:     "log.level",
 			isIndexed:     true,
+			isFullValue:   false,
 			expectedFpMin: 2, // Trigrams from "test": "tes" and "est"
+			expectedFpMax: 0, // No max
 		},
 		{
 			name:          "non_indexed_field_resource_file_type",
 			fieldName:     "resource.file.type",
 			isIndexed:     false,
+			isFullValue:   false,
 			expectedFpMin: 1, // Not in dimensionsToIndex, uses exists check
+			expectedFpMax: 1,
 		},
 	}
 
@@ -242,12 +252,11 @@ func TestFilterToTrigramQuery_IndexedVsNonIndexedFields(t *testing.T) {
 
 			filterToTrigramQuery(filter, fps, &root)
 
-			if tt.isIndexed {
-				assert.GreaterOrEqual(t, len(fps), tt.expectedFpMin,
-					"Indexed field should generate multiple trigram fingerprints")
-			} else {
-				assert.Equal(t, tt.expectedFpMin, len(fps),
-					"Non-indexed field should generate exactly 1 exists fingerprint")
+			assert.GreaterOrEqual(t, len(fps), tt.expectedFpMin,
+				"Should generate at least %d fingerprints", tt.expectedFpMin)
+			if tt.expectedFpMax > 0 {
+				assert.LessOrEqual(t, len(fps), tt.expectedFpMax,
+					"Should generate at most %d fingerprints", tt.expectedFpMax)
 			}
 		})
 	}
@@ -509,6 +518,11 @@ func TestFilterToTrigramQuery_WithSegmentLookupSimulation(t *testing.T) {
 	// Test the full flow: Query → Fingerprints → Segment Lookup → Final Segments
 	// Query: OR(AND(log.level="error", resource.service.name contains "api"),
 	//           AND(log.level="warn", resource.service.name contains "web"))
+	//
+	// Note: resource_service_name is a full-value dimension, so "contains" queries
+	// only use the exists fingerprint (trigram search is not supported for full-value dims).
+	// This means the segment filtering is less precise at the fingerprint level,
+	// and the actual "contains" matching happens at query time.
 
 	filter := BinaryClause{
 		Op: "or",
@@ -549,17 +563,13 @@ func TestFilterToTrigramQuery_WithSegmentLookupSimulation(t *testing.T) {
 	fpWarn1 := computeFingerprint("log_level", "war")
 	fpWarn2 := computeFingerprint("log_level", "arn")
 
-	// For "api" - only 1 trigram (3 chars)
-	fpApi := computeFingerprint("resource_service_name", "api")
-
-	// For "web" - only 1 trigram (3 chars)
-	fpWeb := computeFingerprint("resource_service_name", "web")
+	// For resource_service_name "contains" - uses exists fingerprint since it's a full-value dimension
+	fpServiceNameExists := computeFingerprint("resource_service_name", existsRegex)
 
 	t.Logf("Expected fingerprints:")
 	t.Logf("  error: %d, %d, %d", fpError1, fpError2, fpError3)
 	t.Logf("  warn: %d, %d", fpWarn1, fpWarn2)
-	t.Logf("  api: %d", fpApi)
-	t.Logf("  web: %d", fpWeb)
+	t.Logf("  service_name exists: %d", fpServiceNameExists)
 
 	// Step 3: Create mock segment data simulating database contents
 	seg1 := SegmentInfo{SegmentID: 1, DateInt: 20250101, Hour: "00"}
@@ -570,32 +580,31 @@ func TestFilterToTrigramQuery_WithSegmentLookupSimulation(t *testing.T) {
 
 	fpToSegments := make(map[int64][]SegmentInfo)
 
-	// seg1: Has "error" AND "api" → should match first OR branch
+	// seg1: Has "error" AND service_name exists → should match first OR branch
 	fpToSegments[fpError1] = append(fpToSegments[fpError1], seg1)
 	fpToSegments[fpError2] = append(fpToSegments[fpError2], seg1)
 	fpToSegments[fpError3] = append(fpToSegments[fpError3], seg1)
-	fpToSegments[fpApi] = append(fpToSegments[fpApi], seg1)
+	fpToSegments[fpServiceNameExists] = append(fpToSegments[fpServiceNameExists], seg1)
 
-	// seg2: Has "warn" AND "web" → should match second OR branch
+	// seg2: Has "warn" AND service_name exists → should match second OR branch
 	fpToSegments[fpWarn1] = append(fpToSegments[fpWarn1], seg2)
 	fpToSegments[fpWarn2] = append(fpToSegments[fpWarn2], seg2)
-	fpToSegments[fpWeb] = append(fpToSegments[fpWeb], seg2)
+	fpToSegments[fpServiceNameExists] = append(fpToSegments[fpServiceNameExists], seg2)
 
-	// seg3: Has "error" but NOT "api" → should NOT match (AND fails)
+	// seg3: Has "error" but NO service_name → should NOT match (AND fails)
 	fpToSegments[fpError1] = append(fpToSegments[fpError1], seg3)
 	fpToSegments[fpError2] = append(fpToSegments[fpError2], seg3)
 	fpToSegments[fpError3] = append(fpToSegments[fpError3], seg3)
 
-	// seg4: Has both "error"+"api" AND "warn"+"web" → should match both branches
+	// seg4: Has both "error" AND "warn" AND service_name exists → should match both branches
 	fpToSegments[fpError1] = append(fpToSegments[fpError1], seg4)
 	fpToSegments[fpError2] = append(fpToSegments[fpError2], seg4)
 	fpToSegments[fpError3] = append(fpToSegments[fpError3], seg4)
-	fpToSegments[fpApi] = append(fpToSegments[fpApi], seg4)
 	fpToSegments[fpWarn1] = append(fpToSegments[fpWarn1], seg4)
 	fpToSegments[fpWarn2] = append(fpToSegments[fpWarn2], seg4)
-	fpToSegments[fpWeb] = append(fpToSegments[fpWeb], seg4)
+	fpToSegments[fpServiceNameExists] = append(fpToSegments[fpServiceNameExists], seg4)
 
-	// seg5: Has "warn" but NOT "web" → should NOT match (AND fails)
+	// seg5: Has "warn" but NO service_name → should NOT match (AND fails)
 	fpToSegments[fpWarn1] = append(fpToSegments[fpWarn1], seg5)
 	fpToSegments[fpWarn2] = append(fpToSegments[fpWarn2], seg5)
 
@@ -608,14 +617,14 @@ func TestFilterToTrigramQuery_WithSegmentLookupSimulation(t *testing.T) {
 	}
 
 	// Step 5: Verify results
-	// Should match: seg1 (error+api), seg2 (warn+web), seg4 (both)
-	// Should NOT match: seg3 (error but no api), seg5 (warn but no web)
+	// Should match: seg1 (error+service_name), seg2 (warn+service_name), seg4 (both)
+	// Should NOT match: seg3 (error but no service_name), seg5 (warn but no service_name)
 	assert.Len(t, finalSegments, 3, "Should return exactly 3 segments")
-	assert.Contains(t, finalSegments, seg1, "segment 1 should match (error AND api)")
-	assert.Contains(t, finalSegments, seg2, "segment 2 should match (warn AND web)")
+	assert.Contains(t, finalSegments, seg1, "segment 1 should match (error AND service_name exists)")
+	assert.Contains(t, finalSegments, seg2, "segment 2 should match (warn AND service_name exists)")
 	assert.Contains(t, finalSegments, seg4, "segment 4 should match (both branches)")
-	assert.NotContains(t, finalSegments, seg3, "segment 3 should NOT match (error but no api)")
-	assert.NotContains(t, finalSegments, seg5, "segment 5 should NOT match (warn but no web)")
+	assert.NotContains(t, finalSegments, seg3, "segment 3 should NOT match (error but no service_name)")
+	assert.NotContains(t, finalSegments, seg5, "segment 5 should NOT match (warn but no service_name)")
 }
 
 func TestFilterToTrigramQuery_ComplexOrSegmentSelection(t *testing.T) {

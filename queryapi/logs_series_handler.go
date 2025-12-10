@@ -28,7 +28,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 // logsSeriesPayload is the request payload for /api/v1/logs/series
@@ -83,8 +82,9 @@ func readLogsSeriesPayload(w http.ResponseWriter, r *http.Request) *logsSeriesPa
 	return &p
 }
 
-// handleListLogSeries returns distinct log streams (stream_ids) for a time range.
-// Response format is Loki-compatible: {"status": "success", "data": [{"stream_id": "value"}, ...]}
+// handleListLogSeries returns distinct log streams for a time range.
+// Response format is Loki-compatible: {"status": "success", "data": [{field_name: "value"}, ...]}
+// The field_name is the actual source field (resource_customer_domain, resource_service_name, or stream_id for legacy).
 func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Request) {
 	p := readLogsSeriesPayload(w, r)
 	if p == nil {
@@ -98,7 +98,7 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 	startDateint, _ := helpers.MSToDateintHour(p.StartTs)
 	endDateint, _ := helpers.MSToDateintHour(p.EndTs)
 
-	streamIDs, err := q.mdb.ListLogStreamIDs(ctx, lrdb.ListLogStreamIDsParams{
+	streams, err := q.mdb.ListLogStreams(ctx, lrdb.ListLogStreamsParams{
 		OrganizationID: p.OrgUUID,
 		StartDateint:   startDateint,
 		EndDateint:     endDateint,
@@ -106,16 +106,19 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 		EndTs:          p.EndTs,
 	})
 	if err != nil {
-		slog.Error("ListLogStreamIDs failed", "org", p.OrgUUID, "error", err)
+		slog.Error("ListLogStreams failed", "org", p.OrgUUID, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	// Convert to Loki-compatible format
-	streamIDKey := string(wkk.RowKeyCStreamID.Value())
-	data := make([]map[string]string, 0, len(streamIDs))
-	for _, streamID := range streamIDs {
-		data = append(data, map[string]string{streamIDKey: streamID})
+	// Convert to Loki-compatible format using the actual field name as the key
+	data := make([]map[string]string, 0, len(streams))
+	for _, stream := range streams {
+		// Skip entries with nil FieldName - these are broken data that can't be queried
+		if stream.FieldName == nil {
+			continue
+		}
+		data = append(data, map[string]string{*stream.FieldName: stream.StreamValue})
 	}
 
 	resp := LokiSeriesResponse{

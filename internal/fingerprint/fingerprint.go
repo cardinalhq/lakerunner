@@ -21,7 +21,6 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 
 	"github.com/cardinalhq/lakerunner/pipeline"
-	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 const (
@@ -40,15 +39,17 @@ var (
 		"resource_k8s_namespace_name",
 		"resource_service_name",
 		"span_trace_id",
-		string(wkk.RowKeyCStreamID.Value()),
 	}
 
 	// FullValueDimensions are dimensions that should be indexed with exact full values
 	// instead of trigrams. These support exact matching efficiently but not substring/regex.
+	// resource_customer_domain and resource_service_name are included to support efficient
+	// stream/series lookups for logs.
 	FullValueDimensions = []string{
 		"metric_name",
+		"resource_customer_domain",
 		"resource_file",
-		string(wkk.RowKeyCStreamID.Value()),
+		"resource_service_name",
 	}
 
 	// dimensionsToIndexSet is a pre-built map for O(1) lookup of indexed dimensions

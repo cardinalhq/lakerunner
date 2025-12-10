@@ -20,13 +20,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
 func TestLokiSeriesResponse_Format(t *testing.T) {
-	// Test that the response format matches Loki's expected format
-	streamIDKey := string(wkk.RowKeyCStreamID.Value())
+	// Test that the response format uses actual field names as keys
 	tests := []struct {
 		name     string
 		response LokiSeriesResponse
@@ -41,26 +38,36 @@ func TestLokiSeriesResponse_Format(t *testing.T) {
 			expected: `{"status":"success","data":[]}`,
 		},
 		{
-			name: "single stream",
+			name: "single stream with service_name",
 			response: LokiSeriesResponse{
 				Status: "success",
 				Data: []map[string]string{
-					{streamIDKey: "my-service"},
+					{"resource_service_name": "my-service"},
 				},
 			},
-			expected: `{"status":"success","data":[{"` + streamIDKey + `":"my-service"}]}`,
+			expected: `{"status":"success","data":[{"resource_service_name":"my-service"}]}`,
 		},
 		{
-			name: "multiple streams",
+			name: "single stream with customer_domain",
 			response: LokiSeriesResponse{
 				Status: "success",
 				Data: []map[string]string{
-					{streamIDKey: "service-a"},
-					{streamIDKey: "service-b"},
-					{streamIDKey: "customer.domain.com"},
+					{"resource_customer_domain": "example.com"},
 				},
 			},
-			expected: `{"status":"success","data":[{"` + streamIDKey + `":"service-a"},{"` + streamIDKey + `":"service-b"},{"` + streamIDKey + `":"customer.domain.com"}]}`,
+			expected: `{"status":"success","data":[{"resource_customer_domain":"example.com"}]}`,
+		},
+		{
+			name: "multiple streams with same field",
+			response: LokiSeriesResponse{
+				Status: "success",
+				Data: []map[string]string{
+					{"resource_service_name": "service-a"},
+					{"resource_service_name": "service-b"},
+					{"resource_service_name": "service-c"},
+				},
+			},
+			expected: `{"status":"success","data":[{"resource_service_name":"service-a"},{"resource_service_name":"service-b"},{"resource_service_name":"service-c"}]}`,
 		},
 	}
 
@@ -74,9 +81,8 @@ func TestLokiSeriesResponse_Format(t *testing.T) {
 }
 
 func TestLokiSeriesResponse_Unmarshal(t *testing.T) {
-	// Test that clients can unmarshal the response correctly
-	streamIDKey := string(wkk.RowKeyCStreamID.Value())
-	input := `{"status":"success","data":[{"` + streamIDKey + `":"service-a"},{"` + streamIDKey + `":"service-b"}]}`
+	// Test that clients can unmarshal the response correctly with actual field names
+	input := `{"status":"success","data":[{"resource_service_name":"service-a"},{"resource_service_name":"service-b"}]}`
 
 	var response LokiSeriesResponse
 	err := json.Unmarshal([]byte(input), &response)
@@ -84,8 +90,8 @@ func TestLokiSeriesResponse_Unmarshal(t *testing.T) {
 
 	assert.Equal(t, "success", response.Status)
 	require.Len(t, response.Data, 2)
-	assert.Equal(t, "service-a", response.Data[0][streamIDKey])
-	assert.Equal(t, "service-b", response.Data[1][streamIDKey])
+	assert.Equal(t, "service-a", response.Data[0]["resource_service_name"])
+	assert.Equal(t, "service-b", response.Data[1]["resource_service_name"])
 }
 
 func TestLogsSeriesPayload_Structure(t *testing.T) {
