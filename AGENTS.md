@@ -170,6 +170,34 @@ All source files must include AGPL v3 header:
 - **Schema = what's actually in the data** - not what we expect
 - **Each parquet file has its own schema** - based on its content
 
+### Log Sorting Architecture
+
+**IMPORTANT**: Logs use multi-field sorting for optimal query performance and stream organization.
+
+#### Sort Key Strategy
+
+- **Logs**: Sorted by `[service_identifier, fingerprint, timestamp]` using `LogSortKeyProvider`
+  - `service_identifier`: `resource_customer_domain` if set, otherwise `resource_service_name`
+  - `fingerprint`: Log pattern fingerprint for grouping similar logs
+  - `timestamp`: Timestamp in nanoseconds
+  - This groups logs by service and pattern, enabling efficient stream queries
+- **Traces**: Sorted by `timestamp` only using `TimestampSortKeyProvider`
+
+#### Always Normalize Through MergesortReader
+
+**Critical pattern**: Even single-file ingestion MUST use `MergesortReader` to ensure:
+1. Rows are normalized to match the merged schema (handles type promotion)
+2. Data is properly sorted according to the appropriate sort key provider
+3. Consistent behavior across single and multi-file ingestion paths
+
+Never skip `MergesortReader` even for single readers - normalization is required.
+
+#### Segment Metadata
+
+Log segments include:
+- `stream_ids`: Array of unique stream identifiers found in the segment
+- `sort_version`: Tracks the sorting algorithm version (see `lrdb.CurrentLogSortVersion`)
+
 ### Data Flow Pipeline
 
 1. **PubSub Handler** – S3 notifications via SQS or webhooks

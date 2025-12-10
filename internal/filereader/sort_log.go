@@ -21,14 +21,12 @@ import (
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
-// LogSortKey represents the sort key for logs: [service_identifier, fingerprint, timestamp]
+// LogSortKey represents the sort key for logs: [service_identifier, timestamp]
 // where service_identifier is resource_customer_domain if set, otherwise resource_service_name
 type LogSortKey struct {
 	ServiceIdentifier string
-	Fingerprint       int64
 	Timestamp         int64
 	ServiceOk         bool
-	FingerprintOk     bool
 	TsOk              bool
 }
 
@@ -40,9 +38,6 @@ func (k *LogSortKey) Compare(other SortKey) int {
 	}
 
 	if cmp := compareOptional(k.ServiceIdentifier, k.ServiceOk, o.ServiceIdentifier, o.ServiceOk); cmp != 0 {
-		return cmp
-	}
-	if cmp := compareOptional(k.Fingerprint, k.FingerprintOk, o.Fingerprint, o.FingerprintOk); cmp != 0 {
 		return cmp
 	}
 	return compareOptional(k.Timestamp, k.TsOk, o.Timestamp, o.TsOk)
@@ -77,7 +72,6 @@ type LogSortKeyProvider struct{}
 // MakeKey implements SortKeyProvider interface for logs
 func (p *LogSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
 	key := getLogSortKey()
-	key.Fingerprint, key.FingerprintOk = row[wkk.RowKeyCFingerprint].(int64)
 	key.ServiceIdentifier, key.ServiceOk = getServiceIdentifier(row)
 	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
 	return key
@@ -99,7 +93,6 @@ func getServiceIdentifier(row pipeline.Row) (string, bool) {
 // MakeLogSortKey creates a pooled LogSortKey from a row
 func MakeLogSortKey(row pipeline.Row) *LogSortKey {
 	key := getLogSortKey()
-	key.Fingerprint, key.FingerprintOk = row[wkk.RowKeyCFingerprint].(int64)
 	key.ServiceIdentifier, key.ServiceOk = getServiceIdentifier(row)
 	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
 	return key
