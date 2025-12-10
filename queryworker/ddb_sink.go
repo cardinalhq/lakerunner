@@ -457,8 +457,12 @@ func escape(path string) string {
 }
 
 func normalizeColumnType(name, _ string) string {
-	if name == "chq_timestamp" {
+	switch name {
+	case "chq_timestamp", "chq_rollup_count":
 		return "BIGINT"
+	case "chq_rollup_sum", "chq_rollup_min", "chq_rollup_max":
+		return "DOUBLE"
+	default:
+		return "VARCHAR"
 	}
-	return "VARCHAR"
 }
