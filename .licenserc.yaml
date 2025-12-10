@@ -26,6 +26,7 @@ header:
     - go.work.sum
     - '**/testdata/**'
     - .idea
+    - .claude
     - '**/*.sql.go'
     - '**/*.sql'
     - '**/*db/batch.go'

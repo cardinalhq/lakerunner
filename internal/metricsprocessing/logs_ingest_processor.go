@@ -695,7 +695,7 @@ func (p *LogIngestProcessor) createLogReader(filename, orgId string) (filereader
 func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
 	// Always use MergesortReader, even for single files
 	// This ensures rows are normalized according to the schema before writing
-	keyProvider := &filereader.TimestampSortKeyProvider{}
+	keyProvider := &filereader.LogSortKeyProvider{}
 	multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create multi-source reader: %w", err)

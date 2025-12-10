@@ -179,7 +179,7 @@ func BenchmarkBaselineMergeSort(b *testing.B) {
 		sampler.Start()
 		b.StartTimer()
 
-		keyProvider := &filereader.TimestampSortKeyProvider{}
+		keyProvider := &filereader.LogSortKeyProvider{}
 		mergeReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
 			b.Fatal(err)

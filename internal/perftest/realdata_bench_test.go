@@ -217,7 +217,7 @@ func BenchmarkRealDataMergeSort(b *testing.B) {
 	sampler := NewMemorySampler(timer, 100*1000000)
 	sampler.Start()
 
-	keyProvider := &filereader.TimestampSortKeyProvider{}
+	keyProvider := &filereader.LogSortKeyProvider{}
 	mergeReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 	if err != nil {
 		b.Fatal(err)

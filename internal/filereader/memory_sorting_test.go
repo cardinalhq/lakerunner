@@ -265,7 +265,7 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, &TimestampSortKeyProvider{}, 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &LogSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 

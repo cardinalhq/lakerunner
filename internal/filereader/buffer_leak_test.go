@@ -216,7 +216,7 @@ func TestMemorySortingReader_BufferLeak(t *testing.T) {
 	// Create MemorySortingReader
 	sortingReader, err := NewMemorySortingReader(
 		baseReader,
-		&TimestampSortKeyProvider{},
+		&LogSortKeyProvider{},
 		100,
 	)
 	if err != nil {
@@ -247,7 +247,7 @@ func TestDiskSortingReader_BufferLeak(t *testing.T) {
 	// Create DiskSortingReader
 	sortingReader, err := NewDiskSortingReader(
 		baseReader,
-		&TimestampSortKeyProvider{},
+		&LogSortKeyProvider{},
 		100,
 	)
 	if err != nil {
@@ -353,7 +353,7 @@ func TestStackedReaders_BufferLeak(t *testing.T) {
 	// Add sorting
 	sortingReader, err := NewMemorySortingReader(
 		seqReader,
-		&TimestampSortKeyProvider{},
+		&LogSortKeyProvider{},
 		50,
 	)
 	if err != nil {

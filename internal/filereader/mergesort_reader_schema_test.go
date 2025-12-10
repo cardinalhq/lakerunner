@@ -165,7 +165,7 @@ func TestMergesortReader_SchemaNormalization(t *testing.T) {
 
 	ctx := context.Background()
 	// Use a real sort key provider that sorts by _timestamp
-	keyProvider := &TimestampSortKeyProvider{}
+	keyProvider := &LogSortKeyProvider{}
 	mergeReader, err := NewMergesortReader(ctx, []Reader{reader1, reader2}, keyProvider, 100)
 	require.NoError(t, err)
 	defer func() { _ = mergeReader.Close() }()
