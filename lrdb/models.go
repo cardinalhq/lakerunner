@@ -126,6 +126,7 @@ type LogSeg struct {
 	Published      bool                      `json:"published"`
 	LabelNameMap   []byte                    `json:"label_name_map"`
 	StreamIds      []string                  `json:"stream_ids"`
+	SortVersion    int16                     `json:"sort_version"`
 }
 
 type LrdbExemplarLog struct {

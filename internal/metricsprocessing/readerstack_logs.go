@@ -107,7 +107,20 @@ func createLogReaderStack(
 			return nil, fmt.Errorf("creating parquet reader for %s: %w", fn, err)
 		}
 
-		finalReader := reader
+		finalReader := filereader.Reader(reader)
+		sourceSortedWithCompatibleKey := row.SortVersion == lrdb.CurrentLogSortVersion
+
+		if !sourceSortedWithCompatibleKey {
+			keyProvider := &filereader.LogSortKeyProvider{}
+			sortingReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
+			if err != nil {
+				_ = reader.Close()
+				_ = file.Close()
+				ll.Error("Failed to create disk sorting reader", slog.String("file", fn), slog.Any("error", err))
+				return nil, fmt.Errorf("creating disk sorting reader for %s: %w", fn, err)
+			}
+			finalReader = sortingReader
+		}
 
 		readers = append(readers, finalReader)
 		files = append(files, file)
@@ -115,7 +128,7 @@ func createLogReaderStack(
 	}
 
 	// Always use merge sort reader for consistency
-	keyProvider := &filereader.TimestampSortKeyProvider{}
+	keyProvider := &filereader.LogSortKeyProvider{}
 	mergedReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 	if err != nil {
 		return nil, fmt.Errorf("creating mergesort reader: %w", err)

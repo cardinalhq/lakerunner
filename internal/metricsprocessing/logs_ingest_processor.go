@@ -492,7 +492,7 @@ func ProcessLogFiles(
 	if len(readers) == 1 {
 		finalReader = readers[0]
 	} else {
-		keyProvider := &filereader.TimestampSortKeyProvider{}
+		keyProvider := &filereader.LogSortKeyProvider{}
 		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
@@ -933,6 +933,7 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			Compacted:      false, // New segments are not compacted
 			LabelNameMap:   labelNameMap,
 			StreamIds:      stats.StreamIDs,
+			SortVersion:    lrdb.CurrentLogSortVersion,
 		}
 
 		segmentParams = append(segmentParams, params)
