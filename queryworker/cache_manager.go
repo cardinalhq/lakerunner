@@ -133,6 +133,7 @@ type CacheManager struct {
 	sink                   *DDBSink
 	s3Pool                 *duckdbx.S3DB // shared global pool
 	maxRows                int64
+	maxDiskUsageBytes      uint64 // dynamically calculated from disk size
 	downloader             DownloadBatchFunc
 	storageProfileProvider storageprofile.StorageProfileProvider
 	dataset                string
@@ -153,6 +154,18 @@ type CacheManager struct {
 
 const (
 	MaxRowsDefault = 1000000000 // 1 billion rows (approx 10GB on disk)
+
+	// DiskUsageHeadroomFraction is the fraction of disk space to reserve as headroom.
+	// We use 80% of total disk space as the max, leaving 20% for overhead, temp files,
+	// and measurement noise.
+	DiskUsageHeadroomFraction = 0.80
+
+	// MinDiskUsageBytes is the minimum disk usage limit (1GB).
+	// This prevents unreasonably small limits on tiny test volumes.
+	MinDiskUsageBytes = 1 << 30 // 1 GB
+
+	// DefaultDiskUsageBytes is the fallback if disk size detection fails (8GB).
+	DefaultDiskUsageBytes = 8 << 30 // 8 GB
 )
 
 func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider, s3Pool *duckdbx.S3DB) *CacheManager {
@@ -161,6 +174,10 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		slog.Error("Failed to create DuckDB sink", slog.Any("error", err))
 		return nil
 	}
+
+	// Calculate max disk usage based on the filesystem where the database resides
+	maxDiskUsage := calculateMaxDiskUsage(s3Pool.GetDatabasePath())
+
 	w := &CacheManager{
 		sink:                     ddb,
 		s3Pool:                   s3Pool,
@@ -168,12 +185,19 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		storageProfileProvider:   storageProfileProvider,
 		profilesByOrgInstanceNum: make(map[uuid.UUID]map[int16]storageprofile.StorageProfile),
 		maxRows:                  MaxRowsDefault,
+		maxDiskUsageBytes:        maxDiskUsage,
 		downloader:               dl,
 		present:                  make(map[int64]struct{}, ChannelBufferSize),
 		lastAccess:               make(map[int64]time.Time, ChannelBufferSize),
 		inflight:                 make(map[int64]*struct{}, ChannelBufferSize),
 		ingestQ:                  make(chan ingestJob, 64),
 	}
+
+	slog.Info("CacheManager initialized",
+		slog.String("dataset", dataset),
+		slog.Int64("maxRows", w.maxRows),
+		slog.Uint64("maxDiskUsageBytes", w.maxDiskUsageBytes),
+		slog.Float64("maxDiskUsageGB", float64(w.maxDiskUsageBytes)/(1<<30)))
 
 	ingCtx, ingCancel := context.WithCancel(context.Background())
 	w.stopIngest = ingCancel
@@ -640,13 +664,28 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 	}
 
 	over := w.sink.RowCount() - w.maxRows
-	usedSizeGB, err := getUsedDiskSizeInGB()
+
+	// Get disk usage for the filesystem where the database resides
+	dbPath := w.s3Pool.GetDatabasePath()
+	usedBytes, totalBytes, err := getDiskUsage(dbPath)
 	if err != nil {
-		slog.Error("Failed to get used disk size", slog.Any("error", err))
+		slog.Error("Failed to get disk usage", slog.Any("error", err), slog.String("path", dbPath))
 		return
 	}
-	slog.Info("Cache Status", slog.Int64("rowCount", w.sink.RowCount()), slog.Int64("maxRows", w.maxRows), slog.Int64("overRows", over), slog.Float64("usedDiskGB", usedSizeGB))
-	shouldEvict := over > 0 || usedSizeGB >= 8
+
+	usedGB := float64(usedBytes) / (1 << 30)
+	maxUsageGB := float64(w.maxDiskUsageBytes) / (1 << 30)
+	totalGB := float64(totalBytes) / (1 << 30)
+
+	slog.Info("Cache Status",
+		slog.Int64("rowCount", w.sink.RowCount()),
+		slog.Int64("maxRows", w.maxRows),
+		slog.Int64("overRows", over),
+		slog.Float64("usedDiskGB", usedGB),
+		slog.Float64("maxDiskUsageGB", maxUsageGB),
+		slog.Float64("totalDiskGB", totalGB))
+
+	shouldEvict := over > 0 || usedBytes >= w.maxDiskUsageBytes
 
 	if shouldEvict {
 		type ent struct {
@@ -695,14 +734,56 @@ func (w *CacheManager) dropSegments(ctx context.Context, segIDs []int64) {
 	w.mu.Unlock()
 }
 
-func getUsedDiskSizeInGB() (float64, error) {
-	var stat syscall.Statfs_t
-
-	err := syscall.Statfs(".", &stat)
-	if err != nil {
-		return 0, err
+// calculateMaxDiskUsage determines the maximum disk usage for the cache based on
+// the total size of the filesystem where the database file resides.
+// It returns 80% of total disk space, with a minimum of 1GB and a fallback of 8GB
+// if disk detection fails.
+func calculateMaxDiskUsage(dbPath string) uint64 {
+	if dbPath == "" {
+		slog.Warn("No database path provided for disk size calculation, using default",
+			slog.Uint64("defaultBytes", DefaultDiskUsageBytes))
+		return DefaultDiskUsageBytes
 	}
-	usedBytes := (stat.Blocks - stat.Bfree) * uint64(stat.Bsize)
-	usedGB := float64(usedBytes) / (1024 * 1024 * 1024)
-	return usedGB, nil
+
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(dbPath, &stat); err != nil {
+		slog.Warn("Failed to stat filesystem for disk size calculation, using default",
+			slog.String("path", dbPath),
+			slog.Any("error", err),
+			slog.Uint64("defaultBytes", DefaultDiskUsageBytes))
+		return DefaultDiskUsageBytes
+	}
+
+	totalBytes := stat.Blocks * uint64(stat.Bsize)
+	maxUsage := uint64(float64(totalBytes) * DiskUsageHeadroomFraction)
+
+	// Enforce minimum to prevent unreasonably small limits
+	if maxUsage < MinDiskUsageBytes {
+		maxUsage = MinDiskUsageBytes
+	}
+
+	slog.Info("Calculated max disk usage for cache",
+		slog.String("path", dbPath),
+		slog.Uint64("totalBytes", totalBytes),
+		slog.Float64("totalGB", float64(totalBytes)/(1<<30)),
+		slog.Uint64("maxUsageBytes", maxUsage),
+		slog.Float64("maxUsageGB", float64(maxUsage)/(1<<30)),
+		slog.Float64("headroomFraction", DiskUsageHeadroomFraction))
+
+	return maxUsage
+}
+
+// getDiskUsage returns current disk usage statistics for the filesystem containing
+// the given path. Returns used bytes and total bytes.
+func getDiskUsage(path string) (usedBytes, totalBytes uint64, err error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return 0, 0, err
+	}
+
+	totalBytes = stat.Blocks * uint64(stat.Bsize)
+	freeBytes := stat.Bfree * uint64(stat.Bsize)
+	usedBytes = totalBytes - freeBytes
+
+	return usedBytes, totalBytes, nil
 }
