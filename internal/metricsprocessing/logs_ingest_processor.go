@@ -929,6 +929,11 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			slog.Int64("recordCount", result.RecordCount),
 			slog.Int64("fileSize", result.FileSize))
 
+		// Emit metric for rows missing stream identification field
+		if stats.MissingStreamFieldCount > 0 {
+			factories.StreamFieldMissingCounter.Add(ctx, stats.MissingStreamFieldCount)
+		}
+
 		// Create segment parameters using stats from parquet writer
 		params := lrdb.InsertLogSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
@@ -944,7 +949,8 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			Published:      true,  // Mark ingested segments as published
 			Compacted:      false, // New segments are not compacted
 			LabelNameMap:   labelNameMap,
-			StreamIds:      stats.StreamIDs,
+			StreamIds:      stats.StreamValues,
+			StreamIDField:  stats.StreamIdField,
 			SortVersion:    lrdb.CurrentLogSortVersion,
 		}
 

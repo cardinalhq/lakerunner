@@ -28,7 +28,7 @@ import (
 )
 
 func TestParquetLogTranslator_TranslateRow_NilRow(t *testing.T) {
-	err := translateParquetLogRow(context.Background(), nil, "test-org", "test-bucket", "test.parquet")
+	err := translateParquetLogRow(context.Background(), nil, "test-bucket", "test.parquet")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "row cannot be nil")
 }
@@ -142,7 +142,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampDetection(t *testing.T) {
 			}
 
 			beforeTranslate := time.Now()
-			err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
+			err := translateParquetLogRow(context.Background(), &row, "test-bucket", "test.parquet")
 			afterTranslate := time.Now()
 			require.NoError(t, err)
 
@@ -248,7 +248,7 @@ func TestParquetLogTranslator_TranslateRow_MessageDetection(t *testing.T) {
 				row[k] = v
 			}
 
-			err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
+			err := translateParquetLogRow(context.Background(), &row, "test-bucket", "test.parquet")
 			require.NoError(t, err)
 
 			// Check message was set correctly
@@ -308,7 +308,7 @@ func TestParquetLogTranslator_TranslateRow_FlattenedFields(t *testing.T) {
 				row[k] = v
 			}
 
-			err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
+			err := translateParquetLogRow(context.Background(), &row, "test-bucket", "test.parquet")
 			require.NoError(t, err)
 
 			// Check that fields were prefixed correctly
@@ -360,7 +360,7 @@ func TestParquetLogTranslator_TranslateRow_SpecialFieldsNotDuplicated(t *testing
 		wkk.NewRowKey("resource_old"): "keep",
 	}
 
-	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
+	err := translateParquetLogRow(context.Background(), &row, "test-bucket", "test.parquet")
 	require.NoError(t, err)
 
 	// Check that special fields were not duplicated as regular attributes
@@ -402,7 +402,7 @@ func TestParquetLogTranslator_TranslateRow_RequiredFields(t *testing.T) {
 
 	// Use a specific objectID to verify resource fields are set correctly
 	objectID := "logs/2024/01/data.parquet"
-	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", objectID)
+	err := translateParquetLogRow(context.Background(), &row, "test-bucket", objectID)
 	require.NoError(t, err)
 
 	// Check required CardinalhQ fields
@@ -437,7 +437,7 @@ func TestParquetLogTranslator_TranslateRow_EmptyKeyHandling(t *testing.T) {
 		wkk.NewRowKey(""):          "value with empty key", // This should be skipped
 	}
 
-	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
+	err := translateParquetLogRow(context.Background(), &row, "test-bucket", "test.parquet")
 	require.NoError(t, err)
 
 	// The empty key should be skipped during processing
@@ -463,7 +463,7 @@ func TestParquetLogTranslator_TranslateRow_PreservesNonSpecialFields(t *testing.
 		wkk.NewRowKey("duration_ms"):  float64(123.45),
 	}
 
-	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
+	err := translateParquetLogRow(context.Background(), &row, "test-bucket", "test.parquet")
 	require.NoError(t, err)
 
 	// Check that level was used for detection and not promoted to resource.level
@@ -498,7 +498,7 @@ func TestParquetLogTranslator_TranslateRow_TimestampFieldNotPromoted(t *testing.
 		wkk.NewRowKey("__index_level_0__"): int64(14),
 	}
 
-	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
+	err := translateParquetLogRow(context.Background(), &row, "test-bucket", "test.parquet")
 	require.NoError(t, err)
 
 	// Verify that the timestamp was correctly used for chq_timestamp
@@ -550,7 +550,7 @@ func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testin
 		wkk.NewRowKey("message"):     "test message",
 	}
 
-	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", "test.parquet")
+	err := translateParquetLogRow(context.Background(), &row, "test-bucket", "test.parquet")
 	require.NoError(t, err)
 
 	// Verify that the mock string timestamp was NOT used and we fell back to current time
@@ -567,124 +567,4 @@ func TestParquetLogTranslator_TranslateRow_AvoidStringTimestampParsing(t *testin
 	mockTimestampValue, hasMockTimestamp := row[wkk.NewRowKey("resource_timestamp")]
 	assert.True(t, hasMockTimestamp, "Mock timestamp should be promoted to resource attribute")
 	assert.Equal(t, mockStringTimestamp{value: "2025-09-13 18:09:15"}, mockTimestampValue)
-}
-
-func TestSetStreamID(t *testing.T) {
-	tests := []struct {
-		name           string
-		inputRow       pipeline.Row
-		customerDomain string
-		expectedID     string
-		shouldBeSet    bool
-	}{
-		{
-			name:           "customer domain takes priority",
-			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: "my-service"},
-			customerDomain: "customer.example.com",
-			expectedID:     "customer.example.com",
-			shouldBeSet:    true,
-		},
-		{
-			name:           "falls back to resource_service_name",
-			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: "my-service"},
-			customerDomain: "",
-			expectedID:     "my-service",
-			shouldBeSet:    true,
-		},
-		{
-			name:           "omits if neither present",
-			inputRow:       pipeline.Row{},
-			customerDomain: "",
-			expectedID:     "",
-			shouldBeSet:    false,
-		},
-		{
-			name:           "omits if service name is empty string",
-			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: ""},
-			customerDomain: "",
-			expectedID:     "",
-			shouldBeSet:    false,
-		},
-		{
-			name:           "customer domain overrides service name",
-			inputRow:       pipeline.Row{wkk.RowKeyResourceServiceName: "fallback-service"},
-			customerDomain: "primary-domain",
-			expectedID:     "primary-domain",
-			shouldBeSet:    true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			row := make(pipeline.Row)
-			for k, v := range tt.inputRow {
-				row[k] = v
-			}
-
-			setStreamID(&row, tt.customerDomain)
-
-			streamID, exists := row[wkk.RowKeyCStreamID]
-			if tt.shouldBeSet {
-				assert.True(t, exists, "stream_id should be set")
-				assert.Equal(t, tt.expectedID, streamID, "stream_id value mismatch")
-			} else {
-				assert.False(t, exists, "stream_id should not be set")
-			}
-		})
-	}
-}
-
-func TestParquetLogTranslator_StreamIDIntegration(t *testing.T) {
-	// Test that stream_id is derived during full translation
-	// Using a resource file pattern that extracts customer domain
-	// The objectID path "logs/Support/customer.domain.com/data.parquet" should extract "customer.domain.com"
-	objectID := "logs/Support/customer.domain.com/data.parquet"
-	row := pipeline.Row{
-		wkk.NewRowKey("timestamp"):    int64(1234567890123),
-		wkk.NewRowKey("message"):      "test message",
-		wkk.RowKeyResourceServiceName: "fallback-service",
-	}
-
-	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", objectID)
-	require.NoError(t, err)
-
-	// Customer domain should be extracted from the path and used as stream_id
-	streamID, exists := row[wkk.RowKeyCStreamID]
-	assert.True(t, exists, "stream_id should be set")
-	assert.Equal(t, "customer.domain.com", streamID, "stream_id should be customer domain")
-}
-
-func TestParquetLogTranslator_StreamIDFallbackToServiceName(t *testing.T) {
-	// Test that stream_id falls back to service_name when customer domain is not available
-	objectID := "logs/2024/01/data.parquet" // No Support folder, no customer domain extraction
-	row := pipeline.Row{
-		wkk.NewRowKey("timestamp"):    int64(1234567890123),
-		wkk.NewRowKey("message"):      "test message",
-		wkk.RowKeyResourceServiceName: "my-service",
-	}
-
-	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", objectID)
-	require.NoError(t, err)
-
-	// Should fall back to resource_service_name
-	streamID, exists := row[wkk.RowKeyCStreamID]
-	assert.True(t, exists, "stream_id should be set")
-	assert.Equal(t, "my-service", streamID, "stream_id should be service name as fallback")
-}
-
-func TestParquetLogTranslator_StreamIDOmittedWhenNoSource(t *testing.T) {
-	// Test that stream_id is omitted when neither customer domain nor service name is available
-	objectID := "logs/2024/01/data.parquet" // No Support folder, no customer domain extraction
-	row := pipeline.Row{
-		wkk.NewRowKey("timestamp"): int64(1234567890123),
-		wkk.NewRowKey("message"):   "test message",
-		// No resource_service_name
-	}
-
-	err := translateParquetLogRow(context.Background(), &row, "test-org", "test-bucket", objectID)
-	require.NoError(t, err)
-
-	// stream_id should not be set
-	_, exists := row[wkk.RowKeyCStreamID]
-	assert.False(t, exists, "stream_id should not be set when neither source is available")
 }

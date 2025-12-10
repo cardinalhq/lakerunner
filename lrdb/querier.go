@@ -55,9 +55,11 @@ type Querier interface {
 	// Includes today's and yesterday's dateint for partition pruning
 	ListLogQLTags(ctx context.Context, arg ListLogQLTagsParams) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
-	// Returns distinct stream IDs for an organization within a time range.
+	// Returns distinct stream values with their source field for an organization within a time range.
 	// Used by /api/v1/logs/series endpoint (Loki-compatible).
-	ListLogStreamIDs(ctx context.Context, arg ListLogStreamIDsParams) ([]string, error)
+	// Returns both the field name (resource_customer_domain, resource_service_name, or stream_id for legacy)
+	// and the distinct values for that field.
+	ListLogStreams(ctx context.Context, arg ListLogStreamsParams) ([]ListLogStreamsRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	// Extract tag keys from label_name_map in metric_seg table for a specific metric
 	// Filters by metric fingerprint to return tags only for the requested metric

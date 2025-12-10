@@ -53,13 +53,14 @@ type CompactLogSegsOld struct {
 
 // CompactLogSegsNew represents a new compacted log segment to be inserted
 type CompactLogSegsNew struct {
-	SegmentID    int64
-	StartTs      int64
-	EndTs        int64
-	RecordCount  int64
-	FileSize     int64
-	Fingerprints []int64
-	LabelNameMap []byte
-	StreamIds    []string
-	SortVersion  int16
+	SegmentID     int64
+	StartTs       int64
+	EndTs         int64
+	RecordCount   int64
+	FileSize      int64
+	Fingerprints  []int64
+	LabelNameMap  []byte
+	StreamIds     []string
+	StreamIdField *string
+	SortVersion   int16
 }

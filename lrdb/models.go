@@ -127,6 +127,7 @@ type LogSeg struct {
 	LabelNameMap   []byte                    `json:"label_name_map"`
 	StreamIds      []string                  `json:"stream_ids"`
 	SortVersion    int16                     `json:"sort_version"`
+	StreamIDField  *string                   `json:"stream_id_field"`
 }
 
 type LrdbExemplarLog struct {

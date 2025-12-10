@@ -64,7 +64,6 @@ func NewLogTranslatingReader(wrapped filereader.Reader, orgID, bucket, objectID 
 	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, filereader.DataTypeString, true)
 	schema.AddColumn(wkk.RowKeyCValue, wkk.RowKeyCValue, filereader.DataTypeFloat64, true)
 	schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCStreamID, wkk.RowKeyCStreamID, filereader.DataTypeString, true)
 
 	return &LogTranslatingReader{
 		wrapped:                  wrapped,
@@ -119,9 +118,6 @@ func (r *LogTranslatingReader) translateRow(ctx context.Context, row *pipeline.R
 	(*row)[wkk.RowKeyCName] = "log_events"
 	(*row)[wkk.RowKeyCValue] = float64(1.0)
 
-	// Derive stream_id: prefer customer_domain, then service_name, otherwise omit
-	r.setStreamID(row, customerDomain)
-
 	// Add fingerprint
 	r.setFingerprint(ctx, row)
 }
@@ -135,24 +131,6 @@ func (r *LogTranslatingReader) getResourceFile() string {
 		}
 	}
 	return "unknown"
-}
-
-// setStreamID derives and sets the stream_id field.
-// Priority: customer_domain (already extracted) → resource_service_name → omit
-func (r *LogTranslatingReader) setStreamID(row *pipeline.Row, customerDomain string) {
-	// First priority: use customer_domain if available
-	if customerDomain != "" {
-		(*row)[wkk.RowKeyCStreamID] = customerDomain
-		return
-	}
-
-	// Second priority: use resource_service_name if available
-	if serviceName, ok := (*row)[wkk.RowKeyResourceServiceName].(string); ok && serviceName != "" {
-		(*row)[wkk.RowKeyCStreamID] = serviceName
-		return
-	}
-
-	// Otherwise: omit stream_id (don't set it)
 }
 
 // setFingerprint adds a fingerprint to the row if message is present.

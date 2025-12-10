@@ -54,7 +54,7 @@ func (q *Queries) GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsPara
 }
 
 const getLogSeg = `-- name: GetLogSeg :one
-SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids, sort_version
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids, sort_version, stream_id_field
 FROM log_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -94,6 +94,7 @@ func (q *Queries) GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, e
 		&i.LabelNameMap,
 		&i.StreamIds,
 		&i.SortVersion,
+		&i.StreamIDField,
 	)
 	return i, err
 }
@@ -165,8 +166,10 @@ func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmen
 	return items, nil
 }
 
-const listLogStreamIDs = `-- name: ListLogStreamIDs :many
-SELECT DISTINCT unnest(stream_ids)::text AS stream_id
+const listLogStreams = `-- name: ListLogStreams :many
+SELECT DISTINCT
+    stream_id_field AS field_name,
+    unnest(stream_ids)::text AS stream_value
 FROM log_seg
 WHERE organization_id = $1
   AND dateint >= $2
@@ -174,9 +177,10 @@ WHERE organization_id = $1
   AND ts_range && int8range($4, $5, '[)')
   AND published = true
   AND stream_ids IS NOT NULL
+  AND stream_id_field IS NOT NULL
 `
 
-type ListLogStreamIDsParams struct {
+type ListLogStreamsParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	StartDateint   int32     `json:"start_dateint"`
 	EndDateint     int32     `json:"end_dateint"`
@@ -184,10 +188,17 @@ type ListLogStreamIDsParams struct {
 	EndTs          int64     `json:"end_ts"`
 }
 
-// Returns distinct stream IDs for an organization within a time range.
+type ListLogStreamsRow struct {
+	FieldName   *string `json:"field_name"`
+	StreamValue string  `json:"stream_value"`
+}
+
+// Returns distinct stream values with their source field for an organization within a time range.
 // Used by /api/v1/logs/series endpoint (Loki-compatible).
-func (q *Queries) ListLogStreamIDs(ctx context.Context, arg ListLogStreamIDsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, listLogStreamIDs,
+// Returns both the field name (resource_customer_domain, resource_service_name, or stream_id for legacy)
+// and the distinct values for that field.
+func (q *Queries) ListLogStreams(ctx context.Context, arg ListLogStreamsParams) ([]ListLogStreamsRow, error) {
+	rows, err := q.db.Query(ctx, listLogStreams,
 		arg.OrganizationID,
 		arg.StartDateint,
 		arg.EndDateint,
@@ -198,13 +209,13 @@ func (q *Queries) ListLogStreamIDs(ctx context.Context, arg ListLogStreamIDsPara
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []ListLogStreamsRow
 	for rows.Next() {
-		var stream_id string
-		if err := rows.Scan(&stream_id); err != nil {
+		var i ListLogStreamsRow
+		if err := rows.Scan(&i.FieldName, &i.StreamValue); err != nil {
 			return nil, err
 		}
-		items = append(items, stream_id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -254,6 +265,7 @@ INSERT INTO log_seg (
   compacted,
   label_name_map,
   stream_ids,
+  stream_id_field,
   sort_version
 )
 VALUES (
@@ -270,7 +282,8 @@ VALUES (
   $12,
   $13,
   $14::text[],
-  $15
+  $15,
+  $16
 )
 `
 
@@ -289,6 +302,7 @@ type InsertLogSegmentParams struct {
 	Compacted      bool      `json:"compacted"`
 	LabelNameMap   []byte    `json:"label_name_map"`
 	StreamIds      []string  `json:"stream_ids"`
+	StreamIDField  *string   `json:"stream_id_field"`
 	SortVersion    int16     `json:"sort_version"`
 }
 
@@ -308,6 +322,7 @@ func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 		arg.Compacted,
 		arg.LabelNameMap,
 		arg.StreamIds,
+		arg.StreamIDField,
 		arg.SortVersion,
 	)
 	return err
