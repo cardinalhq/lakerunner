@@ -357,7 +357,7 @@ func (s *DDBSink) diffMissing(incoming map[string]string) map[string]string {
 	out := make(map[string]string)
 	for name := range incoming {
 		if _, ok := s.schema.index[name]; !ok {
-			out[name] = "VARCHAR"
+			out[name] = normalizeColumnType(name, "")
 		}
 	}
 	// Never try to add duplicates for anchor/system columns:
@@ -456,6 +456,9 @@ func escape(path string) string {
 	return strings.ReplaceAll(path, `'`, `''`)
 }
 
-func normalizeColumnType(_, _ string) string {
+func normalizeColumnType(name, _ string) string {
+	if name == "chq_timestamp" {
+		return "BIGINT"
+	}
 	return "VARCHAR"
 }

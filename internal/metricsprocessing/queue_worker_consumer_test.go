@@ -160,70 +160,70 @@ func TestQueueWorkerConsumer_Run_ContextCancellation(t *testing.T) {
 	}
 }
 
-//func TestQueueWorkerConsumer_Run_ProcessesWorkItem(t *testing.T) {
-//	testOrgID := uuid.New()
-//	workID := int64(100)
-//	claimCount := int32(0)
-//
-//	db := &mockWorkQueueDB{
-//		claimFunc: func(ctx context.Context, arg lrdb.WorkQueueClaimParams) (lrdb.WorkQueue, error) {
-//			count := atomic.AddInt32(&claimCount, 1)
-//			if count == 1 {
-//				return lrdb.WorkQueue{
-//					ID:             workID,
-//					TaskName:       "test-task",
-//					OrganizationID: testOrgID,
-//					InstanceNum:    5,
-//					Spec:           json.RawMessage(`{"key": "value"}`),
-//					Tries:          0,
-//					ClaimedBy:      123,
-//				}, nil
-//			}
-//			return lrdb.WorkQueue{}, pgx.ErrNoRows
-//		},
-//	}
-//	mgr := workqueue.NewManager(db, 123, "test-task")
-//
-//	processed := make(chan int64, 1)
-//	processor := &mockBundleProcessor{
-//		processFunc: func(ctx context.Context, workItem workqueue.Workable) error {
-//			processed <- workItem.ID()
-//			return nil
-//		},
-//	}
-//
-//	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task")
-//
-//	ctx, cancel := context.WithCancel(context.Background())
-//	defer cancel()
-//
-//	done := make(chan error, 1)
-//	go func() {
-//		done <- consumer.Run(ctx)
-//	}()
-//
-//	// Wait for work to be processed
-//	select {
-//	case id := <-processed:
-//		assert.Equal(t, workID, id)
-//	case <-time.After(2 * time.Second):
-//		t.Fatal("Work item was not processed")
-//	}
-//
-//	// Cancel and wait for shutdown
-//	cancel()
-//	select {
-//	case <-done:
-//		// Good
-//	case <-time.After(2 * time.Second):
-//		t.Fatal("Run did not exit after context cancellation")
-//	}
-//
-//	// Verify work was completed
-//	db.mu.Lock()
-//	assert.Contains(t, db.completedWorkIDs, workID)
-//	db.mu.Unlock()
-//}
+func TestQueueWorkerConsumer_Run_ProcessesWorkItem(t *testing.T) {
+	testOrgID := uuid.New()
+	workID := int64(100)
+	claimCount := int32(0)
+
+	db := &mockWorkQueueDB{
+		claimFunc: func(ctx context.Context, arg lrdb.WorkQueueClaimParams) (lrdb.WorkQueue, error) {
+			count := atomic.AddInt32(&claimCount, 1)
+			if count == 1 {
+				return lrdb.WorkQueue{
+					ID:             workID,
+					TaskName:       "test-task",
+					OrganizationID: testOrgID,
+					InstanceNum:    5,
+					Spec:           json.RawMessage(`{"key": "value"}`),
+					Tries:          0,
+					ClaimedBy:      123,
+				}, nil
+			}
+			return lrdb.WorkQueue{}, pgx.ErrNoRows
+		},
+	}
+	mgr := workqueue.NewManager(db, 123, "test-task")
+
+	processed := make(chan int64, 1)
+	processor := &mockBundleProcessor{
+		processFunc: func(ctx context.Context, workItem workqueue.Workable) error {
+			processed <- workItem.ID()
+			return nil
+		},
+	}
+
+	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- consumer.Run(ctx)
+	}()
+
+	// Wait for work to be processed
+	select {
+	case id := <-processed:
+		assert.Equal(t, workID, id)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Work item was not processed")
+	}
+
+	// Cancel and wait for shutdown
+	cancel()
+	select {
+	case <-done:
+		// Good
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not exit after context cancellation")
+	}
+
+	// Verify work was completed
+	db.mu.Lock()
+	assert.Contains(t, db.completedWorkIDs, workID)
+	db.mu.Unlock()
+}
 
 func TestQueueWorkerConsumer_Run_FailsWorkItemOnProcessError(t *testing.T) {
 	testOrgID := uuid.New()
