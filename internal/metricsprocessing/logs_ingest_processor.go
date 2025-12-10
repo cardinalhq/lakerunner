@@ -612,6 +612,7 @@ func ProcessLogFiles(
 }
 
 // createLogReaderStackStandalone creates a reader stack for standalone use (benchmarks, tests)
+// Returns DiskSorter(Translation(LogReader(file))) - raw files are unsorted.
 func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fingerprintManager *fingerprint.TenantManager) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
 		SignalType: filereader.SignalTypeLogs,
@@ -630,10 +631,19 @@ func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fi
 		reader = NewLogTranslatingReader(reader, orgID, bucket, objectID, fingerprintManager)
 	}
 
-	return reader, nil
+	// Raw input files are unsorted - wrap in DiskSortingReader to sort before mergesort
+	keyProvider := &filereader.LogSortKeyProvider{}
+	sortingReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
+	if err != nil {
+		_ = reader.Close()
+		return nil, fmt.Errorf("failed to create sorting reader: %w", err)
+	}
+
+	return sortingReader, nil
 }
 
-// createLogReaderStack creates a reader stack: Translation(LogReader(file))
+// createLogReaderStack creates a reader stack: DiskSorter(Translation(LogReader(file)))
+// Raw input files are unsorted, so each must be sorted before feeding to mergesort.
 func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Determine file type from extension for logging
 	var fileType string
@@ -672,7 +682,15 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 		reader = NewLogTranslatingReader(reader, orgID, bucket, objectID, p.fingerprintTenantManager)
 	}
 
-	return reader, nil
+	// Raw input files are unsorted - wrap in DiskSortingReader to sort before mergesort
+	keyProvider := &filereader.LogSortKeyProvider{}
+	sortingReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
+	if err != nil {
+		_ = reader.Close()
+		return nil, fmt.Errorf("failed to create sorting reader: %w", err)
+	}
+
+	return sortingReader, nil
 }
 
 func (p *LogIngestProcessor) createLogReader(filename, orgId string) (filereader.Reader, error) {
