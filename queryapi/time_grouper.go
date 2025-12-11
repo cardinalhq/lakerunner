@@ -42,6 +42,12 @@ type SegmentGroup struct {
 	Segments []SegmentInfo
 }
 
+// MaxSegmentsPerWorkerPerWave is the hard cap we want per worker per wave.
+// A single wave (SegmentGroup) will be sized so that, assuming roughly
+// even distribution across workers, no worker needs to handle more than
+// this many segments in that wave.
+const MaxSegmentsPerWorkerPerWave = 20
+
 // ---- helpers for effective timing ----
 
 func effStart(s SegmentInfo) int64 {
@@ -50,6 +56,7 @@ func effStart(s SegmentInfo) int64 {
 	}
 	return s.StartTs
 }
+
 func effEnd(s SegmentInfo) int64 {
 	if s.EffectiveEndTs != 0 {
 		return s.EffectiveEndTs
@@ -58,7 +65,7 @@ func effEnd(s SegmentInfo) int64 {
 }
 
 // ComputeReplayBatchesWithWorkers public entrypoint. Computes a per-group target size
-// from total #segments and worker count (capped), then delegates.
+// from total #segments and worker count, then delegates.
 func ComputeReplayBatchesWithWorkers(
 	segments []SegmentInfo,
 	step time.Duration,
@@ -107,6 +114,7 @@ func ComputeReplayBatches(
 		return windows[i].StartTs < windows[j].StartTs
 	})
 	// IMPORTANT: do NOT reverse windows here
+
 	// 3) Pack forward; then reverse final batches if requested.
 	out := packByCountEffective(windows, targetSize, queryStartTs, queryEndTs, stepMs)
 
@@ -123,6 +131,7 @@ func ComputeReplayBatches(
 func alignDown(ts, stepMs int64) int64 {
 	return ts - (ts % stepMs)
 }
+
 func alignUp(ts, stepMs int64) int64 {
 	r := ts % stepMs
 	if r == 0 {
@@ -133,7 +142,7 @@ func alignUp(ts, stepMs int64) int64 {
 
 // buildWindowsEffective aligns each segment's **effective** window to step boundaries
 // and buckets by (alignedEffectiveStart, alignedEffectiveEnd).
-// We don’t clamp to the query here; clamping happens at flush to mimic Scala’s merge behavior.
+// We don’t clamp to the query here; clamping happens at flush.
 func buildWindowsEffective(segs []SegmentInfo, stepMs int64) []SegmentGroup {
 	type key struct{ s, e int64 }
 	buckets := make(map[key][]SegmentInfo, len(segs))
@@ -163,8 +172,8 @@ func buildWindowsEffective(segs []SegmentInfo, stepMs int64) []SegmentGroup {
 	return wins
 }
 
-// add stepMs param
-// NOTE: add stepMs param so snapping uses the real step (not window width).
+// packByCountEffective groups windows into SegmentGroups, bounded by minGroupSize-ish,
+// while preserving temporal ordering and fixing seams across window boundaries.
 func packByCountEffective(
 	wins []SegmentGroup,
 	minGroupSize int,
@@ -260,7 +269,7 @@ func packByCountEffective(
 			s.EffectiveEndTs = ee
 			k := key{s.SegmentID, s.ExprID}
 			if m, ok := merged[k]; ok {
-				// widen just in case (shouldn’t happen since we seal to gs..ge)
+				// widen just in case
 				if es < m.EffectiveStartTs {
 					m.EffectiveStartTs = es
 				}
@@ -278,9 +287,7 @@ func packByCountEffective(
 			add(s, gs, ge)
 		}
 
-		// 2) SEAM FIX (Option B): duplicate & clip any lookahead windows whose StartTs < ge
-		//    That ensures buckets right before 'ge' include all contributors, even if
-		//    those segments will be processed in the next batch.
+		// 2) seam fix: duplicate & clip any lookahead windows whose StartTs < ge
 		if lookaheadIdx >= 0 && lookaheadIdx < len(wins) {
 			for k := lookaheadIdx; k < len(wins) && wins[k].StartTs < ge; k++ {
 				for _, s := range wins[k].Segments {
@@ -369,11 +376,36 @@ func packByCountEffective(
 	return out
 }
 
+// TargetSize computes the approximate number of segments per SegmentGroup ("wave").
+// It enforces a hard per-worker-per-wave cap:
+//
+//	waveSegments <= workers * MaxSegmentsPerWorkerPerWave
 func TargetSize(totalSegments, workers int) int {
-	if workers <= 0 {
-		return totalSegments
+	if totalSegments <= 0 {
+		return 0
 	}
-	// Keep previous cap behavior (max ~50 per batch) to avoid huge groups.
-	return int(math.Min(50, math.Ceil(float64(totalSegments)/float64(workers))))
-	// return int(math.Ceil(float64(totalSegments)/float64(workers)))
+	if workers <= 0 {
+		workers = 1
+	}
+
+	// Old behavior: evenly spread segments across workers.
+	base := int(math.Ceil(float64(totalSegments) / float64(workers)))
+
+	// Hard cap based on per-worker-per-wave limit.
+	waveCap := workers * MaxSegmentsPerWorkerPerWave
+	if waveCap <= 0 {
+		waveCap = totalSegments
+	}
+
+	target := base
+	if target > waveCap {
+		target = waveCap
+	}
+	if target > totalSegments {
+		target = totalSegments
+	}
+	if target < 1 {
+		target = 1
+	}
+	return target
 }
