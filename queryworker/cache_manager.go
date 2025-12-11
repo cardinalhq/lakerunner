@@ -516,7 +516,7 @@ func streamFromS3[T promql.Timestamped](
 	request queryapi.PushDownRequest,
 	profile storageprofile.StorageProfile,
 	s3URIs []string,
-	s3GlobSize int,
+	_ int, // s3GlobSize now unused: single-batch S3
 	userSQL string,
 	mapper RowMapper[T],
 ) ([]<-chan T, error) {
@@ -524,118 +524,238 @@ func streamFromS3[T promql.Timestamped](
 		return []<-chan T{}, nil
 	}
 
-	batches := chunkStrings(s3URIs, s3GlobSize)
-	outs := make([]<-chan T, 0, len(batches))
+	// Single S3 batch per worker: one channel, one goroutine
+	out := make(chan T, ChannelBufferSize)
+	outs := []<-chan T{out}
 
-	for batchIdx, uris := range batches {
-		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
-		out := make(chan T, ChannelBufferSize)
-		outs = append(outs, out)
+	urisCopy := append([]string(nil), s3URIs...) // capture
+	batchNum := 0                                // always 0; single batch
 
-		urisCopy := append([]string(nil), uris...) // capture loop var
-		batchNum := batchIdx                       // capture for goroutine
+	go func(out chan<- T) {
+		defer close(out)
 
-		go func(out chan<- T) {
-			defer close(out)
+		tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
+		_, s3Span := tracer.Start(ctx, "query.worker.stream_from_s3")
+		defer s3Span.End()
 
-			tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
-			_, s3Span := tracer.Start(ctx, "query.worker.stream_from_s3")
-			defer s3Span.End()
+		s3Span.SetAttributes(
+			attribute.Int("batch_index", batchNum),
+			attribute.Int("file_count", len(urisCopy)),
+			attribute.String("bucket", profile.Bucket),
+			attribute.String("cloud_provider", profile.CloudProvider),
+		)
 
-			s3Span.SetAttributes(
-				attribute.Int("batch_index", batchNum),
-				attribute.Int("file_count", len(urisCopy)),
-				attribute.String("bucket", profile.Bucket),
-				attribute.String("cloud_provider", profile.CloudProvider),
-			)
+		// Build read_parquet source
+		quoted := make([]string, len(urisCopy))
+		for i := range urisCopy {
+			quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
+		}
+		array := "[" + strings.Join(quoted, ", ") + "]"
+		src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 
-			// Build read_parquet source
-			quoted := make([]string, len(urisCopy))
-			for i := range urisCopy {
-				quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
-			}
-			array := "[" + strings.Join(quoted, ", ") + "]"
-			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
+		sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 
-			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+		// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
+		_, connSpan := tracer.Start(ctx, "query.worker.s3_connection_acquire")
+		start := time.Now()
+		conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, profile)
+		connectionAcquireTime := time.Since(start)
+		connSpan.SetAttributes(attribute.Int64("duration_ms", connectionAcquireTime.Milliseconds()))
+		connSpan.End()
+		slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", profile.Bucket)
 
-			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
-			_, connSpan := tracer.Start(ctx, "query.worker.s3_connection_acquire")
-			start := time.Now()
-			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, profile)
-			connectionAcquireTime := time.Since(start)
-			connSpan.SetAttributes(attribute.Int64("duration_ms", connectionAcquireTime.Milliseconds()))
-			connSpan.End()
-			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", profile.Bucket)
+		if err != nil {
+			s3Span.RecordError(err)
+			s3Span.SetStatus(codes.Error, "connection acquire failed")
+			slog.Error("GetConnection failed", slog.String("bucket", profile.Bucket), slog.Any("error", err))
+			return
+		}
+		defer release()
 
-			if err != nil {
-				s3Span.RecordError(err)
-				s3Span.SetStatus(codes.Error, "connection acquire failed")
-				slog.Error("GetConnection failed", slog.String("bucket", profile.Bucket), slog.Any("error", err))
-				return
-			}
-			// Ensure rows close before releasing the connection
-			defer release()
-
-			_, querySpan := tracer.Start(ctx, "query.worker.s3_query_execute")
-			rows, err := executeQueryWithRetry(ctx, conn, sqlReplaced, "S3", len(urisCopy))
-			if err != nil {
-				querySpan.RecordError(err)
-				querySpan.SetStatus(codes.Error, "query failed")
-				querySpan.End()
-				s3Span.RecordError(err)
-				s3Span.SetStatus(codes.Error, "query failed")
-				return
-			}
+		_, querySpan := tracer.Start(ctx, "query.worker.s3_query_execute")
+		rows, err := executeQueryWithRetry(ctx, conn, sqlReplaced, "S3", len(urisCopy))
+		if err != nil {
+			querySpan.RecordError(err)
+			querySpan.SetStatus(codes.Error, "query failed")
 			querySpan.End()
-			defer func() {
-				if err := rows.Close(); err != nil {
-					slog.Error("Error closing rows", slog.Any("error", err))
-				}
-			}()
+			s3Span.RecordError(err)
+			s3Span.SetStatus(codes.Error, "query failed")
+			return
+		}
+		querySpan.End()
+		defer func() {
+			if err := rows.Close(); err != nil {
+				slog.Error("Error closing rows", slog.Any("error", err))
+			}
+		}()
 
-			cols, err := rows.Columns()
-			if err != nil {
-				s3Span.RecordError(err)
-				s3Span.SetStatus(codes.Error, "failed to get columns")
-				slog.Error("failed to get columns", slog.Any("error", err))
+		cols, err := rows.Columns()
+		if err != nil {
+			s3Span.RecordError(err)
+			s3Span.SetStatus(codes.Error, "failed to get columns")
+			slog.Error("failed to get columns", slog.Any("error", err))
+			return
+		}
+
+		rowCount := 0
+		for rows.Next() {
+			select {
+			case <-ctx.Done():
+				s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
+				s3Span.SetStatus(codes.Error, "context cancelled")
+				slog.Warn("Context cancelled during S3 row iteration", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsProcessed", rowCount))
+				return
+			default:
+			}
+			v, mErr := mapper(request, cols, rows)
+			if mErr != nil {
+				s3Span.RecordError(mErr)
+				s3Span.SetStatus(codes.Error, "row mapping failed")
+				slog.Error("Row mapping failed", slog.Any("error", mErr))
 				return
 			}
+			out <- v
+			rowCount++
+		}
+		if err := rows.Err(); err != nil {
+			s3Span.RecordError(err)
+			s3Span.SetStatus(codes.Error, "rows iteration error")
+			slog.Error("Rows iteration error", slog.Any("error", err))
+			return
+		}
+		s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
+		slog.Info("S3 query completed", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsReturned", rowCount))
+	}(out)
 
-			rowCount := 0
-			for rows.Next() {
-				select {
-				case <-ctx.Done():
-					s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
-					s3Span.SetStatus(codes.Error, "context cancelled")
-					slog.Warn("Context cancelled during S3 row iteration", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsProcessed", rowCount))
-					return
-				default:
-				}
-				v, mErr := mapper(request, cols, rows)
-				if mErr != nil {
-					s3Span.RecordError(mErr)
-					s3Span.SetStatus(codes.Error, "row mapping failed")
-					slog.Error("Row mapping failed", slog.Any("error", mErr))
-					return
-				}
-				out <- v
-				rowCount++
-			}
-			if err := rows.Err(); err != nil {
-				s3Span.RecordError(err)
-				s3Span.SetStatus(codes.Error, "rows iteration error")
-				slog.Error("Rows iteration error", slog.Any("error", err))
-				return
-			}
-			s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
-			slog.Info("S3 query completed", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsReturned", rowCount))
-		}(out)
-	}
-
-	// enqueue is done in EvaluatePushDown(...) after ids/paths are known
 	return outs, nil
 }
+
+//func streamFromS3[T promql.Timestamped](
+//	ctx context.Context,
+//	w *CacheManager,
+//	request queryapi.PushDownRequest,
+//	profile storageprofile.StorageProfile,
+//	s3URIs []string,
+//	s3GlobSize int,
+//	userSQL string,
+//	mapper RowMapper[T],
+//) ([]<-chan T, error) {
+//	if len(s3URIs) == 0 {
+//		return []<-chan T{}, nil
+//	}
+//
+//	batches := chunkStrings(s3URIs, s3GlobSize)
+//	outs := make([]<-chan T, 0, len(batches))
+//
+//	for batchIdx, uris := range batches {
+//		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
+//		out := make(chan T, ChannelBufferSize)
+//		outs = append(outs, out)
+//
+//		urisCopy := append([]string(nil), uris...) // capture loop var
+//		batchNum := batchIdx                       // capture for goroutine
+//
+//		go func(out chan<- T) {
+//			defer close(out)
+//
+//			tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
+//			_, s3Span := tracer.Start(ctx, "query.worker.stream_from_s3")
+//			defer s3Span.End()
+//
+//			s3Span.SetAttributes(
+//				attribute.Int("batch_index", batchNum),
+//				attribute.Int("file_count", len(urisCopy)),
+//				attribute.String("bucket", profile.Bucket),
+//				attribute.String("cloud_provider", profile.CloudProvider),
+//			)
+//
+//			// Build read_parquet source
+//			quoted := make([]string, len(urisCopy))
+//			for i := range urisCopy {
+//				quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
+//			}
+//			array := "[" + strings.Join(quoted, ", ") + "]"
+//			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
+//
+//			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+//
+//			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
+//			_, connSpan := tracer.Start(ctx, "query.worker.s3_connection_acquire")
+//			start := time.Now()
+//			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, profile)
+//			connectionAcquireTime := time.Since(start)
+//			connSpan.SetAttributes(attribute.Int64("duration_ms", connectionAcquireTime.Milliseconds()))
+//			connSpan.End()
+//			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", profile.Bucket)
+//
+//			if err != nil {
+//				s3Span.RecordError(err)
+//				s3Span.SetStatus(codes.Error, "connection acquire failed")
+//				slog.Error("GetConnection failed", slog.String("bucket", profile.Bucket), slog.Any("error", err))
+//				return
+//			}
+//			// Ensure rows close before releasing the connection
+//			defer release()
+//
+//			_, querySpan := tracer.Start(ctx, "query.worker.s3_query_execute")
+//			rows, err := executeQueryWithRetry(ctx, conn, sqlReplaced, "S3", len(urisCopy))
+//			if err != nil {
+//				querySpan.RecordError(err)
+//				querySpan.SetStatus(codes.Error, "query failed")
+//				querySpan.End()
+//				s3Span.RecordError(err)
+//				s3Span.SetStatus(codes.Error, "query failed")
+//				return
+//			}
+//			querySpan.End()
+//			defer func() {
+//				if err := rows.Close(); err != nil {
+//					slog.Error("Error closing rows", slog.Any("error", err))
+//				}
+//			}()
+//
+//			cols, err := rows.Columns()
+//			if err != nil {
+//				s3Span.RecordError(err)
+//				s3Span.SetStatus(codes.Error, "failed to get columns")
+//				slog.Error("failed to get columns", slog.Any("error", err))
+//				return
+//			}
+//
+//			rowCount := 0
+//			for rows.Next() {
+//				select {
+//				case <-ctx.Done():
+//					s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
+//					s3Span.SetStatus(codes.Error, "context cancelled")
+//					slog.Warn("Context cancelled during S3 row iteration", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsProcessed", rowCount))
+//					return
+//				default:
+//				}
+//				v, mErr := mapper(request, cols, rows)
+//				if mErr != nil {
+//					s3Span.RecordError(mErr)
+//					s3Span.SetStatus(codes.Error, "row mapping failed")
+//					slog.Error("Row mapping failed", slog.Any("error", mErr))
+//					return
+//				}
+//				out <- v
+//				rowCount++
+//			}
+//			if err := rows.Err(); err != nil {
+//				s3Span.RecordError(err)
+//				s3Span.SetStatus(codes.Error, "rows iteration error")
+//				slog.Error("Rows iteration error", slog.Any("error", err))
+//				return
+//			}
+//			s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
+//			slog.Info("S3 query completed", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsReturned", rowCount))
+//		}(out)
+//	}
+//
+//	// enqueue is done in EvaluatePushDown(...) after ids/paths are known
+//	return outs, nil
+//}
 
 // enqueueIngest filters out present/in-flight, marks new IDs in-flight, and queues one job.
 func (w *CacheManager) enqueueIngest(storageProfile storageprofile.StorageProfile, paths []string, ids []int64) {

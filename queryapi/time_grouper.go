@@ -46,7 +46,7 @@ type SegmentGroup struct {
 // A single wave (SegmentGroup) will be sized so that, assuming roughly
 // even distribution across workers, no worker needs to handle more than
 // this many segments in that wave.
-const MaxSegmentsPerWorkerPerWave = 5
+const MaxSegmentsPerWorkerPerWave = 20
 
 // ---- helpers for effective timing ----
 
