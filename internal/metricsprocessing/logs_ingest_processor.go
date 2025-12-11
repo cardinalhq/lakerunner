@@ -631,9 +631,9 @@ func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fi
 		reader = NewLogTranslatingReader(reader, orgID, bucket, objectID, fingerprintManager)
 	}
 
-	// Raw input files are unsorted - wrap in DiskSortingReader to sort before mergesort
+	// Raw input files are unsorted - wrap in MemorySortingReader to sort before mergesort
 	keyProvider := &filereader.LogSortKeyProvider{}
-	sortingReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
+	sortingReader, err := filereader.NewMemorySortingReader(reader, keyProvider, 1000)
 	if err != nil {
 		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create sorting reader: %w", err)
@@ -642,7 +642,7 @@ func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fi
 	return sortingReader, nil
 }
 
-// createLogReaderStack creates a reader stack: DiskSorter(Translation(LogReader(file)))
+// createLogReaderStack creates a reader stack: MemorySorter(Translation(LogReader(file)))
 // Raw input files are unsorted, so each must be sorted before feeding to mergesort.
 func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Determine file type from extension for logging
@@ -682,9 +682,9 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 		reader = NewLogTranslatingReader(reader, orgID, bucket, objectID, p.fingerprintTenantManager)
 	}
 
-	// Raw input files are unsorted - wrap in DiskSortingReader to sort before mergesort
+	// Raw input files are unsorted - wrap in MemorySortingReader to sort before mergesort
 	keyProvider := &filereader.LogSortKeyProvider{}
-	sortingReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
+	sortingReader, err := filereader.NewMemorySortingReader(reader, keyProvider, 1000)
 	if err != nil {
 		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create sorting reader: %w", err)
