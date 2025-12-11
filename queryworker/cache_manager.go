@@ -29,6 +29,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -253,17 +256,31 @@ func EvaluatePushDown[T promql.Timestamped](
 	s3GlobSize int,
 	mapper RowMapper[T],
 ) (<-chan T, error) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
+	ctx, evalSpan := tracer.Start(ctx, "query.worker.evaluate_pushdown")
+	defer evalSpan.End()
+
+	evalSpan.SetAttributes(
+		attribute.String("dataset", w.dataset),
+		attribute.Int("segment_count", len(request.Segments)),
+		attribute.Int("s3_glob_size", s3GlobSize),
+	)
+
 	if len(request.Segments) == 0 {
+		evalSpan.SetStatus(codes.Error, "no segment paths")
 		return nil, errors.New("no segment paths")
 	}
 	if mapper == nil {
+		evalSpan.SetStatus(codes.Error, "nil RowMapper")
 		return nil, errors.New("nil RowMapper")
 	}
 	if !strings.Contains(userSQL, "{table}") {
+		evalSpan.SetStatus(codes.Error, "invalid SQL template")
 		return nil, errors.New(`userSQL must contain "{table}" placeholder`)
 	}
 
 	// Group segments by orgId/instanceNum (no profile map mutation here)
+	ctx, groupSpan := tracer.Start(ctx, "query.worker.group_segments")
 	segmentsByOrg := make(map[uuid.UUID]map[int16][]queryapi.SegmentInfo)
 	start := time.Now()
 	for _, seg := range request.Segments {
@@ -274,16 +291,21 @@ func EvaluatePushDown[T promql.Timestamped](
 			append(segmentsByOrg[seg.OrganizationID][seg.InstanceNum], seg)
 	}
 	metadataCreationTime := time.Since(start)
+	groupSpan.SetAttributes(attribute.Int("org_instance_groups", len(segmentsByOrg)))
+	groupSpan.End()
 	slog.Info("Metadata Creation Time", "duration", metadataCreationTime.String())
 	start = time.Now()
 
 	outs := make([]<-chan T, 0)
+	var totalS3Segments, totalCachedSegments int
 
 	// Build channels per (org, instance)
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
 			profile, err := w.getProfile(ctx, orgId, instanceNum)
 			if err != nil {
+				evalSpan.RecordError(err)
+				evalSpan.SetStatus(codes.Error, "failed to get profile")
 				return nil, err
 			}
 
@@ -292,8 +314,6 @@ func EvaluatePushDown[T promql.Timestamped](
 			var s3LocalPaths []string
 			var s3IDs []int64
 			var cachedIDs []int64
-
-			//sortSegments(segments, request)
 
 			for _, seg := range segments {
 				objectId := fmt.Sprintf("db/%s/%s/%d/%s/%s/tbl_%d.parquet",
@@ -324,6 +344,9 @@ func EvaluatePushDown[T promql.Timestamped](
 				}
 			}
 
+			totalS3Segments += len(s3URIs)
+			totalCachedSegments += len(cachedIDs)
+
 			// Safe logging (len(w.present) under RLock)
 			w.mu.RLock()
 			numPresent := len(w.present)
@@ -341,6 +364,8 @@ func EvaluatePushDown[T promql.Timestamped](
 				userSQL,
 				mapper)
 			if err != nil {
+				evalSpan.RecordError(err)
+				evalSpan.SetStatus(codes.Error, "failed to stream from S3")
 				return nil, fmt.Errorf("stream from S3: %w", err)
 			}
 			outs = append(outs, s3Channels...)
@@ -357,6 +382,12 @@ func EvaluatePushDown[T promql.Timestamped](
 	}
 	channelCreationTime := time.Since(start)
 	slog.Info("Channel Creation Time", "duration", channelCreationTime.String())
+
+	evalSpan.SetAttributes(
+		attribute.Int("s3_segments", totalS3Segments),
+		attribute.Int("cached_segments", totalCachedSegments),
+		attribute.Int("output_channels", len(outs)),
+	)
 
 	// Merge all sources (cached + S3 batches) in timestamp order.
 	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
@@ -383,6 +414,15 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 		go func(ids []int64, out chan<- T) {
 			defer close(out)
 
+			tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
+			_, cacheSpan := tracer.Start(ctx, "query.worker.stream_from_cache")
+			defer cacheSpan.End()
+
+			cacheSpan.SetAttributes(
+				attribute.Int("segment_count", len(ids)),
+				attribute.String("table", w.sink.table),
+			)
+
 			idLits := make([]string, len(ids))
 			for i, id := range ids {
 				idLits[i] = strconv.FormatInt(id, 10)
@@ -400,17 +440,28 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 			}
 
 			// Get connection from shared pool for local queries
+			_, connSpan := tracer.Start(ctx, "query.worker.cache_connection_acquire")
 			conn, release, err := w.sink.s3Pool.GetConnection(ctx)
+			connSpan.End()
 			if err != nil {
+				cacheSpan.RecordError(err)
+				cacheSpan.SetStatus(codes.Error, "connection acquire failed")
 				slog.Error("Failed to get connection", slog.Any("error", err))
 				return
 			}
 			defer release()
 
+			_, querySpan := tracer.Start(ctx, "query.worker.cache_query_execute")
 			rows, err := executeQueryWithRetry(ctx, conn, cacheSQL, "cached segments", len(ids))
 			if err != nil {
+				querySpan.RecordError(err)
+				querySpan.SetStatus(codes.Error, "query failed")
+				querySpan.End()
+				cacheSpan.RecordError(err)
+				cacheSpan.SetStatus(codes.Error, "query failed")
 				return
 			}
+			querySpan.End()
 			defer func(rows *sql.Rows) {
 				err := rows.Close()
 				if err != nil {
@@ -420,6 +471,8 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 
 			cols, err := rows.Columns()
 			if err != nil {
+				cacheSpan.RecordError(err)
+				cacheSpan.SetStatus(codes.Error, "failed to get columns")
 				slog.Error("failed to get columns", "err", err)
 				return
 			}
@@ -428,12 +481,16 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 			for rows.Next() {
 				select {
 				case <-ctx.Done():
+					cacheSpan.SetAttributes(attribute.Int("rows_returned", rowCount))
+					cacheSpan.SetStatus(codes.Error, "context cancelled")
 					slog.Warn("Context cancelled during cached row iteration", slog.Int("numSegments", len(ids)), slog.Int("rowsProcessed", rowCount))
 					return
 				default:
 				}
 				v, mErr := mapper(request, cols, rows)
 				if mErr != nil {
+					cacheSpan.RecordError(mErr)
+					cacheSpan.SetStatus(codes.Error, "row mapping failed")
 					slog.Error("Cached row mapping failed", slog.Any("error", mErr))
 					return
 				}
@@ -441,9 +498,12 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				rowCount++
 			}
 			if err := rows.Err(); err != nil {
+				cacheSpan.RecordError(err)
+				cacheSpan.SetStatus(codes.Error, "rows iteration error")
 				slog.Error("Cached rows iteration error", slog.Any("error", err))
 				return
 			}
+			cacheSpan.SetAttributes(attribute.Int("rows_returned", rowCount))
 			slog.Info("Cached query completed", slog.Int("numSegments", len(ids)), slog.Int("rowsReturned", rowCount))
 		}(cachedIDs, out)
 	}
@@ -465,18 +525,29 @@ func streamFromS3[T promql.Timestamped](
 	}
 
 	batches := chunkStrings(s3URIs, s3GlobSize)
-	//slog.Info("Chunked S3 URIs into batches", slog.Int("batches", len(batches)), slog.Int("incoming", len(s3URIs)))
 	outs := make([]<-chan T, 0, len(batches))
 
-	for _, uris := range batches {
+	for batchIdx, uris := range batches {
 		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
 		out := make(chan T, ChannelBufferSize)
 		outs = append(outs, out)
 
 		urisCopy := append([]string(nil), uris...) // capture loop var
+		batchNum := batchIdx                       // capture for goroutine
 
 		go func(out chan<- T) {
 			defer close(out)
+
+			tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
+			_, s3Span := tracer.Start(ctx, "query.worker.stream_from_s3")
+			defer s3Span.End()
+
+			s3Span.SetAttributes(
+				attribute.Int("batch_index", batchNum),
+				attribute.Int("file_count", len(urisCopy)),
+				attribute.String("bucket", profile.Bucket),
+				attribute.String("cloud_provider", profile.CloudProvider),
+			)
 
 			// Build read_parquet source
 			quoted := make([]string, len(urisCopy))
@@ -487,23 +558,36 @@ func streamFromS3[T promql.Timestamped](
 			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+
 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
+			_, connSpan := tracer.Start(ctx, "query.worker.s3_connection_acquire")
 			start := time.Now()
 			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, profile)
 			connectionAcquireTime := time.Since(start)
+			connSpan.SetAttributes(attribute.Int64("duration_ms", connectionAcquireTime.Milliseconds()))
+			connSpan.End()
 			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", profile.Bucket)
 
 			if err != nil {
+				s3Span.RecordError(err)
+				s3Span.SetStatus(codes.Error, "connection acquire failed")
 				slog.Error("GetConnection failed", slog.String("bucket", profile.Bucket), slog.Any("error", err))
 				return
 			}
 			// Ensure rows close before releasing the connection
 			defer release()
 
+			_, querySpan := tracer.Start(ctx, "query.worker.s3_query_execute")
 			rows, err := executeQueryWithRetry(ctx, conn, sqlReplaced, "S3", len(urisCopy))
 			if err != nil {
+				querySpan.RecordError(err)
+				querySpan.SetStatus(codes.Error, "query failed")
+				querySpan.End()
+				s3Span.RecordError(err)
+				s3Span.SetStatus(codes.Error, "query failed")
 				return
 			}
+			querySpan.End()
 			defer func() {
 				if err := rows.Close(); err != nil {
 					slog.Error("Error closing rows", slog.Any("error", err))
@@ -512,6 +596,8 @@ func streamFromS3[T promql.Timestamped](
 
 			cols, err := rows.Columns()
 			if err != nil {
+				s3Span.RecordError(err)
+				s3Span.SetStatus(codes.Error, "failed to get columns")
 				slog.Error("failed to get columns", slog.Any("error", err))
 				return
 			}
@@ -520,12 +606,16 @@ func streamFromS3[T promql.Timestamped](
 			for rows.Next() {
 				select {
 				case <-ctx.Done():
+					s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
+					s3Span.SetStatus(codes.Error, "context cancelled")
 					slog.Warn("Context cancelled during S3 row iteration", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsProcessed", rowCount))
 					return
 				default:
 				}
 				v, mErr := mapper(request, cols, rows)
 				if mErr != nil {
+					s3Span.RecordError(mErr)
+					s3Span.SetStatus(codes.Error, "row mapping failed")
 					slog.Error("Row mapping failed", slog.Any("error", mErr))
 					return
 				}
@@ -533,9 +623,12 @@ func streamFromS3[T promql.Timestamped](
 				rowCount++
 			}
 			if err := rows.Err(); err != nil {
+				s3Span.RecordError(err)
+				s3Span.SetStatus(codes.Error, "rows iteration error")
 				slog.Error("Rows iteration error", slog.Any("error", err))
 				return
 			}
+			s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
 			slog.Info("S3 query completed", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsReturned", rowCount))
 		}(out)
 	}
@@ -579,6 +672,8 @@ func (w *CacheManager) enqueueIngest(storageProfile storageprofile.StorageProfil
 func (w *CacheManager) ingestLoop(ctx context.Context) {
 	defer w.ingestWG.Done()
 
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -588,8 +683,24 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 				continue
 			}
 
+			// Create a span for the entire cache ingest operation
+			_, ingestSpan := tracer.Start(ctx, "query.worker.cache_ingest_batch")
+			ingestSpan.SetAttributes(
+				attribute.Int("file_count", len(job.paths)),
+				attribute.String("bucket", job.profile.Bucket),
+				attribute.String("dataset", w.dataset),
+			)
+
 			if w.downloader != nil {
+				_, downloadSpan := tracer.Start(ctx, "query.worker.cache_download_files")
+				downloadSpan.SetAttributes(attribute.Int("file_count", len(job.paths)))
 				if err := w.downloader(ctx, job.profile, job.paths); err != nil {
+					downloadSpan.RecordError(err)
+					downloadSpan.SetStatus(codes.Error, "download failed")
+					downloadSpan.End()
+					ingestSpan.RecordError(err)
+					ingestSpan.SetStatus(codes.Error, "download failed")
+					ingestSpan.End()
 					slog.Error("Failed to download S3 objects", "error", err.Error())
 					w.mu.Lock()
 					for _, id := range job.ids {
@@ -600,9 +711,18 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 					w.mu.Unlock()
 					continue
 				}
+				downloadSpan.End()
 			}
 
+			_, parquetSpan := tracer.Start(ctx, "query.worker.cache_ingest_parquet")
+			parquetSpan.SetAttributes(attribute.Int("file_count", len(job.paths)))
 			if err := w.sink.IngestParquetBatch(ctx, job.paths, job.ids); err != nil {
+				parquetSpan.RecordError(err)
+				parquetSpan.SetStatus(codes.Error, "ingest failed")
+				parquetSpan.End()
+				ingestSpan.RecordError(err)
+				ingestSpan.SetStatus(codes.Error, "ingest failed")
+				ingestSpan.End()
 				slog.Error("Failed to ingest Parquet batch", "error", err.Error())
 				// release inflight on failure
 				w.mu.Lock()
@@ -614,12 +734,12 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 				w.mu.Unlock()
 				continue
 			}
+			parquetSpan.End()
 
 			// Mark present, update lastAccess, release inflight, and delete local files
 			now := time.Now()
 			w.mu.Lock()
 			for _, id := range job.ids {
-				//slog.Info("Marking segment as present", slog.Int64("segmentID", id))
 				w.present[id] = struct{}{}
 				w.lastAccess[id] = now
 				if wg := w.inflight[id]; wg != nil {
@@ -631,6 +751,9 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			for _, p := range job.paths {
 				_ = os.Remove(p) // best-effort cleanup
 			}
+
+			ingestSpan.SetAttributes(attribute.Int("segments_cached", len(job.ids)))
+			ingestSpan.End()
 
 			w.maybeEvictOnce(ctx)
 		}

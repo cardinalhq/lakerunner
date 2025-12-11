@@ -30,6 +30,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -294,15 +298,35 @@ func asString(v any) string {
 
 // ServeHttp serves SSE with merged, sorted points from cache+S3.
 func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Extract trace context from incoming request headers
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
+	ctx, requestSpan := tracer.Start(ctx, "query.worker.handle_request")
+	defer requestSpan.End()
+
 	var req queryapi.PushDownRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		requestSpan.RecordError(err)
+		requestSpan.SetStatus(codes.Error, "bad json")
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if len(req.Segments) == 0 {
+		requestSpan.SetStatus(codes.Error, "no segments")
 		http.Error(w, "no segments", http.StatusBadRequest)
 		return
 	}
+
+	// Set common request attributes
+	requestSpan.SetAttributes(
+		attribute.String("organization_id", req.OrganizationID.String()),
+		attribute.Int("segment_count", len(req.Segments)),
+		attribute.Int64("start_ts", req.StartTs),
+		attribute.Int64("end_ts", req.EndTs),
+		attribute.Int("limit", req.Limit),
+		attribute.Bool("reverse", req.Reverse),
+	)
 
 	var workerSql string
 	var cacheManager *CacheManager
@@ -364,9 +388,30 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		globSize = ws.LogsGlobSize
 		slog.Info("Generated SQL for LegacyLeaf", slog.String("sql", workerSql))
 	} else {
+		requestSpan.SetStatus(codes.Error, "no leaf to evaluate")
 		http.Error(w, "no leaf to evaluate", http.StatusBadRequest)
 		return
 	}
+
+	// Determine query type for span attributes
+	var queryType string
+	switch {
+	case isTagValuesQuery:
+		queryType = "tag_values"
+	case req.BaseExpr != nil && req.BaseExpr.LogLeaf != nil:
+		queryType = "metrics_over_logs"
+	case req.BaseExpr != nil:
+		queryType = "metrics"
+	case req.IsSpans:
+		queryType = "spans"
+	case req.LogLeaf != nil:
+		queryType = "logs"
+	case req.LegacyLeaf != nil:
+		queryType = "legacy_logs"
+	default:
+		queryType = "unknown"
+	}
+	requestSpan.SetAttributes(attribute.String("query_type", queryType))
 
 	// group request.segments by organizationId and instanceNum
 	segmentsByOrg := make(map[uuid.UUID]map[int16][]queryapi.SegmentInfo)
@@ -385,14 +430,17 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	workerSql = strings.ReplaceAll(workerSql, "{end}", fmt.Sprintf("%d", req.EndTs))
 
 	if cacheManager == nil {
+		requestSpan.SetStatus(codes.Error, "cache manager not initialized")
 		http.Error(w, "cache manager not initialized for this query type", http.StatusInternalServerError)
 		return
 	}
 
 	if isTagValuesQuery {
 		// Handle tag values query
-		tagValuesChannel, err := EvaluatePushDown(r.Context(), cacheManager, req, workerSql, globSize, tagValuesMapper)
+		tagValuesChannel, err := EvaluatePushDown(ctx, cacheManager, req, workerSql, globSize, tagValuesMapper)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "query failed")
 			slog.Error("failed to query cache", "error", err)
 			http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -408,13 +456,15 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// Process the response
-		ws.processResponse(w, responseChannel, r.Context())
+		ws.processResponse(w, responseChannel, ctx)
 		return
 
 	} else if req.BaseExpr != nil {
 		// Handle metrics query
-		sketchChannel, err := EvaluatePushDown(r.Context(), cacheManager, req, workerSql, globSize, sketchInputMapper)
+		sketchChannel, err := EvaluatePushDown(ctx, cacheManager, req, workerSql, globSize, sketchInputMapper)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "query failed")
 			slog.Error("failed to query cache", "error", err)
 			http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -430,13 +480,15 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// Process the response
-		ws.processResponse(w, responseChannel, r.Context())
+		ws.processResponse(w, responseChannel, ctx)
 		return
 
 	} else if req.LogLeaf != nil || req.LegacyLeaf != nil {
 		// Handle logs query (both LogLeaf and LegacyLeaf)
-		exemplarChannel, err := EvaluatePushDown(r.Context(), cacheManager, req, workerSql, globSize, exemplarMapper)
+		exemplarChannel, err := EvaluatePushDown(ctx, cacheManager, req, workerSql, globSize, exemplarMapper)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "query failed")
 			slog.Error("failed to query cache", "error", err)
 			http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -457,7 +509,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// Process the response
-		ws.processResponse(w, responseChannel, r.Context())
+		ws.processResponse(w, responseChannel, ctx)
 		return
 	}
 }

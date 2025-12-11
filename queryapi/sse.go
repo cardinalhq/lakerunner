@@ -25,6 +25,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 func PushDownStream[T any](
@@ -33,10 +38,21 @@ func PushDownStream[T any](
 	request PushDownRequest,
 	parse func(typ string, data json.RawMessage) (T, bool, error),
 ) (<-chan T, error) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
+	ctx, pushdownSpan := tracer.Start(ctx, "query.api.pushdown_stream")
+	pushdownSpan.SetAttributes(
+		attribute.String("worker_ip", worker.IP),
+		attribute.Int("worker_port", worker.Port),
+		attribute.Int("segment_count", len(request.Segments)),
+	)
+
 	u := fmt.Sprintf("http://%s:%d/api/v1/pushDown", worker.IP, worker.Port)
 
 	resp, err := mkRequest(ctx, request, u)
 	if err != nil {
+		pushdownSpan.RecordError(err)
+		pushdownSpan.SetStatus(codes.Error, "worker request failed")
+		pushdownSpan.End()
 		return nil, err
 	}
 
@@ -44,6 +60,11 @@ func PushDownStream[T any](
 
 	go func() {
 		defer close(out)
+		resultsEmitted := 0
+		defer func() {
+			pushdownSpan.SetAttributes(attribute.Int("results_emitted", resultsEmitted))
+			pushdownSpan.End()
+		}()
 		defer func() {
 			if cerr := resp.Body.Close(); cerr != nil {
 				slog.Error("failed to close response body", "err", cerr)
@@ -88,6 +109,7 @@ func PushDownStream[T any](
 					case <-ctx.Done():
 						return false
 					case out <- val:
+						resultsEmitted++
 					}
 				}
 				return true
@@ -141,6 +163,9 @@ func mkRequest(ctx context.Context, request PushDownRequest, u string) (*http.Re
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+
+	// Propagate trace context to the worker
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
 	client := http.DefaultClient
 	resp, err := client.Do(req)

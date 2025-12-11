@@ -25,6 +25,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -47,17 +50,34 @@ func (q *QuerierService) EvaluateLogsQuery(
 	queryPlan logql.LQueryPlan,
 	fields []string,
 ) (<-chan promql.Timestamped, error) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
+	ctx, evalSpan := tracer.Start(ctx, "query.api.evaluate_logs")
+
+	evalSpan.SetAttributes(
+		attribute.String("organization_id", orgID.String()),
+		attribute.Int64("start_ts", startTs),
+		attribute.Int64("end_ts", endTs),
+		attribute.Bool("reverse", reverse),
+		attribute.Int("limit", limit),
+		attribute.Int("leaf_count", len(queryPlan.Leaves)),
+	)
+
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
+		evalSpan.RecordError(err)
+		evalSpan.SetStatus(codes.Error, "failed to get workers")
+		evalSpan.End()
 		slog.Error("failed to get all workers", "err", err)
 		return nil, fmt.Errorf("failed to get all workers: %w", err)
 	}
+	evalSpan.SetAttributes(attribute.Int("worker_count", len(workers)))
 	stepDuration := StepForQueryDuration(startTs, endTs)
 
 	out := make(chan promql.Timestamped, 1024)
 
 	go func() {
 		defer close(out)
+		defer evalSpan.End()
 
 		// If limit <= 0, treat as unlimited.
 		unlimited := limit <= 0
@@ -67,6 +87,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 		defer cancelAll()
 
 		emitted := 0
+		totalSegments := 0
 
 		// Partition by dateInt hours for storage listing.
 		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, reverse)
@@ -82,6 +103,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 				if len(segments) == 0 {
 					continue
 				}
+				totalSegments += len(segments)
 
 				groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), reverse)
 				for _, group := range groups {
@@ -183,6 +205,10 @@ func (q *QuerierService) EvaluateLogsQuery(
 				}
 			}
 		}
+		evalSpan.SetAttributes(
+			attribute.Int("total_segments", totalSegments),
+			attribute.Int("rows_emitted", emitted),
+		)
 	}()
 	return out, nil
 }
