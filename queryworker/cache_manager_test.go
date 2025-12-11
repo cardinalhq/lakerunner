@@ -129,3 +129,58 @@ func TestRemoveFingerprintNormalization(t *testing.T) {
 		})
 	}
 }
+
+func TestCalculateMaxDiskUsage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty path returns default", func(t *testing.T) {
+		t.Parallel()
+		result := calculateMaxDiskUsage("")
+		require.Equal(t, uint64(DefaultDiskUsageBytes), result)
+	})
+
+	t.Run("non-existent path returns default", func(t *testing.T) {
+		t.Parallel()
+		result := calculateMaxDiskUsage("/path/that/does/not/exist/anywhere")
+		require.Equal(t, uint64(DefaultDiskUsageBytes), result)
+	})
+
+	t.Run("valid path returns calculated value", func(t *testing.T) {
+		t.Parallel()
+		// Use temp directory which should exist on any system
+		result := calculateMaxDiskUsage("/tmp")
+
+		// Should be at least MinDiskUsageBytes
+		require.GreaterOrEqual(t, result, uint64(MinDiskUsageBytes))
+
+		// Should be reasonable - less than 1 petabyte
+		require.Less(t, result, uint64(1<<50))
+	})
+
+	t.Run("current directory returns calculated value", func(t *testing.T) {
+		t.Parallel()
+		result := calculateMaxDiskUsage(".")
+
+		// Should be at least MinDiskUsageBytes
+		require.GreaterOrEqual(t, result, uint64(MinDiskUsageBytes))
+	})
+}
+
+func TestGetDiskUsage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid path returns usage", func(t *testing.T) {
+		t.Parallel()
+		usedBytes, totalBytes, err := getDiskUsage("/tmp")
+		require.NoError(t, err)
+		require.Greater(t, totalBytes, uint64(0))
+		// Used bytes should be <= total bytes
+		require.LessOrEqual(t, usedBytes, totalBytes)
+	})
+
+	t.Run("non-existent path returns error", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := getDiskUsage("/path/that/does/not/exist/anywhere")
+		require.Error(t, err)
+	})
+}
