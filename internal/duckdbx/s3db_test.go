@@ -16,16 +16,31 @@ package duckdbx
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
+
+// createS3Secret is a test helper that wraps createS3SecretWithCredsLocked
+// to provide a simpler interface for tests.
+func createS3Secret(ctx context.Context, conn *sql.Conn, config S3SecretConfig, profile storageprofile.StorageProfile) error {
+	creds := aws.Credentials{
+		AccessKeyID:     config.KeyID,
+		SecretAccessKey: config.Secret,
+		SessionToken:    config.SessionToken,
+		Source:          "test",
+		CanExpire:       false,
+	}
+	return createS3SecretWithCredsLocked(ctx, conn, config, creds, profile)
+}
 
 // Test that two connections from the pool share the same database state
 func TestS3DB_SharedDataBetweenConnections(t *testing.T) {
@@ -172,7 +187,8 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 	defer release1()
 
 	// Verify the secret was created
-	rows1, err := conn1.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name = 'secret_test_bucket_1'`)
+	expectedName1 := secretNameFromProfile(profile1)
+	rows1, err := conn1.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name = ?`, expectedName1)
 	require.NoError(t, err)
 	defer func() { _ = rows1.Close() }()
 
@@ -181,7 +197,7 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 		var name string
 		err := rows1.Scan(&name)
 		require.NoError(t, err)
-		if name == "secret_test_bucket_1" {
+		if name == expectedName1 {
 			found1 = true
 			break
 		}
@@ -199,7 +215,8 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 	defer release2()
 
 	// Both secrets should be visible in the second connection
-	rows2, err := conn2.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name IN ('secret_test_bucket_1', 'secret_test_bucket_2') ORDER BY name`)
+	expectedName2 := secretNameFromProfile(profile2)
+	rows2, err := conn2.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name IN (?, ?) ORDER BY name`, expectedName1, expectedName2)
 	require.NoError(t, err)
 	defer func() { _ = rows2.Close() }()
 
@@ -213,8 +230,6 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 
 	// Should have both secrets
 	require.Equal(t, 2, len(secrets), "should have both secrets")
-	require.Equal(t, "secret_test_bucket_1", secrets[0])
-	require.Equal(t, "secret_test_bucket_2", secrets[1])
 
 	// Now get a third connection back to the first bucket
 	// It should reuse the existing secret (CREATE OR REPLACE)
@@ -223,7 +238,7 @@ func TestS3DB_SharedSecretsBetweenConnections(t *testing.T) {
 	defer release3()
 
 	// Verify both secrets are still visible
-	rows3, err := conn3.QueryContext(ctx, `SELECT COUNT(*) FROM duckdb_secrets() WHERE name IN ('secret_test_bucket_1', 'secret_test_bucket_2')`)
+	rows3, err := conn3.QueryContext(ctx, `SELECT COUNT(*) FROM duckdb_secrets() WHERE name IN (?, ?)`, expectedName1, expectedName2)
 	require.NoError(t, err)
 	defer func() { _ = rows3.Close() }()
 
@@ -407,7 +422,7 @@ func TestCreateS3Secret(t *testing.T) {
 	defer release2()
 
 	// Verify the secret is visible in the second connection
-	expectedSecretName := "secret_test_bucket_foo"
+	expectedSecretName := secretNameFromProfile(testProfile)
 	rows, err := conn2.QueryContext(ctx, `SELECT name, type FROM duckdb_secrets() WHERE name = ?`, expectedSecretName)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
@@ -445,7 +460,8 @@ func TestCreateS3Secret(t *testing.T) {
 	require.NoError(t, err, "createS3Secret with HTTP endpoint should succeed")
 
 	// Verify both secrets are visible in conn1 (after creating second in conn2)
-	rows, err = conn1.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name LIKE 'secret_test_bucket_%' ORDER BY name`)
+	expectedSecretName2 := secretNameFromProfile(testProfile2)
+	rows, err = conn1.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name IN (?, ?) ORDER BY name`, expectedSecretName, expectedSecretName2)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 
@@ -458,8 +474,6 @@ func TestCreateS3Secret(t *testing.T) {
 	}
 
 	require.Equal(t, 2, len(secrets), "should have both test secrets")
-	require.Equal(t, "secret_test_bucket_bar", secrets[0])
-	require.Equal(t, "secret_test_bucket_foo", secrets[1])
 }
 
 // TestCreateS3SecretValidation tests the validation logic in createS3Secret.
@@ -526,11 +540,12 @@ func TestCreateS3SecretValidation(t *testing.T) {
 	require.NoError(t, err, "should succeed with minimal config")
 
 	// Verify the secret was created (we can't easily check the defaults from SQL)
+	expectedMinimalName := secretNameFromProfile(minimalProfile)
 	var name, secretType string
 	err = conn.QueryRowContext(ctx,
-		`SELECT name, type FROM duckdb_secrets() WHERE name = 'secret_minimal_bucket'`).Scan(&name, &secretType)
+		`SELECT name, type FROM duckdb_secrets() WHERE name = ?`, expectedMinimalName).Scan(&name, &secretType)
 	require.NoError(t, err)
-	require.Equal(t, "secret_minimal_bucket", name)
+	require.Equal(t, expectedMinimalName, name)
 	require.Equal(t, "s3", secretType)
 }
 
@@ -619,10 +634,11 @@ func TestPooledConnectionReuse(t *testing.T) {
 	require.Equal(t, 1, count)
 
 	// Verify the secret still exists
+	expectedSecretName := secretNameFromProfile(testProfile)
 	var secretName string
-	err = conn2.QueryRowContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name = 'secret_reuse_test_bucket'`).Scan(&secretName)
+	err = conn2.QueryRowContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name = ?`, expectedSecretName).Scan(&secretName)
 	require.NoError(t, err, "secret should still exist in reused connection")
-	require.Equal(t, "secret_reuse_test_bucket", secretName)
+	require.Equal(t, expectedSecretName, secretName)
 
 	// Verify we can still create new secrets (extensions still work)
 	testConfig2 := S3SecretConfig{
@@ -703,13 +719,14 @@ func TestPooledConnectionReuseAcrossBuckets(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify secret was created for bucket-one
+	expectedNameOne := secretNameFromProfile(profileOne)
 	var found bool
-	rows, err := conn1.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name = 'secret_bucket_one'`)
+	rows, err := conn1.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name = ?`, expectedNameOne)
 	require.NoError(t, err)
 	for rows.Next() {
 		var name string
 		_ = rows.Scan(&name)
-		if name == "secret_bucket_one" {
+		if name == expectedNameOne {
 			found = true
 		}
 	}
@@ -731,7 +748,8 @@ func TestPooledConnectionReuseAcrossBuckets(t *testing.T) {
 	defer release2()
 
 	// Both secrets should now exist
-	rows, err = conn2.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name IN ('secret_bucket_one', 'secret_bucket_two') ORDER BY name`)
+	expectedNameTwo := secretNameFromProfile(profileTwo)
+	rows, err = conn2.QueryContext(ctx, `SELECT name FROM duckdb_secrets() WHERE name IN (?, ?) ORDER BY name`, expectedNameOne, expectedNameTwo)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 
@@ -744,8 +762,6 @@ func TestPooledConnectionReuseAcrossBuckets(t *testing.T) {
 	}
 
 	require.Equal(t, 2, len(secrets), "both bucket secrets should exist")
-	require.Equal(t, "secret_bucket_one", secrets[0])
-	require.Equal(t, "secret_bucket_two", secrets[1])
 
 	// Verify we can still use the connection normally
 	_, err = conn2.ExecContext(ctx, `SELECT 1`)
