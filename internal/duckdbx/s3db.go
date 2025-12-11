@@ -1083,19 +1083,6 @@ func envDuration(name string, def time.Duration) time.Duration {
 	return def
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // pollMemoryMetrics periodically polls DuckDB memory statistics and records them as OpenTelemetry metrics
 func (s *S3DB) pollMemoryMetrics(ctx context.Context) {
 	meter := otel.Meter("github.com/cardinalhq/lakerunner/duckdbx")
