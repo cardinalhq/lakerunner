@@ -29,6 +29,9 @@ import (
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -136,39 +139,66 @@ type evalData struct {
 }
 
 func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
+	ctx, requestSpan := tracer.Start(r.Context(), "query.api.metrics_query")
+	defer requestSpan.End()
+
 	qPayload := readQueryPayload(w, r, false)
 	if qPayload == nil {
+		requestSpan.SetStatus(codes.Error, "invalid payload")
 		return
 	}
 
+	requestSpan.SetAttributes(
+		attribute.String("organization_id", qPayload.OrgUUID.String()),
+		attribute.Int64("start_ts", qPayload.StartTs),
+		attribute.Int64("end_ts", qPayload.EndTs),
+		attribute.String("query", qPayload.Q),
+	)
+
 	// Parse & compile PromQL
+	ctx, parseSpan := tracer.Start(ctx, "query.api.parse_promql")
 	promExpr, err := promql.FromPromQL(qPayload.Q)
 	if err != nil {
+		parseSpan.RecordError(err)
+		parseSpan.SetStatus(codes.Error, "invalid expression")
+		parseSpan.End()
+		requestSpan.RecordError(err)
+		requestSpan.SetStatus(codes.Error, "invalid expression")
 		http.Error(w, "invalid query expression: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	plan, err := promql.Compile(promExpr)
 	if err != nil {
+		parseSpan.RecordError(err)
+		parseSpan.SetStatus(codes.Error, "compile error")
+		parseSpan.End()
+		requestSpan.RecordError(err)
+		requestSpan.SetStatus(codes.Error, "compile error")
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	parseSpan.SetAttributes(attribute.Int("leaf_count", len(plan.Leaves)))
+	parseSpan.End()
 
-	resultsCh, err := q.EvaluateMetricsQuery(r.Context(), qPayload.OrgUUID, qPayload.StartTs, qPayload.EndTs, plan)
+	resultsCh, err := q.EvaluateMetricsQuery(ctx, qPayload.OrgUUID, qPayload.StartTs, qPayload.EndTs, plan)
 	if err != nil {
+		requestSpan.RecordError(err)
+		requestSpan.SetStatus(codes.Error, "evaluate error")
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	q.sendEvalResults(r, w, resultsCh, plan)
+	q.sendEvalResults(ctx, w, resultsCh, plan)
 }
 
-func (q *QuerierService) sendEvalResults(r *http.Request, w http.ResponseWriter, resultsCh <-chan map[string]promql.EvalResult, plan promql.QueryPlan) {
+func (q *QuerierService) sendEvalResults(ctx context.Context, w http.ResponseWriter, resultsCh <-chan map[string]promql.EvalResult, plan promql.QueryPlan) {
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
 		return
 	}
 
-	notify := r.Context().Done()
+	notify := ctx.Done()
 	for {
 		select {
 		case <-notify:
@@ -278,70 +308,114 @@ func statusAndCodeForRuntimeError(err error) (int, APIErrorCode) {
 }
 
 func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
+	ctx, requestSpan := tracer.Start(r.Context(), "query.api.logs_query")
+	defer requestSpan.End()
+
 	qp := readQueryPayload(w, r, false)
 	if qp == nil {
+		requestSpan.SetStatus(codes.Error, "invalid payload")
 		return
 	}
 
+	requestSpan.SetAttributes(
+		attribute.String("organization_id", qp.OrgUUID.String()),
+		attribute.Int64("start_ts", qp.StartTs),
+		attribute.Int64("end_ts", qp.EndTs),
+		attribute.String("query", qp.Q),
+		attribute.Bool("reverse", qp.Reverse),
+		attribute.Int("limit", qp.Limit),
+	)
+
+	ctx, parseSpan := tracer.Start(ctx, "query.api.parse_logql")
 	logAst, err := logql.FromLogQL(qp.Q)
 	if err != nil {
+		parseSpan.RecordError(err)
+		parseSpan.SetStatus(codes.Error, "invalid expression")
+		parseSpan.End()
+		requestSpan.RecordError(err)
+		requestSpan.SetStatus(codes.Error, "invalid expression")
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidExpr, "invalid log query expression: "+err.Error())
 		return
 	}
 
 	lplan, err := logql.CompileLog(logAst)
 	if err != nil {
+		parseSpan.RecordError(err)
+		parseSpan.SetStatus(codes.Error, "compile error")
+		parseSpan.End()
+		requestSpan.RecordError(err)
+		requestSpan.SetStatus(codes.Error, "compile error")
 		writeAPIError(w, http.StatusUnprocessableEntity, ErrCompileError, "cannot compile LogQL: "+err.Error())
 		return
 	}
+	isAggregate := logAst.IsAggregateExpr()
+	parseSpan.SetAttributes(
+		attribute.Bool("is_aggregate", isAggregate),
+		attribute.Int("leaf_count", len(lplan.Leaves)),
+	)
+	parseSpan.End()
 
-	if logAst.IsAggregateExpr() {
+	requestSpan.SetAttributes(attribute.Bool("is_aggregate", isAggregate))
+
+	if isAggregate {
 		rr, err := promql.RewriteToPromQL(lplan.Root)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "rewrite unsupported")
 			writeAPIError(w, http.StatusNotImplemented, ErrRewriteUnsupported, "cannot rewrite to PromQL: "+err.Error())
 			return
 		}
 
 		promExpr, err := promql.FromPromQL(rr.PromQL)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "parse rewritten failed")
 			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "cannot parse rewritten PromQL: "+err.Error())
 			return
 		}
 
 		plan, err := promql.Compile(promExpr)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "compile rewritten failed")
 			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "cannot compile rewritten PromQL: "+err.Error())
 			return
 		}
 		plan.AttachLogLeaves(rr)
 
-		evalResults, err := q.EvaluateMetricsQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
+		evalResults, err := q.EvaluateMetricsQuery(ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "evaluate error")
 			status, code := statusAndCodeForRuntimeError(err)
 			writeAPIError(w, status, code, "evaluate error: "+err.Error())
 			return
 		}
-		q.sendEvalResults(r, w, evalResults, plan)
+		q.sendEvalResults(ctx, w, evalResults, plan)
 		return
 	}
 
 	// ---- Raw logs path (no rewrite) ----
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
+		requestSpan.SetStatus(codes.Error, "SSE unsupported")
 		writeAPIError(w, http.StatusNotAcceptable, ErrSSEUnsupported, "server-sent events not supported by client")
 		return
 	}
 
 	resultsCh, err := q.EvaluateLogsQuery(
-		r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan, qp.Fields,
+		ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan, qp.Fields,
 	)
 	if err != nil {
+		requestSpan.RecordError(err)
+		requestSpan.SetStatus(codes.Error, "evaluate error")
 		status, code := statusAndCodeForRuntimeError(err)
 		writeAPIError(w, status, code, "evaluate error: "+err.Error())
 		return
 	}
 
-	notify := r.Context().Done()
+	notify := ctx.Done()
 	for {
 		select {
 		case <-notify:
@@ -361,67 +435,111 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 }
 
 func (q *QuerierService) handleSpansQuery(w http.ResponseWriter, r *http.Request) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
+	ctx, requestSpan := tracer.Start(r.Context(), "query.api.spans_query")
+	defer requestSpan.End()
+
 	qp := readQueryPayload(w, r, false)
 	if qp == nil {
+		requestSpan.SetStatus(codes.Error, "invalid payload")
 		return
 	}
 
+	requestSpan.SetAttributes(
+		attribute.String("organization_id", qp.OrgUUID.String()),
+		attribute.Int64("start_ts", qp.StartTs),
+		attribute.Int64("end_ts", qp.EndTs),
+		attribute.String("query", qp.Q),
+		attribute.Bool("reverse", qp.Reverse),
+		attribute.Int("limit", qp.Limit),
+	)
+
+	ctx, parseSpan := tracer.Start(ctx, "query.api.parse_logql")
 	logAst, err := logql.FromLogQL(qp.Q)
 	if err != nil {
+		parseSpan.RecordError(err)
+		parseSpan.SetStatus(codes.Error, "invalid expression")
+		parseSpan.End()
+		requestSpan.RecordError(err)
+		requestSpan.SetStatus(codes.Error, "invalid expression")
 		http.Error(w, "invalid spans query expression: "+qp.Q+" "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	lplan, err := logql.CompileLog(logAst)
 	if err != nil {
+		parseSpan.RecordError(err)
+		parseSpan.SetStatus(codes.Error, "compile error")
+		parseSpan.End()
+		requestSpan.RecordError(err)
+		requestSpan.SetStatus(codes.Error, "compile error")
 		http.Error(w, "cannot compile LogQL: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	isAggregate := logAst.IsAggregateExpr()
+	parseSpan.SetAttributes(
+		attribute.Bool("is_aggregate", isAggregate),
+		attribute.Int("leaf_count", len(lplan.Leaves)),
+	)
+	parseSpan.End()
 
-	if logAst.IsAggregateExpr() {
+	requestSpan.SetAttributes(attribute.Bool("is_aggregate", isAggregate))
+
+	if isAggregate {
 		rr, err := promql.RewriteToPromQL(lplan.Root)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "rewrite error")
 			http.Error(w, "cannot rewrite to PromQL: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		promExpr, err := promql.FromPromQL(rr.PromQL)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "parse rewritten failed")
 			http.Error(w, "cannot parse rewritten PromQL: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		plan, err := promql.Compile(promExpr)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "compile rewritten failed")
 			http.Error(w, "cannot compile rewritten PromQL: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		plan.AttachLogLeaves(rr)
 
-		evalResults, err := q.EvaluateMetricsQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
+		evalResults, err := q.EvaluateMetricsQuery(ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
 		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "evaluate error")
 			http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		q.sendEvalResults(r, w, evalResults, plan)
+		q.sendEvalResults(ctx, w, evalResults, plan)
 		return
 	}
 
 	// ---- Raw spans path (no rewrite) ----
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
+		requestSpan.SetStatus(codes.Error, "SSE unsupported")
 		return
 	}
 
 	resultsCh, err := q.EvaluateSpansQuery(
-		r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan, qp.Fields,
+		ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan, qp.Fields,
 	)
 	if err != nil {
+		requestSpan.RecordError(err)
+		requestSpan.SetStatus(codes.Error, "evaluate error")
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	notify := r.Context().Done()
+	notify := ctx.Done()
 	for {
 		select {
 		case <-notify:

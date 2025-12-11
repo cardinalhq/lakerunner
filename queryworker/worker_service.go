@@ -33,6 +33,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -297,8 +298,11 @@ func asString(v any) string {
 
 // ServeHttp serves SSE with merged, sorted points from cache+S3.
 func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Extract trace context from incoming request headers
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+
 	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
-	ctx, requestSpan := tracer.Start(r.Context(), "query.worker.handle_request")
+	ctx, requestSpan := tracer.Start(ctx, "query.worker.handle_request")
 	defer requestSpan.End()
 
 	var req queryapi.PushDownRequest

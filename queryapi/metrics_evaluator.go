@@ -24,6 +24,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/prometheus/common/model"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
@@ -108,18 +111,34 @@ func (q *QuerierService) EvaluateMetricsQuery(
 	startTs, endTs int64,
 	queryPlan promql.QueryPlan,
 ) (<-chan map[string]promql.EvalResult, error) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
+	ctx, evalSpan := tracer.Start(ctx, "query.api.evaluate_metrics")
+
+	evalSpan.SetAttributes(
+		attribute.String("organization_id", orgID.String()),
+		attribute.Int64("start_ts", startTs),
+		attribute.Int64("end_ts", endTs),
+		attribute.Int("leaf_count", len(queryPlan.Leaves)),
+	)
+
 	stepDuration := StepForQueryDuration(startTs, endTs)
+	evalSpan.SetAttributes(attribute.Int64("step_ms", stepDuration.Milliseconds()))
 
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
+		evalSpan.RecordError(err)
+		evalSpan.SetStatus(codes.Error, "failed to get workers")
+		evalSpan.End()
 		slog.Error("failed to get all workers", "err", err)
 		return nil, fmt.Errorf("failed to get all workers: %w", err)
 	}
+	evalSpan.SetAttributes(attribute.Int("worker_count", len(workers)))
 
 	out := make(chan map[string]promql.EvalResult, 1024)
 
 	go func() {
 		defer close(out)
+		defer evalSpan.End()
 
 		// ---------- Stage 0: coordinator & EvalFlow ----------
 		regs := make(chan groupReg, 256)
@@ -159,6 +178,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 		defer cancelAllPush()
 
 		// ---------- Stage 1: build segment universe ----------
+		_, segmentSpan := tracer.Start(ctx, "query.api.segment_lookup")
 		segmentUniverse := make([]SegmentInfo, 0)
 		globalStart := startTs
 		globalEnd := endTs
@@ -209,11 +229,14 @@ func (q *QuerierService) EvaluateMetricsQuery(
 				}
 			}
 		}
+		segmentSpan.SetAttributes(attribute.Int("segment_count", len(segmentUniverse)))
+		segmentSpan.End()
 
 		// ---------- Stage 2: group globally (time-disjoint) ----------
 		groups := ComputeReplayBatchesWithWorkers(
 			segmentUniverse, stepDuration, globalStart, globalEnd, len(workers), false,
 		)
+		evalSpan.SetAttributes(attribute.Int("group_count", len(groups)))
 
 		// ---------- Stage 3: launch groups concurrently & register ----------
 		maxParallel := computeMaxParallel(len(workers))
