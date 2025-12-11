@@ -880,20 +880,20 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 	}
 }
 
-func chunkStrings(xs []string, size int) [][]string {
-	if size <= 0 || len(xs) == 0 {
-		return nil
-	}
-	var out [][]string
-	for i := 0; i < len(xs); i += size {
-		j := i + size
-		if j > len(xs) {
-			j = len(xs)
-		}
-		out = append(out, xs[i:j])
-	}
-	return out
-}
+//func chunkStrings(xs []string, size int) [][]string {
+//	if size <= 0 || len(xs) == 0 {
+//		return nil
+//	}
+//	var out [][]string
+//	for i := 0; i < len(xs); i += size {
+//		j := i + size
+//		if j > len(xs) {
+//			j = len(xs)
+//		}
+//		out = append(out, xs[i:j])
+//	}
+//	return out
+//}
 
 const batchSize = 300
 
