@@ -47,7 +47,9 @@ var (
 	// stream/series lookups for logs.
 	FullValueDimensions = []string{
 		"metric_name",
+		"resource_customer_domain",
 		"resource_file",
+		"resource_service_name",
 	}
 
 	// dimensionsToIndexSet is a pre-built map for O(1) lookup of indexed dimensions
