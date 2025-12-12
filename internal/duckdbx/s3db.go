@@ -49,10 +49,19 @@ var duckdbDDLMu sync.Mutex
 // we refresh before the actual expiry.
 const credentialRefreshBuffer = 5 * time.Minute
 
-// bucketSecretState tracks when a secret expires for a given identity key.
+// bucketSecretState tracks when credentials expire for a given identity key.
+// Credentials are cached to avoid repeated AWS SDK calls, but the DuckDB secret
+// must still be created on every connection since secrets are in-memory only.
 type bucketSecretState struct {
-	mu        sync.Mutex
-	expiresAt time.Time // zero means never expires (env creds)
+	mu          sync.Mutex
+	expiresAt   time.Time       // zero means not yet fetched, neverExpiresSentinel means env creds
+	cachedCreds aws.Credentials // cached credentials to reuse when not expired
+}
+
+// seedResult holds the result of seeding credentials.
+type seedResult struct {
+	expiresAt time.Time
+	creds     aws.Credentials
 }
 
 // S3DB manages a pool of DuckDB connections to a single shared on-disk database.
@@ -595,8 +604,10 @@ func (s *S3DB) seedCloudSecretFromEnv(ctx context.Context, conn *sql.Conn, profi
 	return s.ensureBucketSecret(ctx, conn, profile)
 }
 
-// ensureBucketSecret checks if the secret for a profile identity needs refresh,
-// and if so, creates/replaces it. Uses per-identity locking to avoid global contention.
+// ensureBucketSecret checks if the secret for a profile identity needs credential refresh,
+// and creates/replaces it. DuckDB secrets must be created on every connection since they
+// are in-memory only and not shared across different connector instances.
+// Uses per-identity locking to serialize credential fetching (especially for AssumeRole).
 func (s *S3DB) ensureBucketSecret(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) error {
 	if strings.TrimSpace(profile.Bucket) == "" {
 		return fmt.Errorf("bucket is required")
@@ -610,22 +621,23 @@ func (s *S3DB) ensureBucketSecret(ctx context.Context, conn *sql.Conn, profile s
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	// Check if we have a valid cached secret.
-	// neverExpiresSentinel means creds never expire (env creds without session token).
-	// Otherwise, check if we're past expiry minus buffer.
+	// Check if credentials need refresh.
+	// Note: We still need to create the secret on THIS connection even if credentials are cached,
+	// because DuckDB secrets are in-memory and may not be visible across different connectors.
+	needsCredentialRefresh := true
 	if state.expiresAt.Equal(neverExpiresSentinel) {
-		return nil
-	}
-	if !state.expiresAt.IsZero() && time.Now().Before(state.expiresAt.Add(-credentialRefreshBuffer)) {
-		return nil
+		needsCredentialRefresh = false
+	} else if !state.expiresAt.IsZero() && time.Now().Before(state.expiresAt.Add(-credentialRefreshBuffer)) {
+		needsCredentialRefresh = false
 	}
 
-	expiresAt, err := seedCloudSecretFromEnvLocked(ctx, conn, profile)
+	expiresAt, err := seedCloudSecretFromEnvLocked(ctx, conn, profile, needsCredentialRefresh, state.cachedCreds)
 	if err != nil {
 		return err
 	}
 
-	state.expiresAt = expiresAt
+	state.expiresAt = expiresAt.expiresAt
+	state.cachedCreds = expiresAt.creds
 	return nil
 }
 
@@ -633,9 +645,11 @@ func (s *S3DB) ensureBucketSecret(ctx context.Context, conn *sql.Conn, profile s
 var neverExpiresSentinel = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // seedCloudSecretFromEnvLocked does the actual secret creation.
-// Returns the expiration time of the credentials (neverExpiresSentinel if they don't expire).
+// If needsCredentialRefresh is false and cachedCreds is valid, reuses cached credentials.
+// Otherwise fetches fresh credentials.
+// Always creates the DuckDB secret on the connection since secrets are in-memory only.
 // Caller must hold the per-identity lock.
-func seedCloudSecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) (time.Time, error) {
+func seedCloudSecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile, needsCredentialRefresh bool, cachedCreds aws.Credentials) (seedResult, error) {
 	if hasAzureCredentials() || profile.CloudProvider == "azure" {
 		return seedAzureSecretFromEnvLocked(ctx, conn, profile)
 	}
@@ -644,7 +658,7 @@ func seedCloudSecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile s
 	useAWSSDK := profile.CloudProvider == "aws" && strings.TrimSpace(profile.Endpoint) == ""
 
 	if useAWSSDK {
-		return seedS3SecretFromAWSSDKLocked(ctx, conn, profile)
+		return seedS3SecretFromAWSSDKLocked(ctx, conn, profile, needsCredentialRefresh, cachedCreds)
 	}
 
 	return seedS3SecretFromEnvLocked(ctx, conn, profile)
@@ -659,14 +673,14 @@ func hasAzureCredentials() bool {
 // seedAzureSecretFromEnvLocked creates an Azure secret.
 // Azure credentials from env vars are treated as non-expiring.
 // Caller must hold the per-identity lock.
-func seedAzureSecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) (time.Time, error) {
+func seedAzureSecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) (seedResult, error) {
 	authType := os.Getenv("AZURE_AUTH_TYPE")
 	if authType == "" {
 		authType = "credential_chain"
 	}
 
 	if strings.TrimSpace(profile.Endpoint) == "" {
-		return time.Time{}, fmt.Errorf("azure storage profiles require an endpoint to extract storage account name")
+		return seedResult{}, fmt.Errorf("azure storage profiles require an endpoint to extract storage account name")
 	}
 
 	storageAccount := extractStorageAccountFromEndpoint(profile.Endpoint)
@@ -683,7 +697,7 @@ func seedAzureSecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile s
 		tenantId := os.Getenv("AZURE_TENANT_ID")
 
 		if clientId == "" || clientSecret == "" || tenantId == "" {
-			return time.Time{}, fmt.Errorf("missing Azure service principal credentials: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID")
+			return seedResult{}, fmt.Errorf("missing Azure service principal credentials: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID")
 		}
 
 		_, _ = fmt.Fprintf(&b, "  PROVIDER service_principal,\n")
@@ -695,7 +709,7 @@ func seedAzureSecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile s
 	case "connection_string":
 		connectionString := os.Getenv("AZURE_STORAGE_CONNECTION_STRING")
 		if connectionString == "" {
-			return time.Time{}, fmt.Errorf("missing Azure connection string: AZURE_STORAGE_CONNECTION_STRING")
+			return seedResult{}, fmt.Errorf("missing Azure connection string: AZURE_STORAGE_CONNECTION_STRING")
 		}
 
 		_, _ = fmt.Fprintf(&b, "  PROVIDER connection_string,\n")
@@ -710,10 +724,10 @@ func seedAzureSecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile s
 
 	_, err := conn.ExecContext(ctx, b.String())
 	if err != nil {
-		return time.Time{}, err
+		return seedResult{}, err
 	}
 	// Azure env creds don't have explicit expiration - treat as never expiring
-	return neverExpiresSentinel, nil
+	return seedResult{expiresAt: neverExpiresSentinel}, nil
 }
 
 // Extract storage account name from Azure Blob endpoint
@@ -740,17 +754,27 @@ type S3SecretConfig struct {
 }
 
 // seedS3SecretFromAWSSDKLocked uses AWS chain/AssumeRole and creates a DuckDB secret.
-// Returns the credential expiration time.
+// If needsCredentialRefresh is false, reuses cachedCreds instead of fetching new ones.
+// Always creates the DuckDB secret on the connection.
 // Caller must hold the per-identity lock.
-func seedS3SecretFromAWSSDKLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) (time.Time, error) {
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("load AWS config: %w", err)
+func seedS3SecretFromAWSSDKLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile, needsCredentialRefresh bool, cachedCreds aws.Credentials) (seedResult, error) {
+	var creds aws.Credentials
+	var err error
+
+	if needsCredentialRefresh || cachedCreds.AccessKeyID == "" {
+		// Fetch fresh credentials from AWS SDK
+		creds, err = getAWSCredsFromChainOrAssume(ctx, profile)
+		if err != nil {
+			return seedResult{}, err
+		}
+	} else {
+		// Reuse cached credentials
+		creds = cachedCreds
 	}
 
-	creds, err := getAWSCredsFromChainOrAssume(ctx, profile)
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		return time.Time{}, err
+		return seedResult{}, fmt.Errorf("load AWS config: %w", err)
 	}
 
 	region := strings.TrimSpace(profile.Region)
@@ -787,20 +811,23 @@ func seedS3SecretFromAWSSDKLocked(ctx context.Context, conn *sql.Conn, profile s
 	}
 
 	if err := createS3SecretWithCredsLocked(ctx, conn, secretConfig, creds, profile); err != nil {
-		return time.Time{}, err
+		return seedResult{}, err
 	}
 
-	// Return the actual expiration from the credentials
+	// Return the credentials and expiration time
+	var expiresAt time.Time
 	if creds.CanExpire {
-		return creds.Expires, nil
+		expiresAt = creds.Expires
+	} else {
+		expiresAt = neverExpiresSentinel
 	}
-	return neverExpiresSentinel, nil
+	return seedResult{expiresAt: expiresAt, creds: creds}, nil
 }
 
 // seedS3SecretFromEnvLocked uses env creds for S3-compatible systems.
 // Environment credentials are treated as non-expiring.
 // Caller must hold the per-identity lock.
-func seedS3SecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) (time.Time, error) {
+func seedS3SecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) (seedResult, error) {
 	keyID := os.Getenv("S3_ACCESS_KEY_ID")
 	if keyID == "" {
 		keyID = os.Getenv("AWS_ACCESS_KEY_ID")
@@ -812,7 +839,7 @@ func seedS3SecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile stor
 	}
 
 	if keyID == "" || secret == "" {
-		return time.Time{}, fmt.Errorf("missing S3/AWS credentials: S3_ACCESS_KEY_ID/AWS_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY/AWS_SECRET_ACCESS_KEY are required")
+		return seedResult{}, fmt.Errorf("missing S3/AWS credentials: S3_ACCESS_KEY_ID/AWS_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY/AWS_SECRET_ACCESS_KEY are required")
 	}
 
 	session := os.Getenv("S3_SESSION_TOKEN")
@@ -875,10 +902,10 @@ func seedS3SecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile stor
 	}
 
 	if err := createS3SecretWithCredsLocked(ctx, conn, secretConfig, creds, profile); err != nil {
-		return time.Time{}, err
+		return seedResult{}, err
 	}
 	// Environment credentials don't expire
-	return neverExpiresSentinel, nil
+	return seedResult{expiresAt: neverExpiresSentinel, creds: creds}, nil
 }
 
 // chooseSTSRegion picks a region for STS calls. Prefer profile.Region, otherwise env/defaults.
