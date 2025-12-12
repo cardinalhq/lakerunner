@@ -200,11 +200,6 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		ingestQ:                  make(chan ingestJob, 64),
 	}
 
-	// Register OTEL metrics
-	if err := w.registerMetrics(); err != nil {
-		slog.Error("Failed to register cache metrics", slog.Any("error", err))
-	}
-
 	slog.Info("CacheManager initialized",
 		slog.String("dataset", dataset),
 		slog.Int64("maxRows", w.maxRows),
@@ -225,16 +220,21 @@ func (w *CacheManager) Close() {
 	w.ingestWG.Wait()
 }
 
-func (w *CacheManager) registerMetrics() error {
+// RegisterCacheMetrics registers OTEL metrics for multiple CacheManagers.
+// This must be called once with all CacheManagers to avoid callback conflicts.
+func RegisterCacheMetrics(managers ...*CacheManager) error {
 	meter := otel.Meter("lakerunner.querycache")
-	signalAttr := attribute.String("signal", w.dataset)
 
 	// Row count metrics
 	_, err := meter.Int64ObservableGauge(
 		"lakerunner.querycache.rows",
 		metric.WithDescription("Current number of rows in the query cache"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(w.sink.RowCount(), metric.WithAttributes(signalAttr))
+			for _, w := range managers {
+				if w != nil && w.sink != nil {
+					o.Observe(w.sink.RowCount(), metric.WithAttributes(attribute.String("signal", w.dataset)))
+				}
+			}
 			return nil
 		}),
 	)
@@ -246,7 +246,11 @@ func (w *CacheManager) registerMetrics() error {
 		"lakerunner.querycache.rows_limit",
 		metric.WithDescription("Configured row limit for the query cache"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(w.maxRows, metric.WithAttributes(signalAttr))
+			for _, w := range managers {
+				if w != nil {
+					o.Observe(w.maxRows, metric.WithAttributes(attribute.String("signal", w.dataset)))
+				}
+			}
 			return nil
 		}),
 	)
@@ -258,8 +262,10 @@ func (w *CacheManager) registerMetrics() error {
 		"lakerunner.querycache.rows_utilization",
 		metric.WithDescription("Utilization of max rows in the query cache (0-1, may exceed 1 if over limit)"),
 		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
-			if w.maxRows > 0 {
-				o.Observe(float64(w.sink.RowCount())/float64(w.maxRows), metric.WithAttributes(signalAttr))
+			for _, w := range managers {
+				if w != nil && w.sink != nil && w.maxRows > 0 {
+					o.Observe(float64(w.sink.RowCount())/float64(w.maxRows), metric.WithAttributes(attribute.String("signal", w.dataset)))
+				}
 			}
 			return nil
 		}),
@@ -273,10 +279,14 @@ func (w *CacheManager) registerMetrics() error {
 		"lakerunner.querycache.disk_bytes",
 		metric.WithDescription("Current disk usage in bytes"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			dbPath := w.s3Pool.GetDatabasePath()
-			usedBytes, _, err := getDiskUsage(dbPath)
-			if err == nil {
-				o.Observe(int64(usedBytes), metric.WithAttributes(signalAttr))
+			for _, w := range managers {
+				if w != nil {
+					dbPath := w.s3Pool.GetDatabasePath()
+					usedBytes, _, err := getDiskUsage(dbPath)
+					if err == nil {
+						o.Observe(int64(usedBytes), metric.WithAttributes(attribute.String("signal", w.dataset)))
+					}
+				}
 			}
 			return nil
 		}),
@@ -289,7 +299,11 @@ func (w *CacheManager) registerMetrics() error {
 		"lakerunner.querycache.disk_bytes_limit",
 		metric.WithDescription("Configured disk usage limit in bytes"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(int64(w.maxDiskUsageBytes), metric.WithAttributes(signalAttr))
+			for _, w := range managers {
+				if w != nil {
+					o.Observe(int64(w.maxDiskUsageBytes), metric.WithAttributes(attribute.String("signal", w.dataset)))
+				}
+			}
 			return nil
 		}),
 	)
@@ -301,10 +315,14 @@ func (w *CacheManager) registerMetrics() error {
 		"lakerunner.querycache.disk_utilization",
 		metric.WithDescription("Utilization of max disk space (0-1, may exceed 1 if over limit)"),
 		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
-			dbPath := w.s3Pool.GetDatabasePath()
-			usedBytes, _, err := getDiskUsage(dbPath)
-			if err == nil && w.maxDiskUsageBytes > 0 {
-				o.Observe(float64(usedBytes)/float64(w.maxDiskUsageBytes), metric.WithAttributes(signalAttr))
+			for _, w := range managers {
+				if w != nil {
+					dbPath := w.s3Pool.GetDatabasePath()
+					usedBytes, _, err := getDiskUsage(dbPath)
+					if err == nil && w.maxDiskUsageBytes > 0 {
+						o.Observe(float64(usedBytes)/float64(w.maxDiskUsageBytes), metric.WithAttributes(attribute.String("signal", w.dataset)))
+					}
+				}
 			}
 			return nil
 		}),
@@ -318,10 +336,14 @@ func (w *CacheManager) registerMetrics() error {
 		"lakerunner.querycache.lru_depth",
 		metric.WithDescription("Number of segments tracked in the LRU cache"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			w.mu.RLock()
-			depth := len(w.present)
-			w.mu.RUnlock()
-			o.Observe(int64(depth), metric.WithAttributes(signalAttr))
+			for _, w := range managers {
+				if w != nil {
+					w.mu.RLock()
+					depth := len(w.present)
+					w.mu.RUnlock()
+					o.Observe(int64(depth), metric.WithAttributes(attribute.String("signal", w.dataset)))
+				}
+			}
 			return nil
 		}),
 	)
@@ -329,13 +351,18 @@ func (w *CacheManager) registerMetrics() error {
 		return fmt.Errorf("failed to create lru_depth gauge: %w", err)
 	}
 
-	// Eviction duration histogram
-	w.evictionDurationHist, err = meter.Float64Histogram(
+	// Eviction duration histogram - register once, each manager records with its own signal attribute
+	hist, err := meter.Float64Histogram(
 		"lakerunner.querycache.eviction_duration_seconds",
 		metric.WithDescription("Duration of eviction cycles in seconds"),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create eviction_duration histogram: %w", err)
+	}
+	for _, w := range managers {
+		if w != nil {
+			w.evictionDurationHist = hist
+		}
 	}
 
 	return nil
