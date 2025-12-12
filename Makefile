@@ -111,7 +111,7 @@ generate: bin/buf
 bin/buf:
 	./scripts/install-proto-tools.sh
 
-bin/golangci-lint bin/goimports:
+bin/golangci-lint bin/goimports bin/license-eye:
 	./scripts/install-dev-tools.sh
 
 #
@@ -173,8 +173,8 @@ check: bin/golangci-lint
 check-verbose: bin/golangci-lint
 	@VERBOSE=1 ./scripts/check-concise.sh
 
-license-check:
-	go tool license-eye header check
+license-check: bin/license-eye
+	./bin/license-eye header check
 
 imports-check: bin/goimports
 	@echo "Checking import organization..."
