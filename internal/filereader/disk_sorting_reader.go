@@ -15,7 +15,10 @@
 package filereader
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -52,10 +55,16 @@ type DiskSortingReader struct {
 	reader      Reader
 	keyProvider SortKeyProvider // Provider to create sort keys
 	tempFile    *os.File
-	codec       rowcodec.Codec
+	codec       *rowcodec.SpillCodec
+	writer      *bufio.Writer
 	closed      bool
 	rowCount    int64
 	batchSize   int
+	offset      int64
+
+	lenScratch [4]byte
+	payloadBuf bytes.Buffer
+	readBuf    []byte
 
 	// Lightweight sorted indices pointing to binary data
 	indices      []RowIndex
@@ -90,19 +99,12 @@ func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize 
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	// Create default codec (Binary for compatibility, can use TypeCBOR for better performance)
-	codec, err := rowcodec.New(rowcodec.TypeDefault)
-	if err != nil {
-		_ = tempFile.Close()
-		_ = os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to create codec: %w", err)
-	}
-
 	return &DiskSortingReader{
 		reader:      reader,
 		keyProvider: keyProvider,
 		tempFile:    tempFile,
-		codec:       codec,
+		codec:       rowcodec.NewSpillCodec(),
+		writer:      bufio.NewWriterSize(tempFile, 64*1024),
 		batchSize:   batchSize,
 		indices:     make([]RowIndex, 0, 1000), // Start with reasonable capacity
 	}, nil
@@ -144,6 +146,10 @@ func (r *DiskSortingReader) writeAndIndexAllRows(ctx context.Context) error {
 		pipeline.ReturnBatch(batch)
 	}
 
+	if err := r.writer.Flush(); err != nil {
+		return fmt.Errorf("flush spill file: %w", err)
+	}
+
 	// Sort indices using the SortKey Compare method
 	slices.SortFunc(r.indices, func(a, b RowIndex) int {
 		return a.SortKey.Compare(b.SortKey)
@@ -161,31 +167,20 @@ func (r *DiskSortingReader) writeAndIndexAllRows(ctx context.Context) error {
 
 // writeAndIndexRow encodes a row to the temp file and adds an index entry.
 func (r *DiskSortingReader) writeAndIndexRow(row pipeline.Row) error {
-	// Get current file position
-	offset, err := r.tempFile.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return fmt.Errorf("failed to get file offset: %w", err)
-	}
-
-	// Encode the row (converts RowKeys to strings internally)
-	startPos := offset
-	rowBytes, err := r.codec.EncodeRow(row)
+	r.payloadBuf.Reset()
+	payloadLen, err := r.codec.EncodeRowTo(&r.payloadBuf, row)
 	if err != nil {
 		return fmt.Errorf("failed to encode row: %w", err)
 	}
-	if _, err := r.tempFile.Write(rowBytes); err != nil {
-		return fmt.Errorf("failed to write encoded data: %w", err)
+	if payloadLen != int32(r.payloadBuf.Len()) {
+		return fmt.Errorf("payload length mismatch: expected %d got %d", payloadLen, r.payloadBuf.Len())
 	}
-
-	// Get end position to calculate length
-	endPos, err := r.tempFile.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return fmt.Errorf("failed to get end offset: %w", err)
+	binary.LittleEndian.PutUint32(r.lenScratch[:], uint32(payloadLen))
+	if _, err := r.writer.Write(r.lenScratch[:]); err != nil {
+		return fmt.Errorf("failed to write length prefix: %w", err)
 	}
-
-	byteLength := endPos - startPos
-	if byteLength > int64(^uint32(0)) {
-		return fmt.Errorf("encoded row too large: %d bytes", byteLength)
+	if _, err := r.writer.Write(r.payloadBuf.Bytes()); err != nil {
+		return fmt.Errorf("failed to write encoded payload: %w", err)
 	}
 
 	// Extract sort key from row using the provider
@@ -194,11 +189,20 @@ func (r *DiskSortingReader) writeAndIndexRow(row pipeline.Row) error {
 	// Add index entry with extracted sort key only
 	r.indices = append(r.indices, RowIndex{
 		SortKey:    sortKey,
-		FileOffset: startPos,
-		ByteLength: int32(byteLength),
+		FileOffset: r.offset,
+		ByteLength: payloadLen,
 	})
 
+	r.offset += int64(4) + int64(payloadLen)
+
 	return nil
+}
+
+func (r *DiskSortingReader) growReadBuf(size int32) []byte {
+	if int(size) > cap(r.readBuf) {
+		r.readBuf = make([]byte, size)
+	}
+	return r.readBuf[:size]
 }
 
 // Next returns the next batch of sorted rows by reading from the temp file in index order.
@@ -224,21 +228,23 @@ func (r *DiskSortingReader) Next(ctx context.Context) (*Batch, error) {
 	// Return rows from disk in sorted order
 	for batch.Len() < r.batchSize && r.currentIndex < len(r.indices) {
 		idx := r.indices[r.currentIndex]
-
-		// Seek to the row position in temp file
-		if _, err := r.tempFile.Seek(idx.FileOffset, io.SeekStart); err != nil {
-			return nil, fmt.Errorf("failed to seek to row offset %d: %w", idx.FileOffset, err)
+		section := io.NewSectionReader(r.tempFile, idx.FileOffset, int64(4)+int64(idx.ByteLength))
+		if _, err := io.ReadFull(section, r.lenScratch[:]); err != nil {
+			return nil, fmt.Errorf("failed to read length at offset %d: %w", idx.FileOffset, err)
+		}
+		expectedLen := binary.LittleEndian.Uint32(r.lenScratch[:])
+		if int32(expectedLen) != idx.ByteLength {
+			return nil, fmt.Errorf("length mismatch at offset %d: index %d file %d", idx.FileOffset, idx.ByteLength, expectedLen)
 		}
 
-		// Read the encoded bytes
-		rowBytes := make([]byte, idx.ByteLength)
-		if _, err := r.tempFile.Read(rowBytes); err != nil {
+		payload := r.growReadBuf(idx.ByteLength)
+		if _, err := io.ReadFull(section, payload); err != nil {
 			return nil, fmt.Errorf("failed to read encoded data at offset %d: %w", idx.FileOffset, err)
 		}
 
 		// Decode directly into the batch row to avoid allocation
 		batchRow := batch.AddRow()
-		if err := r.codec.DecodeRow(rowBytes, batchRow); err != nil {
+		if err := r.codec.DecodeRowFrom(bytes.NewReader(payload), batchRow); err != nil {
 			return nil, fmt.Errorf("failed to decode row at offset %d: %w", idx.FileOffset, err)
 		}
 
@@ -271,11 +277,12 @@ func (r *DiskSortingReader) Close() error {
 	}
 
 	// Clean up temp file
-	var fileErr error
+	var flushErr, closeErr, removeErr error
 	if r.tempFile != nil {
 		fileName := r.tempFile.Name()
-		_ = r.tempFile.Close()
-		fileErr = os.Remove(fileName)
+		flushErr = r.writer.Flush()
+		closeErr = r.tempFile.Close()
+		removeErr = os.Remove(fileName)
 	}
 
 	// Release any remaining sort keys back to their pools
@@ -292,7 +299,13 @@ func (r *DiskSortingReader) Close() error {
 	if readerErr != nil {
 		return readerErr
 	}
-	return fileErr
+	if flushErr != nil {
+		return flushErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return removeErr
 }
 
 // TotalRowsReturned returns the number of rows that have been returned via Next().
