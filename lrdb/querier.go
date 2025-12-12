@@ -37,6 +37,12 @@ type Querier interface {
 	GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsParams) ([]GetLabelNameMapsRow, error)
 	GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error)
 	GetLogSegmentsForDownload(ctx context.Context, arg GetLogSegmentsForDownloadParams) ([]LogSeg, error)
+	// Fast path for getting tag values when the requested tag matches stream_id_field.
+	// Returns distinct stream_ids values directly from segment metadata, avoiding
+	// expensive parquet file fetches. Returns empty if no segments have this tag
+	// as their stream_id_field (caller should fall back to query workers).
+	// Uses ts_range for accurate time filtering within the dateint range.
+	GetLogStreamIdValues(ctx context.Context, arg GetLogStreamIdValuesParams) ([]string, error)
 	GetMetricLabelNameMaps(ctx context.Context, arg GetMetricLabelNameMapsParams) ([]GetMetricLabelNameMapsRow, error)
 	// Retrieves metric pack estimates for EWMA calculations (backward compatibility)
 	GetMetricPackEstimates(ctx context.Context) ([]GetMetricPackEstimatesRow, error)

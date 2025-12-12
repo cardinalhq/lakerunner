@@ -11,6 +11,60 @@ import (
 	"github.com/google/uuid"
 )
 
+const getLogStreamIdValues = `-- name: GetLogStreamIdValues :many
+SELECT DISTINCT unnest(stream_ids)::text AS tag_value
+FROM log_seg
+WHERE organization_id = $1
+  AND dateint >= $2
+  AND dateint <= $3
+  AND ts_range && int8range($4, $5, '[)')
+  AND published = true
+  AND stream_id_field = $6
+  AND stream_ids IS NOT NULL
+ORDER BY tag_value
+`
+
+type GetLogStreamIdValuesParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	StartDateint   int32     `json:"start_dateint"`
+	EndDateint     int32     `json:"end_dateint"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
+	TagName        *string   `json:"tag_name"`
+}
+
+// Fast path for getting tag values when the requested tag matches stream_id_field.
+// Returns distinct stream_ids values directly from segment metadata, avoiding
+// expensive parquet file fetches. Returns empty if no segments have this tag
+// as their stream_id_field (caller should fall back to query workers).
+// Uses ts_range for accurate time filtering within the dateint range.
+func (q *Queries) GetLogStreamIdValues(ctx context.Context, arg GetLogStreamIdValuesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, getLogStreamIdValues,
+		arg.OrganizationID,
+		arg.StartDateint,
+		arg.EndDateint,
+		arg.StartTs,
+		arg.EndTs,
+		arg.TagName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var tag_value string
+		if err := rows.Scan(&tag_value); err != nil {
+			return nil, err
+		}
+		items = append(items, tag_value)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLogQLTags = `-- name: ListLogQLTags :many
 SELECT DISTINCT key::text AS tag_key
 FROM log_seg,
