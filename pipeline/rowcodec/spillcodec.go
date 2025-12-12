@@ -30,6 +30,10 @@ import (
 // process-local spill files used by DiskSortingReader. The format is not stable
 // across process restarts and intentionally relies on a process-level RowKey
 // dictionary to avoid per-row string serialization.
+//
+// SpillCodec is NOT safe for concurrent use. Each goroutine should use its own
+// instance. The underlying key dictionary is shared and thread-safe, but the
+// scratch buffers within each codec instance are not.
 type SpillCodec struct {
 	// Scratch buffers reused across calls to avoid per-row allocations.
 	varintBuf [binary.MaxVarintLen64]byte

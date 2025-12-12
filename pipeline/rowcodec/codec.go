@@ -24,6 +24,8 @@ import (
 )
 
 // Codec defines the interface for encoding/decoding row data.
+//
+// Implementations are not required to be thread-safe.
 type Codec interface {
 	// Encode encodes a map[string]any to bytes.
 	Encode(row map[string]any) ([]byte, error)
