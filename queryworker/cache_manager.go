@@ -32,6 +32,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -153,6 +154,9 @@ type CacheManager struct {
 	ingestQ    chan ingestJob
 	stopIngest context.CancelFunc
 	ingestWG   sync.WaitGroup
+
+	// metrics
+	evictionDurationHist metric.Float64Histogram
 }
 
 const (
@@ -196,6 +200,11 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		ingestQ:                  make(chan ingestJob, 64),
 	}
 
+	// Register OTEL metrics
+	if err := w.registerMetrics(); err != nil {
+		slog.Error("Failed to register cache metrics", slog.Any("error", err))
+	}
+
 	slog.Info("CacheManager initialized",
 		slog.String("dataset", dataset),
 		slog.Int64("maxRows", w.maxRows),
@@ -214,6 +223,121 @@ func (w *CacheManager) Close() {
 		w.stopIngest()
 	}
 	w.ingestWG.Wait()
+}
+
+func (w *CacheManager) registerMetrics() error {
+	meter := otel.Meter("lakerunner.querycache")
+
+	// Row count metrics
+	_, err := meter.Int64ObservableGauge(
+		"lakerunner.querycache.rows",
+		metric.WithDescription("Current number of rows in the query cache"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(w.sink.RowCount())
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create rows gauge: %w", err)
+	}
+
+	_, err = meter.Int64ObservableGauge(
+		"lakerunner.querycache.rows_limit",
+		metric.WithDescription("Configured row limit for the query cache"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(w.maxRows)
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create rows_limit gauge: %w", err)
+	}
+
+	_, err = meter.Float64ObservableGauge(
+		"lakerunner.querycache.rows_utilization",
+		metric.WithDescription("Utilization of max rows in the query cache (0-1, may exceed 1 if over limit)"),
+		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
+			if w.maxRows > 0 {
+				o.Observe(float64(w.sink.RowCount()) / float64(w.maxRows))
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create rows_utilization gauge: %w", err)
+	}
+
+	// Disk usage metrics
+	_, err = meter.Int64ObservableGauge(
+		"lakerunner.querycache.disk_bytes",
+		metric.WithDescription("Current disk usage in bytes"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			dbPath := w.s3Pool.GetDatabasePath()
+			usedBytes, _, err := getDiskUsage(dbPath)
+			if err == nil {
+				o.Observe(int64(usedBytes))
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create disk_bytes gauge: %w", err)
+	}
+
+	_, err = meter.Int64ObservableGauge(
+		"lakerunner.querycache.disk_bytes_limit",
+		metric.WithDescription("Configured disk usage limit in bytes"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			o.Observe(int64(w.maxDiskUsageBytes))
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create disk_bytes_limit gauge: %w", err)
+	}
+
+	_, err = meter.Float64ObservableGauge(
+		"lakerunner.querycache.disk_utilization",
+		metric.WithDescription("Utilization of max disk space (0-1, may exceed 1 if over limit)"),
+		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
+			dbPath := w.s3Pool.GetDatabasePath()
+			usedBytes, _, err := getDiskUsage(dbPath)
+			if err == nil && w.maxDiskUsageBytes > 0 {
+				o.Observe(float64(usedBytes) / float64(w.maxDiskUsageBytes))
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create disk_utilization gauge: %w", err)
+	}
+
+	// LRU depth (number of segments tracked)
+	_, err = meter.Int64ObservableGauge(
+		"lakerunner.querycache.lru_depth",
+		metric.WithDescription("Number of segments tracked in the LRU cache"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			w.mu.RLock()
+			depth := len(w.present)
+			w.mu.RUnlock()
+			o.Observe(int64(depth))
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create lru_depth gauge: %w", err)
+	}
+
+	// Eviction duration histogram
+	w.evictionDurationHist, err = meter.Float64Histogram(
+		"lakerunner.querycache.eviction_duration_seconds",
+		metric.WithDescription("Duration of eviction cycles in seconds"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create eviction_duration histogram: %w", err)
+	}
+
+	return nil
 }
 
 func (w *CacheManager) getProfile(ctx context.Context, orgID uuid.UUID, inst int16) (storageprofile.StorageProfile, error) {
@@ -813,6 +937,13 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 	shouldEvict := over > 0 || usedBytes >= w.maxDiskUsageBytes
 
 	if shouldEvict {
+		evictStart := time.Now()
+		defer func() {
+			if w.evictionDurationHist != nil {
+				w.evictionDurationHist.Record(ctx, time.Since(evictStart).Seconds())
+			}
+		}()
+
 		type ent struct {
 			id int64
 			at time.Time
