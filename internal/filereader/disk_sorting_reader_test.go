@@ -86,7 +86,7 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 }
 
 func TestDiskSortingReader_TypePreservation(t *testing.T) {
-	// Test various types that need to be preserved through CBOR
+	// Test various types that need to be preserved through SpillCodec
 	testRow := pipeline.Row{
 		wkk.RowKeyCName:                "test_metric",
 		wkk.RowKeyCTID:                 int64(12345),
