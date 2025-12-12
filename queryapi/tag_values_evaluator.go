@@ -24,7 +24,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/logql"
+	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
 )
 
@@ -145,6 +147,45 @@ func (q *QuerierService) EvaluateMetricTagValuesQuery(
 	return out, nil
 }
 
+// tryLogStreamIdShortcut attempts to get tag values directly from PostgreSQL
+// when the requested tag matches the stream_id_field stored in log_seg metadata.
+// Returns the tag values and true if the shortcut succeeded, or nil and false
+// if we should fall back to the full query worker path.
+func (q *QuerierService) tryLogStreamIdShortcut(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs int64,
+	endTs int64,
+	tagName string,
+) ([]string, bool) {
+	// Convert timestamps to dateint range for partition pruning
+	startDateint, _ := helpers.MSToDateintHour(startTs)
+	endDateint, _ := helpers.MSToDateintHour(endTs)
+
+	values, err := q.mdb.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
+		OrganizationID: orgID,
+		StartDateint:   startDateint,
+		EndDateint:     endDateint,
+		StartTs:        startTs,
+		EndTs:          endTs,
+		TagName:        &tagName,
+	})
+	if err != nil {
+		slog.Warn("stream_id shortcut query failed, falling back to workers", "err", err, "tagName", tagName)
+		return nil, false
+	}
+
+	// Empty result means no segments have this tag as stream_id_field,
+	// so fall back to the full query path
+	if len(values) == 0 {
+		slog.Debug("stream_id shortcut returned no results, falling back to workers", "tagName", tagName)
+		return nil, false
+	}
+
+	slog.Info("stream_id shortcut succeeded", "tagName", tagName, "valueCount", len(values))
+	return values, true
+}
+
 func (q *QuerierService) EvaluateLogTagValuesQuery(
 	ctx context.Context,
 	orgID uuid.UUID,
@@ -152,6 +193,24 @@ func (q *QuerierService) EvaluateLogTagValuesQuery(
 	endTs int64,
 	queryPlan logql.LQueryPlan,
 ) (<-chan promql.Timestamped, error) {
+	// Try the fast path: check if the requested tag is the stream_id_field
+	// and get values directly from PostgreSQL segment metadata
+	if values, ok := q.tryLogStreamIdShortcut(ctx, orgID, startTs, endTs, queryPlan.TagName); ok {
+		out := make(chan promql.Timestamped, len(values))
+		go func() {
+			defer close(out)
+			for _, v := range values {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- promql.TagValue{Value: v}:
+				}
+			}
+		}()
+		return out, nil
+	}
+
+	// Fall back to the full query worker path
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
 		slog.Error("failed to get all workers", "err", err)

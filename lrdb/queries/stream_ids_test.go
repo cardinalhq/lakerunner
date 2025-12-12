@@ -508,3 +508,361 @@ func TestLogSegStreamIDs(t *testing.T) {
 		assert.Len(t, rows, 0)
 	})
 }
+
+func TestGetLogStreamIdValues(t *testing.T) {
+	ctx := context.Background()
+	store := testhelpers.NewTestLRDBStore(t)
+
+	orgID := uuid.New()
+	dateint := int32(20250828)
+	now := time.Now()
+	streamIDField := "resource_service_name"
+	anotherField := "resource_customer_domain"
+
+	t.Run("returns values when tag matches stream_id_field", func(t *testing.T) {
+		orgID1 := uuid.New()
+
+		// Insert segment with resource_service_name as stream_id_field
+		err := store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID1,
+			Dateint:        dateint,
+			SegmentID:      5001,
+			InstanceNum:    1,
+			StartTs:        now.UnixMilli(),
+			EndTs:          now.Add(time.Hour).UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{501},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"service-a", "service-b", "service-c"},
+			StreamIDField:  &streamIDField,
+		})
+		require.NoError(t, err)
+
+		// Query with matching tag name
+		values, err := store.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
+			OrganizationID: orgID1,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
+			TagName:        &streamIDField,
+		})
+		require.NoError(t, err)
+		assert.Len(t, values, 3)
+		assert.Contains(t, values, "service-a")
+		assert.Contains(t, values, "service-b")
+		assert.Contains(t, values, "service-c")
+	})
+
+	t.Run("returns empty when tag does not match stream_id_field", func(t *testing.T) {
+		orgID2 := uuid.New()
+
+		// Insert segment with resource_service_name as stream_id_field
+		err := store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID2,
+			Dateint:        dateint,
+			SegmentID:      5002,
+			InstanceNum:    1,
+			StartTs:        now.UnixMilli(),
+			EndTs:          now.Add(time.Hour).UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{502},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"service-x"},
+			StreamIDField:  &streamIDField,
+		})
+		require.NoError(t, err)
+
+		// Query with non-matching tag name (asking for resource_customer_domain)
+		values, err := store.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
+			OrganizationID: orgID2,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
+			TagName:        &anotherField,
+		})
+		require.NoError(t, err)
+		assert.Len(t, values, 0)
+	})
+
+	t.Run("deduplicates values across multiple segments", func(t *testing.T) {
+		orgID3 := uuid.New()
+
+		// Insert multiple segments with overlapping stream_ids
+		err := store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID3,
+			Dateint:        dateint,
+			SegmentID:      5003,
+			InstanceNum:    1,
+			StartTs:        now.UnixMilli(),
+			EndTs:          now.Add(time.Hour).UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{503},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"api-service", "web-service"},
+			StreamIDField:  &streamIDField,
+		})
+		require.NoError(t, err)
+
+		err = store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID3,
+			Dateint:        dateint,
+			SegmentID:      5004,
+			InstanceNum:    1,
+			StartTs:        now.UnixMilli(),
+			EndTs:          now.Add(time.Hour).UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{504},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"api-service", "db-service"}, // api-service is duplicate
+			StreamIDField:  &streamIDField,
+		})
+		require.NoError(t, err)
+
+		values, err := store.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
+			OrganizationID: orgID3,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
+			TagName:        &streamIDField,
+		})
+		require.NoError(t, err)
+		// Should be deduplicated: 3 unique values
+		assert.Len(t, values, 3)
+		assert.Contains(t, values, "api-service")
+		assert.Contains(t, values, "web-service")
+		assert.Contains(t, values, "db-service")
+	})
+
+	t.Run("excludes unpublished segments", func(t *testing.T) {
+		orgID4 := uuid.New()
+
+		err := store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID4,
+			Dateint:        dateint,
+			SegmentID:      5005,
+			InstanceNum:    1,
+			StartTs:        now.UnixMilli(),
+			EndTs:          now.Add(time.Hour).UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{505},
+			Published:      false, // Unpublished
+			Compacted:      false,
+			StreamIds:      []string{"hidden-service"},
+			StreamIDField:  &streamIDField,
+		})
+		require.NoError(t, err)
+
+		values, err := store.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
+			OrganizationID: orgID4,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
+			TagName:        &streamIDField,
+		})
+		require.NoError(t, err)
+		assert.Len(t, values, 0)
+	})
+
+	t.Run("respects timestamp range", func(t *testing.T) {
+		orgID5 := uuid.New()
+
+		// Segment 1: 00:00 - 01:00
+		seg1Start := time.Date(2025, 8, 28, 0, 0, 0, 0, time.UTC)
+		seg1End := time.Date(2025, 8, 28, 1, 0, 0, 0, time.UTC)
+
+		// Segment 2: 04:00 - 05:00
+		seg2Start := time.Date(2025, 8, 28, 4, 0, 0, 0, time.UTC)
+		seg2End := time.Date(2025, 8, 28, 5, 0, 0, 0, time.UTC)
+
+		err := store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID5,
+			Dateint:        dateint,
+			SegmentID:      5006,
+			InstanceNum:    1,
+			StartTs:        seg1Start.UnixMilli(),
+			EndTs:          seg1End.UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{506},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"early-service"},
+			StreamIDField:  &streamIDField,
+		})
+		require.NoError(t, err)
+
+		err = store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID5,
+			Dateint:        dateint,
+			SegmentID:      5007,
+			InstanceNum:    1,
+			StartTs:        seg2Start.UnixMilli(),
+			EndTs:          seg2End.UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{507},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"late-service"},
+			StreamIDField:  &streamIDField,
+		})
+		require.NoError(t, err)
+
+		// Query for 00:00 - 02:00 (only overlaps segment 1)
+		values, err := store.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
+			OrganizationID: orgID5,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        seg1Start.UnixMilli(),
+			EndTs:          time.Date(2025, 8, 28, 2, 0, 0, 0, time.UTC).UnixMilli(),
+			TagName:        &streamIDField,
+		})
+		require.NoError(t, err)
+		assert.Len(t, values, 1)
+		assert.Contains(t, values, "early-service")
+
+		// Query for 00:00 - 06:00 (overlaps both)
+		values, err = store.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
+			OrganizationID: orgID5,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        seg1Start.UnixMilli(),
+			EndTs:          time.Date(2025, 8, 28, 6, 0, 0, 0, time.UTC).UnixMilli(),
+			TagName:        &streamIDField,
+		})
+		require.NoError(t, err)
+		assert.Len(t, values, 2)
+		assert.Contains(t, values, "early-service")
+		assert.Contains(t, values, "late-service")
+	})
+
+	t.Run("returns sorted values", func(t *testing.T) {
+		orgID6 := uuid.New()
+
+		err := store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID6,
+			Dateint:        dateint,
+			SegmentID:      5008,
+			InstanceNum:    1,
+			StartTs:        now.UnixMilli(),
+			EndTs:          now.Add(time.Hour).UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{508},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"zebra", "alpha", "monkey"},
+			StreamIDField:  &streamIDField,
+		})
+		require.NoError(t, err)
+
+		values, err := store.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
+			OrganizationID: orgID6,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
+			TagName:        &streamIDField,
+		})
+		require.NoError(t, err)
+		assert.Len(t, values, 3)
+		// Should be sorted alphabetically
+		assert.Equal(t, "alpha", values[0])
+		assert.Equal(t, "monkey", values[1])
+		assert.Equal(t, "zebra", values[2])
+	})
+
+	t.Run("works with different stream_id_field values", func(t *testing.T) {
+		orgID7 := uuid.New()
+
+		// Insert segment with resource_service_name
+		err := store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID7,
+			Dateint:        dateint,
+			SegmentID:      5009,
+			InstanceNum:    1,
+			StartTs:        now.UnixMilli(),
+			EndTs:          now.Add(time.Hour).UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{509},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"svc-a", "svc-b"},
+			StreamIDField:  &streamIDField, // resource_service_name
+		})
+		require.NoError(t, err)
+
+		// Insert another segment with resource_customer_domain
+		err = store.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: orgID7,
+			Dateint:        dateint,
+			SegmentID:      5010,
+			InstanceNum:    1,
+			StartTs:        now.UnixMilli(),
+			EndTs:          now.Add(time.Hour).UnixMilli(),
+			FileSize:       1024,
+			RecordCount:    10,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   []int64{510},
+			Published:      true,
+			Compacted:      false,
+			StreamIds:      []string{"domain-x.com", "domain-y.com"},
+			StreamIDField:  &anotherField, // resource_customer_domain
+		})
+		require.NoError(t, err)
+
+		// Query for resource_service_name - should only get first segment's values
+		values, err := store.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
+			OrganizationID: orgID7,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
+			TagName:        &streamIDField,
+		})
+		require.NoError(t, err)
+		assert.Len(t, values, 2)
+		assert.Contains(t, values, "svc-a")
+		assert.Contains(t, values, "svc-b")
+
+		// Query for resource_customer_domain - should only get second segment's values
+		values, err = store.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
+			OrganizationID: orgID7,
+			StartDateint:   dateint,
+			EndDateint:     dateint,
+			StartTs:        now.UnixMilli() - 1,
+			EndTs:          now.Add(2 * time.Hour).UnixMilli(),
+			TagName:        &anotherField,
+		})
+		require.NoError(t, err)
+		assert.Len(t, values, 2)
+		assert.Contains(t, values, "domain-x.com")
+		assert.Contains(t, values, "domain-y.com")
+	})
+
+	// Suppress unused variable warnings
+	_ = orgID
+}
