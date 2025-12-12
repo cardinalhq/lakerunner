@@ -75,3 +75,134 @@ func benchmarkRow() pipeline.Row {
 		wkk.NewRowKey("float32s"): []float32{1.1, 2.2, 3.3, 4.4},
 	}
 }
+
+// realisticLogRow simulates a typical OTEL log record with resource/scope attributes.
+func realisticLogRow() pipeline.Row {
+	return pipeline.Row{
+		wkk.NewRowKey("timestamp"):                   int64(1702400000000000000),
+		wkk.NewRowKey("observed_timestamp"):          int64(1702400000000000001),
+		wkk.NewRowKey("severity_number"):             int32(9),
+		wkk.NewRowKey("severity_text"):               "INFO",
+		wkk.NewRowKey("body"):                        "Connection established to database server at 10.0.0.1:5432",
+		wkk.NewRowKey("fingerprint"):                 int64(1234567890123456789),
+		wkk.NewRowKey("resource_service_name"):       "payment-service",
+		wkk.NewRowKey("resource_service_version"):    "1.2.3",
+		wkk.NewRowKey("resource_host_name"):          "prod-payment-node-42",
+		wkk.NewRowKey("resource_k8s_namespace"):      "production",
+		wkk.NewRowKey("resource_k8s_pod_name"):       "payment-service-6b7c8d9e0f-abc12",
+		wkk.NewRowKey("resource_k8s_container_name"): "payment",
+		wkk.NewRowKey("resource_deployment_env"):     "production",
+		wkk.NewRowKey("scope_name"):                  "github.com/org/payment-service/db",
+		wkk.NewRowKey("scope_version"):               "1.0.0",
+		wkk.NewRowKey("attr_db_system"):              "postgresql",
+		wkk.NewRowKey("attr_db_name"):                "payments",
+		wkk.NewRowKey("attr_db_connection_string"):   "host=10.0.0.1 port=5432 dbname=payments",
+		wkk.NewRowKey("attr_net_peer_ip"):            "10.0.0.1",
+		wkk.NewRowKey("attr_net_peer_port"):          int64(5432),
+		wkk.NewRowKey("attr_thread_id"):              int64(12345),
+		wkk.NewRowKey("attr_correlation_id"):         "550e8400-e29b-41d4-a716-446655440000",
+	}
+}
+
+func BenchmarkSpillCodec_RealisticLog(b *testing.B) {
+	codec := NewSpillCodec()
+	row := realisticLogRow()
+	dst := pipeline.Row{}
+	buf := bytes.NewBuffer(make([]byte, 0, 4096))
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		_, err := codec.EncodeRowTo(buf, row)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := codec.DecodeRowFrom(bytes.NewReader(buf.Bytes()), dst); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCBORCodec_RealisticLog(b *testing.B) {
+	codec, err := New(TypeCBOR)
+	if err != nil {
+		b.Fatal(err)
+	}
+	row := realisticLogRow()
+	dst := pipeline.Row{}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		data, err := codec.EncodeRow(row)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := codec.DecodeRow(data, dst); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSpillCodec_EncodeOnly(b *testing.B) {
+	codec := NewSpillCodec()
+	row := realisticLogRow()
+	buf := bytes.NewBuffer(make([]byte, 0, 4096))
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		buf.Reset()
+		_, err := codec.EncodeRowTo(buf, row)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCBORCodec_EncodeOnly(b *testing.B) {
+	codec, err := New(TypeCBOR)
+	if err != nil {
+		b.Fatal(err)
+	}
+	row := realisticLogRow()
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := codec.EncodeRow(row)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSpillCodec_DecodeOnly(b *testing.B) {
+	codec := NewSpillCodec()
+	row := realisticLogRow()
+	buf := bytes.NewBuffer(make([]byte, 0, 4096))
+	_, _ = codec.EncodeRowTo(buf, row)
+	encoded := buf.Bytes()
+	dst := pipeline.Row{}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if err := codec.DecodeRowFrom(bytes.NewReader(encoded), dst); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCBORCodec_DecodeOnly(b *testing.B) {
+	codec, err := New(TypeCBOR)
+	if err != nil {
+		b.Fatal(err)
+	}
+	row := realisticLogRow()
+	encoded, _ := codec.EncodeRow(row)
+	dst := pipeline.Row{}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if err := codec.DecodeRow(encoded, dst); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
