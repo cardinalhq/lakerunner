@@ -449,7 +449,7 @@ func (c *SpillCodec) writeInt16Slice(w io.Writer, tag byte, values []int16) (int
 	if _, err := w.Write(c.varintBuf[:n]); err != nil {
 		return 0, err
 	}
-	var bytesWritten int32 = int32(1 + n)
+	var bytesWritten = int32(1 + n)
 	for _, v := range values {
 		binary.LittleEndian.PutUint16(c.scalarBuf[:2], uint16(v))
 		if _, err := w.Write(c.scalarBuf[:2]); err != nil {
@@ -469,7 +469,7 @@ func (c *SpillCodec) writeInt32Slice(w io.Writer, tag byte, values []int32) (int
 	if _, err := w.Write(c.varintBuf[:n]); err != nil {
 		return 0, err
 	}
-	var bytesWritten int32 = int32(1 + n)
+	var bytesWritten = int32(1 + n)
 	for _, v := range values {
 		binary.LittleEndian.PutUint32(c.scalarBuf[:4], uint32(v))
 		if _, err := w.Write(c.scalarBuf[:4]); err != nil {
@@ -489,7 +489,7 @@ func (c *SpillCodec) writeInt64Slice(w io.Writer, tag byte, values []int64) (int
 	if _, err := w.Write(c.varintBuf[:n]); err != nil {
 		return 0, err
 	}
-	var bytesWritten int32 = int32(1 + n)
+	var bytesWritten = int32(1 + n)
 	for _, v := range values {
 		binary.LittleEndian.PutUint64(c.scalarBuf[:8], uint64(v))
 		if _, err := w.Write(c.scalarBuf[:8]); err != nil {
@@ -516,7 +516,7 @@ func (c *SpillCodec) writeFloat32Slice(w io.Writer, tag byte, values []float32) 
 	if _, err := w.Write(c.varintBuf[:n]); err != nil {
 		return 0, err
 	}
-	var bytesWritten int32 = int32(1 + n)
+	var bytesWritten = int32(1 + n)
 	for _, v := range values {
 		binary.LittleEndian.PutUint32(c.scalarBuf[:4], mathFloat32bits(v))
 		if _, err := w.Write(c.scalarBuf[:4]); err != nil {
@@ -543,7 +543,7 @@ func (c *SpillCodec) writeFloat64Slice(w io.Writer, tag byte, values []float64) 
 	if _, err := w.Write(c.varintBuf[:n]); err != nil {
 		return 0, err
 	}
-	var bytesWritten int32 = int32(1 + n)
+	var bytesWritten = int32(1 + n)
 	for _, v := range values {
 		binary.LittleEndian.PutUint64(c.scalarBuf[:8], mathFloat64bits(v))
 		if _, err := w.Write(c.scalarBuf[:8]); err != nil {
@@ -578,7 +578,7 @@ func (c *SpillCodec) writeStringSlice(w io.Writer, tag byte, values []string) (i
 	if _, err := w.Write(c.varintBuf[:n]); err != nil {
 		return 0, err
 	}
-	var bytesWritten int32 = int32(1 + n)
+	var bytesWritten = int32(1 + n)
 	for _, s := range values {
 		strLen := binary.PutUvarint(c.varintBuf[:], uint64(len(s)))
 		if _, err := w.Write(c.varintBuf[:strLen]); err != nil {
@@ -601,7 +601,7 @@ func (c *SpillCodec) writeBoolSlice(w io.Writer, tag byte, values []bool) (int32
 	if _, err := w.Write(c.varintBuf[:n]); err != nil {
 		return 0, err
 	}
-	var bytesWritten int32 = int32(1 + n)
+	var bytesWritten = int32(1 + n)
 	for _, v := range values {
 		b := byte(0)
 		if v {
