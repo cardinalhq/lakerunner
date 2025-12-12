@@ -61,6 +61,17 @@ const (
 	spillTagStringSlice
 	spillTagBool
 	spillTagBoolSlice
+
+	// Nil slice tags - preserve typed nil vs empty slice distinction
+	spillTagNilBytes
+	spillTagNilInt8Slice
+	spillTagNilInt16Slice
+	spillTagNilInt32Slice
+	spillTagNilInt64Slice
+	spillTagNilFloat32Slice
+	spillTagNilFloat64Slice
+	spillTagNilStringSlice
+	spillTagNilBoolSlice
 )
 
 var (
@@ -109,10 +120,18 @@ func (c *SpillCodec) EncodeRowTo(w io.Writer, row pipeline.Row) (int32, error) {
 			}
 			byteLen += 2
 		case []byte:
-			count, err := c.writeBytes(w, spillTagBytes, v)
-			byteLen += count
-			if err != nil {
-				return 0, err
+			if v == nil {
+				count, err := c.writeNilTag(w, spillTagNilBytes)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
+			} else {
+				count, err := c.writeBytes(w, spillTagBytes, v)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
 			}
 		case int8:
 			if err := c.writeByte(w, spillTagInt8, byte(v)); err != nil {
@@ -120,10 +139,18 @@ func (c *SpillCodec) EncodeRowTo(w io.Writer, row pipeline.Row) (int32, error) {
 			}
 			byteLen += 2
 		case []int8:
-			count, err := c.writeInt8Slice(w, spillTagInt8Slice, v)
-			byteLen += count
-			if err != nil {
-				return 0, err
+			if v == nil {
+				count, err := c.writeNilTag(w, spillTagNilInt8Slice)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
+			} else {
+				count, err := c.writeInt8Slice(w, spillTagInt8Slice, v)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
 			}
 		case int16:
 			count, err := c.writeFixedScalar(w, spillTagInt16, uint64(v), 2)
@@ -132,10 +159,18 @@ func (c *SpillCodec) EncodeRowTo(w io.Writer, row pipeline.Row) (int32, error) {
 				return 0, err
 			}
 		case []int16:
-			count, err := c.writeInt16Slice(w, spillTagInt16Slice, v)
-			byteLen += count
-			if err != nil {
-				return 0, err
+			if v == nil {
+				count, err := c.writeNilTag(w, spillTagNilInt16Slice)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
+			} else {
+				count, err := c.writeInt16Slice(w, spillTagInt16Slice, v)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
 			}
 		case int32:
 			count, err := c.writeFixedScalar(w, spillTagInt32, uint64(v), 4)
@@ -144,10 +179,18 @@ func (c *SpillCodec) EncodeRowTo(w io.Writer, row pipeline.Row) (int32, error) {
 				return 0, err
 			}
 		case []int32:
-			count, err := c.writeInt32Slice(w, spillTagInt32Slice, v)
-			byteLen += count
-			if err != nil {
-				return 0, err
+			if v == nil {
+				count, err := c.writeNilTag(w, spillTagNilInt32Slice)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
+			} else {
+				count, err := c.writeInt32Slice(w, spillTagInt32Slice, v)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
 			}
 		case int64:
 			count, err := c.writeFixedScalar(w, spillTagInt64, uint64(v), 8)
@@ -156,10 +199,18 @@ func (c *SpillCodec) EncodeRowTo(w io.Writer, row pipeline.Row) (int32, error) {
 				return 0, err
 			}
 		case []int64:
-			count, err := c.writeInt64Slice(w, spillTagInt64Slice, v)
-			byteLen += count
-			if err != nil {
-				return 0, err
+			if v == nil {
+				count, err := c.writeNilTag(w, spillTagNilInt64Slice)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
+			} else {
+				count, err := c.writeInt64Slice(w, spillTagInt64Slice, v)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
 			}
 		case float32:
 			count, err := c.writeFloat32(w, spillTagFloat32, v)
@@ -168,10 +219,18 @@ func (c *SpillCodec) EncodeRowTo(w io.Writer, row pipeline.Row) (int32, error) {
 				return 0, err
 			}
 		case []float32:
-			count, err := c.writeFloat32Slice(w, spillTagFloat32Slice, v)
-			byteLen += count
-			if err != nil {
-				return 0, err
+			if v == nil {
+				count, err := c.writeNilTag(w, spillTagNilFloat32Slice)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
+			} else {
+				count, err := c.writeFloat32Slice(w, spillTagFloat32Slice, v)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
 			}
 		case float64:
 			count, err := c.writeFloat64(w, spillTagFloat64, v)
@@ -180,10 +239,18 @@ func (c *SpillCodec) EncodeRowTo(w io.Writer, row pipeline.Row) (int32, error) {
 				return 0, err
 			}
 		case []float64:
-			count, err := c.writeFloat64Slice(w, spillTagFloat64Slice, v)
-			byteLen += count
-			if err != nil {
-				return 0, err
+			if v == nil {
+				count, err := c.writeNilTag(w, spillTagNilFloat64Slice)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
+			} else {
+				count, err := c.writeFloat64Slice(w, spillTagFloat64Slice, v)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
 			}
 		case string:
 			count, err := c.writeString(w, spillTagString, v)
@@ -192,10 +259,18 @@ func (c *SpillCodec) EncodeRowTo(w io.Writer, row pipeline.Row) (int32, error) {
 				return 0, err
 			}
 		case []string:
-			count, err := c.writeStringSlice(w, spillTagStringSlice, v)
-			byteLen += count
-			if err != nil {
-				return 0, err
+			if v == nil {
+				count, err := c.writeNilTag(w, spillTagNilStringSlice)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
+			} else {
+				count, err := c.writeStringSlice(w, spillTagStringSlice, v)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
 			}
 		case bool:
 			if err := c.writeByte(w, spillTagBool, boolToByte(v)); err != nil {
@@ -203,10 +278,18 @@ func (c *SpillCodec) EncodeRowTo(w io.Writer, row pipeline.Row) (int32, error) {
 			}
 			byteLen += 2
 		case []bool:
-			count, err := c.writeBoolSlice(w, spillTagBoolSlice, v)
-			byteLen += count
-			if err != nil {
-				return 0, err
+			if v == nil {
+				count, err := c.writeNilTag(w, spillTagNilBoolSlice)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
+			} else {
+				count, err := c.writeBoolSlice(w, spillTagBoolSlice, v)
+				byteLen += count
+				if err != nil {
+					return 0, err
+				}
 			}
 		default:
 			return 0, fmt.Errorf("unsupported type %T", v)
@@ -356,6 +439,27 @@ func (c *SpillCodec) DecodeRowFrom(r io.Reader, dst pipeline.Row) error {
 				return err
 			}
 			dst[key] = v
+
+		// Nil slice tags - return typed nil slices
+		case spillTagNilBytes:
+			dst[key] = []byte(nil)
+		case spillTagNilInt8Slice:
+			dst[key] = []int8(nil)
+		case spillTagNilInt16Slice:
+			dst[key] = []int16(nil)
+		case spillTagNilInt32Slice:
+			dst[key] = []int32(nil)
+		case spillTagNilInt64Slice:
+			dst[key] = []int64(nil)
+		case spillTagNilFloat32Slice:
+			dst[key] = []float32(nil)
+		case spillTagNilFloat64Slice:
+			dst[key] = []float64(nil)
+		case spillTagNilStringSlice:
+			dst[key] = []string(nil)
+		case spillTagNilBoolSlice:
+			dst[key] = []bool(nil)
+
 		default:
 			return fmt.Errorf("unknown type tag %d", tag)
 		}
@@ -405,6 +509,12 @@ func (c *SpillCodec) writeByte(w io.Writer, tag byte, v byte) error {
 
 func (c *SpillCodec) writeNil(w io.Writer) (int32, error) {
 	c.scalarBuf[0] = spillTagNil
+	_, err := w.Write(c.scalarBuf[:1])
+	return 1, err
+}
+
+func (c *SpillCodec) writeNilTag(w io.Writer, tag byte) (int32, error) {
+	c.scalarBuf[0] = tag
 	_, err := w.Write(c.scalarBuf[:1])
 	return 1, err
 }

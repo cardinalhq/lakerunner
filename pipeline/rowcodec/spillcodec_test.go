@@ -145,3 +145,68 @@ func TestSpillCodec_UnknownTypeTag(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown type tag")
 }
+
+func TestSpillCodec_NilSlicePreservation(t *testing.T) {
+	codec := NewSpillCodec()
+
+	// Test all slice types: nil vs empty should be preserved
+	row := pipeline.Row{
+		wkk.NewRowKey("nil_bytes"):    []byte(nil),
+		wkk.NewRowKey("empty_bytes"):  []byte{},
+		wkk.NewRowKey("nil_int8s"):    []int8(nil),
+		wkk.NewRowKey("empty_int8s"):  []int8{},
+		wkk.NewRowKey("nil_int16s"):   []int16(nil),
+		wkk.NewRowKey("empty_int16s"): []int16{},
+		wkk.NewRowKey("nil_int32s"):   []int32(nil),
+		wkk.NewRowKey("empty_int32s"): []int32{},
+		wkk.NewRowKey("nil_int64s"):   []int64(nil),
+		wkk.NewRowKey("empty_int64s"): []int64{},
+		wkk.NewRowKey("nil_f32s"):     []float32(nil),
+		wkk.NewRowKey("empty_f32s"):   []float32{},
+		wkk.NewRowKey("nil_f64s"):     []float64(nil),
+		wkk.NewRowKey("empty_f64s"):   []float64{},
+		wkk.NewRowKey("nil_strings"):  []string(nil),
+		wkk.NewRowKey("empty_strs"):   []string{},
+		wkk.NewRowKey("nil_bools"):    []bool(nil),
+		wkk.NewRowKey("empty_bools"):  []bool{},
+	}
+
+	var buf bytes.Buffer
+	_, err := codec.EncodeRowTo(&buf, row)
+	require.NoError(t, err)
+
+	decoded := pipeline.Row{}
+	err = codec.DecodeRowFrom(bytes.NewReader(buf.Bytes()), decoded)
+	require.NoError(t, err)
+
+	// Verify nil slices are nil
+	require.Nil(t, decoded[wkk.NewRowKey("nil_bytes")])
+	require.Nil(t, decoded[wkk.NewRowKey("nil_int8s")])
+	require.Nil(t, decoded[wkk.NewRowKey("nil_int16s")])
+	require.Nil(t, decoded[wkk.NewRowKey("nil_int32s")])
+	require.Nil(t, decoded[wkk.NewRowKey("nil_int64s")])
+	require.Nil(t, decoded[wkk.NewRowKey("nil_f32s")])
+	require.Nil(t, decoded[wkk.NewRowKey("nil_f64s")])
+	require.Nil(t, decoded[wkk.NewRowKey("nil_strings")])
+	require.Nil(t, decoded[wkk.NewRowKey("nil_bools")])
+
+	// Verify empty slices are non-nil but empty
+	require.NotNil(t, decoded[wkk.NewRowKey("empty_bytes")])
+	require.Empty(t, decoded[wkk.NewRowKey("empty_bytes")])
+	require.NotNil(t, decoded[wkk.NewRowKey("empty_int8s")])
+	require.Empty(t, decoded[wkk.NewRowKey("empty_int8s")])
+	require.NotNil(t, decoded[wkk.NewRowKey("empty_int16s")])
+	require.Empty(t, decoded[wkk.NewRowKey("empty_int16s")])
+	require.NotNil(t, decoded[wkk.NewRowKey("empty_int32s")])
+	require.Empty(t, decoded[wkk.NewRowKey("empty_int32s")])
+	require.NotNil(t, decoded[wkk.NewRowKey("empty_int64s")])
+	require.Empty(t, decoded[wkk.NewRowKey("empty_int64s")])
+	require.NotNil(t, decoded[wkk.NewRowKey("empty_f32s")])
+	require.Empty(t, decoded[wkk.NewRowKey("empty_f32s")])
+	require.NotNil(t, decoded[wkk.NewRowKey("empty_f64s")])
+	require.Empty(t, decoded[wkk.NewRowKey("empty_f64s")])
+	require.NotNil(t, decoded[wkk.NewRowKey("empty_strs")])
+	require.Empty(t, decoded[wkk.NewRowKey("empty_strs")])
+	require.NotNil(t, decoded[wkk.NewRowKey("empty_bools")])
+	require.Empty(t, decoded[wkk.NewRowKey("empty_bools")])
+}
