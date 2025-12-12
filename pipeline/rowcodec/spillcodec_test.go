@@ -16,6 +16,7 @@ package rowcodec
 
 import (
 	"bytes"
+	"encoding/binary"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,7 @@ func TestSpillCodec_RoundTripAllTypes(t *testing.T) {
 	codec := NewSpillCodec()
 
 	row := pipeline.Row{
+		wkk.NewRowKey("nil_value"):      nil,
 		wkk.NewRowKey("byte"):           byte(7),
 		wkk.NewRowKey("bytes"):          []byte{1, 2, 3, 4},
 		wkk.NewRowKey("int8"):           int8(-8),
@@ -89,4 +91,57 @@ func TestSpillCodec_SharedDictionaryAcrossInstances(t *testing.T) {
 	err = codec2.DecodeRowFrom(bytes.NewReader(buf.Bytes()), decoded)
 	require.NoError(t, err)
 	require.Equal(t, row, decoded)
+}
+
+func TestSpillCodec_EmptyRow(t *testing.T) {
+	codec := NewSpillCodec()
+	row := pipeline.Row{}
+
+	var buf bytes.Buffer
+	byteLen, err := codec.EncodeRowTo(&buf, row)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), byteLen) // Just the varint for field count 0
+
+	decoded := pipeline.Row{}
+	err = codec.DecodeRowFrom(bytes.NewReader(buf.Bytes()), decoded)
+	require.NoError(t, err)
+	require.Empty(t, decoded)
+}
+
+func TestSpillCodec_UnknownKeyID(t *testing.T) {
+	// Craft bytes with an invalid key ID that doesn't exist in the dictionary
+	var buf bytes.Buffer
+	buf.WriteByte(1) // field count = 1 (varint)
+	require.NoError(t, binary.Write(&buf, binary.LittleEndian, uint32(999999999)))
+	buf.WriteByte(spillTagInt64)
+	require.NoError(t, binary.Write(&buf, binary.LittleEndian, int64(123)))
+
+	codec := NewSpillCodec()
+	decoded := pipeline.Row{}
+	err := codec.DecodeRowFrom(bytes.NewReader(buf.Bytes()), decoded)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown key id")
+}
+
+func TestSpillCodec_UnknownTypeTag(t *testing.T) {
+	codec := NewSpillCodec()
+
+	// Encode a valid row first to get a known key into the dictionary
+	row := pipeline.Row{wkk.NewRowKey("test_unknown_tag"): int64(1)}
+	var validBuf bytes.Buffer
+	_, err := codec.EncodeRowTo(&validBuf, row)
+	require.NoError(t, err)
+
+	// Now craft bytes with a valid key ID but unknown type tag (255)
+	var buf bytes.Buffer
+	buf.WriteByte(1) // field count = 1
+	// Get the key ID that was assigned
+	keyID := codec.ensureKeyID(wkk.NewRowKey("test_unknown_tag"))
+	require.NoError(t, binary.Write(&buf, binary.LittleEndian, keyID))
+	buf.WriteByte(255) // invalid type tag
+
+	decoded := pipeline.Row{}
+	err = codec.DecodeRowFrom(bytes.NewReader(buf.Bytes()), decoded)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown type tag")
 }

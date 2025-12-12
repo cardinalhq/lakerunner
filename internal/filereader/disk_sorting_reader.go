@@ -277,12 +277,12 @@ func (r *DiskSortingReader) Close() error {
 	}
 
 	// Clean up temp file
-	var fileErr error
+	var flushErr, closeErr, removeErr error
 	if r.tempFile != nil {
 		fileName := r.tempFile.Name()
-		_ = r.writer.Flush()
-		_ = r.tempFile.Close()
-		fileErr = os.Remove(fileName)
+		flushErr = r.writer.Flush()
+		closeErr = r.tempFile.Close()
+		removeErr = os.Remove(fileName)
 	}
 
 	// Release any remaining sort keys back to their pools
@@ -299,7 +299,13 @@ func (r *DiskSortingReader) Close() error {
 	if readerErr != nil {
 		return readerErr
 	}
-	return fileErr
+	if flushErr != nil {
+		return flushErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return removeErr
 }
 
 // TotalRowsReturned returns the number of rows that have been returned via Next().

@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"unsafe"
 
@@ -371,6 +372,9 @@ func (c *SpillCodec) ensureKeyID(key wkk.RowKey) uint32 {
 	defer spillKeyMu.Unlock()
 	if id, ok := spillKeyToID[key]; ok {
 		return id
+	}
+	if len(spillIDToKey) >= math.MaxUint32 {
+		panic("spill key dictionary overflow: too many unique keys")
 	}
 	id = uint32(len(spillIDToKey))
 	spillKeyToID[key] = id
