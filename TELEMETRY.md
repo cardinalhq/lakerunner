@@ -53,7 +53,7 @@ Many metrics include these standardized attributes:
 | `lakerunner.workqueue.duration` | The duration in seconds for a work item to be processed | s | - |
 | `lakerunner.workqueue.lag` | The lag in seconds for a work item to be processed in the work queue | s | - |
 | `lakerunner.workqueue.request.delay` | The delay in ms for a request for new work to be returned | s | - |
-| `lakerunner.querycache.eviction_duration_seconds` | Duration of cache eviction cycles | s | - |
+| `lakerunner.querycache.eviction_duration_seconds` | Duration of cache eviction cycles | s | `signal` |
 
 ## Gauges
 
@@ -69,13 +69,13 @@ Many metrics include these standardized attributes:
 | `lakerunner.duckdb.memory.wal_size` | DuckDB WAL size | By | - |
 | `lakerunner.process.memory.rss` | Process resident set size (physical memory) | By | - |
 | `lakerunner.process.memory.vms` | Process virtual memory size | By | - |
-| `lakerunner.querycache.rows` | Current number of rows in the query cache | 1 | - |
-| `lakerunner.querycache.rows_limit` | Configured row limit for the query cache | 1 | - |
-| `lakerunner.querycache.rows_utilization` | Row usage ratio (0-1, may exceed 1 if over limit) | 1 | - |
-| `lakerunner.querycache.disk_bytes` | Current disk usage of the query cache | By | - |
-| `lakerunner.querycache.disk_bytes_limit` | Configured disk usage limit for the query cache | By | - |
-| `lakerunner.querycache.disk_utilization` | Disk usage ratio (0-1, may exceed 1 if over limit) | 1 | - |
-| `lakerunner.querycache.lru_depth` | Number of segments tracked in the LRU cache | 1 | - |
+| `lakerunner.querycache.rows` | Current number of rows in the query cache | 1 | `signal` |
+| `lakerunner.querycache.rows_limit` | Configured row limit for the query cache | 1 | `signal` |
+| `lakerunner.querycache.rows_utilization` | Row usage ratio (0-1, may exceed 1 if over limit) | 1 | `signal` |
+| `lakerunner.querycache.disk_bytes` | Current disk usage of the query cache | By | `signal` |
+| `lakerunner.querycache.disk_bytes_limit` | Configured disk usage limit for the query cache | By | `signal` |
+| `lakerunner.querycache.disk_utilization` | Disk usage ratio (0-1, may exceed 1 if over limit) | 1 | `signal` |
+| `lakerunner.querycache.lru_depth` | Number of segments tracked in the LRU cache | 1 | `signal` |
 | `lakerunner.sweeper.cleanup_partitions_known` | Number of org-dateint combinations scheduled for cleanup | 1 | `signal` |
 | `lakerunner.sweeper.pack_estimate_target_records` | Target record estimates for pack tables | 1 | `signal`, `organization_id`, `frequency_ms` |
 | `lakerunner.exists` | Indicates if the service is running (1) or not (0) | - | - |

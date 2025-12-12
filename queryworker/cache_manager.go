@@ -227,13 +227,14 @@ func (w *CacheManager) Close() {
 
 func (w *CacheManager) registerMetrics() error {
 	meter := otel.Meter("lakerunner.querycache")
+	signalAttr := attribute.String("signal", w.dataset)
 
 	// Row count metrics
 	_, err := meter.Int64ObservableGauge(
 		"lakerunner.querycache.rows",
 		metric.WithDescription("Current number of rows in the query cache"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(w.sink.RowCount())
+			o.Observe(w.sink.RowCount(), metric.WithAttributes(signalAttr))
 			return nil
 		}),
 	)
@@ -245,7 +246,7 @@ func (w *CacheManager) registerMetrics() error {
 		"lakerunner.querycache.rows_limit",
 		metric.WithDescription("Configured row limit for the query cache"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(w.maxRows)
+			o.Observe(w.maxRows, metric.WithAttributes(signalAttr))
 			return nil
 		}),
 	)
@@ -258,7 +259,7 @@ func (w *CacheManager) registerMetrics() error {
 		metric.WithDescription("Utilization of max rows in the query cache (0-1, may exceed 1 if over limit)"),
 		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
 			if w.maxRows > 0 {
-				o.Observe(float64(w.sink.RowCount()) / float64(w.maxRows))
+				o.Observe(float64(w.sink.RowCount())/float64(w.maxRows), metric.WithAttributes(signalAttr))
 			}
 			return nil
 		}),
@@ -275,7 +276,7 @@ func (w *CacheManager) registerMetrics() error {
 			dbPath := w.s3Pool.GetDatabasePath()
 			usedBytes, _, err := getDiskUsage(dbPath)
 			if err == nil {
-				o.Observe(int64(usedBytes))
+				o.Observe(int64(usedBytes), metric.WithAttributes(signalAttr))
 			}
 			return nil
 		}),
@@ -288,7 +289,7 @@ func (w *CacheManager) registerMetrics() error {
 		"lakerunner.querycache.disk_bytes_limit",
 		metric.WithDescription("Configured disk usage limit in bytes"),
 		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			o.Observe(int64(w.maxDiskUsageBytes))
+			o.Observe(int64(w.maxDiskUsageBytes), metric.WithAttributes(signalAttr))
 			return nil
 		}),
 	)
@@ -303,7 +304,7 @@ func (w *CacheManager) registerMetrics() error {
 			dbPath := w.s3Pool.GetDatabasePath()
 			usedBytes, _, err := getDiskUsage(dbPath)
 			if err == nil && w.maxDiskUsageBytes > 0 {
-				o.Observe(float64(usedBytes) / float64(w.maxDiskUsageBytes))
+				o.Observe(float64(usedBytes)/float64(w.maxDiskUsageBytes), metric.WithAttributes(signalAttr))
 			}
 			return nil
 		}),
@@ -320,7 +321,7 @@ func (w *CacheManager) registerMetrics() error {
 			w.mu.RLock()
 			depth := len(w.present)
 			w.mu.RUnlock()
-			o.Observe(int64(depth))
+			o.Observe(int64(depth), metric.WithAttributes(signalAttr))
 			return nil
 		}),
 	)
@@ -940,7 +941,8 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 		evictStart := time.Now()
 		defer func() {
 			if w.evictionDurationHist != nil {
-				w.evictionDurationHist.Record(ctx, time.Since(evictStart).Seconds())
+				w.evictionDurationHist.Record(ctx, time.Since(evictStart).Seconds(),
+					metric.WithAttributes(attribute.String("signal", w.dataset)))
 			}
 		}()
 
