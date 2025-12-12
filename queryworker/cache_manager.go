@@ -32,6 +32,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -153,6 +154,9 @@ type CacheManager struct {
 	ingestQ    chan ingestJob
 	stopIngest context.CancelFunc
 	ingestWG   sync.WaitGroup
+
+	// metrics
+	evictionDurationHist metric.Float64Histogram
 }
 
 const (
@@ -214,6 +218,154 @@ func (w *CacheManager) Close() {
 		w.stopIngest()
 	}
 	w.ingestWG.Wait()
+}
+
+// RegisterCacheMetrics registers OTEL metrics for multiple CacheManagers.
+// This must be called once with all CacheManagers to avoid callback conflicts.
+func RegisterCacheMetrics(managers ...*CacheManager) error {
+	meter := otel.Meter("lakerunner.querycache")
+
+	// Row count metrics
+	_, err := meter.Int64ObservableGauge(
+		"lakerunner.querycache.rows",
+		metric.WithDescription("Current number of rows in the query cache"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			for _, w := range managers {
+				if w != nil && w.sink != nil {
+					o.Observe(w.sink.RowCount(), metric.WithAttributes(attribute.String("signal", w.dataset)))
+				}
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create rows gauge: %w", err)
+	}
+
+	_, err = meter.Int64ObservableGauge(
+		"lakerunner.querycache.rows_limit",
+		metric.WithDescription("Configured row limit for the query cache"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			for _, w := range managers {
+				if w != nil {
+					o.Observe(w.maxRows, metric.WithAttributes(attribute.String("signal", w.dataset)))
+				}
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create rows_limit gauge: %w", err)
+	}
+
+	_, err = meter.Float64ObservableGauge(
+		"lakerunner.querycache.rows_utilization",
+		metric.WithDescription("Utilization of max rows in the query cache (0-1, may exceed 1 if over limit)"),
+		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
+			for _, w := range managers {
+				if w != nil && w.sink != nil && w.maxRows > 0 {
+					o.Observe(float64(w.sink.RowCount())/float64(w.maxRows), metric.WithAttributes(attribute.String("signal", w.dataset)))
+				}
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create rows_utilization gauge: %w", err)
+	}
+
+	// Disk usage metrics
+	_, err = meter.Int64ObservableGauge(
+		"lakerunner.querycache.disk_bytes",
+		metric.WithDescription("Current disk usage in bytes"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			for _, w := range managers {
+				if w != nil {
+					dbPath := w.s3Pool.GetDatabasePath()
+					usedBytes, _, err := getDiskUsage(dbPath)
+					if err == nil {
+						o.Observe(int64(usedBytes), metric.WithAttributes(attribute.String("signal", w.dataset)))
+					}
+				}
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create disk_bytes gauge: %w", err)
+	}
+
+	_, err = meter.Int64ObservableGauge(
+		"lakerunner.querycache.disk_bytes_limit",
+		metric.WithDescription("Configured disk usage limit in bytes"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			for _, w := range managers {
+				if w != nil {
+					o.Observe(int64(w.maxDiskUsageBytes), metric.WithAttributes(attribute.String("signal", w.dataset)))
+				}
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create disk_bytes_limit gauge: %w", err)
+	}
+
+	_, err = meter.Float64ObservableGauge(
+		"lakerunner.querycache.disk_utilization",
+		metric.WithDescription("Utilization of max disk space (0-1, may exceed 1 if over limit)"),
+		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
+			for _, w := range managers {
+				if w != nil {
+					dbPath := w.s3Pool.GetDatabasePath()
+					usedBytes, _, err := getDiskUsage(dbPath)
+					if err == nil && w.maxDiskUsageBytes > 0 {
+						o.Observe(float64(usedBytes)/float64(w.maxDiskUsageBytes), metric.WithAttributes(attribute.String("signal", w.dataset)))
+					}
+				}
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create disk_utilization gauge: %w", err)
+	}
+
+	// LRU depth (number of segments tracked)
+	_, err = meter.Int64ObservableGauge(
+		"lakerunner.querycache.lru_depth",
+		metric.WithDescription("Number of segments tracked in the LRU cache"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			for _, w := range managers {
+				if w != nil {
+					w.mu.RLock()
+					depth := len(w.present)
+					w.mu.RUnlock()
+					o.Observe(int64(depth), metric.WithAttributes(attribute.String("signal", w.dataset)))
+				}
+			}
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create lru_depth gauge: %w", err)
+	}
+
+	// Eviction duration histogram - register once, each manager records with its own signal attribute
+	hist, err := meter.Float64Histogram(
+		"lakerunner.querycache.eviction_duration_seconds",
+		metric.WithDescription("Duration of eviction cycles in seconds"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create eviction_duration histogram: %w", err)
+	}
+	for _, w := range managers {
+		if w != nil {
+			w.evictionDurationHist = hist
+		}
+	}
+
+	return nil
 }
 
 func (w *CacheManager) getProfile(ctx context.Context, orgID uuid.UUID, inst int16) (storageprofile.StorageProfile, error) {
@@ -516,7 +668,7 @@ func streamFromS3[T promql.Timestamped](
 	request queryapi.PushDownRequest,
 	profile storageprofile.StorageProfile,
 	s3URIs []string,
-	s3GlobSize int,
+	_ int, // s3GlobSize now unused: single-batch S3
 	userSQL string,
 	mapper RowMapper[T],
 ) ([]<-chan T, error) {
@@ -524,116 +676,109 @@ func streamFromS3[T promql.Timestamped](
 		return []<-chan T{}, nil
 	}
 
-	batches := chunkStrings(s3URIs, s3GlobSize)
-	outs := make([]<-chan T, 0, len(batches))
+	// Single S3 batch per worker: one channel, one goroutine
+	out := make(chan T, ChannelBufferSize)
+	outs := []<-chan T{out}
 
-	for batchIdx, uris := range batches {
-		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
-		out := make(chan T, ChannelBufferSize)
-		outs = append(outs, out)
+	urisCopy := append([]string(nil), s3URIs...) // capture
+	batchNum := 0                                // always 0; single batch
 
-		urisCopy := append([]string(nil), uris...) // capture loop var
-		batchNum := batchIdx                       // capture for goroutine
+	go func(out chan<- T) {
+		defer close(out)
 
-		go func(out chan<- T) {
-			defer close(out)
+		tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
+		_, s3Span := tracer.Start(ctx, "query.worker.stream_from_s3")
+		defer s3Span.End()
 
-			tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
-			_, s3Span := tracer.Start(ctx, "query.worker.stream_from_s3")
-			defer s3Span.End()
+		s3Span.SetAttributes(
+			attribute.Int("batch_index", batchNum),
+			attribute.Int("file_count", len(urisCopy)),
+			attribute.String("bucket", profile.Bucket),
+			attribute.String("cloud_provider", profile.CloudProvider),
+		)
 
-			s3Span.SetAttributes(
-				attribute.Int("batch_index", batchNum),
-				attribute.Int("file_count", len(urisCopy)),
-				attribute.String("bucket", profile.Bucket),
-				attribute.String("cloud_provider", profile.CloudProvider),
-			)
+		// Build read_parquet source
+		quoted := make([]string, len(urisCopy))
+		for i := range urisCopy {
+			quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
+		}
+		array := "[" + strings.Join(quoted, ", ") + "]"
+		src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 
-			// Build read_parquet source
-			quoted := make([]string, len(urisCopy))
-			for i := range urisCopy {
-				quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
-			}
-			array := "[" + strings.Join(quoted, ", ") + "]"
-			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
+		sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 
-			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+		// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
+		_, connSpan := tracer.Start(ctx, "query.worker.s3_connection_acquire")
+		start := time.Now()
+		conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, profile)
+		connectionAcquireTime := time.Since(start)
+		connSpan.SetAttributes(attribute.Int64("duration_ms", connectionAcquireTime.Milliseconds()))
+		connSpan.End()
+		slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", profile.Bucket)
 
-			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
-			_, connSpan := tracer.Start(ctx, "query.worker.s3_connection_acquire")
-			start := time.Now()
-			conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, profile)
-			connectionAcquireTime := time.Since(start)
-			connSpan.SetAttributes(attribute.Int64("duration_ms", connectionAcquireTime.Milliseconds()))
-			connSpan.End()
-			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", profile.Bucket)
+		if err != nil {
+			s3Span.RecordError(err)
+			s3Span.SetStatus(codes.Error, "connection acquire failed")
+			slog.Error("GetConnection failed", slog.String("bucket", profile.Bucket), slog.Any("error", err))
+			return
+		}
+		defer release()
 
-			if err != nil {
-				s3Span.RecordError(err)
-				s3Span.SetStatus(codes.Error, "connection acquire failed")
-				slog.Error("GetConnection failed", slog.String("bucket", profile.Bucket), slog.Any("error", err))
-				return
-			}
-			// Ensure rows close before releasing the connection
-			defer release()
-
-			_, querySpan := tracer.Start(ctx, "query.worker.s3_query_execute")
-			rows, err := executeQueryWithRetry(ctx, conn, sqlReplaced, "S3", len(urisCopy))
-			if err != nil {
-				querySpan.RecordError(err)
-				querySpan.SetStatus(codes.Error, "query failed")
-				querySpan.End()
-				s3Span.RecordError(err)
-				s3Span.SetStatus(codes.Error, "query failed")
-				return
-			}
+		_, querySpan := tracer.Start(ctx, "query.worker.s3_query_execute")
+		rows, err := executeQueryWithRetry(ctx, conn, sqlReplaced, "S3", len(urisCopy))
+		if err != nil {
+			querySpan.RecordError(err)
+			querySpan.SetStatus(codes.Error, "query failed")
 			querySpan.End()
-			defer func() {
-				if err := rows.Close(); err != nil {
-					slog.Error("Error closing rows", slog.Any("error", err))
-				}
-			}()
+			s3Span.RecordError(err)
+			s3Span.SetStatus(codes.Error, "query failed")
+			return
+		}
+		querySpan.End()
+		defer func() {
+			if err := rows.Close(); err != nil {
+				slog.Error("Error closing rows", slog.Any("error", err))
+			}
+		}()
 
-			cols, err := rows.Columns()
-			if err != nil {
-				s3Span.RecordError(err)
-				s3Span.SetStatus(codes.Error, "failed to get columns")
-				slog.Error("failed to get columns", slog.Any("error", err))
+		cols, err := rows.Columns()
+		if err != nil {
+			s3Span.RecordError(err)
+			s3Span.SetStatus(codes.Error, "failed to get columns")
+			slog.Error("failed to get columns", slog.Any("error", err))
+			return
+		}
+
+		rowCount := 0
+		for rows.Next() {
+			select {
+			case <-ctx.Done():
+				s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
+				s3Span.SetStatus(codes.Error, "context cancelled")
+				slog.Warn("Context cancelled during S3 row iteration", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsProcessed", rowCount))
+				return
+			default:
+			}
+			v, mErr := mapper(request, cols, rows)
+			if mErr != nil {
+				s3Span.RecordError(mErr)
+				s3Span.SetStatus(codes.Error, "row mapping failed")
+				slog.Error("Row mapping failed", slog.Any("error", mErr))
 				return
 			}
+			out <- v
+			rowCount++
+		}
+		if err := rows.Err(); err != nil {
+			s3Span.RecordError(err)
+			s3Span.SetStatus(codes.Error, "rows iteration error")
+			slog.Error("Rows iteration error", slog.Any("error", err))
+			return
+		}
+		s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
+		slog.Info("S3 query completed", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsReturned", rowCount))
+	}(out)
 
-			rowCount := 0
-			for rows.Next() {
-				select {
-				case <-ctx.Done():
-					s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
-					s3Span.SetStatus(codes.Error, "context cancelled")
-					slog.Warn("Context cancelled during S3 row iteration", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsProcessed", rowCount))
-					return
-				default:
-				}
-				v, mErr := mapper(request, cols, rows)
-				if mErr != nil {
-					s3Span.RecordError(mErr)
-					s3Span.SetStatus(codes.Error, "row mapping failed")
-					slog.Error("Row mapping failed", slog.Any("error", mErr))
-					return
-				}
-				out <- v
-				rowCount++
-			}
-			if err := rows.Err(); err != nil {
-				s3Span.RecordError(err)
-				s3Span.SetStatus(codes.Error, "rows iteration error")
-				slog.Error("Rows iteration error", slog.Any("error", err))
-				return
-			}
-			s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
-			slog.Info("S3 query completed", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsReturned", rowCount))
-		}(out)
-	}
-
-	// enqueue is done in EvaluatePushDown(...) after ids/paths are known
 	return outs, nil
 }
 
@@ -760,25 +905,34 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 	}
 }
 
-func chunkStrings(xs []string, size int) [][]string {
-	if size <= 0 || len(xs) == 0 {
-		return nil
-	}
-	var out [][]string
-	for i := 0; i < len(xs); i += size {
-		j := i + size
-		if j > len(xs) {
-			j = len(xs)
-		}
-		out = append(out, xs[i:j])
-	}
-	return out
-}
-
 const batchSize = 300
 
 func escapeSQL(s string) string {
 	return strings.ReplaceAll(s, `'`, `''`)
+}
+
+// evictedEnough returns true if we've evicted enough to be 10% under the limits.
+// This provides a buffer to avoid thrashing at the boundary.
+func (w *CacheManager) evictedEnough() bool {
+	// Target 90% of maxRows to provide 10% buffer
+	targetRows := int64(float64(w.maxRows) * 0.9)
+	if w.sink.RowCount() > targetRows {
+		return false
+	}
+
+	// Target 90% of maxDiskUsageBytes to provide 10% buffer
+	targetDisk := uint64(float64(w.maxDiskUsageBytes) * 0.9)
+	dbPath := w.s3Pool.GetDatabasePath()
+	usedBytes, _, err := getDiskUsage(dbPath)
+	if err != nil {
+		// If we can't check disk, assume we haven't evicted enough
+		return false
+	}
+	if usedBytes > targetDisk {
+		return false
+	}
+
+	return true
 }
 
 func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
@@ -811,6 +965,14 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 	shouldEvict := over > 0 || usedBytes >= w.maxDiskUsageBytes
 
 	if shouldEvict {
+		evictStart := time.Now()
+		defer func() {
+			if w.evictionDurationHist != nil {
+				w.evictionDurationHist.Record(ctx, time.Since(evictStart).Seconds(),
+					metric.WithAttributes(attribute.String("signal", w.dataset)))
+			}
+		}()
+
 		type ent struct {
 			id int64
 			at time.Time
@@ -830,16 +992,16 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 		batch := make([]int64, 0, batchSize)
 
 		for _, e := range lru {
-			//if w.sink.RowCount() <= w.maxRows {
-			//	break
-			//}
+			if w.evictedEnough() {
+				break
+			}
 			batch = append(batch, e.id)
 			if len(batch) == batchSize {
 				w.dropSegments(ctx, batch)
 				batch = batch[:0]
 			}
 		}
-		if len(batch) > 0 && w.sink.RowCount() > w.maxRows {
+		if len(batch) > 0 && !w.evictedEnough() {
 			w.dropSegments(ctx, batch)
 		}
 	}
