@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 )
 
 // LegacyLeaf represents a compiled legacy query filter that can be pushed down to workers.
@@ -287,7 +289,7 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 
 	// Check if field is indexed - if not indexed, we handle it differently
 	// Non-indexed fields might not exist in all segments, so we add IS NOT NULL checks
-	isIndexed := slices.Contains(dimensionsToIndex, colName)
+	fieldIsIndexed := fingerprint.IsIndexed(colName)
 
 	quotedCol := quoteIdentifier(colName)
 
@@ -298,7 +300,7 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 		}
 		cond := fmt.Sprintf("%s = %s", quotedCol, sqlStringLiteral(filter.V[0]))
 		// For non-indexed fields, add IS NOT NULL check to handle missing fields gracefully
-		if !isIndexed {
+		if !fieldIsIndexed {
 			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
 		}
 		return cond
@@ -320,7 +322,7 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 			cond = fmt.Sprintf("%s IN (%s)", quotedCol, strings.Join(values, ", "))
 		}
 		// For non-indexed fields, add IS NOT NULL check
-		if !isIndexed {
+		if !fieldIsIndexed {
 			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
 		}
 		return cond
@@ -335,7 +337,7 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 		pattern := ".*" + escapedValue + ".*"
 		cond := fmt.Sprintf("REGEXP_MATCHES(%s, %s, 'i')", quotedCol, sqlStringLiteral(pattern))
 		// For non-indexed fields, add IS NOT NULL check
-		if !isIndexed {
+		if !fieldIsIndexed {
 			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
 		}
 		return cond
@@ -348,7 +350,7 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 		// Scala uses: regexp_matches(col, pattern, 'i')
 		cond := fmt.Sprintf("REGEXP_MATCHES(%s, %s, 'i')", quotedCol, sqlStringLiteral(filter.V[0]))
 		// For non-indexed fields, add IS NOT NULL check
-		if !isIndexed {
+		if !fieldIsIndexed {
 			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
 		}
 		return cond
@@ -359,7 +361,7 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 		}
 		cond := fmt.Sprintf("%s > %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
 		// For non-indexed fields, add IS NOT NULL check
-		if !isIndexed {
+		if !fieldIsIndexed {
 			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
 		}
 		return cond
@@ -370,7 +372,7 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 		}
 		cond := fmt.Sprintf("%s >= %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
 		// For non-indexed fields, add IS NOT NULL check
-		if !isIndexed {
+		if !fieldIsIndexed {
 			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
 		}
 		return cond
@@ -381,7 +383,7 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 		}
 		cond := fmt.Sprintf("%s < %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
 		// For non-indexed fields, add IS NOT NULL check
-		if !isIndexed {
+		if !fieldIsIndexed {
 			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
 		}
 		return cond
@@ -392,7 +394,7 @@ func (ll *LegacyLeaf) filterToSQL(filter Filter) string {
 		}
 		cond := fmt.Sprintf("%s <= %s", quotedCol, sqlLiteral(filter.V[0], filter.DataType))
 		// For non-indexed fields, add IS NOT NULL check
-		if !isIndexed {
+		if !fieldIsIndexed {
 			cond = fmt.Sprintf("(%s IS NOT NULL AND %s)", quotedCol, cond)
 		}
 		return cond

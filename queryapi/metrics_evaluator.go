@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
 )
@@ -478,7 +479,7 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 
 	var allSegments []SegmentInfo
 
-	fingerprint := computeFingerprint("metric_name", be.Metric)
+	metricFp := fingerprint.ComputeFingerprint("metric_name", be.Metric)
 
 	rows, err := q.mdb.ListMetricSegmentsForQuery(ctx, lrdb.ListMetricSegmentsForQueryParams{
 		StartTs:        startTs,
@@ -486,7 +487,7 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 		Dateint:        int32(dih.DateInt),
 		FrequencyMs:    int32(stepDuration.Milliseconds()),
 		OrganizationID: orgUUID,
-		Fingerprints:   []int64{fingerprint},
+		Fingerprints:   []int64{metricFp},
 	})
 	if err != nil {
 		return nil, err
@@ -498,7 +499,7 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 		"endTs", endTs,
 		"frequencyMs", stepDuration.Milliseconds(),
 		"orgUUID", orgUUID,
-		"fingerprint", fingerprint,
+		"fingerprint", metricFp,
 		"metric", be.Metric,
 		"numSegments", len(rows))
 	for _, row := range rows {

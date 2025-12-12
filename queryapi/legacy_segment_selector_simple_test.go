@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -52,34 +53,27 @@ func TestSelectSegmentsFromLegacyFilter_SimpleOr(t *testing.T) {
 		},
 	}
 
-	//  For "eq" on non-full-value dimensions, we use trigram matching
-	// Pattern for "error" → lots of trigrams like "err", "rro", "ror"
-	// We'll provide a segment that has those trigrams
+	// For "eq" on indexed dimensions, we use exact value fingerprints.
+	// The query structure requires both exists AND exact value fingerprints.
 
 	fakeRows := []lrdb.ListLogSegmentsForQueryRow{
-		// Trigrams for "error"
+		// Exists fingerprint for log_level
 		{
-			Fingerprint: computeFingerprint("log_level", "err"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_level", fingerprint.ExistsRegex),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
 			EndTs:       endTs,
 		},
+		// Exact value fingerprint for "error"
 		{
-			Fingerprint: computeFingerprint("log_level", "rro"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_level", "error"),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
 			EndTs:       endTs,
 		},
-		{
-			Fingerprint: computeFingerprint("log_level", "ror"),
-			InstanceNum: 1,
-			SegmentID:   101,
-			StartTs:     startTs,
-			EndTs:       endTs,
-		},
-		// NOTE: No trigrams for "debug", simulating that no segments match it
+		// NOTE: No fingerprint for "debug", simulating that no segments match it
 	}
 
 	var lookup SegmentLookupFunc = func(ctx context.Context, p lrdb.ListLogSegmentsForQueryParams) ([]lrdb.ListLogSegmentsForQueryRow, error) {

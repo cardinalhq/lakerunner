@@ -287,17 +287,15 @@ func TestGenerateRowFingerprints(t *testing.T) {
 	// Test that it includes fingerprints for indexed dimensions
 	expectedFingerprints := mapset.NewSet[int64]()
 
-	// metric_name is a full value dimension
+	// metric_name is IndexExact - gets exact value fingerprint
 	expectedFingerprints.Add(ComputeFingerprint("metric_name", "log_events"))
 	expectedFingerprints.Add(ComputeFingerprint("metric_name", ExistsRegex))
 
-	// log_level should have trigram fingerprints
-	levelTrigrams := ToTrigrams("error")
-	for _, trigram := range levelTrigrams {
-		expectedFingerprints.Add(ComputeFingerprint("log_level", trigram))
-	}
+	// log_level is IndexExact - gets exact value fingerprint (no trigrams)
+	expectedFingerprints.Add(ComputeFingerprint("log_level", "error"))
+	expectedFingerprints.Add(ComputeFingerprint("log_level", ExistsRegex))
 
-	// custom_field should get exists regex fingerprint only (not in DimensionsToIndex)
+	// custom_field should get exists regex fingerprint only (not in IndexedDimensions)
 	expectedFingerprints.Add(ComputeFingerprint("custom_field", ExistsRegex))
 
 	// Verify some expected fingerprints are present
@@ -383,35 +381,42 @@ func TestGenerateRowFingerprints_Comprehensive(t *testing.T) {
 		}
 	}
 
-	// Only DimensionsToIndex fields get value-based fingerprints
-	// 1. chq_telemetry_type - indexed dimension with trigrams
+	// Only IndexedDimensions fields get value-based fingerprints
+	// 1. chq_telemetry_type - IndexTrigramExact (both exact and trigrams)
+	expected.Add(ComputeFingerprint("chq_telemetry_type", "logs"))
 	for _, trigram := range ToTrigrams("logs") {
 		expected.Add(ComputeFingerprint("chq_telemetry_type", trigram))
 	}
 
-	// 2. log_level - indexed dimension with trigrams
-	for _, trigram := range ToTrigrams("error") {
-		expected.Add(ComputeFingerprint("log_level", trigram))
-	}
+	// 2. log_level - IndexExact (exact value only)
+	expected.Add(ComputeFingerprint("log_level", "error"))
 
-	// 3. metric_name - FULL VALUE dimension (no trigrams)
+	// 3. metric_name - IndexExact (exact value only)
 	expected.Add(ComputeFingerprint("metric_name", "log_events"))
 
-	// 4. resource_customer_domain - FULL VALUE dimension (no trigrams)
+	// 4. resource_customer_domain - IndexTrigramExact (both exact and trigrams)
 	expected.Add(ComputeFingerprint("resource_customer_domain", "example.com"))
+	for _, trigram := range ToTrigrams("example.com") {
+		expected.Add(ComputeFingerprint("resource_customer_domain", trigram))
+	}
 
-	// 5. resource_file - FULL VALUE dimension (no trigrams)
+	// 5. resource_file - IndexExact (exact value only)
 	expected.Add(ComputeFingerprint("resource_file", "auth.log"))
 
-	// 6. resource_k8s_namespace_name - indexed dimension with trigrams
+	// 6. resource_k8s_namespace_name - IndexTrigramExact (both exact and trigrams)
+	expected.Add(ComputeFingerprint("resource_k8s_namespace_name", "production"))
 	for _, trigram := range ToTrigrams("production") {
 		expected.Add(ComputeFingerprint("resource_k8s_namespace_name", trigram))
 	}
 
-	// 7. resource_service_name - FULL VALUE dimension (no trigrams)
+	// 7. resource_service_name - IndexTrigramExact (both exact and trigrams)
 	expected.Add(ComputeFingerprint("resource_service_name", "auth-service"))
+	for _, trigram := range ToTrigrams("auth-service") {
+		expected.Add(ComputeFingerprint("resource_service_name", trigram))
+	}
 
-	// 8. span_trace_id - indexed dimension with trigrams
+	// 8. span_trace_id - IndexTrigramExact (both exact and trigrams)
+	expected.Add(ComputeFingerprint("span_trace_id", "abc123def456"))
 	for _, trigram := range ToTrigrams("abc123def456") {
 		expected.Add(ComputeFingerprint("span_trace_id", trigram))
 	}
@@ -542,21 +547,21 @@ func TestFieldFingerprinter_CacheEffectiveness(t *testing.T) {
 	assert.Equal(t, 5, len(fp.existsFpCache), "Cache should grow with new field")
 }
 
-// TestFieldFingerprinter_FullValueCache validates that full-value fingerprints are cached
+// TestFieldFingerprinter_FullValueCache validates that exact-value fingerprints are cached
 func TestFieldFingerprinter_FullValueCache(t *testing.T) {
 	fp := NewFieldFingerprinter()
 
-	// metric_name and resource_file are full-value dimensions
+	// All indexed fields now have exact fingerprints cached
 	row1 := map[string]any{
-		"metric_name":   "http_requests_total",
-		"resource_file": "/var/log/app.log",
-		"log_level":     "info", // Not a full-value dimension
+		"metric_name":   "http_requests_total", // IndexExact
+		"resource_file": "/var/log/app.log",    // IndexExact
+		"log_level":     "info",                // IndexTrigramExact (also caches exact)
 	}
 
 	_ = fp.GenerateFingerprints(toRow(row1))
 
-	// Should have cached 2 full-value fingerprints
-	assert.Equal(t, 2, len(fp.fullValueFpCache), "Should cache full-value fingerprints")
+	// Should have cached 3 exact-value fingerprints (all indexed fields)
+	assert.Equal(t, 3, len(fp.fullValueFpCache), "Should cache exact-value fingerprints")
 
 	// Same values again - should hit cache
 	row2 := map[string]any{
@@ -567,7 +572,7 @@ func TestFieldFingerprinter_FullValueCache(t *testing.T) {
 	_ = fp.GenerateFingerprints(toRow(row2))
 
 	// Cache size should not grow
-	assert.Equal(t, 2, len(fp.fullValueFpCache), "Cache should not grow for same values")
+	assert.Equal(t, 3, len(fp.fullValueFpCache), "Cache should not grow for same values")
 
 	// Different values - should add to cache
 	row3 := map[string]any{
@@ -578,7 +583,7 @@ func TestFieldFingerprinter_FullValueCache(t *testing.T) {
 	_ = fp.GenerateFingerprints(toRow(row3))
 
 	// Cache should grow by 2
-	assert.Equal(t, 4, len(fp.fullValueFpCache), "Cache should grow with new values")
+	assert.Equal(t, 5, len(fp.fullValueFpCache), "Cache should grow with new values")
 }
 
 // TestFieldFingerprinter_FullValueCacheBounded validates that cache doesn't grow beyond limit
@@ -610,4 +615,86 @@ func TestFieldFingerprinter_FullValueCacheBounded(t *testing.T) {
 	_ = fp.GenerateFingerprints(toRow(row))
 
 	assert.Equal(t, maxFullValueCacheSize, len(fp.fullValueFpCache), "Cache should not grow beyond limit")
+}
+
+func TestIsIndexed(t *testing.T) {
+	tests := []struct {
+		field    string
+		expected bool
+	}{
+		{"metric_name", true},
+		{"log_level", true},
+		{"resource_service_name", true},
+		{"resource_k8s_namespace_name", true},
+		{"span_trace_id", true},
+		{"chq_telemetry_type", true},
+		{"resource_customer_domain", true},
+		{"resource_file", true},
+		{"custom_field", false},
+		{"not_indexed", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			assert.Equal(t, tt.expected, IsIndexed(tt.field))
+		})
+	}
+}
+
+func TestHasExactIndex(t *testing.T) {
+	tests := []struct {
+		field    string
+		expected bool
+	}{
+		// IndexExact fields
+		{"log_level", true},
+		{"metric_name", true},
+		{"resource_file", true},
+		// IndexTrigramExact fields (also have exact)
+		{"resource_customer_domain", true},
+		{"resource_service_name", true},
+		{"resource_k8s_namespace_name", true},
+		{"span_trace_id", true},
+		{"chq_telemetry_type", true},
+		// Non-indexed fields
+		{"custom_field", false},
+		{"not_indexed", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			assert.Equal(t, tt.expected, HasExactIndex(tt.field))
+		})
+	}
+}
+
+func TestHasTrigramIndex(t *testing.T) {
+	tests := []struct {
+		field    string
+		expected bool
+	}{
+		// IndexTrigramExact fields
+		{"resource_k8s_namespace_name", true},
+		{"resource_k8s_cluster_name", true},
+		{"resource_service_name", true},
+		{"resource_customer_domain", true},
+		{"span_trace_id", true},
+		{"chq_telemetry_type", true},
+		// IndexExact only fields (no trigrams)
+		{"metric_name", false},
+		{"resource_file", false},
+		{"log_level", false},
+		// Non-indexed fields
+		{"custom_field", false},
+		{"not_indexed", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			assert.Equal(t, tt.expected, HasTrigramIndex(tt.field))
+		})
+	}
 }

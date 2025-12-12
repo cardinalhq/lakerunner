@@ -28,47 +28,61 @@ const (
 	ExistsRegex = ".*"
 )
 
-var (
-	// DimensionsToIndex are all dimensions that should have fingerprints generated
-	DimensionsToIndex = []string{
-		"chq_telemetry_type",
-		"log_level",
-		"metric_name",
-		"resource_customer_domain",
-		"resource_file",
-		"resource_k8s_namespace_name",
-		"resource_service_name",
-		"span_trace_id",
-	}
+// IndexFlags defines which fingerprinting strategies to use for a dimension.
+// Use the helper methods HasExact() and HasTrigram() to check flags.
+type IndexFlags uint8
 
-	// FullValueDimensions are dimensions that should be indexed with exact full values
-	// instead of trigrams. These support exact matching efficiently but not substring/regex.
-	// resource_customer_domain and resource_service_name are included to support efficient
-	// stream/series lookups for logs.
-	FullValueDimensions = []string{
-		"metric_name",
-		"resource_customer_domain",
-		"resource_file",
-		"resource_service_name",
-	}
+const (
+	// IndexExact generates a fingerprint for the exact full value.
+	// This is the baseline for any indexed field and supports efficient exact matching.
+	IndexExact IndexFlags = 1 << 0
 
-	// dimensionsToIndexSet is a pre-built map for O(1) lookup of indexed dimensions
-	dimensionsToIndexSet map[string]struct{}
-
-	// fullValueDimensionsSet is a pre-built map for O(1) lookup of full-value dimensions
-	fullValueDimensionsSet map[string]struct{}
+	// IndexTrigramExact generates both trigram fingerprints AND the exact value fingerprint.
+	// This supports both substring/regex matching (via trigrams) and exact matching.
+	// Note: IndexTrigramExact includes IndexExact - trigram-only indexing is not supported.
+	IndexTrigramExact IndexFlags = (1 << 1) | IndexExact
 )
 
-func init() {
-	dimensionsToIndexSet = make(map[string]struct{}, len(DimensionsToIndex))
-	for _, dim := range DimensionsToIndex {
-		dimensionsToIndexSet[dim] = struct{}{}
-	}
+// HasExact returns true if the flags include exact value fingerprinting.
+func (f IndexFlags) HasExact() bool {
+	return f&IndexExact != 0
+}
 
-	fullValueDimensionsSet = make(map[string]struct{}, len(FullValueDimensions))
-	for _, dim := range FullValueDimensions {
-		fullValueDimensionsSet[dim] = struct{}{}
-	}
+// HasTrigram returns true if the flags include trigram fingerprinting.
+func (f IndexFlags) HasTrigram() bool {
+	return f&IndexTrigramExact == IndexTrigramExact
+}
+
+// IndexedDimensions maps dimension names to their indexing strategy.
+// Fields not in this map only get "exists" fingerprints.
+var IndexedDimensions = map[string]IndexFlags{
+	"chq_telemetry_type":          IndexTrigramExact,
+	"log_level":                   IndexExact,
+	"metric_name":                 IndexExact,
+	"resource_customer_domain":    IndexTrigramExact,
+	"resource_file":               IndexExact,
+	"resource_k8s_cluster_name":   IndexTrigramExact,
+	"resource_k8s_namespace_name": IndexTrigramExact,
+	"resource_service_name":       IndexTrigramExact,
+	"span_trace_id":               IndexTrigramExact,
+}
+
+// IsIndexed returns true if the field has any indexing configured.
+func IsIndexed(field string) bool {
+	_, ok := IndexedDimensions[field]
+	return ok
+}
+
+// HasExactIndex returns true if the field has exact value fingerprinting.
+func HasExactIndex(field string) bool {
+	flags, ok := IndexedDimensions[field]
+	return ok && flags.HasExact()
+}
+
+// HasTrigramIndex returns true if the field has trigram fingerprinting.
+func HasTrigramIndex(field string) bool {
+	flags, ok := IndexedDimensions[field]
+	return ok && flags.HasTrigram()
 }
 
 // ToFingerprints converts a map of tagName → slice of tagValues into a set of fingerprints.
@@ -78,23 +92,22 @@ func ToFingerprints(tagValuesByName map[string]mapset.Set[string]) mapset.Set[in
 	for tagName, values := range tagValuesByName {
 		fingerprints.Add(ComputeFingerprint(tagName, ExistsRegex))
 
-		if _, isIndexed := dimensionsToIndexSet[tagName]; !isIndexed {
+		flags, isIndexed := IndexedDimensions[tagName]
+		if !isIndexed {
 			continue
 		}
 
-		if _, isFullValue := fullValueDimensionsSet[tagName]; isFullValue {
-			for _, tagValue := range values.ToSlice() {
+		for _, tagValue := range values.ToSlice() {
+			// Always add exact value fingerprint for indexed fields
+			if flags.HasExact() {
 				fingerprints.Add(ComputeFingerprint(tagName, tagValue))
 			}
-			continue
-		}
 
-		// looks like full trigrams
-		for _, tagValue := range values.ToSlice() {
-			trigrams := ToTrigrams(tagValue)
-			for _, trigram := range trigrams {
-				fp := ComputeFingerprint(tagName, trigram)
-				fingerprints.Add(fp)
+			// Add trigram fingerprints if configured
+			if flags.HasTrigram() {
+				for _, trigram := range ToTrigrams(tagValue) {
+					fingerprints.Add(ComputeFingerprint(tagName, trigram))
+				}
 			}
 		}
 	}
@@ -192,7 +205,8 @@ func (f *FieldFingerprinter) GenerateFingerprints(row pipeline.Row) []int64 {
 		fingerprints.Add(existsFp)
 
 		// Check if this field should be indexed for value-based fingerprints (O(1) lookup)
-		if _, isIndexed := dimensionsToIndexSet[fieldName]; !isIndexed {
+		flags, isIndexed := IndexedDimensions[fieldName]
+		if !isIndexed {
 			continue
 		}
 
@@ -212,9 +226,8 @@ func (f *FieldFingerprinter) GenerateFingerprints(row pipeline.Row) []int64 {
 			continue
 		}
 
-		// Check if this is a full-value dimension (no trigrams) - O(1) lookup
-		if _, isFullValue := fullValueDimensionsSet[fieldName]; isFullValue {
-			// Try to use cache for full-value fingerprints
+		// Add exact value fingerprint if configured
+		if flags.HasExact() {
 			cacheKey := fieldName + ":" + strValue
 			if fp, found := f.fullValueFpCache[cacheKey]; found {
 				fingerprints.Add(fp)
@@ -226,14 +239,13 @@ func (f *FieldFingerprinter) GenerateFingerprints(row pipeline.Row) []int64 {
 					f.fullValueFpCache[cacheKey] = fp
 				}
 			}
-			continue
 		}
 
-		// Generate trigram fingerprints
-		trigrams := ToTrigrams(strValue)
-		for _, trigram := range trigrams {
-			fp := ComputeFingerprint(fieldName, trigram)
-			fingerprints.Add(fp)
+		// Add trigram fingerprints if configured
+		if flags.HasTrigram() {
+			for _, trigram := range ToTrigrams(strValue) {
+				fingerprints.Add(ComputeFingerprint(fieldName, trigram))
+			}
 		}
 	}
 

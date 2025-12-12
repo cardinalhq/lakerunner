@@ -114,7 +114,7 @@ func TestComputeFingerprint(t *testing.T) {
 		{
 			name:      "exists regex",
 			fieldName: "log_message",
-			trigram:   existsRegex,
+			trigram:   fingerprint.ExistsRegex,
 			expected:  fingerprint.ComputeHash("log_message:.*"),
 		},
 		{
@@ -127,7 +127,7 @@ func TestComputeFingerprint(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := computeFingerprint(tt.fieldName, tt.trigram)
+			got := fingerprint.ComputeFingerprint(tt.fieldName, tt.trigram)
 			assert.Equal(t, tt.expected, got)
 		})
 	}
