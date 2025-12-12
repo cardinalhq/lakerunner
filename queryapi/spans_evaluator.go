@@ -262,8 +262,24 @@ func (q *QuerierService) lookupSpansSegments(
 			continue
 		}
 		switch lm.Op {
-		case logql.MatchEq, logql.MatchRe:
-			addAndNodeFromPattern(label, val, fpsToFetch, &root)
+		case logql.MatchEq:
+			// For full-value dimensions with exact match, use the full value fingerprint
+			if slices.Contains(fullValueDimensions, label) {
+				addFullValueNode(label, val, fpsToFetch, &root)
+			} else {
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			}
+		case logql.MatchRe:
+			// For full-value dimensions, check if this is a simple alternation
+			if slices.Contains(fullValueDimensions, label) {
+				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
+					addOrNodeFromValues(label, values, fpsToFetch, &root)
+				} else {
+					addExistsNode(label, fpsToFetch, &root)
+				}
+			} else {
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)
 		}
@@ -279,8 +295,24 @@ func (q *QuerierService) lookupSpansSegments(
 			continue
 		}
 		switch lf.Op {
-		case logql.MatchEq, logql.MatchRe:
-			addAndNodeFromPattern(label, val, fpsToFetch, &root)
+		case logql.MatchEq:
+			// For full-value dimensions with exact match, use the full value fingerprint
+			if slices.Contains(fullValueDimensions, label) {
+				addFullValueNode(label, val, fpsToFetch, &root)
+			} else {
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			}
+		case logql.MatchRe:
+			// For full-value dimensions, check if this is a simple alternation
+			if slices.Contains(fullValueDimensions, label) {
+				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
+					addOrNodeFromValues(label, values, fpsToFetch, &root)
+				} else {
+					addExistsNode(label, fpsToFetch, &root)
+				}
+			} else {
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)
 		}
