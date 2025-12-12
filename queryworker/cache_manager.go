@@ -759,6 +759,30 @@ func escapeSQL(s string) string {
 	return strings.ReplaceAll(s, `'`, `''`)
 }
 
+// evictedEnough returns true if we've evicted enough to be 10% under the limits.
+// This provides a buffer to avoid thrashing at the boundary.
+func (w *CacheManager) evictedEnough() bool {
+	// Target 90% of maxRows to provide 10% buffer
+	targetRows := int64(float64(w.maxRows) * 0.9)
+	if w.sink.RowCount() > targetRows {
+		return false
+	}
+
+	// Target 90% of maxDiskUsageBytes to provide 10% buffer
+	targetDisk := uint64(float64(w.maxDiskUsageBytes) * 0.9)
+	dbPath := w.s3Pool.GetDatabasePath()
+	usedBytes, _, err := getDiskUsage(dbPath)
+	if err != nil {
+		// If we can't check disk, assume we haven't evicted enough
+		return false
+	}
+	if usedBytes > targetDisk {
+		return false
+	}
+
+	return true
+}
+
 func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 	if w.maxRows <= 0 {
 		return
@@ -808,13 +832,16 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 		batch := make([]int64, 0, batchSize)
 
 		for _, e := range lru {
+			if w.evictedEnough() {
+				break
+			}
 			batch = append(batch, e.id)
 			if len(batch) == batchSize {
 				w.dropSegments(ctx, batch)
 				batch = batch[:0]
 			}
 		}
-		if len(batch) > 0 && w.sink.RowCount() > w.maxRows {
+		if len(batch) > 0 && !w.evictedEnough() {
 			w.dropSegments(ctx, batch)
 		}
 	}
