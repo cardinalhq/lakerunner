@@ -44,26 +44,6 @@ func BenchmarkSpillCodec(b *testing.B) {
 	}
 }
 
-func BenchmarkCBORCodec(b *testing.B) {
-	codec, err := New(TypeCBOR)
-	if err != nil {
-		b.Fatal(err)
-	}
-	row := benchmarkRow()
-	dst := pipeline.Row{}
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		data, err := codec.EncodeRow(row)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if err := codec.DecodeRow(data, dst); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func benchmarkRow() pipeline.Row {
 	return pipeline.Row{
 		wkk.NewRowKey("byte"):     byte(7),
@@ -123,26 +103,6 @@ func BenchmarkSpillCodec_RealisticLog(b *testing.B) {
 	}
 }
 
-func BenchmarkCBORCodec_RealisticLog(b *testing.B) {
-	codec, err := New(TypeCBOR)
-	if err != nil {
-		b.Fatal(err)
-	}
-	row := realisticLogRow()
-	dst := pipeline.Row{}
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		data, err := codec.EncodeRow(row)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if err := codec.DecodeRow(data, dst); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func BenchmarkSpillCodec_EncodeOnly(b *testing.B) {
 	codec := NewSpillCodec()
 	row := realisticLogRow()
@@ -152,22 +112,6 @@ func BenchmarkSpillCodec_EncodeOnly(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		buf.Reset()
 		_, err := codec.EncodeRowTo(buf, row)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkCBORCodec_EncodeOnly(b *testing.B) {
-	codec, err := New(TypeCBOR)
-	if err != nil {
-		b.Fatal(err)
-	}
-	row := realisticLogRow()
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_, err := codec.EncodeRow(row)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -185,23 +129,6 @@ func BenchmarkSpillCodec_DecodeOnly(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		if err := codec.DecodeRowFrom(bytes.NewReader(encoded), dst); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkCBORCodec_DecodeOnly(b *testing.B) {
-	codec, err := New(TypeCBOR)
-	if err != nil {
-		b.Fatal(err)
-	}
-	row := realisticLogRow()
-	encoded, _ := codec.EncodeRow(row)
-	dst := pipeline.Row{}
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		if err := codec.DecodeRow(encoded, dst); err != nil {
 			b.Fatal(err)
 		}
 	}

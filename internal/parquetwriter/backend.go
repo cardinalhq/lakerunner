@@ -23,7 +23,6 @@ import (
 )
 
 // ParquetBackend defines the interface for different Parquet writing implementations.
-// This allows side-by-side comparison of go-parquet (CBOR) vs Arrow approaches.
 type ParquetBackend interface {
 	// WriteBatch writes a batch of rows. Rows may have heterogeneous schemas.
 	// The backend must handle schema evolution and null values.
@@ -56,7 +55,7 @@ type BackendMetadata struct {
 type BackendType string
 
 const (
-	// BackendGoParquet uses the segmentio/parquet-go library with CBOR temp files
+	// BackendGoParquet uses the segmentio/parquet-go library
 	BackendGoParquet BackendType = "go-parquet"
 
 	// BackendArrow uses Apache Arrow columnar format with streaming writes
