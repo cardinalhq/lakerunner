@@ -15,7 +15,8 @@ INSERT INTO metric_seg (
   sort_version,
   compacted,
   label_name_map,
-  metric_names
+  metric_names,
+  metric_types
 )
 VALUES (
   @organization_id,
@@ -33,7 +34,8 @@ VALUES (
   @sort_version,
   @compacted,
   @label_name_map,
-  @metric_names::text[]
+  @metric_names::text[],
+  @metric_types::smallint[]
 );
 
 -- name: GetMetricSegsByIds :many
@@ -63,7 +65,8 @@ INSERT INTO metric_seg (
   sort_version,
   compacted,
   label_name_map,
-  metric_names
+  metric_names,
+  metric_types
 )
 VALUES (
   @organization_id,
@@ -81,7 +84,8 @@ VALUES (
   @sort_version,
   @compacted,
   @label_name_map,
-  @metric_names::text[]
+  @metric_names::text[],
+  @metric_types::smallint[]
 )
 ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
 DO NOTHING;
@@ -181,3 +185,20 @@ WHERE organization_id = @organization_id
   AND ts_range && int8range(@start_ts, @end_ts, '[)')
   AND published = true
   AND metric_names IS NOT NULL;
+
+-- name: ListMetricNamesWithTypes :many
+-- Returns distinct (metric_name, metric_type) pairs for an organization within a time range
+-- Uses WITH ORDINALITY to properly join parallel arrays
+SELECT DISTINCT
+    n.name::text AS metric_name,
+    t.type::smallint AS metric_type
+FROM metric_seg
+CROSS JOIN LATERAL unnest(metric_names) WITH ORDINALITY AS n(name, idx)
+INNER JOIN LATERAL unnest(metric_types) WITH ORDINALITY AS t(type, idx) ON n.idx = t.idx
+WHERE organization_id = @organization_id
+  AND dateint >= @start_dateint
+  AND dateint <= @end_dateint
+  AND ts_range && int8range(@start_ts, @end_ts, '[)')
+  AND published = true
+  AND metric_names IS NOT NULL
+  AND metric_types IS NOT NULL;

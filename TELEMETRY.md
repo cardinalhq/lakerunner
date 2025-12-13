@@ -25,6 +25,7 @@ Many metrics include these standardized attributes:
 | `lakerunner.processing.segments.filtered` | Number of segments filtered out during processing pipeline | `signal`, `action`, `reason` |
 | `lakerunner.processing.segments.in` | Number of segments input to processing pipeline | `signal`, `action` |
 | `lakerunner.processing.segments.out` | Number of segments output from processing pipeline | `signal`, `action` |
+| `lakerunner.queryapi.metadata_default_time_range_total` | Count of metadata requests using default 1-hour time range | - |
 | `lakerunner.reader.rows.dropped` | Number of rows dropped by readers due to invalid data | `reader`, `reason`, `metric_type` |
 | `lakerunner.reader.rows.in` | Number of rows read by readers from their input source | `reader` |
 | `lakerunner.reader.rows.out` | Number of rows output by readers to downstream processing | `reader` |

@@ -23,6 +23,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
@@ -82,6 +83,7 @@ type MetricsStatsProvider struct{}
 func (p *MetricsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &MetricsStatsAccumulator{
 		metricNames:  mapset.NewSet[string](),
+		metricTypes:  make(map[string]int16),
 		labelColumns: mapset.NewSet[string](),
 	}
 }
@@ -89,6 +91,7 @@ func (p *MetricsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 // MetricsStatsAccumulator collects metrics-specific statistics.
 type MetricsStatsAccumulator struct {
 	metricNames  mapset.Set[string]
+	metricTypes  map[string]int16 // metric_name -> metric_type (parallel to metricNames)
 	labelColumns mapset.Set[string]
 	firstTS      int64
 	lastTS       int64
@@ -96,10 +99,18 @@ type MetricsStatsAccumulator struct {
 }
 
 func (a *MetricsStatsAccumulator) Add(row pipeline.Row) {
-	// Track metric name for fingerprinting
+	// Track metric name and type for fingerprinting
 	metricNameKey := wkk.NewRowKey("metric_name")
 	if name, ok := row[metricNameKey].(string); ok && name != "" {
 		a.metricNames.Add(name)
+		// Track metric type - only set if not already set (first occurrence wins)
+		if _, exists := a.metricTypes[name]; !exists {
+			if metricType, ok := row[wkk.RowKeyCMetricType].(string); ok {
+				a.metricTypes[name] = lrdb.MetricTypeFromString(metricType)
+			} else {
+				a.metricTypes[name] = lrdb.MetricTypeUnknown
+			}
+		}
 	}
 
 	// Track label column names for label_name_map
@@ -154,12 +165,19 @@ func (a *MetricsStatsAccumulator) Finalize() any {
 	metricNames := a.metricNames.ToSlice()
 	slices.Sort(metricNames)
 
+	// Build parallel metric types array (same order as metricNames)
+	metricTypes := make([]int16, len(metricNames))
+	for i, name := range metricNames {
+		metricTypes[i] = a.metricTypes[name]
+	}
+
 	return MetricsFileStats{
 		FirstTS:      a.firstTS,
 		LastTS:       a.lastTS,
 		Fingerprints: fingerprints,
 		LabelNameMap: labelNameMap,
 		MetricNames:  metricNames,
+		MetricTypes:  metricTypes,
 	}
 }
 
@@ -170,6 +188,7 @@ type MetricsFileStats struct {
 	Fingerprints []int64  // Fingerprints for indexing
 	LabelNameMap []byte   // JSON map of label column names to dotted names
 	MetricNames  []string // Unique metric names observed in this file
+	MetricTypes  []int16  // Metric types parallel to MetricNames (use lrdb.MetricType* constants)
 }
 
 // ValidateMetricsRow checks that a row has the required fields for metrics processing.

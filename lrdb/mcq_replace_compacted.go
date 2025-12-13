@@ -51,6 +51,7 @@ func (q *Store) CompactMetricSegs(ctx context.Context, args CompactMetricSegsPar
 			SortVersion:    CurrentMetricSortVersion,
 			Compacted:      false,
 			MetricNames:    r.MetricNames,
+			MetricTypes:    r.MetricTypes,
 		}
 	}
 

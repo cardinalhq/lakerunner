@@ -238,3 +238,337 @@ func TestListPromMetricTags_DateintFiltering(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, tags)
 }
+
+// TestListMetricNamesWithTypes tests that ListMetricNamesWithTypes correctly
+// returns metric names with their types from the parallel arrays
+func TestListMetricNamesWithTypes(t *testing.T) {
+	ctx := context.Background()
+	db := testhelpers.NewTestLRDBStore(t)
+
+	orgID := uuid.New()
+	now := time.Now()
+	baseTs := now.UnixMilli()
+
+	// Insert segment with multiple metrics of different types
+	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250110,
+		FrequencyMs:    10000,
+		SegmentID:      1001,
+		InstanceNum:    1,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000,
+		RecordCount:    1000,
+		FileSize:       50000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Published:      true,
+		Fingerprints:   []int64{12345},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		MetricNames:    []string{"http_requests_total", "cpu_usage_percent", "request_duration_seconds"},
+		MetricTypes:    []int16{lrdb.MetricTypeSum, lrdb.MetricTypeGauge, lrdb.MetricTypeHistogram},
+	})
+	require.NoError(t, err)
+
+	// Query metrics with types
+	results, err := db.ListMetricNamesWithTypes(ctx, lrdb.ListMetricNamesWithTypesParams{
+		OrganizationID: orgID,
+		StartDateint:   20250110,
+		EndDateint:     20250110,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+
+	// Build a map for easier verification
+	resultMap := make(map[string]int16)
+	for _, r := range results {
+		resultMap[r.MetricName] = r.MetricType
+	}
+
+	assert.Equal(t, lrdb.MetricTypeSum, resultMap["http_requests_total"])
+	assert.Equal(t, lrdb.MetricTypeGauge, resultMap["cpu_usage_percent"])
+	assert.Equal(t, lrdb.MetricTypeHistogram, resultMap["request_duration_seconds"])
+}
+
+// TestListMetricNamesWithTypes_Deduplication tests that the query returns
+// distinct pairs when the same metric appears in multiple segments
+func TestListMetricNamesWithTypes_Deduplication(t *testing.T) {
+	ctx := context.Background()
+	db := testhelpers.NewTestLRDBStore(t)
+
+	orgID := uuid.New()
+	now := time.Now()
+	baseTs := now.UnixMilli()
+
+	// Insert first segment with some metrics
+	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250110,
+		FrequencyMs:    10000,
+		SegmentID:      1001,
+		InstanceNum:    1,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 1800000,
+		RecordCount:    500,
+		FileSize:       25000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Published:      true,
+		Fingerprints:   []int64{12345},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		MetricNames:    []string{"http_requests_total", "cpu_usage_percent"},
+		MetricTypes:    []int16{lrdb.MetricTypeSum, lrdb.MetricTypeGauge},
+	})
+	require.NoError(t, err)
+
+	// Insert second segment with overlapping metrics
+	err = db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250110,
+		FrequencyMs:    10000,
+		SegmentID:      1002,
+		InstanceNum:    1,
+		StartTs:        baseTs + 1800000,
+		EndTs:          baseTs + 3600000,
+		RecordCount:    500,
+		FileSize:       25000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Published:      true,
+		Fingerprints:   []int64{12346},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		MetricNames:    []string{"http_requests_total", "memory_usage_bytes"},
+		MetricTypes:    []int16{lrdb.MetricTypeSum, lrdb.MetricTypeGauge},
+	})
+	require.NoError(t, err)
+
+	// Query should return 3 distinct metrics (http_requests_total appears in both)
+	results, err := db.ListMetricNamesWithTypes(ctx, lrdb.ListMetricNamesWithTypesParams{
+		OrganizationID: orgID,
+		StartDateint:   20250110,
+		EndDateint:     20250110,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+
+	resultMap := make(map[string]int16)
+	for _, r := range results {
+		resultMap[r.MetricName] = r.MetricType
+	}
+
+	assert.Equal(t, lrdb.MetricTypeSum, resultMap["http_requests_total"])
+	assert.Equal(t, lrdb.MetricTypeGauge, resultMap["cpu_usage_percent"])
+	assert.Equal(t, lrdb.MetricTypeGauge, resultMap["memory_usage_bytes"])
+}
+
+// TestListMetricNamesWithTypes_TimeRangeFiltering tests ts_range filtering
+func TestListMetricNamesWithTypes_TimeRangeFiltering(t *testing.T) {
+	ctx := context.Background()
+	db := testhelpers.NewTestLRDBStore(t)
+
+	orgID := uuid.New()
+	now := time.Now()
+	baseTs := now.UnixMilli()
+
+	// Insert segment covering 0-1h
+	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250110,
+		FrequencyMs:    10000,
+		SegmentID:      1001,
+		InstanceNum:    1,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000, // 1 hour
+		RecordCount:    1000,
+		FileSize:       50000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Published:      true,
+		Fingerprints:   []int64{12345},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		MetricNames:    []string{"early_metric"},
+		MetricTypes:    []int16{lrdb.MetricTypeGauge},
+	})
+	require.NoError(t, err)
+
+	// Insert segment covering 2h-3h
+	err = db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250110,
+		FrequencyMs:    10000,
+		SegmentID:      1002,
+		InstanceNum:    1,
+		StartTs:        baseTs + 7200000,  // 2 hours
+		EndTs:          baseTs + 10800000, // 3 hours
+		RecordCount:    1000,
+		FileSize:       50000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Published:      true,
+		Fingerprints:   []int64{12346},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		MetricNames:    []string{"late_metric"},
+		MetricTypes:    []int16{lrdb.MetricTypeSum},
+	})
+	require.NoError(t, err)
+
+	// Query only first hour - should only find early_metric
+	results, err := db.ListMetricNamesWithTypes(ctx, lrdb.ListMetricNamesWithTypesParams{
+		OrganizationID: orgID,
+		StartDateint:   20250110,
+		EndDateint:     20250110,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "early_metric", results[0].MetricName)
+	assert.Equal(t, lrdb.MetricTypeGauge, results[0].MetricType)
+
+	// Query 2h-3h - should only find late_metric
+	results, err = db.ListMetricNamesWithTypes(ctx, lrdb.ListMetricNamesWithTypesParams{
+		OrganizationID: orgID,
+		StartDateint:   20250110,
+		EndDateint:     20250110,
+		StartTs:        baseTs + 7200000,
+		EndTs:          baseTs + 10800000,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "late_metric", results[0].MetricName)
+	assert.Equal(t, lrdb.MetricTypeSum, results[0].MetricType)
+
+	// Query entire range - should find both
+	results, err = db.ListMetricNamesWithTypes(ctx, lrdb.ListMetricNamesWithTypesParams{
+		OrganizationID: orgID,
+		StartDateint:   20250110,
+		EndDateint:     20250110,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 10800000,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+}
+
+// TestListMetricNamesWithTypes_UnpublishedFiltering tests that unpublished segments are excluded
+func TestListMetricNamesWithTypes_UnpublishedFiltering(t *testing.T) {
+	ctx := context.Background()
+	db := testhelpers.NewTestLRDBStore(t)
+
+	orgID := uuid.New()
+	now := time.Now()
+	baseTs := now.UnixMilli()
+
+	// Insert published segment
+	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250110,
+		FrequencyMs:    10000,
+		SegmentID:      1001,
+		InstanceNum:    1,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000,
+		RecordCount:    1000,
+		FileSize:       50000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Published:      true,
+		Fingerprints:   []int64{12345},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		MetricNames:    []string{"published_metric"},
+		MetricTypes:    []int16{lrdb.MetricTypeGauge},
+	})
+	require.NoError(t, err)
+
+	// Insert unpublished segment
+	err = db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250110,
+		FrequencyMs:    10000,
+		SegmentID:      1002,
+		InstanceNum:    1,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000,
+		RecordCount:    1000,
+		FileSize:       50000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Published:      false,
+		Fingerprints:   []int64{12346},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		MetricNames:    []string{"unpublished_metric"},
+		MetricTypes:    []int16{lrdb.MetricTypeSum},
+	})
+	require.NoError(t, err)
+
+	// Query should only return published metric
+	results, err := db.ListMetricNamesWithTypes(ctx, lrdb.ListMetricNamesWithTypesParams{
+		OrganizationID: orgID,
+		StartDateint:   20250110,
+		EndDateint:     20250110,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "published_metric", results[0].MetricName)
+}
+
+// TestListMetricNamesWithTypes_NullArrays tests that segments with NULL arrays are excluded
+func TestListMetricNamesWithTypes_NullArrays(t *testing.T) {
+	ctx := context.Background()
+	db := testhelpers.NewTestLRDBStore(t)
+
+	orgID := uuid.New()
+	now := time.Now()
+	baseTs := now.UnixMilli()
+
+	// Insert segment with metric_names and metric_types populated
+	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250110,
+		FrequencyMs:    10000,
+		SegmentID:      1001,
+		InstanceNum:    1,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000,
+		RecordCount:    1000,
+		FileSize:       50000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Published:      true,
+		Fingerprints:   []int64{12345},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		MetricNames:    []string{"good_metric"},
+		MetricTypes:    []int16{lrdb.MetricTypeGauge},
+	})
+	require.NoError(t, err)
+
+	// Insert segment with NULL arrays (old segment before migration)
+	err = db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        20250110,
+		FrequencyMs:    10000,
+		SegmentID:      1002,
+		InstanceNum:    1,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000,
+		RecordCount:    1000,
+		FileSize:       50000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Published:      true,
+		Fingerprints:   []int64{12346},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		MetricNames:    nil, // NULL
+		MetricTypes:    nil, // NULL
+	})
+	require.NoError(t, err)
+
+	// Query should only return segment with populated arrays
+	results, err := db.ListMetricNamesWithTypes(ctx, lrdb.ListMetricNamesWithTypesParams{
+		OrganizationID: orgID,
+		StartDateint:   20250110,
+		EndDateint:     20250110,
+		StartTs:        baseTs,
+		EndTs:          baseTs + 3600000,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "good_metric", results[0].MetricName)
+}

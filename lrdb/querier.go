@@ -68,6 +68,9 @@ type Querier interface {
 	ListLogStreams(ctx context.Context, arg ListLogStreamsParams) ([]ListLogStreamsRow, error)
 	// Returns distinct metric names for an organization within a time range
 	ListMetricNames(ctx context.Context, arg ListMetricNamesParams) ([]string, error)
+	// Returns distinct (metric_name, metric_type) pairs for an organization within a time range
+	// Uses WITH ORDINALITY to properly join parallel arrays
+	ListMetricNamesWithTypes(ctx context.Context, arg ListMetricNamesWithTypesParams) ([]ListMetricNamesWithTypesRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	// Extract tag keys from label_name_map in metric_seg table for a specific metric
 	// Filters by metric fingerprint to return tags only for the requested metric

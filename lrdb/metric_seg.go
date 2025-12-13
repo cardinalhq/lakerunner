@@ -32,6 +32,52 @@ const (
 	MetricSortVersionNameTidTimestampV3 = 3
 )
 
+// MetricType constants matching OTEL metric data types
+const (
+	MetricTypeUnknown              int16 = 0
+	MetricTypeGauge                int16 = 1
+	MetricTypeSum                  int16 = 2
+	MetricTypeHistogram            int16 = 3
+	MetricTypeExponentialHistogram int16 = 4
+	MetricTypeSummary              int16 = 5
+)
+
+// MetricTypeFromString converts a string metric type to its int16 constant
+func MetricTypeFromString(s string) int16 {
+	switch s {
+	case "gauge":
+		return MetricTypeGauge
+	case "sum", "counter":
+		return MetricTypeSum
+	case "histogram":
+		return MetricTypeHistogram
+	case "exponential_histogram":
+		return MetricTypeExponentialHistogram
+	case "summary":
+		return MetricTypeSummary
+	default:
+		return MetricTypeUnknown
+	}
+}
+
+// MetricTypeToString converts an int16 metric type constant to its string representation
+func MetricTypeToString(t int16) string {
+	switch t {
+	case MetricTypeGauge:
+		return "gauge"
+	case MetricTypeSum:
+		return "sum"
+	case MetricTypeHistogram:
+		return "histogram"
+	case MetricTypeExponentialHistogram:
+		return "exponential_histogram"
+	case MetricTypeSummary:
+		return "summary"
+	default:
+		return "unknown"
+	}
+}
+
 // Current metric sort configuration - single source of truth for all metric sorting
 const (
 	// CurrentMetricSortVersion is the sort version used for all newly created metric segments
@@ -57,6 +103,7 @@ type CompactMetricSegsNew struct {
 	FileSize     int64
 	Fingerprints []int64
 	MetricNames  []string
+	MetricTypes  []int16
 }
 
 type RollupSourceParams struct {
@@ -83,6 +130,7 @@ type RollupNewRecord struct {
 	FileSize     int64
 	Fingerprints []int64
 	MetricNames  []string
+	MetricTypes  []int16
 }
 
 type CompactMetricSegsParams struct {
