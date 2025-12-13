@@ -47,7 +47,7 @@ func MetricTypeFromString(s string) int16 {
 	switch s {
 	case "gauge":
 		return MetricTypeGauge
-	case "sum", "counter":
+	case "sum", "counter", "count":
 		return MetricTypeSum
 	case "histogram":
 		return MetricTypeHistogram

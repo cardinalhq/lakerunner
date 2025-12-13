@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -116,10 +117,8 @@ func (q *QuerierService) handleListPromQLMetricsMetadata(w http.ResponseWriter, 
 		slog.Debug("metrics metadata using default 1-hour time range")
 	}
 
-	startTime := time.Unix(0, startTs*1e6).UTC()
-	endTime := time.Unix(0, endTs*1e6).UTC()
-	startDateint := int32(startTime.Year()*10000 + int(startTime.Month())*100 + startTime.Day())
-	endDateint := int32(endTime.Year()*10000 + int(endTime.Month())*100 + endTime.Day())
+	startDateint, _ := helpers.MSToDateintHour(startTs)
+	endDateint, _ := helpers.MSToDateintHour(endTs)
 
 	rows, err := q.mdb.ListMetricNamesWithTypes(ctx, lrdb.ListMetricNamesWithTypesParams{
 		OrganizationID: orgUUID,
@@ -187,17 +186,14 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 			http.Error(w, "invalid start/end time: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Convert timestamps to dateints for partition pruning
-		startTime := time.Unix(0, startTs*1e6).UTC()
-		endTime := time.Unix(0, endTs*1e6).UTC()
-		startDateint = int32(startTime.Year()*10000 + int(startTime.Month())*100 + startTime.Day())
-		endDateint = int32(endTime.Year()*10000 + int(endTime.Month())*100 + endTime.Day())
+		startDateint, _ = helpers.MSToDateintHour(startTs)
+		endDateint, _ = helpers.MSToDateintHour(endTs)
 	} else {
 		// Default to yesterday and today for partition pruning
 		now := time.Now().UTC()
-		endDateint = int32(now.Year()*10000 + int(now.Month())*100 + now.Day())
+		endDateint, _ = helpers.MSToDateintHour(now.UnixMilli())
 		yesterday := now.AddDate(0, 0, -1)
-		startDateint = int32(yesterday.Year()*10000 + int(yesterday.Month())*100 + yesterday.Day())
+		startDateint, _ = helpers.MSToDateintHour(yesterday.UnixMilli())
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
