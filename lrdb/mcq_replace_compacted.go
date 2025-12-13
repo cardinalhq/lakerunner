@@ -50,6 +50,7 @@ func (q *Store) CompactMetricSegs(ctx context.Context, args CompactMetricSegsPar
 			Fingerprints:   r.Fingerprints,
 			SortVersion:    CurrentMetricSortVersion,
 			Compacted:      false,
+			MetricNames:    r.MetricNames,
 		}
 	}
 

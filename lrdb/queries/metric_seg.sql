@@ -14,7 +14,8 @@ INSERT INTO metric_seg (
   fingerprints,
   sort_version,
   compacted,
-  label_name_map
+  label_name_map,
+  metric_names
 )
 VALUES (
   @organization_id,
@@ -31,7 +32,8 @@ VALUES (
   @fingerprints::bigint[],
   @sort_version,
   @compacted,
-  @label_name_map
+  @label_name_map,
+  @metric_names::text[]
 );
 
 -- name: GetMetricSegsByIds :many
@@ -60,7 +62,8 @@ INSERT INTO metric_seg (
   fingerprints,
   sort_version,
   compacted,
-  label_name_map
+  label_name_map,
+  metric_names
 )
 VALUES (
   @organization_id,
@@ -77,7 +80,8 @@ VALUES (
   @fingerprints::bigint[],
   @sort_version,
   @compacted,
-  @label_name_map
+  @label_name_map,
+  @metric_names::text[]
 )
 ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
 DO NOTHING;
@@ -165,3 +169,15 @@ WHERE organization_id = @organization_id
   AND frequency_ms = @frequency_ms
   AND segment_id = ANY(@segment_ids::BIGINT[])
   AND label_name_map IS NOT NULL;
+
+-- name: ListMetricNames :many
+-- Returns distinct metric names for an organization within a time range
+SELECT DISTINCT
+    unnest(metric_names)::text AS metric_name
+FROM metric_seg
+WHERE organization_id = @organization_id
+  AND dateint >= @start_dateint
+  AND dateint <= @end_dateint
+  AND ts_range && int8range(@start_ts, @end_ts, '[)')
+  AND published = true
+  AND metric_names IS NOT NULL;

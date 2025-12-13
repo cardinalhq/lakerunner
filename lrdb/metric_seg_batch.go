@@ -67,6 +67,7 @@ func (q *Store) InsertMetricSegmentsBatch(
 					Fingerprints:   params.Fingerprints,
 					SortVersion:    params.SortVersion,
 					LabelNameMap:   params.LabelNameMap,
+					MetricNames:    params.MetricNames,
 				}
 			}
 
@@ -137,6 +138,7 @@ func (q *Store) CompactMetricSegments(
 					Fingerprints:   r.Fingerprints,
 					SortVersion:    CurrentMetricSortVersion,
 					Compacted:      true,
+					MetricNames:    r.MetricNames,
 				}
 			}
 
@@ -204,6 +206,7 @@ func (q *Store) RollupMetricSegments(
 					SegmentID:      newRec.SegmentID,
 					SortVersion:    targetParams.SortVersion,
 					StartTs:        newRec.StartTs,
+					MetricNames:    newRec.MetricNames,
 				}
 			}
 

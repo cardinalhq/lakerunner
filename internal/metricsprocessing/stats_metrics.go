@@ -28,11 +28,12 @@ import (
 // fileMetadata contains extracted metadata from a parquet file result
 type fileMetadata struct {
 	Fingerprints []int64
-	StartTs      int64  // Inclusive start timestamp
-	EndTs        int64  // Exclusive end timestamp (LastTS + 1)
-	Dateint      int32  // YYYYMMDD
-	Hour         int16  // Hour of day (0-23)
-	LabelNameMap []byte // JSON map of label column names
+	StartTs      int64    // Inclusive start timestamp
+	EndTs        int64    // Exclusive end timestamp (LastTS + 1)
+	Dateint      int32    // YYYYMMDD
+	Hour         int16    // Hour of day (0-23)
+	LabelNameMap []byte   // JSON map of label column names
+	MetricNames  []string // Unique metric names observed
 }
 
 // extractFileMetadata extracts and validates metadata from a parquet file result
@@ -67,5 +68,6 @@ func extractFileMetadata(ctx context.Context, file parquetwriter.Result) (*fileM
 		Dateint:      dateint,
 		Hour:         hour,
 		LabelNameMap: stats.LabelNameMap,
+		MetricNames:  stats.MetricNames,
 	}, nil
 }

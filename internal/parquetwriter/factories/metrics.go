@@ -150,20 +150,26 @@ func (a *MetricsStatsAccumulator) Finalize() any {
 	// Build label name map from collected columns
 	labelNameMap := buildLabelNameMap(a.labelColumns)
 
+	// Extract metric names as sorted slice for storage
+	metricNames := a.metricNames.ToSlice()
+	slices.Sort(metricNames)
+
 	return MetricsFileStats{
 		FirstTS:      a.firstTS,
 		LastTS:       a.lastTS,
 		Fingerprints: fingerprints,
 		LabelNameMap: labelNameMap,
+		MetricNames:  metricNames,
 	}
 }
 
 // MetricsFileStats contains statistics about a metrics file.
 type MetricsFileStats struct {
-	FirstTS      int64   // Earliest timestamp
-	LastTS       int64   // Latest timestamp
-	Fingerprints []int64 // Fingerprints for indexing
-	LabelNameMap []byte  // JSON map of label column names to dotted names
+	FirstTS      int64    // Earliest timestamp
+	LastTS       int64    // Latest timestamp
+	Fingerprints []int64  // Fingerprints for indexing
+	LabelNameMap []byte   // JSON map of label column names to dotted names
+	MetricNames  []string // Unique metric names observed in this file
 }
 
 // ValidateMetricsRow checks that a row has the required fields for metrics processing.

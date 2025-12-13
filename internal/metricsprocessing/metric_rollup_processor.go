@@ -451,6 +451,7 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 			Fingerprints: stats.Fingerprints,
 			SortVersion:  lrdb.CurrentMetricSortVersion,
 			CreatedBy:    lrdb.CreatedByRollup,
+			MetricNames:  stats.MetricNames,
 		}
 
 		segments = append(segments, segment)
@@ -487,6 +488,7 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 			RecordCount:  seg.RecordCount,
 			FileSize:     seg.FileSize,
 			Fingerprints: seg.Fingerprints,
+			MetricNames:  seg.MetricNames,
 		}
 	}
 

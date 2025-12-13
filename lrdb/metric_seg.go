@@ -56,6 +56,7 @@ type CompactMetricSegsNew struct {
 	RecordCount  int64
 	FileSize     int64
 	Fingerprints []int64
+	MetricNames  []string
 }
 
 type RollupSourceParams struct {
@@ -81,6 +82,7 @@ type RollupNewRecord struct {
 	RecordCount  int64
 	FileSize     int64
 	Fingerprints []int64
+	MetricNames  []string
 }
 
 type CompactMetricSegsParams struct {
