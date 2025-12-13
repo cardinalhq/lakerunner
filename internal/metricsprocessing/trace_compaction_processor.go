@@ -23,6 +23,9 @@ import (
 	"runtime"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -111,15 +114,29 @@ func (p *TraceCompactionProcessor) ProcessBundle(ctx context.Context, key messag
 		}
 	}()
 
+	// Setup storage
+	ctx, setupSpan := boxerTracer.Start(ctx, "traces.compact.setup_storage", trace.WithAttributes(
+		attribute.String("organization_id", key.OrganizationID.String()),
+		attribute.Int("instance_num", int(key.InstanceNum)),
+		attribute.Int("dateint", int(key.DateInt)),
+	))
+
 	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
 	if err != nil {
+		setupSpan.RecordError(err)
+		setupSpan.SetStatus(codes.Error, "failed to get storage profile")
+		setupSpan.End()
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
 	storageClient, err := cloudstorage.NewClient(ctx, p.cmgr, storageProfile)
 	if err != nil {
+		setupSpan.RecordError(err)
+		setupSpan.SetStatus(codes.Error, "failed to create storage client")
+		setupSpan.End()
 		return fmt.Errorf("create storage client: %w", err)
 	}
+	setupSpan.End()
 
 	if err := p.ProcessWork(ctx, tmpDir, storageClient, storageProfile, key, msgs, partition, offset); err != nil {
 		ll.Error("Failed to process trace compaction work, skipping bundle",
@@ -148,6 +165,11 @@ func (p *TraceCompactionProcessor) ProcessWork(
 	ll := logctx.FromContext(ctx)
 
 	recordCountEstimate := p.store.GetTraceEstimate(ctx, key.OrganizationID)
+
+	// Fetch segments
+	ctx, fetchSpan := boxerTracer.Start(ctx, "traces.compact.fetch_segments", trace.WithAttributes(
+		attribute.Int("message_count", len(msgs)),
+	))
 
 	var activeSegments []lrdb.TraceSeg
 	var segmentsToMarkCompacted []lrdb.TraceSeg
@@ -187,6 +209,11 @@ func (p *TraceCompactionProcessor) ProcessWork(
 
 		activeSegments = append(activeSegments, segment)
 	}
+	fetchSpan.SetAttributes(
+		attribute.Int("active_segments", len(activeSegments)),
+		attribute.Int("segments_to_mark", len(segmentsToMarkCompacted)),
+	)
+	fetchSpan.End()
 
 	if len(segmentsToMarkCompacted) > 0 {
 		if err := p.markTraceSegmentsAsCompacted(ctx, segmentsToMarkCompacted, key); err != nil {
@@ -204,8 +231,16 @@ func (p *TraceCompactionProcessor) ProcessWork(
 
 	ll.Info("Found segments to compact", slog.Int("activeSegments", len(activeSegments)))
 
+	// Process core
+	ctx, processSpan := boxerTracer.Start(ctx, "traces.compact.process_core", trace.WithAttributes(
+		attribute.Int("segment_count", len(activeSegments)),
+	))
+
 	results, err := p.performTraceCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
+		processSpan.RecordError(err)
+		processSpan.SetStatus(codes.Error, "failed to perform compaction core")
+		processSpan.End()
 		ll.Error("Failed to perform trace compaction core processing",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -214,9 +249,19 @@ func (p *TraceCompactionProcessor) ProcessWork(
 			slog.Any("error", err))
 		return err
 	}
+	processSpan.SetAttributes(attribute.Int("result_count", len(results)))
+	processSpan.End()
+
+	// Upload segments
+	ctx, uploadSpan := boxerTracer.Start(ctx, "traces.compact.upload_segments", trace.WithAttributes(
+		attribute.Int("result_count", len(results)),
+	))
 
 	newSegments, err := p.uploadAndCreateTraceSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
 	if err != nil {
+		uploadSpan.RecordError(err)
+		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
+		uploadSpan.End()
 		ll.Error("Failed to upload and create trace segments",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -225,8 +270,19 @@ func (p *TraceCompactionProcessor) ProcessWork(
 			slog.Any("error", err))
 		return err
 	}
+	uploadSpan.SetAttributes(attribute.Int("new_segments", len(newSegments)))
+	uploadSpan.End()
+
+	// Update database
+	ctx, dbSpan := boxerTracer.Start(ctx, "traces.compact.update_db", trace.WithAttributes(
+		attribute.Int("old_segments", len(activeSegments)),
+		attribute.Int("new_segments", len(newSegments)),
+	))
 
 	if err := p.atomicTraceDatabaseUpdate(ctx, activeSegments, newSegments, key, partition, offset); err != nil {
+		dbSpan.RecordError(err)
+		dbSpan.SetStatus(codes.Error, "failed to update database")
+		dbSpan.End()
 		ll.Error("Failed to perform atomic database update for trace compaction",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -236,6 +292,7 @@ func (p *TraceCompactionProcessor) ProcessWork(
 			slog.Any("error", err))
 		return err
 	}
+	dbSpan.End()
 
 	var totalRecords, totalSize int64
 	for _, result := range results {

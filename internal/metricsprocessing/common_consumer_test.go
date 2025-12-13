@@ -277,7 +277,8 @@ func TestCommonConsumer_IdleCheck_TickerEvents(t *testing.T) {
 	maxAge := 2 * time.Second
 
 	// Expect processIdleGroups to be called at least once (allow multiple calls)
-	mockGatherer.On("processIdleGroups", ctx, staleAge, maxAge).Return(3, nil).Maybe()
+	// Use mock.Anything for context since tracing wraps it
+	mockGatherer.On("processIdleGroups", mock.Anything, staleAge, maxAge).Return(3, nil).Maybe()
 
 	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
 		gatherer:        mockGatherer,
@@ -317,7 +318,7 @@ func TestCommonConsumer_IdleCheck_ErrorHandling(t *testing.T) {
 
 	// Mock processIdleGroups to return an error
 	expectedError := fmt.Errorf("failed to process idle groups")
-	mockGatherer.On("processIdleGroups", ctx, staleAge, maxAge).Return(0, expectedError).Maybe()
+	mockGatherer.On("processIdleGroups", mock.Anything, staleAge, maxAge).Return(0, expectedError).Maybe()
 
 	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
 		gatherer:        mockGatherer,
@@ -357,7 +358,7 @@ func TestCommonConsumer_IdleCheck_ConfigParametersPassedCorrectly(t *testing.T) 
 	staleAge := 45 * time.Second
 	maxAge := 10 * time.Minute
 
-	mockGatherer.On("processIdleGroups", ctx, staleAge, maxAge).Return(2, nil).Maybe()
+	mockGatherer.On("processIdleGroups", mock.Anything, staleAge, maxAge).Return(2, nil).Maybe()
 
 	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
 		gatherer:        mockGatherer,
@@ -396,9 +397,9 @@ func TestCommonConsumer_IdleCheck_MultipleTicks(t *testing.T) {
 	maxAge := 2 * time.Second
 
 	// Set up expectations for multiple calls (allow more calls than expected)
-	mockGatherer.On("processIdleGroups", ctx, staleAge, maxAge).Return(1, nil).Maybe()
-	mockGatherer.On("processIdleGroups", ctx, staleAge, maxAge).Return(3, nil).Maybe()
-	mockGatherer.On("processIdleGroups", ctx, staleAge, maxAge).Return(0, nil).Maybe()
+	mockGatherer.On("processIdleGroups", mock.Anything, staleAge, maxAge).Return(1, nil).Maybe()
+	mockGatherer.On("processIdleGroups", mock.Anything, staleAge, maxAge).Return(3, nil).Maybe()
+	mockGatherer.On("processIdleGroups", mock.Anything, staleAge, maxAge).Return(0, nil).Maybe()
 
 	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
 		gatherer:        mockGatherer,

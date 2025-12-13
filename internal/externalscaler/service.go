@@ -22,6 +22,10 @@ import (
 	"strconv"
 	"strings"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
@@ -32,6 +36,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
+
+var tracer trace.Tracer = otel.Tracer("github.com/cardinalhq/lakerunner/externalscaler")
 
 // LagMonitorInterface defines the methods needed for Kafka lag monitoring (boxer services)
 type LagMonitorInterface interface {
@@ -159,6 +165,12 @@ func (s *Service) startGRPCServer(ctx context.Context) error {
 }
 
 func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActiveResponse, error) {
+	ctx, span := tracer.Start(ctx, "scaler.is_active", trace.WithAttributes(
+		attribute.String("scaled_object_name", req.Name),
+		attribute.String("namespace", req.Namespace),
+	))
+	defer span.End()
+
 	ll := logctx.FromContext(ctx)
 
 	ll.Debug("IsActive called",
@@ -172,16 +184,31 @@ func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActive
 			"name", req.Name,
 			"namespace", req.Namespace,
 			"metadata", req.ScalerMetadata)
+		span.SetAttributes(attribute.Bool("result", false))
 		return &IsActiveResponse{Result: false}, nil
 	}
 
+	span.SetAttributes(attribute.String("service_type", serviceType))
+
 	if serviceType == config.ServiceTypeBoxer {
 		ll.Debug("IsActive: Handling boxer service type", "serviceType", serviceType)
-		return s.isBoxerActive(ctx, req.ScalerMetadata)
+		resp, err := s.isBoxerActive(ctx, req.ScalerMetadata)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(otelcodes.Error, "boxer active check failed")
+			return nil, err
+		}
+		span.SetAttributes(attribute.Bool("result", resp.Result))
+		return resp, nil
 	}
 
 	depth, err := s.getQueueDepth(ctx, serviceType)
 	isActive := err == nil && depth > 0
+
+	span.SetAttributes(
+		attribute.Int64("queue_depth", depth),
+		attribute.Bool("result", isActive),
+	)
 
 	ll.Debug("IsActive response",
 		"serviceType", serviceType,
@@ -226,6 +253,12 @@ func (s *Service) StreamIsActive(req *ScaledObjectRef, stream grpc.ServerStreami
 }
 
 func (s *Service) GetMetricSpec(ctx context.Context, req *ScaledObjectRef) (*GetMetricSpecResponse, error) {
+	ctx, span := tracer.Start(ctx, "scaler.get_metric_spec", trace.WithAttributes(
+		attribute.String("scaled_object_name", req.Name),
+		attribute.String("namespace", req.Namespace),
+	))
+	defer span.End()
+
 	ll := logctx.FromContext(ctx)
 
 	ll.Debug("GetMetricSpec called",
@@ -238,12 +271,23 @@ func (s *Service) GetMetricSpec(ctx context.Context, req *ScaledObjectRef) (*Get
 		ll.Error("GetMetricSpec: serviceType not specified in scaler metadata",
 			"name", req.Name,
 			"metadata", req.ScalerMetadata)
+		span.RecordError(fmt.Errorf("serviceType not specified"))
+		span.SetStatus(otelcodes.Error, "serviceType not specified")
 		return nil, status.Errorf(codes.InvalidArgument, "serviceType not specified in scaler metadata")
 	}
 
+	span.SetAttributes(attribute.String("service_type", serviceType))
+
 	if serviceType == config.ServiceTypeBoxer {
 		ll.Debug("GetMetricSpec: Handling boxer service type", "serviceType", serviceType)
-		return s.getBoxerMetricSpecs(ctx, req.ScalerMetadata)
+		resp, err := s.getBoxerMetricSpecs(ctx, req.ScalerMetadata)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(otelcodes.Error, "failed to get boxer metric specs")
+			return nil, err
+		}
+		span.SetAttributes(attribute.Int("metric_specs_count", len(resp.MetricSpecs)))
+		return resp, nil
 	}
 
 	target, err := s.scalingConfig.GetTargetQueueSize(serviceType)
@@ -251,6 +295,8 @@ func (s *Service) GetMetricSpec(ctx context.Context, req *ScaledObjectRef) (*Get
 		ll.Error("GetMetricSpec: Failed to get target queue size",
 			"serviceType", serviceType,
 			"error", err)
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, "failed to get target queue size")
 		return nil, status.Errorf(codes.InvalidArgument, "failed to get target queue size: %v", err)
 	}
 
@@ -262,6 +308,11 @@ func (s *Service) GetMetricSpec(ctx context.Context, req *ScaledObjectRef) (*Get
 			},
 		},
 	}
+
+	span.SetAttributes(
+		attribute.Int("target_size", target),
+		attribute.Int("metric_specs_count", len(response.MetricSpecs)),
+	)
 
 	ll.Debug("GetMetricSpec response",
 		"serviceType", serviceType,
@@ -322,6 +373,13 @@ func (s *Service) getBoxerMetricSpecs(ctx context.Context, metadata map[string]s
 }
 
 func (s *Service) GetMetrics(ctx context.Context, req *GetMetricsRequest) (*GetMetricsResponse, error) {
+	ctx, span := tracer.Start(ctx, "scaler.get_metrics", trace.WithAttributes(
+		attribute.String("metric_name", req.MetricName),
+		attribute.String("scaled_object_name", req.ScaledObjectRef.Name),
+		attribute.String("namespace", req.ScaledObjectRef.Namespace),
+	))
+	defer span.End()
+
 	ll := logctx.FromContext(ctx)
 
 	ll.Debug("GetMetrics called",
@@ -330,12 +388,16 @@ func (s *Service) GetMetrics(ctx context.Context, req *GetMetricsRequest) (*GetM
 		"namespace", req.ScaledObjectRef.Namespace)
 
 	serviceType := req.MetricName
+	span.SetAttributes(attribute.String("service_type", serviceType))
+
 	depth, err := s.getQueueDepth(ctx, serviceType)
 	if err != nil {
 		ll.Error("GetMetrics: Failed to get queue depth",
 			"serviceType", serviceType,
 			"metricName", req.MetricName,
 			"error", err)
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, "failed to get queue depth")
 		return nil, status.Errorf(codes.Internal, "failed to get queue depth for %s: %v", serviceType, err)
 	}
 
@@ -347,6 +409,11 @@ func (s *Service) GetMetrics(ctx context.Context, req *GetMetricsRequest) (*GetM
 			},
 		},
 	}
+
+	span.SetAttributes(
+		attribute.Int64("queue_depth", depth),
+		attribute.Int("metric_values_count", len(response.MetricValues)),
+	)
 
 	ll.Debug("GetMetrics response",
 		"serviceType", serviceType,

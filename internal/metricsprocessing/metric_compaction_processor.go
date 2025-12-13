@@ -23,6 +23,9 @@ import (
 	"runtime"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -313,15 +316,33 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		}
 	}()
 
+	ctx, storageSpan := boxerTracer.Start(ctx, "metrics.compact.setup_storage", trace.WithAttributes(
+		attribute.String("organization_id", key.OrganizationID.String()),
+		attribute.Int("dateint", int(key.DateInt)),
+		attribute.Int("frequency_ms", int(key.FrequencyMs)),
+		attribute.Int("instance_num", int(key.InstanceNum)),
+	))
+
 	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
 	if err != nil {
+		storageSpan.RecordError(err)
+		storageSpan.SetStatus(codes.Error, "failed to get storage profile")
+		storageSpan.End()
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
 	storageClient, err := cloudstorage.NewClient(ctx, p.cmgr, storageProfile)
 	if err != nil {
+		storageSpan.RecordError(err)
+		storageSpan.SetStatus(codes.Error, "failed to create storage client")
+		storageSpan.End()
 		return fmt.Errorf("create storage client: %w", err)
 	}
+	storageSpan.End()
+
+	ctx, fetchSpan := boxerTracer.Start(ctx, "metrics.compact.fetch_segments", trace.WithAttributes(
+		attribute.Int("message_count", len(msgs)),
+	))
 
 	var activeSegments []lrdb.MetricSeg
 	var segmentsToMarkCompacted []lrdb.MetricSeg
@@ -364,6 +385,12 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		activeSegments = append(activeSegments, segment)
 	}
 
+	fetchSpan.SetAttributes(
+		attribute.Int("active_segments", len(activeSegments)),
+		attribute.Int("segments_to_mark_compacted", len(segmentsToMarkCompacted)),
+	)
+	fetchSpan.End()
+
 	if len(segmentsToMarkCompacted) > 0 {
 		if err := p.markSegmentsAsCompacted(ctx, segmentsToMarkCompacted, key); err != nil {
 			ll.Warn("Failed to mark segments as compacted", slog.Any("error", err))
@@ -381,8 +408,15 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 	ll.Info("Found segments to compact",
 		slog.Int("activeSegments", len(activeSegments)))
 
+	ctx, processSpan := boxerTracer.Start(ctx, "metrics.compact.process_core", trace.WithAttributes(
+		attribute.Int("active_segments", len(activeSegments)),
+	))
+
 	results, err := p.performCompaction(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
+		processSpan.RecordError(err)
+		processSpan.SetStatus(codes.Error, "failed to perform compaction")
+		processSpan.End()
 		ll.Error("Failed to perform metric compaction core processing, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -392,9 +426,18 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 			slog.Any("error", err))
 		return nil
 	}
+	processSpan.SetAttributes(attribute.Int("output_files", len(results)))
+	processSpan.End()
+
+	ctx, uploadSpan := boxerTracer.Start(ctx, "metrics.compact.upload_segments", trace.WithAttributes(
+		attribute.Int("result_count", len(results)),
+	))
 
 	newSegments, err := p.uploadAndCreateSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
 	if err != nil {
+		uploadSpan.RecordError(err)
+		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
+		uploadSpan.End()
 		ll.Error("Failed to upload and create metric segments, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -404,8 +447,18 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 			slog.Any("error", err))
 		return nil
 	}
+	uploadSpan.SetAttributes(attribute.Int("new_segment_count", len(newSegments)))
+	uploadSpan.End()
+
+	ctx, dbSpan := boxerTracer.Start(ctx, "metrics.compact.update_db", trace.WithAttributes(
+		attribute.Int("old_segment_count", len(activeSegments)),
+		attribute.Int("new_segment_count", len(newSegments)),
+	))
 
 	if err := p.atomicDatabaseUpdate(ctx, activeSegments, newSegments, key); err != nil {
+		dbSpan.RecordError(err)
+		dbSpan.SetStatus(codes.Error, "failed to update database")
+		dbSpan.End()
 		ll.Error("Failed to perform atomic database update for metric compaction, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -416,6 +469,7 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 			slog.Any("error", err))
 		return nil
 	}
+	dbSpan.End()
 
 	var totalRecords, totalSize int64
 	for _, result := range results {

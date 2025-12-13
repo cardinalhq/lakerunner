@@ -22,12 +22,19 @@ import (
 	"reflect"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
+
+var boxerTracer trace.Tracer = otel.Tracer("github.com/cardinalhq/lakerunner/metricsprocessing")
 
 // CommonConsumerConfig holds configuration for a common consumer
 type CommonConsumerConfig struct {
@@ -141,12 +148,21 @@ func (c *CommonConsumer[M, K]) processKafkaMessageBatch(ctx context.Context, kaf
 		return nil
 	}
 
+	ctx, span := boxerTracer.Start(ctx, "boxer.consume.batch", trace.WithAttributes(
+		attribute.Int("message_count", len(kafkaMessages)),
+		attribute.String("topic", c.config.Topic),
+		attribute.String("consumer_group", c.config.ConsumerGroup),
+	))
+	defer span.End()
+
 	ll.Debug("Processing Kafka message batch",
 		slog.Int("messageCount", len(kafkaMessages)))
 
 	// Process each message
 	for _, kafkaMsg := range kafkaMessages {
 		if err := c.processKafkaMessage(ctx, kafkaMsg, ll); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to process message")
 			return err
 		}
 	}
@@ -224,9 +240,21 @@ func (c *CommonConsumer[M, K]) idleCheck(ctx context.Context) {
 			return
 		case <-c.idleCheckTicker.C:
 			ll.Debug("Running periodic flush of idle groups")
-			if _, err := c.gatherer.processIdleGroups(ctx, c.config.StaleAge, c.config.MaxAge); err != nil {
+
+			ctx, flushSpan := boxerTracer.Start(ctx, "boxer.idle_flush", trace.WithAttributes(
+				attribute.String("topic", c.config.Topic),
+				attribute.String("consumer_group", c.config.ConsumerGroup),
+			))
+
+			flushed, err := c.gatherer.processIdleGroups(ctx, c.config.StaleAge, c.config.MaxAge)
+			if err != nil {
+				flushSpan.RecordError(err)
+				flushSpan.SetStatus(codes.Error, "failed to flush idle groups")
 				ll.Error("Failed to flush idle groups", slog.Any("error", err))
+			} else {
+				flushSpan.SetAttributes(attribute.Int("groups_flushed", flushed))
 			}
+			flushSpan.End()
 		}
 	}
 }

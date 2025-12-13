@@ -27,6 +27,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
@@ -269,13 +272,25 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 		}
 	}()
 
+	// Setup storage
+	ctx, setupSpan := boxerTracer.Start(ctx, "traces.ingest.setup_storage", trace.WithAttributes(
+		attribute.String("organization_id", key.OrganizationID.String()),
+		attribute.Int("instance_num", int(key.InstanceNum)),
+	))
+
 	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
 	if err != nil {
+		setupSpan.RecordError(err)
+		setupSpan.SetStatus(codes.Error, "failed to get storage profile")
+		setupSpan.End()
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
 	inputClient, err := cloudstorage.NewClient(ctx, p.cmgr, srcProfile)
 	if err != nil {
+		setupSpan.RecordError(err)
+		setupSpan.SetStatus(codes.Error, "failed to create input storage client")
+		setupSpan.End()
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
@@ -283,14 +298,26 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 	if p.config.Traces.Ingestion.SingleInstanceMode {
 		dstProfile, err = p.storageProvider.GetLowestInstanceStorageProfile(ctx, srcProfile.OrganizationID, srcProfile.Bucket)
 		if err != nil {
+			setupSpan.RecordError(err)
+			setupSpan.SetStatus(codes.Error, "failed to get lowest instance storage profile")
+			setupSpan.End()
 			return fmt.Errorf("get lowest instance storage profile: %w", err)
 		}
 	}
 
 	outputClient, err := cloudstorage.NewClient(ctx, p.cmgr, dstProfile)
 	if err != nil {
+		setupSpan.RecordError(err)
+		setupSpan.SetStatus(codes.Error, "failed to create output storage client")
+		setupSpan.End()
 		return fmt.Errorf("create storage client: %w", err)
 	}
+	setupSpan.End()
+
+	// Download files
+	ctx, downloadSpan := boxerTracer.Start(ctx, "traces.ingest.download_files", trace.WithAttributes(
+		attribute.Int("message_count", len(msgs)),
+	))
 
 	var readers []filereader.Reader
 	var readersToClose []filereader.Reader
@@ -321,6 +348,11 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 		readersToClose = append(readersToClose, reader)
 		totalInputSize += msg.FileSize
 	}
+	downloadSpan.SetAttributes(
+		attribute.Int("readers_created", len(readers)),
+		attribute.Int64("total_input_size", totalInputSize),
+	)
+	downloadSpan.End()
 
 	defer func() {
 		for _, reader := range readersToClose {
@@ -335,28 +367,64 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 		return nil
 	}
 
+	// Create unified reader
+	ctx, unifiedSpan := boxerTracer.Start(ctx, "traces.ingest.create_unified_reader", trace.WithAttributes(
+		attribute.Int("reader_count", len(readers)),
+	))
+
 	finalReader, err := p.createUnifiedTraceReader(ctx, readers)
 	if err != nil {
+		unifiedSpan.RecordError(err)
+		unifiedSpan.SetStatus(codes.Error, "failed to create unified reader")
+		unifiedSpan.End()
 		return fmt.Errorf("failed to create unified reader: %w", err)
 	}
+	unifiedSpan.End()
+
+	// Process rows
+	ctx, processSpan := boxerTracer.Start(ctx, "traces.ingest.process_rows")
 
 	dateintBins, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
+		processSpan.RecordError(err)
+		processSpan.SetStatus(codes.Error, "failed to process rows")
+		processSpan.End()
 		return fmt.Errorf("failed to process rows: %w", err)
 	}
+	processSpan.SetAttributes(attribute.Int("dateint_bins", len(dateintBins)))
+	processSpan.End()
 
 	if len(dateintBins) == 0 {
 		ll.Info("No output files generated")
 		return nil
 	}
 
+	// Upload segments
+	ctx, uploadSpan := boxerTracer.Start(ctx, "traces.ingest.upload_segments", trace.WithAttributes(
+		attribute.Int("dateint_bins", len(dateintBins)),
+	))
+
 	segmentParams, err := p.uploadAndCreateTraceSegments(ctx, outputClient, dateintBins, dstProfile)
 	if err != nil {
+		uploadSpan.RecordError(err)
+		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
+		uploadSpan.End()
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
+	uploadSpan.SetAttributes(attribute.Int("segments_created", len(segmentParams)))
+	uploadSpan.End()
+
+	// Insert segments into database
+	ctx, insertSpan := boxerTracer.Start(ctx, "traces.ingest.insert_segments", trace.WithAttributes(
+		attribute.Int("segment_count", len(segmentParams)),
+	))
 
 	criticalCtx := context.WithoutCancel(ctx)
 	if err := p.store.InsertTraceSegmentsBatch(criticalCtx, segmentParams); err != nil {
+		insertSpan.RecordError(err)
+		insertSpan.SetStatus(codes.Error, "failed to insert segments")
+		insertSpan.End()
+
 		// Log detailed segment information for debugging
 		segmentIDs := make([]int64, len(segmentParams))
 		var totalRecords, totalSize int64
@@ -377,8 +445,13 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 
 		return fmt.Errorf("failed to insert trace segments with Kafka offsets: %w", err)
 	}
+	insertSpan.End()
 
 	// Send compaction notifications to Kafka topic
+	ctx, publishSpan := boxerTracer.Start(ctx, "traces.ingest.publish_kafka", trace.WithAttributes(
+		attribute.Int("segment_count", len(segmentParams)),
+	))
+
 	if p.kafkaProducer != nil {
 		compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerTracesCompact)
 
@@ -400,6 +473,9 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 			// Marshal compaction message
 			compactionMsgBytes, err := compactionNotification.Marshal()
 			if err != nil {
+				publishSpan.RecordError(err)
+				publishSpan.SetStatus(codes.Error, "failed to marshal compaction notification")
+				publishSpan.End()
 				return fmt.Errorf("failed to marshal trace compaction notification: %w", err)
 			}
 
@@ -410,12 +486,16 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 
 			// Send to compaction topic
 			if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
+				publishSpan.RecordError(err)
+				publishSpan.SetStatus(codes.Error, "failed to send compaction notification")
+				publishSpan.End()
 				return fmt.Errorf("failed to send trace compaction notification to Kafka: %w", err)
 			} else {
 				ll.Debug("Sent trace compaction notification", slog.Any("message", compactionNotification))
 			}
 		}
 	}
+	publishSpan.End()
 
 	// Calculate output metrics for telemetry
 	var totalOutputRecords, totalOutputSize int64
