@@ -25,7 +25,10 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -37,6 +40,7 @@ import (
 )
 
 var (
+	tracer                  = otel.Tracer("github.com/cardinalhq/lakerunner/cmd/sweeper")
 	legacyTableSyncCounter  metric.Int64Counter
 	legacyTableSyncDuration metric.Float64Histogram
 	metricEstimateCounter   metric.Int64Counter
@@ -151,7 +155,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	if cmd.syncLegacyTables {
 		wg.Go(func() {
 			slog.Info("Starting legacy table sync goroutine", slog.Duration("period", legacyTablesSyncPeriod))
-			if err := periodicLoop(ctx, legacyTablesSyncPeriod, func(c context.Context) error {
+			if err := periodicLoop(ctx, "legacy_table_sync", legacyTablesSyncPeriod, func(c context.Context) error {
 				return runLegacyTablesSync(c, cdbPool)
 			}); err != nil && !errors.Is(err, context.Canceled) {
 				errCh <- err
@@ -161,7 +165,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 
 	// Periodic: metric estimate updates
 	wg.Go(func() {
-		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
+		if err := periodicLoop(ctx, "metric_estimate_update", metricEstimateUpdatePeriod, func(c context.Context) error {
 			return runMetricEstimateUpdate(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
@@ -170,7 +174,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 
 	// Periodic: log estimate updates
 	wg.Go(func() {
-		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
+		if err := periodicLoop(ctx, "log_estimate_update", metricEstimateUpdatePeriod, func(c context.Context) error {
 			return runLogEstimateUpdate(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
@@ -179,7 +183,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 
 	// Periodic: trace estimate updates
 	wg.Go(func() {
-		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
+		if err := periodicLoop(ctx, "trace_estimate_update", metricEstimateUpdatePeriod, func(c context.Context) error {
 			return runTraceEstimateUpdate(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
@@ -210,7 +214,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	// PubSub message history cleanup
 	wg.Go(func() {
 		slog.Info("Starting PubSub history cleanup goroutine", slog.Duration("period", pubsubCleanupPeriod))
-		if err := periodicLoop(ctx, pubsubCleanupPeriod, func(c context.Context) error {
+		if err := periodicLoop(ctx, "pubsub_cleanup", pubsubCleanupPeriod, func(c context.Context) error {
 			return runPubSubHistoryCleanup(c, mdb, cmd.cfg)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
@@ -220,7 +224,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	// Data expiry cleanup
 	wg.Go(func() {
 		slog.Info("Starting data expiry cleanup goroutine", slog.Duration("period", expiryCleanupPeriod))
-		if err := periodicLoop(ctx, expiryCleanupPeriod, func(c context.Context) error {
+		if err := periodicLoop(ctx, "expiry_cleanup", expiryCleanupPeriod, func(c context.Context) error {
 			return runExpiryCleanup(c, cdb, mdb, cmd.cfg)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
@@ -232,7 +236,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		slog.Info("Starting work queue cleanup goroutine",
 			slog.Duration("period", workQueueCleanupPeriod),
 			slog.Duration("heartbeatTimeout", workQueueHeartbeatTimeout))
-		if err := periodicLoop(ctx, workQueueCleanupPeriod, func(c context.Context) error {
+		if err := periodicLoop(ctx, "work_queue_cleanup", workQueueCleanupPeriod, func(c context.Context) error {
 			return runWorkQueueCleanup(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
@@ -252,11 +256,26 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	return ctx.Err()
 }
 
-// Runs f immediately, then on a ticker every period. Never more than once per period.
-func periodicLoop(ctx context.Context, period time.Duration, f func(context.Context) error) error {
-	if err := f(ctx); err != nil {
-		slog.Error("periodic task error", slog.Any("error", err))
+// periodicLoop runs f immediately, then on a ticker every period. Never more than once per period.
+func periodicLoop(ctx context.Context, taskName string, period time.Duration, f func(context.Context) error) error {
+	runTask := func() {
+		ctx, span := tracer.Start(ctx, "sweeper."+taskName, trace.WithAttributes(
+			attribute.String("task", taskName),
+		))
+		start := time.Now()
+
+		if err := f(ctx); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "task failed")
+			slog.Error("periodic task error", slog.String("task", taskName), slog.Any("error", err))
+		}
+
+		span.SetAttributes(attribute.Float64("duration_seconds", time.Since(start).Seconds()))
+		span.End()
 	}
+
+	// Run immediately
+	runTask()
 
 	t := time.NewTicker(period)
 	defer t.Stop()
@@ -266,10 +285,7 @@ func periodicLoop(ctx context.Context, period time.Duration, f func(context.Cont
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-t.C:
-			if err := f(ctx); err != nil {
-				slog.Error("periodic task error", slog.Any("error", err))
-				// keep going; periodic tasks should be resilient
-			}
+			runTask()
 		}
 	}
 }

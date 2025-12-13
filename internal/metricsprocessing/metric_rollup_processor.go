@@ -25,6 +25,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -189,15 +192,35 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		}
 	}()
 
+	// Setup storage
+	ctx, setupSpan := boxerTracer.Start(ctx, "metrics.rollup.setup_storage", trace.WithAttributes(
+		attribute.String("organization_id", firstMsg.OrganizationID.String()),
+		attribute.Int("instance_num", int(firstMsg.InstanceNum)),
+	))
+
 	storageProfile, err := r.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, firstMsg.OrganizationID, firstMsg.InstanceNum)
 	if err != nil {
+		setupSpan.RecordError(err)
+		setupSpan.SetStatus(codes.Error, "failed to get storage profile")
+		setupSpan.End()
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
 	storageClient, err := cloudstorage.NewClient(ctx, r.cmgr, storageProfile)
 	if err != nil {
+		setupSpan.RecordError(err)
+		setupSpan.SetStatus(codes.Error, "failed to create storage client")
+		setupSpan.End()
 		return fmt.Errorf("create storage client: %w", err)
 	}
+	setupSpan.End()
+
+	// Fetch segments
+	ctx, fetchSpan := boxerTracer.Start(ctx, "metrics.rollup.fetch_segments", trace.WithAttributes(
+		attribute.Int("message_count", len(bundle.Messages)),
+		attribute.Int("dateint", int(firstMsg.DateInt)),
+		attribute.Int("source_frequency_ms", int(firstMsg.SourceFrequencyMs)),
+	))
 
 	var segments []lrdb.MetricSeg
 	for _, msg := range bundle.Messages {
@@ -223,6 +246,8 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			segments = append(segments, segment)
 		}
 	}
+	fetchSpan.SetAttributes(attribute.Int("segments_found", len(segments)))
+	fetchSpan.End()
 
 	if len(segments) == 0 {
 		ll.Info("No segments to roll up")
@@ -242,8 +267,17 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
+	// Process core
+	ctx, processSpan := boxerTracer.Start(ctx, "metrics.rollup.process_core", trace.WithAttributes(
+		attribute.Int("segment_count", len(segments)),
+		attribute.Int("target_frequency_ms", int(key.TargetFrequencyMs)),
+	))
+
 	results, err := processMetricsWithAggregation(ctx, params)
 	if err != nil {
+		processSpan.RecordError(err)
+		processSpan.SetStatus(codes.Error, "failed to process metrics with aggregation")
+		processSpan.End()
 		ll.Error("Failed to process metrics with aggregation for rollup, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -254,9 +288,19 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			slog.Any("error", err))
 		return nil
 	}
+	processSpan.SetAttributes(attribute.Int("result_count", len(results)))
+	processSpan.End()
+
+	// Upload segments
+	ctx, uploadSpan := boxerTracer.Start(ctx, "metrics.rollup.upload_segments", trace.WithAttributes(
+		attribute.Int("result_count", len(results)),
+	))
 
 	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, results, key, segments)
 	if err != nil {
+		uploadSpan.RecordError(err)
+		uploadSpan.SetStatus(codes.Error, "failed to upload rollup segments")
+		uploadSpan.End()
 		ll.Error("Failed to upload and create rollup segments, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -267,8 +311,19 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			slog.Any("error", err))
 		return nil
 	}
+	uploadSpan.SetAttributes(attribute.Int("new_segments", len(newSegments)))
+	uploadSpan.End()
+
+	// Update database
+	ctx, dbSpan := boxerTracer.Start(ctx, "metrics.rollup.update_db", trace.WithAttributes(
+		attribute.Int("old_segments", len(segments)),
+		attribute.Int("new_segments", len(newSegments)),
+	))
 
 	if err := r.atomicDatabaseUpdate(ctx, segments, newSegments, key); err != nil {
+		dbSpan.RecordError(err)
+		dbSpan.SetStatus(codes.Error, "failed to perform atomic database update")
+		dbSpan.End()
 		ll.Error("Failed to perform atomic database update for metric rollup, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -280,12 +335,18 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			slog.Any("error", err))
 		return nil
 	}
+	dbSpan.End()
 
 	var totalRecords, totalSize int64
 	for _, result := range results {
 		totalRecords += result.RecordCount
 		totalSize += result.FileSize
 	}
+
+	// Publish to Kafka
+	ctx, publishSpan := boxerTracer.Start(ctx, "metrics.rollup.publish_kafka", trace.WithAttributes(
+		attribute.Int("new_segments", len(newSegments)),
+	))
 
 	if err := r.queueNextLevelRollups(ctx, newSegments, key); err != nil {
 		ll.Warn("Failed to queue next-level rollup messages", slog.Any("error", err))
@@ -294,6 +355,7 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 	if err := r.queueCompactionMessages(ctx, newSegments, key); err != nil {
 		ll.Warn("Failed to queue compaction messages", slog.Any("error", err))
 	}
+	publishSpan.End()
 
 	ll.Info("Rollup completed successfully",
 		slog.Int("inputSegments", len(segments)),

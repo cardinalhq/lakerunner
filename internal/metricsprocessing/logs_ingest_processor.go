@@ -32,9 +32,9 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -139,8 +139,6 @@ func validateLogIngestMessages(key messages.IngestKey, msgs []*messages.ObjStore
 
 // Process implements the Processor interface and performs raw log ingestion
 func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.IngestKey, msgs []*messages.ObjStoreNotificationMessage, partition int32, offset int64) error {
-	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/metricsprocessing")
-
 	ll := logctx.FromContext(ctx).With(
 		slog.String("organizationID", key.OrganizationID.String()),
 		slog.Int("instanceNum", int(key.InstanceNum)))
@@ -163,11 +161,10 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		}
 	}()
 
-	ctx, storageSpan := tracer.Start(ctx, "logs.ingest.setup_storage")
-	storageSpan.SetAttributes(
+	ctx, storageSpan := boxerTracer.Start(ctx, "logs.ingest.setup_storage", trace.WithAttributes(
 		attribute.String("organization_id", key.OrganizationID.String()),
 		attribute.Int("instance_num", int(key.InstanceNum)),
-	)
+	))
 
 	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
 	if err != nil {
@@ -209,8 +206,9 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
-	ctx, downloadSpan := tracer.Start(ctx, "logs.ingest.download_files")
-	downloadSpan.SetAttributes(attribute.Int("file_count", len(msgs)))
+	ctx, downloadSpan := boxerTracer.Start(ctx, "logs.ingest.download_files", trace.WithAttributes(
+		attribute.Int("file_count", len(msgs)),
+	))
 
 	for _, msg := range msgs {
 
@@ -258,7 +256,7 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		return nil
 	}
 
-	ctx, readerSpan := tracer.Start(ctx, "logs.ingest.create_unified_reader")
+	ctx, readerSpan := boxerTracer.Start(ctx, "logs.ingest.create_unified_reader")
 	finalReader, err := p.createUnifiedLogReader(ctx, readers)
 	if err != nil {
 		readerSpan.RecordError(err)
@@ -268,7 +266,7 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	}
 	readerSpan.End()
 
-	ctx, processSpan := tracer.Start(ctx, "logs.ingest.process_rows")
+	ctx, processSpan := boxerTracer.Start(ctx, "logs.ingest.process_rows")
 	dateintBins, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
 		processSpan.RecordError(err)
@@ -287,7 +285,7 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	// Get schema from reader for label name mapping
 	schema := finalReader.GetSchema()
 
-	ctx, uploadSpan := tracer.Start(ctx, "logs.ingest.upload_segments")
+	ctx, uploadSpan := boxerTracer.Start(ctx, "logs.ingest.upload_segments")
 	segmentParams, err := p.uploadAndCreateLogSegments(ctx, outputClient, dateintBins, schema, dstProfile)
 	if err != nil {
 		uploadSpan.RecordError(err)
@@ -299,8 +297,9 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	uploadSpan.End()
 
 	criticalCtx := context.WithoutCancel(ctx)
-	ctx, dbSpan := tracer.Start(ctx, "logs.ingest.insert_segments")
-	dbSpan.SetAttributes(attribute.Int("segment_count", len(segmentParams)))
+	ctx, dbSpan := boxerTracer.Start(ctx, "logs.ingest.insert_segments", trace.WithAttributes(
+		attribute.Int("segment_count", len(segmentParams)),
+	))
 
 	if err := p.store.InsertLogSegmentsBatch(criticalCtx, segmentParams); err != nil {
 		segmentIDs := make([]int64, len(segmentParams))
@@ -326,8 +325,9 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	}
 	dbSpan.End()
 
-	_, kafkaSpan := tracer.Start(ctx, "logs.ingest.publish_compaction")
-	kafkaSpan.SetAttributes(attribute.Int("message_count", len(segmentParams)))
+	_, kafkaSpan := boxerTracer.Start(ctx, "logs.ingest.publish_compaction", trace.WithAttributes(
+		attribute.Int("message_count", len(segmentParams)),
+	))
 
 	compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerLogsCompact)
 
