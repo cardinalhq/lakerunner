@@ -140,6 +140,7 @@ type CacheManager struct {
 	downloader             DownloadBatchFunc
 	storageProfileProvider storageprofile.StorageProfileProvider
 	dataset                string
+	disableTableCache      bool // when true, skip DuckDB cache entirely
 
 	// in-memory presence + LRU tracking
 	mu         sync.RWMutex
@@ -177,11 +178,17 @@ const (
 	DefaultDiskUsageBytes = 8 << 30 // 8 GB
 )
 
-func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider, s3Pool *duckdbx.S3DB) *CacheManager {
-	ddb, err := NewDDBSink(dataset, context.Background(), s3Pool)
-	if err != nil {
-		slog.Error("Failed to create DuckDB sink", slog.Any("error", err))
-		return nil
+func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider, s3Pool *duckdbx.S3DB, disableTableCache bool) *CacheManager {
+	var ddb *DDBSink
+	var err error
+
+	// Only create DuckDB sink if table cache is enabled
+	if !disableTableCache {
+		ddb, err = NewDDBSink(dataset, context.Background(), s3Pool)
+		if err != nil {
+			slog.Error("Failed to create DuckDB sink", slog.Any("error", err))
+			return nil
+		}
 	}
 
 	w := &CacheManager{
@@ -192,6 +199,7 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		profilesByOrgInstanceNum: make(map[uuid.UUID]map[int16]storageprofile.StorageProfile),
 		maxRows:                  MaxRowsDefault,
 		downloader:               dl,
+		disableTableCache:        disableTableCache,
 		present:                  make(map[int64]struct{}, ChannelBufferSize),
 		lastAccess:               make(map[int64]time.Time, ChannelBufferSize),
 		inflight:                 make(map[int64]*struct{}, ChannelBufferSize),
@@ -201,13 +209,17 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 	slog.Info("CacheManager initialized",
 		slog.String("dataset", dataset),
 		slog.Int64("maxRows", w.maxRows),
+		slog.Bool("disableTableCache", disableTableCache),
 		slog.Float64("diskHighWatermark", DiskUsageHighWatermark),
 		slog.Float64("diskLowWatermark", DiskUsageLowWatermark))
 
-	ingCtx, ingCancel := context.WithCancel(context.Background())
-	w.stopIngest = ingCancel
-	w.ingestWG.Add(1)
-	go w.ingestLoop(ingCtx)
+	// Only start ingest loop if table cache is enabled
+	if !disableTableCache {
+		ingCtx, ingCancel := context.WithCancel(context.Background())
+		w.stopIngest = ingCancel
+		w.ingestWG.Add(1)
+		go w.ingestLoop(ingCtx)
+	}
 	return w
 }
 
@@ -459,7 +471,7 @@ func EvaluatePushDown[T promql.Timestamped](
 				return nil, err
 			}
 
-			// Split into cached vs S3
+			// Split into cached vs S3 (when table cache is disabled, treat all as S3)
 			var s3URIs []string
 			var s3LocalPaths []string
 			var s3IDs []int64
@@ -474,9 +486,12 @@ func EvaluatePushDown[T promql.Timestamped](
 					seg.Hour,
 					seg.SegmentID)
 
-				w.mu.RLock()
-				_, inCache := w.present[seg.SegmentID]
-				w.mu.RUnlock()
+				inCache := false
+				if !w.disableTableCache {
+					w.mu.RLock()
+					_, inCache = w.present[seg.SegmentID]
+					w.mu.RUnlock()
+				}
 
 				if inCache {
 					cachedIDs = append(cachedIDs, seg.SegmentID)
@@ -527,8 +542,8 @@ func EvaluatePushDown[T promql.Timestamped](
 			}
 			outs = append(outs, s3Channels...)
 
-			// Enqueue uncached segments for background ingest.
-			if len(s3LocalPaths) > 0 {
+			// Enqueue uncached segments for background ingest (skip if cache disabled).
+			if len(s3LocalPaths) > 0 && !w.disableTableCache {
 				w.enqueueIngest(profile, s3LocalPaths, s3IDs)
 			}
 

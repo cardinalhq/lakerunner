@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/lrdb"
 
@@ -50,6 +51,16 @@ func init() {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
+
+			// Load config and apply query settings
+			cfg, err := config.Load()
+			if err != nil {
+				slog.Warn("Failed to load config, using defaults", slog.Any("error", err))
+			} else {
+				queryapi.SetMaxSegmentsPerWorkerPerWave(cfg.Query.MaxSegmentsPerWorkerPerWave)
+				slog.Info("Query config loaded",
+					slog.Int("maxSegmentsPerWorkerPerWave", cfg.Query.MaxSegmentsPerWorkerPerWave))
+			}
 
 			// Start disk usage monitoring
 			go diskUsageLoop(ctx)

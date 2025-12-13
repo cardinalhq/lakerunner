@@ -63,6 +63,7 @@ func NewWorkerService(
 	maxConcurrency int,
 	sp storageprofile.StorageProfileProvider,
 	cloudManagers cloudstorage.ClientProvider,
+	disableTableCache bool,
 ) (*WorkerService, error) {
 	// Create shared parquet file cache for downloaded files
 	parquetCache := NewParquetFileCache(DefaultParquetFileTTL, DefaultCleanupInterval)
@@ -176,9 +177,9 @@ func NewWorkerService(
 		return nil, fmt.Errorf("failed to create shared S3DB pool: %w", err)
 	}
 
-	metricsCM := NewCacheManager(downloader, "metrics", sp, s3Pool)
-	logsCM := NewCacheManager(downloader, "logs", sp, s3Pool)
-	tracesCM := NewCacheManager(downloader, "traces", sp, s3Pool)
+	metricsCM := NewCacheManager(downloader, "metrics", sp, s3Pool, disableTableCache)
+	logsCM := NewCacheManager(downloader, "logs", sp, s3Pool, disableTableCache)
+	tracesCM := NewCacheManager(downloader, "traces", sp, s3Pool, disableTableCache)
 
 	// Register metrics once for all cache managers
 	if err := RegisterCacheMetrics(metricsCM, logsCM, tracesCM); err != nil {

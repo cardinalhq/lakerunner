@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/configdb"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -51,6 +52,15 @@ func init() {
 				}
 			}()
 
+			// Load config
+			cfg, err := config.Load()
+			if err != nil {
+				slog.Warn("Failed to load config, using defaults", slog.Any("error", err))
+				cfg = &config.Config{}
+			}
+			slog.Info("Query worker config loaded",
+				slog.Bool("disableTableCache", cfg.Query.DisableTableCache))
+
 			go diskUsageLoop(ctx)
 
 			go debugging.RunPprof(ctx)
@@ -79,7 +89,7 @@ func init() {
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			worker, err := queryworker.NewWorkerService(5, 5, 5, 12, sp, cloudManagers)
+			worker, err := queryworker.NewWorkerService(5, 5, 5, 12, sp, cloudManagers, cfg.Query.DisableTableCache)
 			if err != nil {
 				return fmt.Errorf("failed to create worker service: %w", err)
 			}
