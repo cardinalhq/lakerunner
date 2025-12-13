@@ -42,11 +42,29 @@ type SegmentGroup struct {
 	Segments []SegmentInfo
 }
 
-// MaxSegmentsPerWorkerPerWave is the hard cap we want per worker per wave.
+// DefaultMaxSegmentsPerWorkerPerWave is the default hard cap per worker per wave.
+const DefaultMaxSegmentsPerWorkerPerWave = 20
+
+// maxSegmentsPerWorkerPerWave is the configured hard cap we want per worker per wave.
 // A single wave (SegmentGroup) will be sized so that, assuming roughly
 // even distribution across workers, no worker needs to handle more than
 // this many segments in that wave.
-const MaxSegmentsPerWorkerPerWave = 20
+var maxSegmentsPerWorkerPerWave = DefaultMaxSegmentsPerWorkerPerWave
+
+// SetMaxSegmentsPerWorkerPerWave configures the max segments per worker per wave.
+// If value is <= 0, the default is used.
+func SetMaxSegmentsPerWorkerPerWave(value int) {
+	if value <= 0 {
+		maxSegmentsPerWorkerPerWave = DefaultMaxSegmentsPerWorkerPerWave
+	} else {
+		maxSegmentsPerWorkerPerWave = value
+	}
+}
+
+// GetMaxSegmentsPerWorkerPerWave returns the current max segments per worker per wave setting.
+func GetMaxSegmentsPerWorkerPerWave() int {
+	return maxSegmentsPerWorkerPerWave
+}
 
 // ---- helpers for effective timing ----
 
@@ -392,7 +410,7 @@ func TargetSize(totalSegments, workers int) int {
 	base := int(math.Ceil(float64(totalSegments) / float64(workers)))
 
 	// Hard cap based on per-worker-per-wave limit.
-	waveCap := workers * MaxSegmentsPerWorkerPerWave
+	waveCap := workers * maxSegmentsPerWorkerPerWave
 	if waveCap <= 0 {
 		waveCap = totalSegments
 	}

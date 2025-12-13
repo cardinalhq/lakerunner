@@ -244,6 +244,24 @@ type TrigramQuery struct {
 	fieldName string
 }
 
+// String returns a string representation of the trigram query for logging
+func (t *TrigramQuery) String() string {
+	if t == nil {
+		return "nil"
+	}
+	if len(t.Trigram) > 0 {
+		return fmt.Sprintf("%v(%s:%v)", t.Op, t.fieldName, t.Trigram)
+	}
+	if len(t.Sub) > 0 {
+		var parts []string
+		for _, sub := range t.Sub {
+			parts = append(parts, sub.String())
+		}
+		return fmt.Sprintf("%v[%s]", t.Op, strings.Join(parts, ", "))
+	}
+	return fmt.Sprintf("%v", t.Op)
+}
+
 func (q *QuerierService) lookupLogsSegments(
 	ctx context.Context,
 	dih DateIntHours,
@@ -255,6 +273,7 @@ func (q *QuerierService) lookupLogsSegments(
 	root := &TrigramQuery{Op: index.QAll}
 	fpsToFetch := make(map[int64]struct{})
 
+	// Priority: exact index > trigram index > exists
 	for _, lm := range leaf.Matchers {
 		label, val := lm.Label, lm.Value
 		if !fingerprint.IsIndexed(label) {
@@ -263,20 +282,23 @@ func (q *QuerierService) lookupLogsSegments(
 		}
 		switch lm.Op {
 		case logql.MatchEq:
-			// All indexed fields have exact fingerprints
-			addFullValueNode(label, val, fpsToFetch, &root)
+			// Exact match - use exact fingerprint if available
+			if fingerprint.HasExactIndex(label) {
+				addFullValueNode(label, val, fpsToFetch, &root)
+			} else {
+				addExistsNode(label, fpsToFetch, &root)
+			}
 		case logql.MatchRe:
-			if fingerprint.HasTrigramIndex(label) {
+			// For regex: check exact alternates first (if has exact index), then trigrams, then exists
+			if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 && fingerprint.HasExactIndex(label) {
+				// Simple alternation pattern with exact index - use exact fingerprints
+				addOrNodeFromValues(label, values, fpsToFetch, &root)
+			} else if fingerprint.HasTrigramIndex(label) {
 				// Use trigram matching for regex patterns
 				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			} else {
-				// For exact-only fields, check if this is a simple alternation (e.g., from 'in' operator)
-				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
-					addOrNodeFromValues(label, values, fpsToFetch, &root)
-				} else {
-					// Fall back to exists check for complex regex patterns
-					addExistsNode(label, fpsToFetch, &root)
-				}
+				// Fall back to exists check for complex regex patterns
+				addExistsNode(label, fpsToFetch, &root)
 			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)
@@ -294,20 +316,23 @@ func (q *QuerierService) lookupLogsSegments(
 		}
 		switch lf.Op {
 		case logql.MatchEq:
-			// All indexed fields have exact fingerprints
-			addFullValueNode(label, val, fpsToFetch, &root)
+			// Exact match - use exact fingerprint if available
+			if fingerprint.HasExactIndex(label) {
+				addFullValueNode(label, val, fpsToFetch, &root)
+			} else {
+				addExistsNode(label, fpsToFetch, &root)
+			}
 		case logql.MatchRe:
-			if fingerprint.HasTrigramIndex(label) {
+			// For regex: check exact alternates first (if has exact index), then trigrams, then exists
+			if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 && fingerprint.HasExactIndex(label) {
+				// Simple alternation pattern with exact index - use exact fingerprints
+				addOrNodeFromValues(label, values, fpsToFetch, &root)
+			} else if fingerprint.HasTrigramIndex(label) {
 				// Use trigram matching for regex patterns
 				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			} else {
-				// For exact-only fields, check if this is a simple alternation (e.g., from 'in' operator)
-				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
-					addOrNodeFromValues(label, values, fpsToFetch, &root)
-				} else {
-					// Fall back to exists check for complex regex patterns
-					addExistsNode(label, fpsToFetch, &root)
-				}
+				// Fall back to exists check for complex regex patterns
+				addExistsNode(label, fpsToFetch, &root)
 			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)
@@ -325,6 +350,15 @@ func (q *QuerierService) lookupLogsSegments(
 	}
 	slices.Sort(fpList)
 
+	slog.Info("log segment lookup: querying database",
+		"orgID", orgUUID,
+		"dateint", dih.DateInt,
+		"startTs", startTs,
+		"endTs", endTs,
+		"fingerprintCount", len(fpList),
+		"trigramQuery", root.String(),
+	)
+
 	rows, err := lookupFunc(ctx, lrdb.ListLogSegmentsForQueryParams{
 		OrganizationID: orgUUID,
 		Dateint:        int32(dih.DateInt),
@@ -335,6 +369,12 @@ func (q *QuerierService) lookupLogsSegments(
 	if err != nil {
 		return nil, fmt.Errorf("list log segments for query: %w", err)
 	}
+
+	slog.Info("log segment lookup: database query complete",
+		"orgID", orgUUID,
+		"dateint", dih.DateInt,
+		"rowsReturned", len(rows),
+	)
 
 	fpToSegments := make(map[int64][]SegmentInfo, len(rows))
 	for _, row := range rows {
@@ -624,12 +664,22 @@ func addOrNodeFromValues(label string, values []string, fps map[int64]struct{}, 
 // tryExtractExactAlternates attempts to extract exact values from a simple alternation pattern
 // like ^(val1|val2|val3)$ by string parsing. Returns the unescaped values and true if successful.
 // Returns false for patterns with wildcards or other complex regex features.
+// Also handles non-capturing groups like ^(?:val1|val2|val3)$
 func tryExtractExactAlternates(pattern string) ([]string, bool) {
-	// Check if it matches the basic structure: ^(...)$
-	if !strings.HasPrefix(pattern, "^(") || !strings.HasSuffix(pattern, ")$") {
+	// Check if it matches the basic structure: ^(...)$ or ^(?:...)$
+	var inner string
+	if strings.HasPrefix(pattern, "^(?:") && strings.HasSuffix(pattern, ")$") {
+		// Non-capturing group: ^(?:...)$
+		inner = strings.TrimPrefix(pattern, "^(?:")
+		inner = strings.TrimSuffix(inner, ")$")
+	} else if strings.HasPrefix(pattern, "^(") && strings.HasSuffix(pattern, ")$") {
+		// Capturing group: ^(...)$
+		inner = strings.TrimPrefix(pattern, "^(")
+		inner = strings.TrimSuffix(inner, ")$")
+	} else {
 		// Also try without parens: ^val$
 		if strings.HasPrefix(pattern, "^") && strings.HasSuffix(pattern, "$") {
-			inner := strings.TrimPrefix(pattern, "^")
+			inner = strings.TrimPrefix(pattern, "^")
 			inner = strings.TrimSuffix(inner, "$")
 			// Make sure it's just a literal (no regex metacharacters except escaped ones)
 			if isSimpleLiteral(inner) {
@@ -638,10 +688,6 @@ func tryExtractExactAlternates(pattern string) ([]string, bool) {
 		}
 		return nil, false
 	}
-
-	// Extract the content between ^( and )$
-	inner := strings.TrimPrefix(pattern, "^(")
-	inner = strings.TrimSuffix(inner, ")$")
 
 	// Split by | at the top level (not inside nested parens/brackets)
 	parts := splitTopLevelPipe(inner)

@@ -256,6 +256,7 @@ func (q *QuerierService) lookupSpansSegments(
 	root := &TrigramQuery{Op: index.QAll}
 	fpsToFetch := make(map[int64]struct{})
 
+	// Priority: exact index > trigram index > exists
 	for _, lm := range leaf.Matchers {
 		label, val := lm.Label, lm.Value
 		if !fingerprint.IsIndexed(label) {
@@ -264,19 +265,23 @@ func (q *QuerierService) lookupSpansSegments(
 		}
 		switch lm.Op {
 		case logql.MatchEq:
-			// All indexed fields have exact fingerprints
-			addFullValueNode(label, val, fpsToFetch, &root)
+			// Exact match - use exact fingerprint if available
+			if fingerprint.HasExactIndex(label) {
+				addFullValueNode(label, val, fpsToFetch, &root)
+			} else {
+				addExistsNode(label, fpsToFetch, &root)
+			}
 		case logql.MatchRe:
-			if fingerprint.HasTrigramIndex(label) {
+			// For regex: check exact alternates first (if has exact index), then trigrams, then exists
+			if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 && fingerprint.HasExactIndex(label) {
+				// Simple alternation pattern with exact index - use exact fingerprints
+				addOrNodeFromValues(label, values, fpsToFetch, &root)
+			} else if fingerprint.HasTrigramIndex(label) {
 				// Use trigram matching for regex patterns
 				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			} else {
-				// For exact-only fields, check if this is a simple alternation
-				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
-					addOrNodeFromValues(label, values, fpsToFetch, &root)
-				} else {
-					addExistsNode(label, fpsToFetch, &root)
-				}
+				// Fall back to exists check for complex regex patterns
+				addExistsNode(label, fpsToFetch, &root)
 			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)
@@ -294,19 +299,23 @@ func (q *QuerierService) lookupSpansSegments(
 		}
 		switch lf.Op {
 		case logql.MatchEq:
-			// All indexed fields have exact fingerprints
-			addFullValueNode(label, val, fpsToFetch, &root)
+			// Exact match - use exact fingerprint if available
+			if fingerprint.HasExactIndex(label) {
+				addFullValueNode(label, val, fpsToFetch, &root)
+			} else {
+				addExistsNode(label, fpsToFetch, &root)
+			}
 		case logql.MatchRe:
-			if fingerprint.HasTrigramIndex(label) {
+			// For regex: check exact alternates first (if has exact index), then trigrams, then exists
+			if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 && fingerprint.HasExactIndex(label) {
+				// Simple alternation pattern with exact index - use exact fingerprints
+				addOrNodeFromValues(label, values, fpsToFetch, &root)
+			} else if fingerprint.HasTrigramIndex(label) {
 				// Use trigram matching for regex patterns
 				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			} else {
-				// For exact-only fields, check if this is a simple alternation
-				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
-					addOrNodeFromValues(label, values, fpsToFetch, &root)
-				} else {
-					addExistsNode(label, fpsToFetch, &root)
-				}
+				// Fall back to exists check for complex regex patterns
+				addExistsNode(label, fpsToFetch, &root)
 			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)

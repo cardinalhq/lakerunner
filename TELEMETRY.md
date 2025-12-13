@@ -60,6 +60,8 @@ Many metrics include these standardized attributes:
 
 | Metric Name | Description | Unit | Attributes |
 |-------------|-------------|------|------------|
+| `lakerunner.parquet_cache.file_count` | Number of parquet files cached on disk | 1 | - |
+| `lakerunner.parquet_cache.bytes` | Total bytes of parquet files cached on disk | By | - |
 | `lakerunner.duckdb.memory.block_size` | DuckDB block size | By | - |
 | `lakerunner.duckdb.memory.database_size` | DuckDB database size | By | - |
 | `lakerunner.duckdb.memory.free_blocks` | DuckDB free blocks | 1 | - |
@@ -119,6 +121,11 @@ Many metrics include these standardized attributes:
 - `lakerunner.querycache.disk_bytes` / `lakerunner.querycache.disk_bytes_limit` / `lakerunner.querycache.disk_utilization` - Disk usage tracking
 - `lakerunner.querycache.lru_depth` - Number of cached segments
 - `lakerunner.querycache.eviction_duration_seconds` - Cache eviction performance
+
+### Parquet File Cache (Query Worker)
+
+- `lakerunner.parquet_cache.file_count` - Number of downloaded parquet files on disk
+- `lakerunner.parquet_cache.bytes` - Total size of downloaded parquet files
 
 ### Service Health
 

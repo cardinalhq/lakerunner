@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -479,7 +480,70 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 
 	var allSegments []SegmentInfo
 
+	// Collect fingerprints for metric name and all label matchers
+	fpsToFetch := make(map[int64]struct{})
+
+	// Always add metric_name fingerprint
 	metricFp := fingerprint.ComputeFingerprint("metric_name", be.Metric)
+	fpsToFetch[metricFp] = struct{}{}
+
+	// Add fingerprints for label matchers
+	// Priority: exact index > trigram index > exists
+	for _, m := range be.Matchers {
+		label, val := m.Label, m.Value
+		if !fingerprint.IsIndexed(label) {
+			// For non-indexed fields, add exists fingerprint
+			existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+			fpsToFetch[existsFp] = struct{}{}
+			continue
+		}
+		switch m.Op {
+		case promql.MatchEq:
+			// Exact match - use exact fingerprint if available
+			if fingerprint.HasExactIndex(label) {
+				existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+				valueFp := fingerprint.ComputeFingerprint(label, val)
+				fpsToFetch[existsFp] = struct{}{}
+				fpsToFetch[valueFp] = struct{}{}
+			} else {
+				// No exact index, fall back to exists
+				existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+				fpsToFetch[existsFp] = struct{}{}
+			}
+		case promql.MatchRe:
+			// For regex: check exact alternates first (if has exact index), then trigrams, then exists
+			if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 && fingerprint.HasExactIndex(label) {
+				// Simple alternation pattern with exact index - use exact fingerprints
+				for _, v := range values {
+					existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+					valueFp := fingerprint.ComputeFingerprint(label, v)
+					fpsToFetch[existsFp] = struct{}{}
+					fpsToFetch[valueFp] = struct{}{}
+				}
+			} else if fingerprint.HasTrigramIndex(label) {
+				// Use trigram matching for regex patterns
+				_, fpsList := buildLabelTrigram(label, val)
+				for _, fp := range fpsList {
+					fpsToFetch[fp] = struct{}{}
+				}
+			} else {
+				// Fall back to exists check
+				existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+				fpsToFetch[existsFp] = struct{}{}
+			}
+		default:
+			// For != and !~ operators, just check exists
+			existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+			fpsToFetch[existsFp] = struct{}{}
+		}
+	}
+
+	// Convert to sorted slice for consistent query behavior
+	fpList := make([]int64, 0, len(fpsToFetch))
+	for fp := range fpsToFetch {
+		fpList = append(fpList, fp)
+	}
+	slices.Sort(fpList)
 
 	rows, err := q.mdb.ListMetricSegmentsForQuery(ctx, lrdb.ListMetricSegmentsForQueryParams{
 		StartTs:        startTs,
@@ -487,7 +551,7 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 		Dateint:        int32(dih.DateInt),
 		FrequencyMs:    int32(stepDuration.Milliseconds()),
 		OrganizationID: orgUUID,
-		Fingerprints:   []int64{metricFp},
+		Fingerprints:   fpList,
 	})
 	if err != nil {
 		return nil, err
@@ -499,8 +563,9 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 		"endTs", endTs,
 		"frequencyMs", stepDuration.Milliseconds(),
 		"orgUUID", orgUUID,
-		"fingerprint", metricFp,
+		"fingerprintCount", len(fpList),
 		"metric", be.Metric,
+		"matcherCount", len(be.Matchers),
 		"numSegments", len(rows))
 	for _, row := range rows {
 		startHour := zeroFilledHour(time.UnixMilli(row.StartTs).UTC().Hour())
