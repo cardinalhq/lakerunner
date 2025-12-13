@@ -52,7 +52,8 @@ type WorkerService struct {
 	MetricsGlobSize      int
 	LogsGlobSize         int
 	TracesGlobSize       int
-	s3Pool               *duckdbx.S3DB // shared pool for all queries
+	s3Pool               *duckdbx.S3DB     // shared pool for all queries
+	parquetCache         *ParquetFileCache // shared parquet file cache
 }
 
 func NewWorkerService(
@@ -63,6 +64,19 @@ func NewWorkerService(
 	sp storageprofile.StorageProfileProvider,
 	cloudManagers cloudstorage.ClientProvider,
 ) (*WorkerService, error) {
+	// Create shared parquet file cache for downloaded files
+	parquetCache := NewParquetFileCache(DefaultParquetFileTTL, DefaultCleanupInterval)
+
+	// Scan for existing files from previous runs
+	if err := parquetCache.ScanExistingFiles(); err != nil {
+		slog.Warn("Failed to scan existing parquet files", slog.Any("error", err))
+	}
+
+	// Register parquet cache metrics
+	if err := parquetCache.RegisterMetrics(); err != nil {
+		slog.Error("Failed to register parquet cache metrics", slog.Any("error", err))
+	}
+
 	downloader := func(ctx context.Context, profile storageprofile.StorageProfile, keys []string) error {
 		if len(keys) == 0 {
 			return nil
@@ -92,6 +106,13 @@ func NewWorkerService(
 				// keep same relative layout locally
 				localPath := key
 				dir := filepath.Dir(localPath)
+
+				// Check if file already exists locally (from previous download or query)
+				if parquetCache.HasFile(localPath) {
+					slog.Debug("File already cached locally, skipping download",
+						slog.String("path", localPath))
+					return nil
+				}
 
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return fmt.Errorf("mkdir %q: %w", dir, err)
@@ -126,6 +147,12 @@ func NewWorkerService(
 						return fmt.Errorf("rename %q -> %q: %w", tmpfn, localPath, err2)
 					}
 				}
+
+				// Track the newly downloaded file
+				if err := parquetCache.TrackFile(localPath); err != nil {
+					slog.Warn("Failed to track downloaded file", slog.String("path", localPath), slog.Any("error", err))
+				}
+
 				return nil
 			})
 		}
@@ -167,6 +194,7 @@ func NewWorkerService(
 		LogsGlobSize:         logsGlobSize,
 		TracesGlobSize:       tracesGlobSize,
 		s3Pool:               s3Pool,
+		parquetCache:         parquetCache,
 	}, nil
 }
 
@@ -641,6 +669,12 @@ func (ws *WorkerService) Close() {
 	}
 	if ws.LogsCM != nil {
 		ws.LogsCM.Close()
+	}
+	if ws.TracesCM != nil {
+		ws.TracesCM.Close()
+	}
+	if ws.parquetCache != nil {
+		ws.parquetCache.Close()
 	}
 	if ws.s3Pool != nil {
 		_ = ws.s3Pool.Close()

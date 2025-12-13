@@ -137,7 +137,6 @@ type CacheManager struct {
 	sink                   *DDBSink
 	s3Pool                 *duckdbx.S3DB // shared global pool
 	maxRows                int64
-	maxDiskUsageBytes      uint64 // dynamically calculated from disk size
 	downloader             DownloadBatchFunc
 	storageProfileProvider storageprofile.StorageProfileProvider
 	dataset                string
@@ -162,10 +161,13 @@ type CacheManager struct {
 const (
 	MaxRowsDefault = 1000000000 // 1 billion rows (approx 10GB on disk)
 
-	// DiskUsageHeadroomFraction is the fraction of disk space to reserve as headroom.
-	// We use 80% of total disk space as the max, leaving 20% for overhead, temp files,
-	// and measurement noise.
-	DiskUsageHeadroomFraction = 0.80
+	// DiskUsageHighWatermark is the disk utilization level that triggers eviction.
+	// When disk usage exceeds this fraction, CacheManagers will start evicting.
+	DiskUsageHighWatermark = 0.80
+
+	// DiskUsageLowWatermark is the target disk utilization after eviction.
+	// Eviction continues until disk usage drops below this level.
+	DiskUsageLowWatermark = 0.70
 
 	// MinDiskUsageBytes is the minimum disk usage limit (1GB).
 	// This prevents unreasonably small limits on tiny test volumes.
@@ -182,9 +184,6 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		return nil
 	}
 
-	// Calculate max disk usage based on the filesystem where the database resides
-	maxDiskUsage := calculateMaxDiskUsage(s3Pool.GetDatabasePath())
-
 	w := &CacheManager{
 		sink:                     ddb,
 		s3Pool:                   s3Pool,
@@ -192,7 +191,6 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		storageProfileProvider:   storageProfileProvider,
 		profilesByOrgInstanceNum: make(map[uuid.UUID]map[int16]storageprofile.StorageProfile),
 		maxRows:                  MaxRowsDefault,
-		maxDiskUsageBytes:        maxDiskUsage,
 		downloader:               dl,
 		present:                  make(map[int64]struct{}, ChannelBufferSize),
 		lastAccess:               make(map[int64]time.Time, ChannelBufferSize),
@@ -203,8 +201,8 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 	slog.Info("CacheManager initialized",
 		slog.String("dataset", dataset),
 		slog.Int64("maxRows", w.maxRows),
-		slog.Uint64("maxDiskUsageBytes", w.maxDiskUsageBytes),
-		slog.Float64("maxDiskUsageGB", float64(w.maxDiskUsageBytes)/(1<<30)))
+		slog.Float64("diskHighWatermark", DiskUsageHighWatermark),
+		slog.Float64("diskLowWatermark", DiskUsageLowWatermark))
 
 	ingCtx, ingCancel := context.WithCancel(context.Background())
 	w.stopIngest = ingCancel
@@ -295,33 +293,21 @@ func RegisterCacheMetrics(managers ...*CacheManager) error {
 		return fmt.Errorf("failed to create disk_bytes gauge: %w", err)
 	}
 
-	_, err = meter.Int64ObservableGauge(
-		"lakerunner.querycache.disk_bytes_limit",
-		metric.WithDescription("Configured disk usage limit in bytes"),
-		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
-			for _, w := range managers {
-				if w != nil {
-					o.Observe(int64(w.maxDiskUsageBytes), metric.WithAttributes(attribute.String("signal", w.dataset)))
-				}
-			}
-			return nil
-		}),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create disk_bytes_limit gauge: %w", err)
-	}
-
+	// Report disk utilization - shared across all signal types (not per-signal)
+	// Only report once since it's the same filesystem for all managers
 	_, err = meter.Float64ObservableGauge(
 		"lakerunner.querycache.disk_utilization",
-		metric.WithDescription("Utilization of max disk space (0-1, may exceed 1 if over limit)"),
+		metric.WithDescription("Disk utilization (0-1), shared across all signal types"),
 		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
+			// Only need to check once since all managers share the same disk
 			for _, w := range managers {
 				if w != nil {
 					dbPath := w.s3Pool.GetDatabasePath()
-					usedBytes, _, err := getDiskUsage(dbPath)
-					if err == nil && w.maxDiskUsageBytes > 0 {
-						o.Observe(float64(usedBytes)/float64(w.maxDiskUsageBytes), metric.WithAttributes(attribute.String("signal", w.dataset)))
+					usedBytes, totalBytes, err := getDiskUsage(dbPath)
+					if err == nil && totalBytes > 0 {
+						o.Observe(float64(usedBytes) / float64(totalBytes))
 					}
+					break // Only report once
 				}
 			}
 			return nil
@@ -329,6 +315,18 @@ func RegisterCacheMetrics(managers ...*CacheManager) error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create disk_utilization gauge: %w", err)
+	}
+
+	_, err = meter.Float64ObservableGauge(
+		"lakerunner.querycache.disk_high_watermark",
+		metric.WithDescription("Disk utilization threshold that triggers eviction"),
+		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
+			o.Observe(DiskUsageHighWatermark)
+			return nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create disk_high_watermark gauge: %w", err)
 	}
 
 	// LRU depth (number of segments tracked)
@@ -508,17 +506,24 @@ func EvaluatePushDown[T promql.Timestamped](
 				"numCached", len(cachedIDs),
 				"numPresent", numPresent)
 
-			// Stream uncached segments directly from S3 (one channel per glob).
-			s3Channels, err := streamFromS3(ctx, w, request,
-				profile,
-				s3URIs,
-				s3GlobSize,
+			// Download files from S3 before querying (new flow: download-then-query)
+			if len(s3LocalPaths) > 0 {
+				if err := w.downloadForQuery(ctx, profile, s3LocalPaths); err != nil {
+					evalSpan.RecordError(err)
+					evalSpan.SetStatus(codes.Error, "failed to download from S3")
+					return nil, fmt.Errorf("download from S3: %w", err)
+				}
+			}
+
+			// Stream from downloaded local files (not S3 directly).
+			s3Channels, err := streamFromLocalFiles(ctx, w, request,
+				s3LocalPaths,
 				userSQL,
 				mapper)
 			if err != nil {
 				evalSpan.RecordError(err)
-				evalSpan.SetStatus(codes.Error, "failed to stream from S3")
-				return nil, fmt.Errorf("stream from S3: %w", err)
+				evalSpan.SetStatus(codes.Error, "failed to stream from local files")
+				return nil, fmt.Errorf("stream from local files: %w", err)
 			}
 			outs = append(outs, s3Channels...)
 
@@ -662,76 +667,71 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 	return outs
 }
 
-func streamFromS3[T promql.Timestamped](
+func streamFromLocalFiles[T promql.Timestamped](
 	ctx context.Context,
 	w *CacheManager,
 	request queryapi.PushDownRequest,
-	profile storageprofile.StorageProfile,
-	s3URIs []string,
-	_ int, // s3GlobSize now unused: single-batch S3
+	localPaths []string,
 	userSQL string,
 	mapper RowMapper[T],
 ) ([]<-chan T, error) {
-	if len(s3URIs) == 0 {
+	if len(localPaths) == 0 {
 		return []<-chan T{}, nil
 	}
 
-	// Single S3 batch per worker: one channel, one goroutine
+	// Single batch per worker: one channel, one goroutine
 	out := make(chan T, ChannelBufferSize)
 	outs := []<-chan T{out}
 
-	urisCopy := append([]string(nil), s3URIs...) // capture
-	batchNum := 0                                // always 0; single batch
+	pathsCopy := append([]string(nil), localPaths...) // capture
 
 	go func(out chan<- T) {
 		defer close(out)
 
 		tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
-		_, s3Span := tracer.Start(ctx, "query.worker.stream_from_s3")
-		defer s3Span.End()
+		_, localSpan := tracer.Start(ctx, "query.worker.stream_from_local_files")
+		defer localSpan.End()
 
-		s3Span.SetAttributes(
-			attribute.Int("batch_index", batchNum),
-			attribute.Int("file_count", len(urisCopy)),
-			attribute.String("bucket", profile.Bucket),
-			attribute.String("cloud_provider", profile.CloudProvider),
+		localSpan.SetAttributes(
+			attribute.Int("file_count", len(pathsCopy)),
+			attribute.String("dataset", w.dataset),
 		)
 
-		// Build read_parquet source
-		quoted := make([]string, len(urisCopy))
-		for i := range urisCopy {
-			quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
+		// Build read_parquet source from local paths
+		quoted := make([]string, len(pathsCopy))
+		for i := range pathsCopy {
+			quoted[i] = "'" + escapeSQL(pathsCopy[i]) + "'"
 		}
 		array := "[" + strings.Join(quoted, ", ") + "]"
 		src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 
 		sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 
-		// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
-		_, connSpan := tracer.Start(ctx, "query.worker.s3_connection_acquire")
+		// Get a local connection (no S3 credentials needed for local files)
+		_, connSpan := tracer.Start(ctx, "query.worker.local_connection_acquire")
 		start := time.Now()
-		conn, release, err := w.s3Pool.GetConnectionForBucket(ctx, profile)
+		conn, release, err := w.s3Pool.GetConnection(ctx)
 		connectionAcquireTime := time.Since(start)
 		connSpan.SetAttributes(attribute.Int64("duration_ms", connectionAcquireTime.Milliseconds()))
 		connSpan.End()
-		slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", profile.Bucket)
+		slog.Info("Local Connection Acquire Time", "duration", connectionAcquireTime.String())
 
 		if err != nil {
-			s3Span.RecordError(err)
-			s3Span.SetStatus(codes.Error, "connection acquire failed")
-			slog.Error("GetConnection failed", slog.String("bucket", profile.Bucket), slog.Any("error", err))
+			localSpan.RecordError(err)
+			localSpan.SetStatus(codes.Error, "connection acquire failed")
+			slog.Error("GetConnection failed", slog.Any("error", err))
 			return
 		}
 		defer release()
 
-		_, querySpan := tracer.Start(ctx, "query.worker.s3_query_execute")
-		rows, err := executeQueryWithRetry(ctx, conn, sqlReplaced, "S3", len(urisCopy))
+		_, querySpan := tracer.Start(ctx, "query.worker.local_query_execute")
+		rows, err := executeQueryWithRetry(ctx, conn, sqlReplaced, "local files", len(pathsCopy))
 		if err != nil {
 			querySpan.RecordError(err)
 			querySpan.SetStatus(codes.Error, "query failed")
 			querySpan.End()
-			s3Span.RecordError(err)
-			s3Span.SetStatus(codes.Error, "query failed")
+			localSpan.RecordError(err)
+			localSpan.SetStatus(codes.Error, "query failed")
 			return
 		}
 		querySpan.End()
@@ -743,8 +743,8 @@ func streamFromS3[T promql.Timestamped](
 
 		cols, err := rows.Columns()
 		if err != nil {
-			s3Span.RecordError(err)
-			s3Span.SetStatus(codes.Error, "failed to get columns")
+			localSpan.RecordError(err)
+			localSpan.SetStatus(codes.Error, "failed to get columns")
 			slog.Error("failed to get columns", slog.Any("error", err))
 			return
 		}
@@ -753,16 +753,16 @@ func streamFromS3[T promql.Timestamped](
 		for rows.Next() {
 			select {
 			case <-ctx.Done():
-				s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
-				s3Span.SetStatus(codes.Error, "context cancelled")
-				slog.Warn("Context cancelled during S3 row iteration", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsProcessed", rowCount))
+				localSpan.SetAttributes(attribute.Int("rows_returned", rowCount))
+				localSpan.SetStatus(codes.Error, "context cancelled")
+				slog.Warn("Context cancelled during local file row iteration", slog.Int("numFiles", len(pathsCopy)), slog.Int("rowsProcessed", rowCount))
 				return
 			default:
 			}
 			v, mErr := mapper(request, cols, rows)
 			if mErr != nil {
-				s3Span.RecordError(mErr)
-				s3Span.SetStatus(codes.Error, "row mapping failed")
+				localSpan.RecordError(mErr)
+				localSpan.SetStatus(codes.Error, "row mapping failed")
 				slog.Error("Row mapping failed", slog.Any("error", mErr))
 				return
 			}
@@ -770,16 +770,42 @@ func streamFromS3[T promql.Timestamped](
 			rowCount++
 		}
 		if err := rows.Err(); err != nil {
-			s3Span.RecordError(err)
-			s3Span.SetStatus(codes.Error, "rows iteration error")
+			localSpan.RecordError(err)
+			localSpan.SetStatus(codes.Error, "rows iteration error")
 			slog.Error("Rows iteration error", slog.Any("error", err))
 			return
 		}
-		s3Span.SetAttributes(attribute.Int("rows_returned", rowCount))
-		slog.Info("S3 query completed", slog.Int("numFiles", len(urisCopy)), slog.Int("rowsReturned", rowCount))
+		localSpan.SetAttributes(attribute.Int("rows_returned", rowCount))
+		slog.Info("Local file query completed", slog.Int("numFiles", len(pathsCopy)), slog.Int("rowsReturned", rowCount))
 	}(out)
 
 	return outs, nil
+}
+
+// downloadForQuery downloads all files from S3 in parallel before querying.
+// Returns the local paths of successfully downloaded files and their corresponding IDs.
+func (w *CacheManager) downloadForQuery(ctx context.Context, profile storageprofile.StorageProfile, localPaths []string) error {
+	if w.downloader == nil || len(localPaths) == 0 {
+		return nil
+	}
+
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
+	ctx, downloadSpan := tracer.Start(ctx, "query.worker.download_for_query")
+	defer downloadSpan.End()
+
+	downloadSpan.SetAttributes(
+		attribute.Int("file_count", len(localPaths)),
+		attribute.String("bucket", profile.Bucket),
+		attribute.String("dataset", w.dataset),
+	)
+
+	if err := w.downloader(ctx, profile, localPaths); err != nil {
+		downloadSpan.RecordError(err)
+		downloadSpan.SetStatus(codes.Error, "download failed")
+		return fmt.Errorf("download files for query: %w", err)
+	}
+
+	return nil
 }
 
 // enqueueIngest filters out present/in-flight, marks new IDs in-flight, and queues one job.
@@ -836,10 +862,21 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 				attribute.String("dataset", w.dataset),
 			)
 
-			if w.downloader != nil {
+			// Filter out paths that already exist locally (downloaded by query path)
+			var pathsToDownload []string
+			for _, p := range job.paths {
+				if _, err := os.Stat(p); os.IsNotExist(err) {
+					pathsToDownload = append(pathsToDownload, p)
+				}
+			}
+
+			if w.downloader != nil && len(pathsToDownload) > 0 {
 				_, downloadSpan := tracer.Start(ctx, "query.worker.cache_download_files")
-				downloadSpan.SetAttributes(attribute.Int("file_count", len(job.paths)))
-				if err := w.downloader(ctx, job.profile, job.paths); err != nil {
+				downloadSpan.SetAttributes(
+					attribute.Int("file_count", len(pathsToDownload)),
+					attribute.Int("skipped_existing", len(job.paths)-len(pathsToDownload)),
+				)
+				if err := w.downloader(ctx, job.profile, pathsToDownload); err != nil {
 					downloadSpan.RecordError(err)
 					downloadSpan.SetStatus(codes.Error, "download failed")
 					downloadSpan.End()
@@ -857,6 +894,9 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 					continue
 				}
 				downloadSpan.End()
+			} else if len(pathsToDownload) == 0 {
+				slog.Info("Skipping download, all files already exist locally",
+					slog.Int("file_count", len(job.paths)))
 			}
 
 			_, parquetSpan := tracer.Start(ctx, "query.worker.cache_ingest_parquet")
@@ -911,28 +951,25 @@ func escapeSQL(s string) string {
 	return strings.ReplaceAll(s, `'`, `''`)
 }
 
-// evictedEnough returns true if we've evicted enough to be 10% under the limits.
+// evictedEnough returns true if we've evicted enough to be below the low watermark.
 // This provides a buffer to avoid thrashing at the boundary.
 func (w *CacheManager) evictedEnough() bool {
-	// Target 90% of maxRows to provide 10% buffer
+	// Check row count limit
 	targetRows := int64(float64(w.maxRows) * 0.9)
 	if w.sink.RowCount() > targetRows {
 		return false
 	}
 
-	// Target 90% of maxDiskUsageBytes to provide 10% buffer
-	targetDisk := uint64(float64(w.maxDiskUsageBytes) * 0.9)
+	// Check disk usage against low watermark (shared across all signal types)
 	dbPath := w.s3Pool.GetDatabasePath()
-	usedBytes, _, err := getDiskUsage(dbPath)
+	usedBytes, totalBytes, err := getDiskUsage(dbPath)
 	if err != nil {
 		// If we can't check disk, assume we haven't evicted enough
 		return false
 	}
-	if usedBytes > targetDisk {
-		return false
-	}
 
-	return true
+	diskUtilization := float64(usedBytes) / float64(totalBytes)
+	return diskUtilization <= DiskUsageLowWatermark
 }
 
 func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
@@ -950,19 +987,22 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 		return
 	}
 
+	diskUtilization := float64(usedBytes) / float64(totalBytes)
 	usedGB := float64(usedBytes) / (1 << 30)
-	maxUsageGB := float64(w.maxDiskUsageBytes) / (1 << 30)
 	totalGB := float64(totalBytes) / (1 << 30)
 
 	slog.Info("Cache Status",
+		slog.String("dataset", w.dataset),
 		slog.Int64("rowCount", w.sink.RowCount()),
 		slog.Int64("maxRows", w.maxRows),
 		slog.Int64("overRows", over),
 		slog.Float64("usedDiskGB", usedGB),
-		slog.Float64("maxDiskUsageGB", maxUsageGB),
-		slog.Float64("totalDiskGB", totalGB))
+		slog.Float64("totalDiskGB", totalGB),
+		slog.Float64("diskUtilization", diskUtilization),
+		slog.Float64("highWatermark", DiskUsageHighWatermark))
 
-	shouldEvict := over > 0 || usedBytes >= w.maxDiskUsageBytes
+	// Evict if row count exceeded OR disk usage above high watermark
+	shouldEvict := over > 0 || diskUtilization >= DiskUsageHighWatermark
 
 	if shouldEvict {
 		evictStart := time.Now()
@@ -1017,45 +1057,6 @@ func (w *CacheManager) dropSegments(ctx context.Context, segIDs []int64) {
 		delete(w.lastAccess, id)
 	}
 	w.mu.Unlock()
-}
-
-// calculateMaxDiskUsage determines the maximum disk usage for the cache based on
-// the total size of the filesystem where the database file resides.
-// It returns 80% of total disk space, with a minimum of 1GB and a fallback of 8GB
-// if disk detection fails.
-func calculateMaxDiskUsage(dbPath string) uint64 {
-	if dbPath == "" {
-		slog.Warn("No database path provided for disk size calculation, using default",
-			slog.Uint64("defaultBytes", DefaultDiskUsageBytes))
-		return DefaultDiskUsageBytes
-	}
-
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(dbPath, &stat); err != nil {
-		slog.Warn("Failed to stat filesystem for disk size calculation, using default",
-			slog.String("path", dbPath),
-			slog.Any("error", err),
-			slog.Uint64("defaultBytes", DefaultDiskUsageBytes))
-		return DefaultDiskUsageBytes
-	}
-
-	totalBytes := stat.Blocks * uint64(stat.Bsize)
-	maxUsage := uint64(float64(totalBytes) * DiskUsageHeadroomFraction)
-
-	// Enforce minimum to prevent unreasonably small limits
-	if maxUsage < MinDiskUsageBytes {
-		maxUsage = MinDiskUsageBytes
-	}
-
-	slog.Info("Calculated max disk usage for cache",
-		slog.String("path", dbPath),
-		slog.Uint64("totalBytes", totalBytes),
-		slog.Float64("totalGB", float64(totalBytes)/(1<<30)),
-		slog.Uint64("maxUsageBytes", maxUsage),
-		slog.Float64("maxUsageGB", float64(maxUsage)/(1<<30)),
-		slog.Float64("headroomFraction", DiskUsageHeadroomFraction))
-
-	return maxUsage
 }
 
 // getDiskUsage returns current disk usage statistics for the filesystem containing
