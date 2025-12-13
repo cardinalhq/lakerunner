@@ -486,6 +486,11 @@ func (r *MetricRollupProcessor) GetTargetRecordCount(ctx context.Context, groupi
 	return r.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.TargetFrequencyMs)
 }
 
+// ShouldEmitImmediately returns false - metric rollup always uses normal grouping.
+func (r *MetricRollupProcessor) ShouldEmitImmediately(msg *messages.MetricRollupMessage) bool {
+	return false
+}
+
 // queueNextLevelRollups generates rollup messages for the next level if the target frequency can be rolled up further
 func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSegments []lrdb.MetricSeg, key messages.RollupKey) error {
 	ll := logctx.FromContext(ctx)

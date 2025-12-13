@@ -65,6 +65,11 @@ func (p *MetricCompactionProcessor) GetTargetRecordCount(ctx context.Context, gr
 	return p.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.FrequencyMs)
 }
 
+// ShouldEmitImmediately returns false - metric compaction always uses normal grouping.
+func (p *MetricCompactionProcessor) ShouldEmitImmediately(msg *messages.MetricCompactionMessage) bool {
+	return false
+}
+
 // Helper methods from original processor
 func (p *MetricCompactionProcessor) performCompaction(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.CompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.MetricSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
 	params := metricProcessingParams{

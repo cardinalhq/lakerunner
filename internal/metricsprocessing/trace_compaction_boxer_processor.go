@@ -87,3 +87,8 @@ func (b *TraceCompactionBoxerProcessor) Process(ctx context.Context, group *accu
 func (b *TraceCompactionBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.TraceCompactionKey) int64 {
 	return b.store.GetTraceEstimate(ctx, groupingKey.OrganizationID)
 }
+
+// ShouldEmitImmediately returns false - trace compaction always uses normal grouping.
+func (b *TraceCompactionBoxerProcessor) ShouldEmitImmediately(msg *messages.TraceCompactionMessage) bool {
+	return false
+}

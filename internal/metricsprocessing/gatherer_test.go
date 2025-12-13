@@ -64,6 +64,10 @@ func (m *MockCompactor) GetTargetRecordCount(ctx context.Context, groupingKey me
 	return 3000 // Lower threshold for testing to trigger more boxes
 }
 
+func (m *MockCompactor) ShouldEmitImmediately(msg *messages.MetricCompactionMessage) bool {
+	return false
+}
+
 // MockOffsetStore implements offsetStore for testing
 type MockOffsetStore struct {
 	processedOffsets map[string][]int64 // key: "consumer_group:topic:partition" -> offsets

@@ -93,3 +93,8 @@ func (b *MetricRollupBoxerProcessor) Process(ctx context.Context, group *accumul
 func (b *MetricRollupBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.RollupKey) int64 {
 	return b.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.TargetFrequencyMs)
 }
+
+// ShouldEmitImmediately returns false - metric rollup always uses normal grouping.
+func (b *MetricRollupBoxerProcessor) ShouldEmitImmediately(msg *messages.MetricRollupMessage) bool {
+	return false
+}

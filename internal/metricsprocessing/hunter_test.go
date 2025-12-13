@@ -747,3 +747,7 @@ func (m *MockProcessorWithFunc) Process(ctx context.Context, group *accumulation
 func (m *MockProcessorWithFunc) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
 	return 10000000 // Default target for testing
 }
+
+func (m *MockProcessorWithFunc) ShouldEmitImmediately(msg *messages.MetricCompactionMessage) bool {
+	return false
+}

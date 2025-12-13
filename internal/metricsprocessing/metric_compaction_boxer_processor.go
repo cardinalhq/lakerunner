@@ -91,3 +91,8 @@ func (b *MetricCompactionBoxerProcessor) Process(ctx context.Context, group *acc
 func (b *MetricCompactionBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
 	return b.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.FrequencyMs)
 }
+
+// ShouldEmitImmediately returns false - metric compaction always uses normal grouping.
+func (b *MetricCompactionBoxerProcessor) ShouldEmitImmediately(msg *messages.MetricCompactionMessage) bool {
+	return false
+}

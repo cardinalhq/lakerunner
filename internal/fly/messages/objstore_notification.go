@@ -87,3 +87,8 @@ func (m *ObjStoreNotificationMessage) Marshal() ([]byte, error) {
 func (m *ObjStoreNotificationMessage) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, m)
 }
+
+// IsParquet returns true if this notification is for a parquet file
+func (m *ObjStoreNotificationMessage) IsParquet() bool {
+	return strings.HasSuffix(m.ObjectID, ".parquet")
+}

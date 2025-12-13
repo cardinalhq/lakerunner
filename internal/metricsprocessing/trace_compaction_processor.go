@@ -256,6 +256,11 @@ func (p *TraceCompactionProcessor) GetTargetRecordCount(ctx context.Context, gro
 	return p.store.GetTraceEstimate(ctx, groupingKey.OrganizationID)
 }
 
+// ShouldEmitImmediately returns false - trace compaction always uses normal grouping.
+func (p *TraceCompactionProcessor) ShouldEmitImmediately(msg *messages.TraceCompactionMessage) bool {
+	return false
+}
+
 // Helper methods similar to logs but for traces
 func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.TraceCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.TraceSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
 	params := traceProcessingParams{

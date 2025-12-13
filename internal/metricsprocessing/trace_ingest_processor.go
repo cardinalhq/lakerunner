@@ -468,6 +468,11 @@ func (p *TraceIngestProcessor) GetTargetRecordCount(ctx context.Context, groupin
 	return 5 * 1024 * 1024 // 5MB file size limit instead of record count
 }
 
+// ShouldEmitImmediately returns false - trace ingest always uses normal grouping.
+func (p *TraceIngestProcessor) ShouldEmitImmediately(msg *messages.ObjStoreNotificationMessage) bool {
+	return false
+}
+
 // createTraceReaderStack creates a reader stack: Translation(TraceReader(file))
 func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Determine file type from extension for logging
