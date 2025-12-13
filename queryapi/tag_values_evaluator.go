@@ -30,6 +30,48 @@ import (
 	"github.com/cardinalhq/lakerunner/promql"
 )
 
+// tryMetricNameShortcut attempts to get metric names directly from PostgreSQL
+// when the requested tag is "metric_name". Returns the tag values and true if
+// the shortcut succeeded, or nil and false if we should fall back to workers.
+func (q *QuerierService) tryMetricNameShortcut(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs int64,
+	endTs int64,
+	tagName string,
+) ([]string, bool) {
+	// Only handle metric_name tag
+	if tagName != "metric_name" {
+		return nil, false
+	}
+
+	// Convert timestamps to dateint range for partition pruning
+	startDateint, _ := helpers.MSToDateintHour(startTs)
+	endDateint, _ := helpers.MSToDateintHour(endTs)
+
+	values, err := q.mdb.ListMetricNames(ctx, lrdb.ListMetricNamesParams{
+		OrganizationID: orgID,
+		StartDateint:   startDateint,
+		EndDateint:     endDateint,
+		StartTs:        startTs,
+		EndTs:          endTs,
+	})
+	if err != nil {
+		slog.Warn("metric_name shortcut query failed, falling back to workers", "err", err)
+		return nil, false
+	}
+
+	// Empty result means no segments have metric_names populated,
+	// so fall back to the full query path
+	if len(values) == 0 {
+		slog.Debug("metric_name shortcut returned no results, falling back to workers")
+		return nil, false
+	}
+
+	slog.Info("metric_name shortcut succeeded", "valueCount", len(values))
+	return values, true
+}
+
 func (q *QuerierService) EvaluateMetricTagValuesQuery(
 	ctx context.Context,
 	orgID uuid.UUID,
@@ -37,6 +79,24 @@ func (q *QuerierService) EvaluateMetricTagValuesQuery(
 	endTs int64,
 	queryPlan promql.QueryPlan,
 ) (<-chan promql.TagValue, error) {
+	// Try the fast path: check if the requested tag is "metric_name"
+	// and get values directly from PostgreSQL segment metadata
+	if values, ok := q.tryMetricNameShortcut(ctx, orgID, startTs, endTs, queryPlan.TagName); ok {
+		out := make(chan promql.TagValue, len(values))
+		go func() {
+			defer close(out)
+			for _, v := range values {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- promql.TagValue{Value: v}:
+				}
+			}
+		}()
+		return out, nil
+	}
+
+	// Fall back to the full query worker path
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
 		slog.Error("failed to get all workers", "err", err)
