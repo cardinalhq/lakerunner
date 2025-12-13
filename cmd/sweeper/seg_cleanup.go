@@ -226,8 +226,8 @@ func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfi
 
 		// Periodic partition refresh
 		if time.Since(lastPartitionRefresh) > partitionRefreshInterval {
-			ctx, refreshSpan := tracer.Start(ctx, "sweeper."+signalType+"_partition_refresh")
-			if err := manager.refreshPartitions(ctx, cdb); err != nil {
+			refreshCtx, refreshSpan := tracer.Start(ctx, "sweeper."+signalType+"_partition_refresh")
+			if err := manager.refreshPartitions(refreshCtx, cdb); err != nil {
 				refreshSpan.RecordError(err)
 				ll.Error("Failed to refresh partitions", slog.Any("error", err))
 			} else {
@@ -240,12 +240,12 @@ func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfi
 		workItem := manager.scheduler.popNextWorkItem()
 		if workItem != nil {
 			// Process the work item using its Perform method with tracing
-			ctx, workSpan := tracer.Start(ctx, "sweeper."+signalType+"_cleanup", trace.WithAttributes(
+			workCtx, workSpan := tracer.Start(ctx, "sweeper."+signalType+"_cleanup", trace.WithAttributes(
 				attribute.String("work_item_key", workItem.GetKey()),
 			))
 			start := time.Now()
 
-			rescheduleIn := workItem.Perform(ctx)
+			rescheduleIn := workItem.Perform(workCtx)
 
 			workSpan.SetAttributes(attribute.Float64("duration_seconds", time.Since(start).Seconds()))
 			workSpan.End()

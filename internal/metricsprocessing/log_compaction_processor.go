@@ -250,7 +250,7 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 	uploadSpan.SetAttributes(attribute.Int("new_segment_count", len(newSegments)))
 	uploadSpan.End()
 
-	_, dbSpan := boxerTracer.Start(ctx, "logs.compact.update_db", trace.WithAttributes(
+	ctx, dbSpan := boxerTracer.Start(ctx, "logs.compact.update_db", trace.WithAttributes(
 		attribute.Int("old_segment_count", len(activeSegments)),
 		attribute.Int("new_segment_count", len(newSegments)),
 	))
