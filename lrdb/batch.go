@@ -767,7 +767,9 @@ INSERT INTO metric_seg (
   fingerprints,
   sort_version,
   compacted,
-  label_name_map
+  label_name_map,
+  metric_names,
+  metric_types
 )
 VALUES (
   $1,
@@ -784,7 +786,9 @@ VALUES (
   $13::bigint[],
   $14,
   $15,
-  $16
+  $16,
+  $17::text[],
+  $18::smallint[]
 )
 ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
 DO NOTHING
@@ -813,6 +817,8 @@ type InsertMetricSegsParams struct {
 	SortVersion    int16     `json:"sort_version"`
 	Compacted      bool      `json:"compacted"`
 	LabelNameMap   []byte    `json:"label_name_map"`
+	MetricNames    []string  `json:"metric_names"`
+	MetricTypes    []int16   `json:"metric_types"`
 }
 
 func (q *Queries) insertMetricSegsDirect(ctx context.Context, arg []InsertMetricSegsParams) *insertMetricSegsDirectBatchResults {
@@ -835,6 +841,8 @@ func (q *Queries) insertMetricSegsDirect(ctx context.Context, arg []InsertMetric
 			a.SortVersion,
 			a.Compacted,
 			a.LabelNameMap,
+			a.MetricNames,
+			a.MetricTypes,
 		}
 		batch.Queue(insertMetricSegsDirect, vals...)
 	}

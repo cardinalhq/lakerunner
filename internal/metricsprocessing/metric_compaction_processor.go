@@ -144,6 +144,8 @@ func (p *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context,
 			Fingerprints: stats.Fingerprints,
 			SortVersion:  lrdb.CurrentMetricSortVersion,
 			CreatedBy:    lrdb.CreatedByCompact,
+			MetricNames:  stats.MetricNames,
+			MetricTypes:  stats.MetricTypes,
 		}
 
 		segments = append(segments, segment)
@@ -181,6 +183,8 @@ func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 			RecordCount:  seg.RecordCount,
 			FileSize:     seg.FileSize,
 			Fingerprints: seg.Fingerprints,
+			MetricNames:  seg.MetricNames,
+			MetricTypes:  seg.MetricTypes,
 		}
 	}
 

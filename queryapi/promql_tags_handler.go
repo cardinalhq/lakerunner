@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -26,10 +27,28 @@ import (
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
+
+var metadataDefaultTimeRangeCounter metric.Int64Counter
+
+func init() {
+	meter := otel.Meter("github.com/cardinalhq/lakerunner/queryapi")
+
+	var err error
+	metadataDefaultTimeRangeCounter, err = meter.Int64Counter(
+		"lakerunner.queryapi.metadata_default_time_range_total",
+		metric.WithDescription("Count of metadata requests using default 1-hour time range"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create metadata_default_time_range_total counter: %w", err))
+	}
+}
 
 type promTagsReq struct {
 	S      string `json:"s"`
@@ -68,20 +87,60 @@ func (q *QuerierService) handleListPromQLMetricsMetadata(w http.ResponseWriter, 
 		return
 	}
 
+	// Parse optional time range from request body
+	var req promTagsReq
+	body, _ := io.ReadAll(r.Body)
+	defer func() { _ = r.Body.Close() }()
+	_ = json.Unmarshal(body, &req)
+
 	ctx := r.Context()
-	rows, err := q.mdb.ListPromMetrics(ctx, orgUUID)
+	out := promTagsListMetricsResp{Metrics: make([]metricItem, 0)}
+
+	// Determine time range - use provided values or default to last hour
+	var startTs, endTs int64
+	var usingDefault bool
+
+	if req.S != "" && req.E != "" {
+		var err error
+		startTs, endTs, err = dateutils.ToStartEnd(req.S, req.E)
+		if err != nil {
+			http.Error(w, "invalid start/end time: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		// Default to last 1 hour
+		now := time.Now()
+		endTs = now.UnixMilli()
+		startTs = now.Add(-1 * time.Hour).UnixMilli()
+		usingDefault = true
+		metadataDefaultTimeRangeCounter.Add(ctx, 1)
+		slog.Debug("metrics metadata using default 1-hour time range")
+	}
+
+	startDateint, _ := helpers.MSToDateintHour(startTs)
+	endDateint, _ := helpers.MSToDateintHour(endTs)
+
+	rows, err := q.mdb.ListMetricNamesWithTypes(ctx, lrdb.ListMetricNamesWithTypesParams{
+		OrganizationID: orgUUID,
+		StartDateint:   startDateint,
+		EndDateint:     endDateint,
+		StartTs:        startTs,
+		EndTs:          endTs,
+	})
 	if err != nil {
-		slog.Error("ListPromMetrics failed", slog.Any("error", err))
+		slog.Error("ListMetricNamesWithTypes failed", slog.Any("error", err))
 		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	out := promTagsListMetricsResp{Metrics: make([]metricItem, 0, len(rows))}
-	for _, m := range rows {
-		out.Metrics = append(out.Metrics, metricItem{
-			Name: m.MetricName,
-			Type: m.MetricType,
-		})
+	if len(rows) > 0 {
+		slog.Info("metrics metadata using fast path", "count", len(rows), "default_range", usingDefault)
+		for _, m := range rows {
+			out.Metrics = append(out.Metrics, metricItem{
+				Name: m.MetricName,
+				Type: lrdb.MetricTypeToString(m.MetricType),
+			})
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -127,17 +186,14 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 			http.Error(w, "invalid start/end time: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Convert timestamps to dateints for partition pruning
-		startTime := time.Unix(0, startTs*1e6).UTC()
-		endTime := time.Unix(0, endTs*1e6).UTC()
-		startDateint = int32(startTime.Year()*10000 + int(startTime.Month())*100 + startTime.Day())
-		endDateint = int32(endTime.Year()*10000 + int(endTime.Month())*100 + endTime.Day())
+		startDateint, _ = helpers.MSToDateintHour(startTs)
+		endDateint, _ = helpers.MSToDateintHour(endTs)
 	} else {
 		// Default to yesterday and today for partition pruning
 		now := time.Now().UTC()
-		endDateint = int32(now.Year()*10000 + int(now.Month())*100 + now.Day())
+		endDateint, _ = helpers.MSToDateintHour(now.UnixMilli())
 		yesterday := now.AddDate(0, 0, -1)
-		startDateint = int32(yesterday.Year()*10000 + int(yesterday.Month())*100 + yesterday.Day())
+		startDateint, _ = helpers.MSToDateintHour(yesterday.UnixMilli())
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

@@ -30,6 +30,67 @@ import (
 	"github.com/cardinalhq/lakerunner/promql"
 )
 
+// hasMetricSelectors returns true if the query plan has any label matchers
+// beyond just the metric name. If selectors are present, we can't use shortcuts.
+func hasMetricSelectors(leaves []promql.BaseExpr) bool {
+	for _, leaf := range leaves {
+		if len(leaf.Matchers) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// tryMetricNameShortcut attempts to get metric names directly from PostgreSQL
+// when the requested tag is "metric_name". Returns the tag values and true if
+// the shortcut succeeded, or nil and false if we should fall back to workers.
+func (q *QuerierService) tryMetricNameShortcut(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs int64,
+	endTs int64,
+	tagName string,
+	leaves []promql.BaseExpr,
+) ([]string, bool) {
+	// Only handle metric_name tag
+	if tagName != "metric_name" {
+		return nil, false
+	}
+
+	// If there are selectors in the query, we can't use the shortcut
+	// because we need to filter by those selectors
+	if hasMetricSelectors(leaves) {
+		slog.Debug("metric_name shortcut skipped due to selectors in query")
+		return nil, false
+	}
+
+	// Convert timestamps to dateint range for partition pruning
+	startDateint, _ := helpers.MSToDateintHour(startTs)
+	endDateint, _ := helpers.MSToDateintHour(endTs)
+
+	values, err := q.mdb.ListMetricNames(ctx, lrdb.ListMetricNamesParams{
+		OrganizationID: orgID,
+		StartDateint:   startDateint,
+		EndDateint:     endDateint,
+		StartTs:        startTs,
+		EndTs:          endTs,
+	})
+	if err != nil {
+		slog.Warn("metric_name shortcut query failed, falling back to workers", "err", err)
+		return nil, false
+	}
+
+	// Empty result means no segments have metric_names populated,
+	// so fall back to the full query path
+	if len(values) == 0 {
+		slog.Debug("metric_name shortcut returned no results, falling back to workers")
+		return nil, false
+	}
+
+	slog.Info("metric_name shortcut succeeded", "valueCount", len(values))
+	return values, true
+}
+
 func (q *QuerierService) EvaluateMetricTagValuesQuery(
 	ctx context.Context,
 	orgID uuid.UUID,
@@ -37,6 +98,24 @@ func (q *QuerierService) EvaluateMetricTagValuesQuery(
 	endTs int64,
 	queryPlan promql.QueryPlan,
 ) (<-chan promql.TagValue, error) {
+	// Try the fast path: check if the requested tag is "metric_name"
+	// and get values directly from PostgreSQL segment metadata
+	if values, ok := q.tryMetricNameShortcut(ctx, orgID, startTs, endTs, queryPlan.TagName, queryPlan.Leaves); ok {
+		out := make(chan promql.TagValue, len(values))
+		go func() {
+			defer close(out)
+			for _, v := range values {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- promql.TagValue{Value: v}:
+				}
+			}
+		}()
+		return out, nil
+	}
+
+	// Fall back to the full query worker path
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
 		slog.Error("failed to get all workers", "err", err)
@@ -147,6 +226,17 @@ func (q *QuerierService) EvaluateMetricTagValuesQuery(
 	return out, nil
 }
 
+// hasLogSelectors returns true if the query plan has any label matchers,
+// line filters, or label filters. If selectors are present, we can't use shortcuts.
+func hasLogSelectors(leaves []logql.LogLeaf) bool {
+	for _, leaf := range leaves {
+		if len(leaf.Matchers) > 0 || len(leaf.LineFilters) > 0 || len(leaf.LabelFilters) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // tryLogStreamIdShortcut attempts to get tag values directly from PostgreSQL
 // when the requested tag matches the stream_id_field stored in log_seg metadata.
 // Returns the tag values and true if the shortcut succeeded, or nil and false
@@ -157,7 +247,15 @@ func (q *QuerierService) tryLogStreamIdShortcut(
 	startTs int64,
 	endTs int64,
 	tagName string,
+	leaves []logql.LogLeaf,
 ) ([]string, bool) {
+	// If there are selectors in the query, we can't use the shortcut
+	// because we need to filter by those selectors
+	if hasLogSelectors(leaves) {
+		slog.Debug("stream_id shortcut skipped due to selectors in query", "tagName", tagName)
+		return nil, false
+	}
+
 	// Convert timestamps to dateint range for partition pruning
 	startDateint, _ := helpers.MSToDateintHour(startTs)
 	endDateint, _ := helpers.MSToDateintHour(endTs)
@@ -195,7 +293,7 @@ func (q *QuerierService) EvaluateLogTagValuesQuery(
 ) (<-chan promql.Timestamped, error) {
 	// Try the fast path: check if the requested tag is the stream_id_field
 	// and get values directly from PostgreSQL segment metadata
-	if values, ok := q.tryLogStreamIdShortcut(ctx, orgID, startTs, endTs, queryPlan.TagName); ok {
+	if values, ok := q.tryLogStreamIdShortcut(ctx, orgID, startTs, endTs, queryPlan.TagName, queryPlan.Leaves); ok {
 		out := make(chan promql.Timestamped, len(values))
 		go func() {
 			defer close(out)

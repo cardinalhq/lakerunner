@@ -192,6 +192,8 @@ type MetricSeg struct {
 	SortVersion    int16                     `json:"sort_version"`
 	Compacted      bool                      `json:"compacted"`
 	LabelNameMap   []byte                    `json:"label_name_map"`
+	MetricNames    []string                  `json:"metric_names"`
+	MetricTypes    []int16                   `json:"metric_types"`
 }
 
 type PackEstimate struct {

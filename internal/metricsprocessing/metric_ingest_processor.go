@@ -777,6 +777,8 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 			Fingerprints:   metadata.Fingerprints,
 			SortVersion:    lrdb.CurrentMetricSortVersion,
 			LabelNameMap:   metadata.LabelNameMap,
+			MetricNames:    metadata.MetricNames,
+			MetricTypes:    metadata.MetricTypes,
 		}
 
 		ll.Debug("Created segment params",
