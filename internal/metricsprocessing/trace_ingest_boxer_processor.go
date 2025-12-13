@@ -107,3 +107,8 @@ func (b *TraceIngestBoxerProcessor) Process(ctx context.Context, group *accumula
 func (b *TraceIngestBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
 	return config.TargetFileSize
 }
+
+// ShouldEmitImmediately returns false - trace ingest always uses normal grouping.
+func (b *TraceIngestBoxerProcessor) ShouldEmitImmediately(msg *messages.ObjStoreNotificationMessage) bool {
+	return false
+}

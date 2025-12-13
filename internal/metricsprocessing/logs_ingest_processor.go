@@ -419,6 +419,11 @@ func (p *LogIngestProcessor) GetTargetRecordCount(ctx context.Context, groupingK
 	return 5 * 1024 * 1024 // 5MB file size limit instead of record count
 }
 
+// ShouldEmitImmediately returns false - log ingest processing always uses normal grouping.
+func (p *LogIngestProcessor) ShouldEmitImmediately(msg *messages.ObjStoreNotificationMessage) bool {
+	return false
+}
+
 // LogIngestionResult contains the results of processing log files
 type LogIngestionResult struct {
 	OutputFiles      []parquetwriter.Result // Parquet files generated

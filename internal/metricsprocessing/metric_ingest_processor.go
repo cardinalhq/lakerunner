@@ -401,6 +401,11 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 	return 5 * 1024 * 1024 // 5MB file size limit instead of record count
 }
 
+// ShouldEmitImmediately returns false - metric ingest always uses normal grouping.
+func (p *MetricIngestProcessor) ShouldEmitImmediately(msg *messages.ObjStoreNotificationMessage) bool {
+	return false
+}
+
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Determine file type from extension for logging

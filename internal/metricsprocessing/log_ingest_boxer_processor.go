@@ -106,3 +106,9 @@ func (b *LogIngestBoxerProcessor) Process(ctx context.Context, group *accumulati
 func (b *LogIngestBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
 	return config.TargetFileSize
 }
+
+// ShouldEmitImmediately returns true for parquet files to prevent memory issues
+// when processing large pre-aggregated files that shouldn't be batched together.
+func (b *LogIngestBoxerProcessor) ShouldEmitImmediately(msg *messages.ObjStoreNotificationMessage) bool {
+	return msg.IsParquet()
+}

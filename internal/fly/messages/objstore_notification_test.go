@@ -131,3 +131,56 @@ func TestObjStoreNotificationMessage_RecordCount_EdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestObjStoreNotificationMessage_IsParquet(t *testing.T) {
+	tests := []struct {
+		name      string
+		objectID  string
+		isParquet bool
+	}{
+		{
+			name:      "parquet file",
+			objectID:  "path/to/file.parquet",
+			isParquet: true,
+		},
+		{
+			name:      "parquet in nested path",
+			objectID:  "org/2024/01/15/data.parquet",
+			isParquet: true,
+		},
+		{
+			name:      "json.gz file",
+			objectID:  "path/to/file.json.gz",
+			isParquet: false,
+		},
+		{
+			name:      "binpb file",
+			objectID:  "path/to/file.binpb",
+			isParquet: false,
+		},
+		{
+			name:      "json file",
+			objectID:  "path/to/file.json",
+			isParquet: false,
+		},
+		{
+			name:      "empty objectID",
+			objectID:  "",
+			isParquet: false,
+		},
+		{
+			name:      "parquet in middle of path is not parquet file",
+			objectID:  "path/parquet/file.json",
+			isParquet: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := &ObjStoreNotificationMessage{
+				ObjectID: tt.objectID,
+			}
+			assert.Equal(t, tt.isParquet, msg.IsParquet())
+		})
+	}
+}

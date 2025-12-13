@@ -27,6 +27,10 @@ import (
 type processor[M messages.GroupableMessage, K comparable] interface {
 	Process(ctx context.Context, group *accumulationGroup[K], kafkaOffsets []lrdb.KafkaOffsetInfo) error
 	GetTargetRecordCount(ctx context.Context, groupingKey K) int64
+	// ShouldEmitImmediately returns true if the message should be emitted as its own
+	// bundle without being grouped with other messages. This is used to prevent
+	// memory issues when processing large files that shouldn't be batched.
+	ShouldEmitImmediately(msg M) bool
 }
 
 // offsetStore defines the interface for checking processed offsets
@@ -104,6 +108,11 @@ func (g *gatherer[M, K]) processMessage(ctx context.Context, msg M, metadata *me
 	// Get the grouping key from the message
 	groupingKey := msg.GroupingKey().(K)
 
+	// Check if this message should be emitted immediately without grouping
+	if g.processor.ShouldEmitImmediately(msg) {
+		return g.emitSingleMessage(ctx, msg, metadata, groupingKey)
+	}
+
 	// Get dynamic estimate from the processor
 	targetRecordCount := g.processor.GetTargetRecordCount(ctx, groupingKey)
 
@@ -124,6 +133,34 @@ func (g *gatherer[M, K]) processMessage(ctx context.Context, msg M, metadata *me
 		g.metadataTracker.trackMetadata(result.Group)
 	}
 
+	return nil
+}
+
+// emitSingleMessage creates a single-message group and processes it immediately.
+// This bypasses the hunter accumulation for messages that should not be grouped.
+func (g *gatherer[M, K]) emitSingleMessage(ctx context.Context, msg M, metadata *messageMetadata, groupingKey K) error {
+	now := time.Now()
+	group := &accumulationGroup[K]{
+		Key: groupingKey,
+		Messages: []*accumulatedMessage{
+			{
+				Message:  msg,
+				Metadata: metadata,
+			},
+		},
+		TotalRecordCount: msg.RecordCount(),
+		LatestOffsets:    map[int32]int64{metadata.Partition: metadata.Offset},
+		CreatedAt:        now,
+		LastUpdatedAt:    now,
+	}
+
+	kafkaOffsets := g.collectKafkaOffsetsFromGroup(group)
+
+	if err := g.processor.Process(ctx, group, kafkaOffsets); err != nil {
+		return err
+	}
+
+	g.metadataTracker.trackMetadata(group)
 	return nil
 }
 

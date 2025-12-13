@@ -515,3 +515,62 @@ func TestBoxerProcessor_GetTargetRecordCount(t *testing.T) {
 		assert.Equal(t, expectedEstimate, count)
 	})
 }
+
+func TestBoxerProcessor_ShouldEmitImmediately(t *testing.T) {
+	cfg := &config.Config{}
+
+	t.Run("LogIngestBoxerProcessor returns true for parquet files", func(t *testing.T) {
+		store := &mockBoxerStore{}
+		processor := newLogIngestBoxerProcessor(cfg, store)
+
+		parquetMsg := &messages.ObjStoreNotificationMessage{
+			ObjectID: "path/to/file.parquet",
+		}
+		assert.True(t, processor.ShouldEmitImmediately(parquetMsg))
+	})
+
+	t.Run("LogIngestBoxerProcessor returns false for non-parquet files", func(t *testing.T) {
+		store := &mockBoxerStore{}
+		processor := newLogIngestBoxerProcessor(cfg, store)
+
+		testCases := []struct {
+			name     string
+			objectID string
+		}{
+			{"json.gz file", "path/to/file.json.gz"},
+			{"binpb file", "path/to/file.binpb"},
+			{"binpb.gz file", "path/to/file.binpb.gz"},
+			{"json file", "path/to/file.json"},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				msg := &messages.ObjStoreNotificationMessage{
+					ObjectID: tc.objectID,
+				}
+				assert.False(t, processor.ShouldEmitImmediately(msg))
+			})
+		}
+	})
+
+	t.Run("MetricIngestBoxerProcessor always returns false", func(t *testing.T) {
+		store := &mockBoxerStore{}
+		processor := newMetricIngestBoxerProcessor(cfg, store)
+
+		// Even parquet files should return false for metric ingest
+		parquetMsg := &messages.ObjStoreNotificationMessage{
+			ObjectID: "path/to/file.parquet",
+		}
+		assert.False(t, processor.ShouldEmitImmediately(parquetMsg))
+	})
+
+	t.Run("TraceIngestBoxerProcessor always returns false", func(t *testing.T) {
+		store := &mockBoxerStore{}
+		processor := newTraceIngestBoxerProcessor(cfg, store)
+
+		parquetMsg := &messages.ObjStoreNotificationMessage{
+			ObjectID: "path/to/file.parquet",
+		}
+		assert.False(t, processor.ShouldEmitImmediately(parquetMsg))
+	})
+}

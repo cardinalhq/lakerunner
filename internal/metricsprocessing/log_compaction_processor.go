@@ -237,6 +237,11 @@ func (p *LogCompactionProcessor) GetTargetRecordCount(ctx context.Context, group
 	return p.store.GetLogEstimate(ctx, groupingKey.OrganizationID)
 }
 
+// ShouldEmitImmediately returns false - log compaction always uses normal grouping.
+func (p *LogCompactionProcessor) ShouldEmitImmediately(msg *messages.LogCompactionMessage) bool {
+	return false
+}
+
 func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.LogCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.LogSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
 	params := logProcessingParams{
 		TmpDir:         tmpDir,

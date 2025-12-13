@@ -92,6 +92,10 @@ func (m *MockProcessor) GetTargetRecordCount(ctx context.Context, groupingKey me
 	return args.Get(0).(int64)
 }
 
+func (m *MockProcessor) ShouldEmitImmediately(msg *messages.MetricCompactionMessage) bool {
+	return false
+}
+
 // MockMetricCompactionStore for specific testing
 type MockMetricCompactionStore struct {
 	mock.Mock

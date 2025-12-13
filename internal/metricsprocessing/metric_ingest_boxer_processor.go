@@ -107,3 +107,8 @@ func (b *MetricIngestBoxerProcessor) Process(ctx context.Context, group *accumul
 func (b *MetricIngestBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
 	return config.TargetFileSize
 }
+
+// ShouldEmitImmediately returns false - metric ingest always uses normal grouping.
+func (b *MetricIngestBoxerProcessor) ShouldEmitImmediately(msg *messages.ObjStoreNotificationMessage) bool {
+	return false
+}

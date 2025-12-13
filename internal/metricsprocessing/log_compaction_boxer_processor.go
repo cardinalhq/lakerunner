@@ -96,3 +96,8 @@ func (p *LogCompactionBoxerProcessor) Process(ctx context.Context, group *accumu
 func (p *LogCompactionBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.LogCompactionKey) int64 {
 	return p.store.GetLogEstimate(ctx, groupingKey.OrganizationID)
 }
+
+// ShouldEmitImmediately returns false - log compaction always uses normal grouping.
+func (p *LogCompactionBoxerProcessor) ShouldEmitImmediately(msg *messages.LogCompactionMessage) bool {
+	return false
+}

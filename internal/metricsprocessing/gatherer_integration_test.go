@@ -124,6 +124,10 @@ func (p *integrationTestProcessor) GetTargetRecordCount(ctx context.Context, gro
 	return 1000 // Lower threshold for test to trigger box emission
 }
 
+func (p *integrationTestProcessor) ShouldEmitImmediately(msg *messages.LogCompactionMessage) bool {
+	return false
+}
+
 // setupIntegrationTest creates a test database and returns cleanup function
 func setupIntegrationTest(t *testing.T) (*lrdb.Store, func()) {
 	ctx := context.Background()
