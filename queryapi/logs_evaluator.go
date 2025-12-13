@@ -29,6 +29,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
@@ -256,32 +257,26 @@ func (q *QuerierService) lookupLogsSegments(
 
 	for _, lm := range leaf.Matchers {
 		label, val := lm.Label, lm.Value
-		if !slices.Contains(dimensionsToIndex, label) {
+		if !fingerprint.IsIndexed(label) {
 			addExistsNode(label, fpsToFetch, &root)
 			continue
 		}
 		switch lm.Op {
 		case logql.MatchEq:
-			// For full-value dimensions with exact match, use the full value fingerprint
-			if slices.Contains(fullValueDimensions, label) {
-				addFullValueNode(label, val, fpsToFetch, &root)
-			} else {
-				addAndNodeFromPattern(label, val, fpsToFetch, &root)
-			}
+			// All indexed fields have exact fingerprints
+			addFullValueNode(label, val, fpsToFetch, &root)
 		case logql.MatchRe:
-			// For full-value dimensions, check if this is a simple alternation (e.g., from 'in' operator)
-			// If so, convert to OR of exact matches instead of falling back to exists check
-			if slices.Contains(fullValueDimensions, label) {
+			if fingerprint.HasTrigramIndex(label) {
+				// Use trigram matching for regex patterns
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			} else {
+				// For exact-only fields, check if this is a simple alternation (e.g., from 'in' operator)
 				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
-					// Create OR of exact value matches
 					addOrNodeFromValues(label, values, fpsToFetch, &root)
 				} else {
 					// Fall back to exists check for complex regex patterns
 					addExistsNode(label, fpsToFetch, &root)
 				}
-			} else {
-				// For non-full-value dimensions, use trigram matching
-				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)
@@ -293,32 +288,26 @@ func (q *QuerierService) lookupLogsSegments(
 			continue
 		}
 		label, val := lf.Label, lf.Value
-		if !slices.Contains(dimensionsToIndex, label) {
+		if !fingerprint.IsIndexed(label) {
 			addExistsNode(label, fpsToFetch, &root)
 			continue
 		}
 		switch lf.Op {
 		case logql.MatchEq:
-			// For full-value dimensions with exact match, use the full value fingerprint
-			if slices.Contains(fullValueDimensions, label) {
-				addFullValueNode(label, val, fpsToFetch, &root)
-			} else {
-				addAndNodeFromPattern(label, val, fpsToFetch, &root)
-			}
+			// All indexed fields have exact fingerprints
+			addFullValueNode(label, val, fpsToFetch, &root)
 		case logql.MatchRe:
-			// For full-value dimensions, check if this is a simple alternation (e.g., from 'in' operator)
-			// If so, convert to OR of exact matches instead of falling back to exists check
-			if slices.Contains(fullValueDimensions, label) {
+			if fingerprint.HasTrigramIndex(label) {
+				// Use trigram matching for regex patterns
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			} else {
+				// For exact-only fields, check if this is a simple alternation (e.g., from 'in' operator)
 				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
-					// Create OR of exact value matches
 					addOrNodeFromValues(label, values, fpsToFetch, &root)
 				} else {
 					// Fall back to exists check for complex regex patterns
 					addExistsNode(label, fpsToFetch, &root)
 				}
-			} else {
-				// For non-full-value dimensions, use trigram matching
-				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)
@@ -382,12 +371,12 @@ func addAndNodeFromPattern(label, pattern string, fps map[int64]struct{}, root *
 }
 
 func addExistsNode(label string, fps map[int64]struct{}, root **TrigramQuery) {
-	fp := computeFingerprint(label, existsRegex)
+	fp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
 	fps[fp] = struct{}{}
 	tq := &TrigramQuery{
 		Op:        index.QAnd,
 		fieldName: label,
-		Trigram:   []string{existsRegex},
+		Trigram:   []string{fingerprint.ExistsRegex},
 	}
 	*root = &TrigramQuery{Op: index.QAnd, Sub: []*TrigramQuery{*root, tq}}
 }
@@ -395,8 +384,8 @@ func addExistsNode(label string, fps map[int64]struct{}, root **TrigramQuery) {
 func addFullValueNode(label, value string, fps map[int64]struct{}, root **TrigramQuery) {
 	// For full-value dimensions, we index both the exists fingerprint and the exact value
 	// Add both fingerprints to the query
-	existsFp := computeFingerprint(label, existsRegex)
-	valueFp := computeFingerprint(label, value)
+	existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+	valueFp := fingerprint.ComputeFingerprint(label, value)
 	fps[existsFp] = struct{}{}
 	fps[valueFp] = struct{}{}
 
@@ -404,7 +393,7 @@ func addFullValueNode(label, value string, fps map[int64]struct{}, root **Trigra
 	tq := &TrigramQuery{
 		Op:        index.QAnd,
 		fieldName: label,
-		Trigram:   []string{existsRegex, value},
+		Trigram:   []string{fingerprint.ExistsRegex, value},
 	}
 	*root = &TrigramQuery{Op: index.QAnd, Sub: []*TrigramQuery{*root, tq}}
 }
@@ -466,7 +455,7 @@ func computeSegmentSet(q *TrigramQuery, fpToSegs map[int64][]SegmentInfo) map[Se
 		}
 		sets := make([]map[SegmentInfo]struct{}, 0, len(q.Trigram))
 		for _, tri := range q.Trigram {
-			fp := computeFingerprint(q.fieldName, tri)
+			fp := fingerprint.ComputeFingerprint(q.fieldName, tri)
 			set := make(map[SegmentInfo]struct{})
 			for _, s := range fpToSegs[fp] {
 				set[s] = struct{}{}
@@ -477,7 +466,7 @@ func computeSegmentSet(q *TrigramQuery, fpToSegs map[int64][]SegmentInfo) map[Se
 	case index.QOr:
 		out := make(map[SegmentInfo]struct{})
 		for _, tri := range q.Trigram {
-			fp := computeFingerprint(q.fieldName, tri)
+			fp := fingerprint.ComputeFingerprint(q.fieldName, tri)
 			for _, s := range fpToSegs[fp] {
 				out[s] = struct{}{}
 			}
@@ -550,7 +539,7 @@ func buildLabelTrigram(label, pattern string) (*index.Query, []int64) {
 	if len(tq.Trigram) > 0 {
 		fps = make([]int64, 0, len(tq.Trigram))
 		for _, tri := range tq.Trigram {
-			fps = append(fps, computeFingerprint(label, tri))
+			fps = append(fps, fingerprint.ComputeFingerprint(label, tri))
 		}
 		return tq, dedupeInt64(fps)
 	}
@@ -560,7 +549,7 @@ func buildLabelTrigram(label, pattern string) (*index.Query, []int64) {
 	}
 
 	// Recursively collect fingerprints from children where possible
-	// (for OR/AND we’ll combine at the planner level; here we only emit leaf fps)
+	// (for OR/AND we'll combine at the planner level; here we only emit leaf fps)
 	var collect func(q *index.Query)
 	collect = func(q *index.Query) {
 		if q == nil {
@@ -568,7 +557,7 @@ func buildLabelTrigram(label, pattern string) (*index.Query, []int64) {
 		}
 		if len(q.Trigram) > 0 {
 			for _, tri := range q.Trigram {
-				fps = append(fps, computeFingerprint(label, tri))
+				fps = append(fps, fingerprint.ComputeFingerprint(label, tri))
 			}
 		}
 		for _, ch := range q.Sub {
@@ -612,15 +601,15 @@ func addOrNodeFromValues(label string, values []string, fps map[int64]struct{}, 
 	// Multiple values - create OR of exact matches
 	var orSubs []*TrigramQuery
 	for _, val := range values {
-		existsFp := computeFingerprint(label, existsRegex)
-		valueFp := computeFingerprint(label, val)
+		existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+		valueFp := fingerprint.ComputeFingerprint(label, val)
 		fps[existsFp] = struct{}{}
 		fps[valueFp] = struct{}{}
 
 		orSubs = append(orSubs, &TrigramQuery{
 			Op:        index.QAnd,
 			fieldName: label,
-			Trigram:   []string{existsRegex, val},
+			Trigram:   []string{fingerprint.ExistsRegex, val},
 		})
 	}
 

@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
@@ -257,28 +258,25 @@ func (q *QuerierService) lookupSpansSegments(
 
 	for _, lm := range leaf.Matchers {
 		label, val := lm.Label, lm.Value
-		if !slices.Contains(dimensionsToIndex, label) {
+		if !fingerprint.IsIndexed(label) {
 			addExistsNode(label, fpsToFetch, &root)
 			continue
 		}
 		switch lm.Op {
 		case logql.MatchEq:
-			// For full-value dimensions with exact match, use the full value fingerprint
-			if slices.Contains(fullValueDimensions, label) {
-				addFullValueNode(label, val, fpsToFetch, &root)
-			} else {
-				addAndNodeFromPattern(label, val, fpsToFetch, &root)
-			}
+			// All indexed fields have exact fingerprints
+			addFullValueNode(label, val, fpsToFetch, &root)
 		case logql.MatchRe:
-			// For full-value dimensions, check if this is a simple alternation
-			if slices.Contains(fullValueDimensions, label) {
+			if fingerprint.HasTrigramIndex(label) {
+				// Use trigram matching for regex patterns
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			} else {
+				// For exact-only fields, check if this is a simple alternation
 				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
 					addOrNodeFromValues(label, values, fpsToFetch, &root)
 				} else {
 					addExistsNode(label, fpsToFetch, &root)
 				}
-			} else {
-				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)
@@ -290,28 +288,25 @@ func (q *QuerierService) lookupSpansSegments(
 			continue
 		}
 		label, val := lf.Label, lf.Value
-		if !slices.Contains(dimensionsToIndex, label) {
+		if !fingerprint.IsIndexed(label) {
 			addExistsNode(label, fpsToFetch, &root)
 			continue
 		}
 		switch lf.Op {
 		case logql.MatchEq:
-			// For full-value dimensions with exact match, use the full value fingerprint
-			if slices.Contains(fullValueDimensions, label) {
-				addFullValueNode(label, val, fpsToFetch, &root)
-			} else {
-				addAndNodeFromPattern(label, val, fpsToFetch, &root)
-			}
+			// All indexed fields have exact fingerprints
+			addFullValueNode(label, val, fpsToFetch, &root)
 		case logql.MatchRe:
-			// For full-value dimensions, check if this is a simple alternation
-			if slices.Contains(fullValueDimensions, label) {
+			if fingerprint.HasTrigramIndex(label) {
+				// Use trigram matching for regex patterns
+				addAndNodeFromPattern(label, val, fpsToFetch, &root)
+			} else {
+				// For exact-only fields, check if this is a simple alternation
 				if values, ok := tryExtractExactAlternates(val); ok && len(values) > 0 {
 					addOrNodeFromValues(label, values, fpsToFetch, &root)
 				} else {
 					addExistsNode(label, fpsToFetch, &root)
 				}
-			} else {
-				addAndNodeFromPattern(label, val, fpsToFetch, &root)
 			}
 		default:
 			addExistsNode(label, fpsToFetch, &root)

@@ -23,6 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
+
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -55,24 +57,12 @@ func TestPruneFilter_OrWithNonExistentField(t *testing.T) {
 	}
 
 	// Provide segments that have log.level but NOT log.nonexistent
+	// Note: log_level is IndexExact (no trigrams), so "contains" queries
+	// only use the exists fingerprint for segment selection.
 	fakeRows := []lrdb.ListLogSegmentsForQueryRow{
-		// Trigrams for "error" in log_level
+		// log_level exists fingerprint (IndexExact fields use exists for "contains")
 		{
-			Fingerprint: computeFingerprint("log_level", "err"),
-			InstanceNum: 1,
-			SegmentID:   101,
-			StartTs:     startTs,
-			EndTs:       endTs,
-		},
-		{
-			Fingerprint: computeFingerprint("log_level", "rro"),
-			InstanceNum: 1,
-			SegmentID:   101,
-			StartTs:     startTs,
-			EndTs:       endTs,
-		},
-		{
-			Fingerprint: computeFingerprint("log_level", "ror"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_level", fingerprint.ExistsRegex),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
@@ -142,24 +132,12 @@ func TestPruneFilter_AndWithNonExistentField(t *testing.T) {
 	}
 
 	// Provide segments that have log.level but NOT log.nonexistent
+	// Note: log_level is IndexExact (no trigrams), so "contains" queries
+	// only use the exists fingerprint for segment selection.
 	fakeRows := []lrdb.ListLogSegmentsForQueryRow{
-		// Trigrams for "error" in log_level
+		// log_level exists fingerprint (IndexExact fields use exists for "contains")
 		{
-			Fingerprint: computeFingerprint("log_level", "err"),
-			InstanceNum: 1,
-			SegmentID:   101,
-			StartTs:     startTs,
-			EndTs:       endTs,
-		},
-		{
-			Fingerprint: computeFingerprint("log_level", "rro"),
-			InstanceNum: 1,
-			SegmentID:   101,
-			StartTs:     startTs,
-			EndTs:       endTs,
-		},
-		{
-			Fingerprint: computeFingerprint("log_level", "ror"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_level", fingerprint.ExistsRegex),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
@@ -244,14 +222,14 @@ func TestPruneFilter_ComplexNestedCase(t *testing.T) {
 	fakeRows := []lrdb.ListLogSegmentsForQueryRow{
 		// log_level: indexed field, needs exists + value fingerprints
 		{
-			Fingerprint: computeFingerprint("log_level", existsRegex),
+			Fingerprint: fingerprint.ComputeFingerprint("log_level", fingerprint.ExistsRegex),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
 			EndTs:       endTs,
 		},
 		{
-			Fingerprint: computeFingerprint("log_level", "error"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_level", "error"),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
@@ -259,49 +237,49 @@ func TestPruneFilter_ComplexNestedCase(t *testing.T) {
 		},
 		// log_message: NOT indexed, needs exists + trigrams for "database"
 		{
-			Fingerprint: computeFingerprint("log_message", existsRegex),
+			Fingerprint: fingerprint.ComputeFingerprint("log_message", fingerprint.ExistsRegex),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
 			EndTs:       endTs,
 		},
 		{
-			Fingerprint: computeFingerprint("log_message", "dat"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_message", "dat"),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
 			EndTs:       endTs,
 		},
 		{
-			Fingerprint: computeFingerprint("log_message", "ata"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_message", "ata"),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
 			EndTs:       endTs,
 		},
 		{
-			Fingerprint: computeFingerprint("log_message", "tab"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_message", "tab"),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
 			EndTs:       endTs,
 		},
 		{
-			Fingerprint: computeFingerprint("log_message", "aba"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_message", "aba"),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
 			EndTs:       endTs,
 		},
 		{
-			Fingerprint: computeFingerprint("log_message", "bas"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_message", "bas"),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
 			EndTs:       endTs,
 		},
 		{
-			Fingerprint: computeFingerprint("log_message", "ase"),
+			Fingerprint: fingerprint.ComputeFingerprint("log_message", "ase"),
 			InstanceNum: 1,
 			SegmentID:   101,
 			StartTs:     startTs,
@@ -330,9 +308,9 @@ func TestPruneFilter_ComplexNestedCase(t *testing.T) {
 	// 1. It's safe (false negatives are ok, false positives are not)
 	// 2. The pruning step will rewrite the filter for SQL generation
 	// For this test, we just verify that fpToSegments has the right data for pruning
-	assert.Contains(t, fpToSegments, computeFingerprint("log_level", existsRegex), "Should have log_level exists fp")
-	assert.Contains(t, fpToSegments, computeFingerprint("log_message", existsRegex), "Should have log_message exists fp")
-	assert.NotContains(t, fpToSegments, computeFingerprint("log_nonexistent", existsRegex), "Should NOT have log_nonexistent exists fp")
+	assert.Contains(t, fpToSegments, fingerprint.ComputeFingerprint("log_level", fingerprint.ExistsRegex), "Should have log_level exists fp")
+	assert.Contains(t, fpToSegments, fingerprint.ComputeFingerprint("log_message", fingerprint.ExistsRegex), "Should have log_message exists fp")
+	assert.NotContains(t, fpToSegments, fingerprint.ComputeFingerprint("log_nonexistent", fingerprint.ExistsRegex), "Should NOT have log_nonexistent exists fp")
 
 	// Test pruning - this is the key part
 	prunedFilter := PruneFilterForMissingFields(filter, fpToSegments)

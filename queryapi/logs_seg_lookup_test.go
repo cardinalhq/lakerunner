@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -46,7 +47,7 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 	}
 
 	// Expected coarse fingerprint for the message field
-	expFP := computeFingerprint("log_message", existsRegex)
+	expFP := fingerprint.ComputeFingerprint("log_message", fingerprint.ExistsRegex)
 
 	// Capture the params we send to the DB lookup.
 	var gotParams lrdb.ListLogSegmentsForQueryParams
@@ -183,8 +184,8 @@ func TestLookupLogsSegments_FullValueDimension_ExactMatch(t *testing.T) {
 	}
 
 	// Expected fingerprints for full-value dimension: exists + exact value
-	existsFP := computeFingerprint("resource_file", existsRegex)
-	valueFP := computeFingerprint("resource_file", filename)
+	existsFP := fingerprint.ComputeFingerprint("resource_file", fingerprint.ExistsRegex)
+	valueFP := fingerprint.ComputeFingerprint("resource_file", filename)
 
 	var gotParams lrdb.ListLogSegmentsForQueryParams
 

@@ -24,6 +24,7 @@ import (
 	"github.com/google/codesearch/index"
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -130,13 +131,13 @@ func buildTrigramQueryForClause(clause QueryClause, fps map[int64]struct{}) *Tri
 		label := normalizeLabelName(c.K)
 
 		// Check if this dimension is indexed
-		if !slices.Contains(dimensionsToIndex, label) {
-			fp := computeFingerprint(label, existsRegex)
+		if !fingerprint.IsIndexed(label) {
+			fp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
 			fps[fp] = struct{}{}
 			return &TrigramQuery{
 				Op:        index.QAnd,
 				fieldName: label,
-				Trigram:   []string{existsRegex},
+				Trigram:   []string{fingerprint.ExistsRegex},
 			}
 		}
 
@@ -145,83 +146,52 @@ func buildTrigramQueryForClause(clause QueryClause, fps map[int64]struct{}) *Tri
 			if len(c.V) == 0 {
 				return nil
 			}
-			if slices.Contains(fullValueDimensions, label) {
-				existsFp := computeFingerprint(label, existsRegex)
-				valueFp := computeFingerprint(label, c.V[0])
-				fps[existsFp] = struct{}{}
-				fps[valueFp] = struct{}{}
-				return &TrigramQuery{
-					Op:        index.QAnd,
-					fieldName: label,
-					Trigram:   []string{existsRegex, c.V[0]},
-				}
-			} else {
-				pattern := regexp.QuoteMeta(c.V[0])
-				lt, fpsList := buildLabelTrigram(label, pattern)
-				for _, fp := range fpsList {
-					fps[fp] = struct{}{}
-				}
-				return fromIndexQuery(label, lt)
+			// All indexed fields have exact fingerprints
+			existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+			valueFp := fingerprint.ComputeFingerprint(label, c.V[0])
+			fps[existsFp] = struct{}{}
+			fps[valueFp] = struct{}{}
+			return &TrigramQuery{
+				Op:        index.QAnd,
+				fieldName: label,
+				Trigram:   []string{fingerprint.ExistsRegex, c.V[0]},
 			}
 
 		case "in":
 			if len(c.V) == 0 {
 				return nil
 			}
-			if slices.Contains(fullValueDimensions, label) {
-				if len(c.V) == 1 {
-					existsFp := computeFingerprint(label, existsRegex)
-					valueFp := computeFingerprint(label, c.V[0])
-					fps[existsFp] = struct{}{}
-					fps[valueFp] = struct{}{}
-					return &TrigramQuery{
-						Op:        index.QAnd,
-						fieldName: label,
-						Trigram:   []string{existsRegex, c.V[0]},
-					}
+			// All indexed fields have exact fingerprints
+			if len(c.V) == 1 {
+				existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+				valueFp := fingerprint.ComputeFingerprint(label, c.V[0])
+				fps[existsFp] = struct{}{}
+				fps[valueFp] = struct{}{}
+				return &TrigramQuery{
+					Op:        index.QAnd,
+					fieldName: label,
+					Trigram:   []string{fingerprint.ExistsRegex, c.V[0]},
 				}
-				var orSubs []*TrigramQuery
-				for _, val := range c.V {
-					existsFp := computeFingerprint(label, existsRegex)
-					valueFp := computeFingerprint(label, val)
-					fps[existsFp] = struct{}{}
-					fps[valueFp] = struct{}{}
-					orSubs = append(orSubs, &TrigramQuery{
-						Op:        index.QAnd,
-						fieldName: label,
-						Trigram:   []string{existsRegex, val},
-					})
-				}
-				return &TrigramQuery{Op: index.QOr, Sub: orSubs}
-			} else {
-				var orSubs []*TrigramQuery
-				for _, val := range c.V {
-					pattern := regexp.QuoteMeta(val)
-					lt, fpsList := buildLabelTrigram(label, pattern)
-					for _, fp := range fpsList {
-						fps[fp] = struct{}{}
-					}
-					orSubs = append(orSubs, fromIndexQuery(label, lt))
-				}
-				if len(orSubs) == 1 {
-					return orSubs[0]
-				}
-				return &TrigramQuery{Op: index.QOr, Sub: orSubs}
 			}
+			var orSubs []*TrigramQuery
+			for _, val := range c.V {
+				existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+				valueFp := fingerprint.ComputeFingerprint(label, val)
+				fps[existsFp] = struct{}{}
+				fps[valueFp] = struct{}{}
+				orSubs = append(orSubs, &TrigramQuery{
+					Op:        index.QAnd,
+					fieldName: label,
+					Trigram:   []string{fingerprint.ExistsRegex, val},
+				})
+			}
+			return &TrigramQuery{Op: index.QOr, Sub: orSubs}
 
 		case "contains":
 			if len(c.V) == 0 {
 				return nil
 			}
-			if slices.Contains(fullValueDimensions, label) {
-				fp := computeFingerprint(label, existsRegex)
-				fps[fp] = struct{}{}
-				return &TrigramQuery{
-					Op:        index.QAnd,
-					fieldName: label,
-					Trigram:   []string{existsRegex},
-				}
-			} else {
+			if fingerprint.HasTrigramIndex(label) {
 				pattern := ".*" + regexp.QuoteMeta(c.V[0]) + ".*"
 				lt, fpsList := buildLabelTrigram(label, pattern)
 				for _, fp := range fpsList {
@@ -229,43 +199,51 @@ func buildTrigramQueryForClause(clause QueryClause, fps map[int64]struct{}) *Tri
 				}
 				return fromIndexQuery(label, lt)
 			}
+			// Exact-only fields fall back to exists check for substring matching
+			fp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+			fps[fp] = struct{}{}
+			return &TrigramQuery{
+				Op:        index.QAnd,
+				fieldName: label,
+				Trigram:   []string{fingerprint.ExistsRegex},
+			}
 
 		case "regex":
 			if len(c.V) == 0 {
 				return nil
 			}
-			if slices.Contains(fullValueDimensions, label) {
-				fp := computeFingerprint(label, existsRegex)
-				fps[fp] = struct{}{}
-				return &TrigramQuery{
-					Op:        index.QAnd,
-					fieldName: label,
-					Trigram:   []string{existsRegex},
-				}
-			} else {
+			if fingerprint.HasTrigramIndex(label) {
 				lt, fpsList := buildLabelTrigram(label, c.V[0])
 				for _, fp := range fpsList {
 					fps[fp] = struct{}{}
 				}
 				return fromIndexQuery(label, lt)
 			}
-
-		case "gt", "gte", "lt", "lte":
-			fp := computeFingerprint(label, existsRegex)
+			// Exact-only fields fall back to exists check for regex matching
+			fp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
 			fps[fp] = struct{}{}
 			return &TrigramQuery{
 				Op:        index.QAnd,
 				fieldName: label,
-				Trigram:   []string{existsRegex},
+				Trigram:   []string{fingerprint.ExistsRegex},
+			}
+
+		case "gt", "gte", "lt", "lte":
+			fp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+			fps[fp] = struct{}{}
+			return &TrigramQuery{
+				Op:        index.QAnd,
+				fieldName: label,
+				Trigram:   []string{fingerprint.ExistsRegex},
 			}
 
 		default:
-			fp := computeFingerprint(label, existsRegex)
+			fp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
 			fps[fp] = struct{}{}
 			return &TrigramQuery{
 				Op:        index.QAnd,
 				fieldName: label,
-				Trigram:   []string{existsRegex},
+				Trigram:   []string{fingerprint.ExistsRegex},
 			}
 		}
 
@@ -338,8 +316,8 @@ func PruneFilterForMissingFields(filter QueryClause, fpToSegments map[int64][]Se
 		label := normalizeLabelName(c.K)
 
 		// For non-indexed fields, check if the exists fingerprint is present
-		if !slices.Contains(dimensionsToIndex, label) {
-			existsFp := computeFingerprint(label, existsRegex)
+		if !fingerprint.IsIndexed(label) {
+			existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
 			// If the exists fingerprint is not in fpToSegments, this field doesn't exist in any segment
 			if _, exists := fpToSegments[existsFp]; !exists {
 				slog.Info("Pruning filter for non-existent field",
