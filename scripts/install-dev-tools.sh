@@ -18,6 +18,7 @@ set -euo pipefail
 # Dev tool versions - update these to change versions across the project
 GOLANGCI_LINT_VERSION="v2.4.0"
 GOIMPORTS_VERSION="latest"
+LICENSE_EYE_VERSION="latest"
 
 # Project root directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,6 +37,9 @@ GOBIN="$BIN_DIR" go install "github.com/golangci/golangci-lint/v2/cmd/golangci-l
 echo "Installing goimports $GOIMPORTS_VERSION..."
 GOBIN="$BIN_DIR" go install "golang.org/x/tools/cmd/goimports@$GOIMPORTS_VERSION" || echo "Failed to install goimports"
 
+echo "Installing license-eye $LICENSE_EYE_VERSION..."
+GOBIN="$BIN_DIR" go install "github.com/apache/skywalking-eyes/cmd/license-eye@$LICENSE_EYE_VERSION" || echo "Failed to install license-eye"
+
 echo ""
 echo "Installation complete. Installed tools:"
-ls -la "$BIN_DIR" | grep -E "golangci-lint|goimports" || echo "No tools found"
+ls -la "$BIN_DIR" | grep -E "golangci-lint|goimports|license-eye" || echo "No tools found"

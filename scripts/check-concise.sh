@@ -77,11 +77,11 @@ run_license_check() {
     local output_file="$TMPDIR/license.out"
 
     if [ "$VERBOSE" = "1" ]; then
-        go tool license-eye header check
+        ./bin/license-eye header check
         return $?
     fi
 
-    go tool license-eye header check >"$output_file" 2>&1
+    ./bin/license-eye header check >"$output_file" 2>&1
     local result=$?
 
     if [ $result -eq 0 ]; then
