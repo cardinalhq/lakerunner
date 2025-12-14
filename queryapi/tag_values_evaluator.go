@@ -31,12 +31,24 @@ import (
 	"github.com/cardinalhq/lakerunner/promql"
 )
 
-// hasMetricSelectors returns true if the query plan has any label matchers
-// beyond just the metric name. If selectors are present, we can't use shortcuts.
-func hasMetricSelectors(leaves []promql.BaseExpr) bool {
+// hasEffectiveMetricSelectors returns true if the query plan has any label matchers
+// that actually filter results. A selector like {tagName=~".+"} is considered a no-op.
+func hasEffectiveMetricSelectors(leaves []promql.BaseExpr, tagName string) bool {
 	for _, leaf := range leaves {
-		if len(leaf.Matchers) > 0 {
-			return true
+		for _, m := range leaf.Matchers {
+			// If matcher is for a different label, it's a real filter
+			if m.Label != tagName {
+				return true
+			}
+			// If it's an exact match or negative match, it's a real filter
+			if m.Op != promql.MatchRe {
+				return true
+			}
+			// For regex match on the queried tag, check if it's a "match all" pattern
+			if !isMatchAllRegex(m.Value) {
+				return true
+			}
+			// Pattern like {tagName=~".+"} - this is a no-op, continue checking
 		}
 	}
 	return false
@@ -58,9 +70,9 @@ func (q *QuerierService) tryMetricNameShortcut(
 		return nil, false
 	}
 
-	// If there are selectors in the query, we can't use the shortcut
-	// because we need to filter by those selectors
-	if hasMetricSelectors(leaves) {
+	// If there are effective selectors in the query (not just match-all patterns),
+	// we can't use the shortcut because we need to filter by those selectors
+	if hasEffectiveMetricSelectors(leaves, tagName) {
 		slog.Debug("metric_name shortcut skipped due to selectors in query")
 		return nil, false
 	}
@@ -227,12 +239,56 @@ func (q *QuerierService) EvaluateMetricTagValuesQuery(
 	return out, nil
 }
 
-// hasLogSelectors returns true if the query plan has any label matchers,
-// line filters, or label filters. If selectors are present, we can't use shortcuts.
-func hasLogSelectors(leaves []logql.LogLeaf) bool {
-	for _, leaf := range leaves {
-		if len(leaf.Matchers) > 0 || len(leaf.LineFilters) > 0 || len(leaf.LabelFilters) > 0 {
+// isMatchAllRegex returns true if the regex pattern effectively matches all non-empty values.
+// Patterns like ".+", ".*", "^.*$", "^.+$" are match-all patterns.
+func isMatchAllRegex(pattern string) bool {
+	// Common "match all" patterns
+	matchAllPatterns := []string{
+		".+",
+		".*",
+		"^.*$",
+		"^.+$",
+		"^.*",
+		".*$",
+		"^.+",
+		".+$",
+	}
+	for _, p := range matchAllPatterns {
+		if pattern == p {
 			return true
+		}
+	}
+	return false
+}
+
+// hasEffectiveLogSelectors returns true if the query plan has any label matchers,
+// line filters, or label filters that actually filter results.
+// A selector like {tagName=~".+"} for the queried tag is considered a no-op.
+func hasEffectiveLogSelectors(leaves []logql.LogLeaf, tagName string) bool {
+	for _, leaf := range leaves {
+		// Line filters always filter
+		if len(leaf.LineFilters) > 0 {
+			return true
+		}
+		// Label filters always filter
+		if len(leaf.LabelFilters) > 0 {
+			return true
+		}
+		// Check matchers - skip "match all" patterns on the queried tag
+		for _, m := range leaf.Matchers {
+			// If matcher is for a different label, it's a real filter
+			if m.Label != tagName {
+				return true
+			}
+			// If it's an exact match or negative match, it's a real filter
+			if m.Op != logql.MatchRe {
+				return true
+			}
+			// For regex match on the queried tag, check if it's a "match all" pattern
+			if !isMatchAllRegex(m.Value) {
+				return true
+			}
+			// Pattern like {tagName=~".+"} - this is a no-op, continue checking
 		}
 	}
 	return false
@@ -281,9 +337,9 @@ func (q *QuerierService) tryLogStreamIdShortcut(
 	startDateint, _ := helpers.MSToDateintHour(startTs)
 	endDateint, _ := helpers.MSToDateintHour(endTs)
 
-	// If there are selectors in the query, we can't use the shortcut
-	// because we need to filter by those selectors
-	if hasLogSelectors(leaves) {
+	// If there are effective selectors in the query (not just match-all patterns),
+	// we can't use the shortcut because we need to filter by those selectors
+	if hasEffectiveLogSelectors(leaves, tagName) {
 		slog.Info("log tag values: stream_id shortcut skipped due to selectors",
 			"tagName", tagName,
 			"selectors", logLeafSelectorsDebug(leaves),
