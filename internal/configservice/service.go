@@ -146,11 +146,6 @@ func (s *Service) DeleteConfig(ctx context.Context, orgID uuid.UUID, key string)
 	return nil
 }
 
-// InvalidateCache clears all cached config entries.
-func (s *Service) InvalidateCache() {
-	s.cache.DeleteAll()
-}
-
 // ListConfigs lists all config keys/values for an organization.
 func (s *Service) ListConfigs(ctx context.Context, orgID uuid.UUID) ([]configdb.ListOrgConfigsRow, error) {
 	return s.querier.ListOrgConfigs(ctx, orgID)

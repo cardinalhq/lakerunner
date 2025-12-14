@@ -154,16 +154,14 @@ func TestGetLogStreamConfig_InvalidJSON(t *testing.T) {
 	})
 }
 
-func TestSetLogStreamConfig(t *testing.T) {
+func TestSetLogStreamConfigDirect(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("sets config with correct JSON structure", func(t *testing.T) {
 		mock := newMockQuerier()
-		svc := New(mock, 5*time.Minute)
-		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
-		err := svc.SetLogStreamConfig(ctx, orgID, "my_custom_field")
+		err := SetLogStreamConfigDirect(ctx, mock, orgID, "my_custom_field")
 		require.NoError(t, err)
 
 		// Verify the stored value
@@ -171,36 +169,72 @@ func TestSetLogStreamConfig(t *testing.T) {
 		assert.Equal(t, `{"field_name":"my_custom_field"}`, string(stored))
 	})
 
-	t.Run("invalidates cache after set", func(t *testing.T) {
+	t.Run("propagates error on failure", func(t *testing.T) {
 		mock := newMockQuerier()
-		svc := New(mock, 5*time.Minute)
-		t.Cleanup(svc.Close)
+		mock.setErr = assert.AnError
 
+		err := SetLogStreamConfigDirect(ctx, mock, uuid.New(), "field")
+		assert.Error(t, err)
+	})
+}
+
+func TestDeleteLogStreamConfigDirect(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("deletes config", func(t *testing.T) {
+		mock := newMockQuerier()
 		orgID := uuid.New()
+		mock.configs[mock.key(orgID, configKeyLogStream)] = json.RawMessage(`{"field_name":"to_delete"}`)
 
-		// Prime cache with old value
-		mock.configs[mock.key(orgID, configKeyLogStream)] = json.RawMessage(`{"field_name":"old"}`)
-		_ = svc.GetLogStreamConfig(ctx, orgID)
-		initialCalls := mock.getCallCount.Load()
-
-		// Update
-		err := svc.SetLogStreamConfig(ctx, orgID, "new")
+		err := DeleteLogStreamConfigDirect(ctx, mock, orgID)
 		require.NoError(t, err)
 
-		// Next get should fetch from DB
-		config := svc.GetLogStreamConfig(ctx, orgID)
-		assert.Equal(t, "new", config.FieldName)
-		assert.Equal(t, initialCalls+1, mock.getCallCount.Load())
+		_, exists := mock.configs[mock.key(orgID, configKeyLogStream)]
+		assert.False(t, exists)
 	})
 
 	t.Run("propagates error on failure", func(t *testing.T) {
 		mock := newMockQuerier()
-		mock.setErr = assert.AnError
-		svc := New(mock, 5*time.Minute)
-		t.Cleanup(svc.Close)
+		mock.deleteErr = assert.AnError
 
-		err := svc.SetLogStreamConfig(ctx, uuid.New(), "field")
+		err := DeleteLogStreamConfigDirect(ctx, mock, uuid.New())
 		assert.Error(t, err)
+	})
+}
+
+func TestGetLogStreamConfigDirect(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns org-specific config", func(t *testing.T) {
+		mock := newMockQuerier()
+		orgID := uuid.New()
+		mock.configs[mock.key(orgID, configKeyLogStream)] = json.RawMessage(`{"field_name":"org_field"}`)
+
+		result, err := GetLogStreamConfigDirect(ctx, mock, orgID)
+		require.NoError(t, err)
+		assert.Equal(t, "org_field", result.Config.FieldName)
+		assert.False(t, result.IsDefault)
+	})
+
+	t.Run("falls back to system default", func(t *testing.T) {
+		mock := newMockQuerier()
+		orgID := uuid.New()
+		mock.configs[mock.key(DefaultOrgID, configKeyLogStream)] = json.RawMessage(`{"field_name":"system_default"}`)
+
+		result, err := GetLogStreamConfigDirect(ctx, mock, orgID)
+		require.NoError(t, err)
+		assert.Equal(t, "system_default", result.Config.FieldName)
+		assert.True(t, result.IsDefault)
+	})
+
+	t.Run("returns hardcoded fallback", func(t *testing.T) {
+		mock := newMockQuerier()
+		orgID := uuid.New()
+
+		result, err := GetLogStreamConfigDirect(ctx, mock, orgID)
+		require.NoError(t, err)
+		assert.Equal(t, "resource_service_name", result.Config.FieldName)
+		assert.True(t, result.IsDefault)
 	})
 }
 

@@ -37,6 +37,7 @@ type mockQuerier struct {
 	setCallCount atomic.Int32
 	getErr       error
 	setErr       error
+	deleteErr    error
 }
 
 func newMockQuerier() *mockQuerier {
@@ -71,6 +72,9 @@ func (m *mockQuerier) UpsertOrgConfig(ctx context.Context, arg configdb.UpsertOr
 }
 
 func (m *mockQuerier) DeleteOrgConfig(ctx context.Context, arg configdb.DeleteOrgConfigParams) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
 	delete(m.configs, m.key(arg.OrganizationID, arg.Key))
 	return nil
 }
@@ -124,18 +128,6 @@ func TestService_CachingBehavior(t *testing.T) {
 		assert.Equal(t, configVal, val)
 		// Should NOT have incremented - served from cache
 		assert.Equal(t, initialCalls, mock.getCallCount.Load())
-	})
-
-	t.Run("InvalidateCache forces refetch", func(t *testing.T) {
-		initialCalls := mock.getCallCount.Load()
-
-		svc.InvalidateCache()
-
-		val, err := svc.getConfigCached(ctx, orgID, configKey)
-		require.NoError(t, err)
-		assert.Equal(t, configVal, val)
-		// Should have fetched again
-		assert.Equal(t, initialCalls+1, mock.getCallCount.Load())
 	})
 }
 

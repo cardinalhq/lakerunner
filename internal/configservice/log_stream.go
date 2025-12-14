@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+
+	"github.com/cardinalhq/lakerunner/configdb"
 )
 
 // LogStreamConfig holds configuration for log stream identification.
@@ -38,27 +40,40 @@ func defaultLogStreamConfig() LogStreamConfig {
 	}
 }
 
+// parseLogStreamConfig attempts to parse a raw JSON value into LogStreamConfig.
+// Returns the config and true if successful, or zero value and false if parsing
+// fails or the field name is empty.
+func parseLogStreamConfig(val json.RawMessage) (LogStreamConfig, bool) {
+	if len(val) == 0 {
+		return LogStreamConfig{}, false
+	}
+	var config LogStreamConfig
+	if json.Unmarshal(val, &config) != nil || config.FieldName == "" {
+		return LogStreamConfig{}, false
+	}
+	return config, true
+}
+
+// marshalLogStreamConfig marshals a field name into the JSON format for storage.
+func marshalLogStreamConfig(fieldName string) (json.RawMessage, error) {
+	return json.Marshal(LogStreamConfig{FieldName: fieldName})
+}
+
 // GetLogStreamConfig returns the log stream config for an organization.
 // It checks the org-specific config first, then falls back to the system default,
 // and finally to a hardcoded default if neither exists.
 func (s *Service) GetLogStreamConfig(ctx context.Context, orgID uuid.UUID) LogStreamConfig {
 	// Try org-specific config
-	val, err := s.getConfigCached(ctx, orgID, configKeyLogStream)
-	if err == nil && len(val) > 0 {
-		var config LogStreamConfig
-		if json.Unmarshal(val, &config) == nil && config.FieldName != "" {
-			return config
-		}
+	val, _ := s.getConfigCached(ctx, orgID, configKeyLogStream)
+	if config, ok := parseLogStreamConfig(val); ok {
+		return config
 	}
 
 	// Try system default (if not already checking default)
 	if orgID != DefaultOrgID {
-		val, err = s.getConfigCached(ctx, DefaultOrgID, configKeyLogStream)
-		if err == nil && len(val) > 0 {
-			var config LogStreamConfig
-			if json.Unmarshal(val, &config) == nil && config.FieldName != "" {
-				return config
-			}
+		val, _ = s.getConfigCached(ctx, DefaultOrgID, configKeyLogStream)
+		if config, ok := parseLogStreamConfig(val); ok {
+			return config
 		}
 	}
 
@@ -66,12 +81,56 @@ func (s *Service) GetLogStreamConfig(ctx context.Context, orgID uuid.UUID) LogSt
 	return defaultLogStreamConfig()
 }
 
-// SetLogStreamConfig sets the log stream field for an organization.
-func (s *Service) SetLogStreamConfig(ctx context.Context, orgID uuid.UUID, fieldName string) error {
-	config := LogStreamConfig{FieldName: fieldName}
-	val, err := json.Marshal(config)
+// GetLogStreamConfigResult contains the result of a direct config lookup.
+type GetLogStreamConfigResult struct {
+	Config    LogStreamConfig
+	IsDefault bool // True if the config comes from system default or hardcoded fallback
+}
+
+// GetLogStreamConfigDirect fetches the log stream config directly from the database,
+// bypassing any cache. This is intended for admin interfaces that need current values.
+func GetLogStreamConfigDirect(ctx context.Context, querier OrgConfigQuerier, orgID uuid.UUID) (GetLogStreamConfigResult, error) {
+	// Try org-specific config
+	val, _ := querier.GetOrgConfig(ctx, configdb.GetOrgConfigParams{
+		OrganizationID: orgID,
+		Key:            configKeyLogStream,
+	})
+	if config, ok := parseLogStreamConfig(val); ok {
+		return GetLogStreamConfigResult{Config: config, IsDefault: false}, nil
+	}
+
+	// Try system default
+	val, _ = querier.GetOrgConfig(ctx, configdb.GetOrgConfigParams{
+		OrganizationID: DefaultOrgID,
+		Key:            configKeyLogStream,
+	})
+	if config, ok := parseLogStreamConfig(val); ok {
+		return GetLogStreamConfigResult{Config: config, IsDefault: true}, nil
+	}
+
+	// Hardcoded fallback
+	return GetLogStreamConfigResult{Config: defaultLogStreamConfig(), IsDefault: true}, nil
+}
+
+// SetLogStreamConfigDirect sets the log stream config directly in the database,
+// bypassing any cache. This is intended for admin interfaces.
+func SetLogStreamConfigDirect(ctx context.Context, querier OrgConfigQuerier, orgID uuid.UUID, fieldName string) error {
+	val, err := marshalLogStreamConfig(fieldName)
 	if err != nil {
 		return err
 	}
-	return s.setConfig(ctx, orgID, configKeyLogStream, val)
+	return querier.UpsertOrgConfig(ctx, configdb.UpsertOrgConfigParams{
+		OrganizationID: orgID,
+		Key:            configKeyLogStream,
+		Value:          val,
+	})
+}
+
+// DeleteLogStreamConfigDirect deletes the log stream config directly from the database,
+// bypassing any cache. This is intended for admin interfaces.
+func DeleteLogStreamConfigDirect(ctx context.Context, querier OrgConfigQuerier, orgID uuid.UUID) error {
+	return querier.DeleteOrgConfig(ctx, configdb.DeleteOrgConfigParams{
+		OrganizationID: orgID,
+		Key:            configKeyLogStream,
+	})
 }
