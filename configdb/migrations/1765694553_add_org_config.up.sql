@@ -18,6 +18,6 @@ CREATE INDEX IF NOT EXISTS idx_organization_config_org_id ON organization_config
 INSERT INTO organization_config (organization_id, key, value)
 VALUES (
     '00000000-0000-0000-0000-000000000000',
-    'log.stream.field',
+    'log.stream',
     '{"field_name": "resource_service_name"}'
 ) ON CONFLICT (organization_id, key) DO NOTHING;
