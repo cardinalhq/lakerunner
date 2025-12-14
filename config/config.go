@@ -42,6 +42,7 @@ type Config struct {
 	Scaling     ScalingConfig     `mapstructure:"scaling"`
 	PubSub      PubSubConfig      `mapstructure:"pubsub"`
 	Expiry      ExpiryConfig      `mapstructure:"expiry"`
+	Query       QueryConfig       `mapstructure:"query"`
 
 	// Derived fields (populated during Load())
 	TopicRegistry *TopicRegistry // Kafka topic registry based on prefix
@@ -93,6 +94,20 @@ type ExpiryConfig struct {
 	DefaultMaxAgeDaysMetrics int `mapstructure:"default_max_age_days_metrics"`
 	DefaultMaxAgeDaysTraces  int `mapstructure:"default_max_age_days_traces"`
 	BatchSize                int `mapstructure:"batch_size"`
+}
+
+// QueryConfig holds configuration for query-api and query-worker services.
+type QueryConfig struct {
+	// MaxSegmentsPerWorkerPerWave is the hard cap of segments per worker per wave.
+	// Used by query-api when grouping segments into waves for distribution.
+	// Default: 20
+	MaxSegmentsPerWorkerPerWave int `mapstructure:"max_segments_per_worker_per_wave"`
+
+	// DisableTableCache disables the DuckDB table cache in query-workers.
+	// When true, query-workers will only use downloaded parquet files directly
+	// without populating or querying the local DuckDB cache.
+	// Default: false
+	DisableTableCache bool `mapstructure:"disable_table_cache"`
 }
 
 // TopicCreationConfig holds configuration for creating Kafka topics
@@ -264,6 +279,10 @@ func Load() (*Config, error) {
 			DefaultMaxAgeDaysMetrics: -1,    // -1 means not configured
 			DefaultMaxAgeDaysTraces:  -1,    // -1 means not configured
 			BatchSize:                20000, // Default batch size for expiry operations
+		},
+		Query: QueryConfig{
+			MaxSegmentsPerWorkerPerWave: 50,    // Default wave size
+			DisableTableCache:           false, // Use table cache by default
 		},
 	}
 

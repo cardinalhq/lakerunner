@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 func TestIsMissingFingerprintError(t *testing.T) {
@@ -130,39 +132,20 @@ func TestRemoveFingerprintNormalization(t *testing.T) {
 	}
 }
 
-func TestCalculateMaxDiskUsage(t *testing.T) {
+func TestDiskUsageWatermarks(t *testing.T) {
 	t.Parallel()
 
-	t.Run("empty path returns default", func(t *testing.T) {
+	t.Run("high watermark is greater than low watermark", func(t *testing.T) {
 		t.Parallel()
-		result := calculateMaxDiskUsage("")
-		require.Equal(t, uint64(DefaultDiskUsageBytes), result)
+		require.Greater(t, DiskUsageHighWatermark, DiskUsageLowWatermark)
 	})
 
-	t.Run("non-existent path returns default", func(t *testing.T) {
+	t.Run("watermarks are valid fractions", func(t *testing.T) {
 		t.Parallel()
-		result := calculateMaxDiskUsage("/path/that/does/not/exist/anywhere")
-		require.Equal(t, uint64(DefaultDiskUsageBytes), result)
-	})
-
-	t.Run("valid path returns calculated value", func(t *testing.T) {
-		t.Parallel()
-		// Use temp directory which should exist on any system
-		result := calculateMaxDiskUsage("/tmp")
-
-		// Should be at least MinDiskUsageBytes
-		require.GreaterOrEqual(t, result, uint64(MinDiskUsageBytes))
-
-		// Should be reasonable - less than 1 petabyte
-		require.Less(t, result, uint64(1<<50))
-	})
-
-	t.Run("current directory returns calculated value", func(t *testing.T) {
-		t.Parallel()
-		result := calculateMaxDiskUsage(".")
-
-		// Should be at least MinDiskUsageBytes
-		require.GreaterOrEqual(t, result, uint64(MinDiskUsageBytes))
+		require.Greater(t, DiskUsageHighWatermark, 0.0)
+		require.LessOrEqual(t, DiskUsageHighWatermark, 1.0)
+		require.Greater(t, DiskUsageLowWatermark, 0.0)
+		require.LessOrEqual(t, DiskUsageLowWatermark, 1.0)
 	})
 }
 
@@ -182,5 +165,64 @@ func TestGetDiskUsage(t *testing.T) {
 		t.Parallel()
 		_, _, err := getDiskUsage("/path/that/does/not/exist/anywhere")
 		require.Error(t, err)
+	})
+}
+
+func TestDownloadForQuery(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil downloader returns nil", func(t *testing.T) {
+		t.Parallel()
+		cm := &CacheManager{
+			downloader: nil,
+			dataset:    "test",
+		}
+		err := cm.downloadForQuery(context.Background(), storageprofile.StorageProfile{}, []string{"path1", "path2"})
+		require.NoError(t, err)
+	})
+
+	t.Run("empty paths returns nil", func(t *testing.T) {
+		t.Parallel()
+		downloadCalled := false
+		cm := &CacheManager{
+			downloader: func(ctx context.Context, profile storageprofile.StorageProfile, keys []string) error {
+				downloadCalled = true
+				return nil
+			},
+			dataset: "test",
+		}
+		err := cm.downloadForQuery(context.Background(), storageprofile.StorageProfile{}, []string{})
+		require.NoError(t, err)
+		require.False(t, downloadCalled)
+	})
+
+	t.Run("downloader called with correct paths", func(t *testing.T) {
+		t.Parallel()
+		var downloadedPaths []string
+		cm := &CacheManager{
+			downloader: func(ctx context.Context, profile storageprofile.StorageProfile, keys []string) error {
+				downloadedPaths = keys
+				return nil
+			},
+			dataset: "test",
+		}
+		paths := []string{"path1", "path2", "path3"}
+		err := cm.downloadForQuery(context.Background(), storageprofile.StorageProfile{}, paths)
+		require.NoError(t, err)
+		require.Equal(t, paths, downloadedPaths)
+	})
+
+	t.Run("downloader error propagated", func(t *testing.T) {
+		t.Parallel()
+		expectedErr := errors.New("download failed")
+		cm := &CacheManager{
+			downloader: func(ctx context.Context, profile storageprofile.StorageProfile, keys []string) error {
+				return expectedErr
+			},
+			dataset: "test",
+		}
+		err := cm.downloadForQuery(context.Background(), storageprofile.StorageProfile{}, []string{"path1"})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "download files for query")
 	})
 }

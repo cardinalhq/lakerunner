@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,12 +31,24 @@ import (
 	"github.com/cardinalhq/lakerunner/promql"
 )
 
-// hasMetricSelectors returns true if the query plan has any label matchers
-// beyond just the metric name. If selectors are present, we can't use shortcuts.
-func hasMetricSelectors(leaves []promql.BaseExpr) bool {
+// hasEffectiveMetricSelectors returns true if the query plan has any label matchers
+// that actually filter results. A selector like {tagName=~".+"} is considered a no-op.
+func hasEffectiveMetricSelectors(leaves []promql.BaseExpr, tagName string) bool {
 	for _, leaf := range leaves {
-		if len(leaf.Matchers) > 0 {
-			return true
+		for _, m := range leaf.Matchers {
+			// If matcher is for a different label, it's a real filter
+			if m.Label != tagName {
+				return true
+			}
+			// If it's an exact match or negative match, it's a real filter
+			if m.Op != promql.MatchRe {
+				return true
+			}
+			// For regex match on the queried tag, check if it's a "match all" pattern
+			if !isMatchAllRegex(m.Value) {
+				return true
+			}
+			// Pattern like {tagName=~".+"} - this is a no-op, continue checking
 		}
 	}
 	return false
@@ -57,9 +70,9 @@ func (q *QuerierService) tryMetricNameShortcut(
 		return nil, false
 	}
 
-	// If there are selectors in the query, we can't use the shortcut
-	// because we need to filter by those selectors
-	if hasMetricSelectors(leaves) {
+	// If there are effective selectors in the query (not just match-all patterns),
+	// we can't use the shortcut because we need to filter by those selectors
+	if hasEffectiveMetricSelectors(leaves, tagName) {
 		slog.Debug("metric_name shortcut skipped due to selectors in query")
 		return nil, false
 	}
@@ -226,15 +239,86 @@ func (q *QuerierService) EvaluateMetricTagValuesQuery(
 	return out, nil
 }
 
-// hasLogSelectors returns true if the query plan has any label matchers,
-// line filters, or label filters. If selectors are present, we can't use shortcuts.
-func hasLogSelectors(leaves []logql.LogLeaf) bool {
-	for _, leaf := range leaves {
-		if len(leaf.Matchers) > 0 || len(leaf.LineFilters) > 0 || len(leaf.LabelFilters) > 0 {
+// isMatchAllRegex returns true if the regex pattern effectively matches all non-empty values.
+// Patterns like ".+", ".*", "^.*$", "^.+$" are match-all patterns.
+func isMatchAllRegex(pattern string) bool {
+	// Common "match all" patterns
+	matchAllPatterns := []string{
+		".+",
+		".*",
+		"^.*$",
+		"^.+$",
+		"^.*",
+		".*$",
+		"^.+",
+		".+$",
+	}
+	for _, p := range matchAllPatterns {
+		if pattern == p {
 			return true
 		}
 	}
 	return false
+}
+
+// hasEffectiveLogSelectors returns true if the query plan has any label matchers,
+// line filters, or label filters that actually filter results.
+// A selector like {tagName=~".+"} for the queried tag is considered a no-op.
+func hasEffectiveLogSelectors(leaves []logql.LogLeaf, tagName string) bool {
+	for _, leaf := range leaves {
+		// Line filters always filter
+		if len(leaf.LineFilters) > 0 {
+			return true
+		}
+		// Label filters always filter
+		if len(leaf.LabelFilters) > 0 {
+			return true
+		}
+		// Check matchers - skip "match all" patterns on the queried tag
+		for _, m := range leaf.Matchers {
+			// If matcher is for a different label, it's a real filter
+			if m.Label != tagName {
+				return true
+			}
+			// If it's an exact match or negative match, it's a real filter
+			if m.Op != logql.MatchRe {
+				return true
+			}
+			// For regex match on the queried tag, check if it's a "match all" pattern
+			if !isMatchAllRegex(m.Value) {
+				return true
+			}
+			// Pattern like {tagName=~".+"} - this is a no-op, continue checking
+		}
+	}
+	return false
+}
+
+// logLeafSelectorsDebug returns a string representation of selectors for logging
+func logLeafSelectorsDebug(leaves []logql.LogLeaf) string {
+	if len(leaves) == 0 {
+		return "no leaves"
+	}
+	var parts []string
+	for i, leaf := range leaves {
+		var leafParts []string
+		for _, m := range leaf.Matchers {
+			leafParts = append(leafParts, fmt.Sprintf("%s%s%q", m.Label, m.Op, m.Value))
+		}
+		for _, lf := range leaf.LineFilters {
+			leafParts = append(leafParts, fmt.Sprintf("line%s%q", lf.Op, lf.Match))
+		}
+		for _, lf := range leaf.LabelFilters {
+			leafParts = append(leafParts, fmt.Sprintf("label:%s%s%q", lf.Label, lf.Op, lf.Value))
+		}
+		if len(leafParts) > 0 {
+			parts = append(parts, fmt.Sprintf("leaf[%d]:{%s}", i, strings.Join(leafParts, ", ")))
+		}
+	}
+	if len(parts) == 0 {
+		return "no selectors"
+	}
+	return strings.Join(parts, "; ")
 }
 
 // tryLogStreamIdShortcut attempts to get tag values directly from PostgreSQL
@@ -249,16 +333,33 @@ func (q *QuerierService) tryLogStreamIdShortcut(
 	tagName string,
 	leaves []logql.LogLeaf,
 ) ([]string, bool) {
-	// If there are selectors in the query, we can't use the shortcut
-	// because we need to filter by those selectors
-	if hasLogSelectors(leaves) {
-		slog.Debug("stream_id shortcut skipped due to selectors in query", "tagName", tagName)
-		return nil, false
-	}
-
 	// Convert timestamps to dateint range for partition pruning
 	startDateint, _ := helpers.MSToDateintHour(startTs)
 	endDateint, _ := helpers.MSToDateintHour(endTs)
+
+	// If there are effective selectors in the query (not just match-all patterns),
+	// we can't use the shortcut because we need to filter by those selectors
+	if hasEffectiveLogSelectors(leaves, tagName) {
+		slog.Info("log tag values: stream_id shortcut skipped due to selectors",
+			"tagName", tagName,
+			"selectors", logLeafSelectorsDebug(leaves),
+			"orgID", orgID,
+			"startTs", startTs,
+			"endTs", endTs,
+			"startDateint", startDateint,
+			"endDateint", endDateint,
+		)
+		return nil, false
+	}
+
+	slog.Info("log tag values: trying stream_id shortcut via PostgreSQL",
+		"tagName", tagName,
+		"orgID", orgID,
+		"startTs", startTs,
+		"endTs", endTs,
+		"startDateint", startDateint,
+		"endDateint", endDateint,
+	)
 
 	values, err := q.mdb.GetLogStreamIdValues(ctx, lrdb.GetLogStreamIdValuesParams{
 		OrganizationID: orgID,
@@ -269,18 +370,31 @@ func (q *QuerierService) tryLogStreamIdShortcut(
 		TagName:        &tagName,
 	})
 	if err != nil {
-		slog.Warn("stream_id shortcut query failed, falling back to workers", "err", err, "tagName", tagName)
+		slog.Warn("log tag values: stream_id shortcut query failed, falling back to workers",
+			"err", err,
+			"tagName", tagName,
+			"orgID", orgID,
+		)
 		return nil, false
 	}
 
 	// Empty result means no segments have this tag as stream_id_field,
 	// so fall back to the full query path
 	if len(values) == 0 {
-		slog.Debug("stream_id shortcut returned no results, falling back to workers", "tagName", tagName)
+		slog.Info("log tag values: stream_id shortcut returned no results, falling back to workers",
+			"tagName", tagName,
+			"orgID", orgID,
+			"startDateint", startDateint,
+			"endDateint", endDateint,
+		)
 		return nil, false
 	}
 
-	slog.Info("stream_id shortcut succeeded", "tagName", tagName, "valueCount", len(values))
+	slog.Info("log tag values: stream_id shortcut succeeded",
+		"tagName", tagName,
+		"valueCount", len(values),
+		"orgID", orgID,
+	)
 	return values, true
 }
 
@@ -316,6 +430,18 @@ func (q *QuerierService) EvaluateLogTagValuesQuery(
 	}
 	stepDuration := StepForQueryDuration(startTs, endTs)
 
+	dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, true)
+	slog.Info("log tag values: using worker fallback path",
+		"tagName", queryPlan.TagName,
+		"selectors", logLeafSelectorsDebug(queryPlan.Leaves),
+		"orgID", orgID,
+		"startTs", startTs,
+		"endTs", endTs,
+		"workerCount", len(workers),
+		"dateIntHoursCount", len(dateIntHours),
+		"leafCount", len(queryPlan.Leaves),
+	)
+
 	out := make(chan promql.Timestamped, 1024)
 
 	go func() {
@@ -324,15 +450,19 @@ func (q *QuerierService) EvaluateLogTagValuesQuery(
 		// Use a map to track unique tag values across all workers and groups
 		seenTagValues := make(map[string]bool)
 
-		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, true)
-
 		for _, leaf := range queryPlan.Leaves {
 			for _, dih := range dateIntHours {
 				segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery)
 				if err != nil {
-					slog.Error("failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
+					slog.Error("log tag values: failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
 					return
 				}
+				slog.Info("log tag values: segment lookup",
+					"tagName", queryPlan.TagName,
+					"dateIntHour", dih,
+					"segmentCount", len(segments),
+					"selectors", logLeafSelectorsDebug([]logql.LogLeaf{leaf}),
+				)
 				if len(segments) == 0 {
 					continue
 				}
