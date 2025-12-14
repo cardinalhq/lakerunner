@@ -19,12 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/exemplarreceiver"
+	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
@@ -86,6 +88,8 @@ func init() {
 				slog.Error("Failed to connect to config database", slog.Any("error", err))
 				return fmt.Errorf("failed to connect to config database: %w", err)
 			}
+
+			configservice.NewGlobal(cdb, 5*time.Minute)
 
 			// Mark as ready now that database connections are established and migrations have been checked
 			healthServer.SetReady(true)

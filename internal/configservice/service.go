@@ -31,6 +31,22 @@ import (
 // DefaultOrgID is the nil UUID used for system-wide default config values.
 var DefaultOrgID = uuid.UUID{}
 
+var global *Service
+
+// NewGlobal initializes the global config service instance.
+func NewGlobal(querier OrgConfigQuerier, ttl time.Duration) {
+	global = New(querier, ttl)
+}
+
+// Global returns the global config service instance.
+// Panics if NewGlobal has not been called.
+func Global() *Service {
+	if global == nil {
+		panic("configservice: NewGlobal must be called before Global")
+	}
+	return global
+}
+
 // OrgConfigQuerier defines the minimal database interface required by the config service.
 type OrgConfigQuerier interface {
 	GetOrgConfig(ctx context.Context, arg configdb.GetOrgConfigParams) (json.RawMessage, error)

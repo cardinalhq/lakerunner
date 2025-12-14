@@ -19,11 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -128,6 +131,13 @@ func runBoxer(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open LRDB store: %w", err)
 	}
+
+	cdb, err := configdb.ConfigDBStore(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to open ConfigDB store: %w", err)
+	}
+
+	configservice.NewGlobal(cdb, 5*time.Minute)
 
 	// Create and run boxer manager with selected tasks
 	manager, err := metricsprocessing.NewBoxerManager(ctx, cfg, mdb, tasks)

@@ -19,11 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/configdb"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryworker"
@@ -75,12 +77,14 @@ func init() {
 			}()
 
 			cdb, err := configdb.ConfigDBStore(ctx)
-			sp := storageprofile.NewStorageProfileProvider(cdb)
-
 			if err != nil {
-				slog.Error("Failed to create query-worker service", slog.Any("error", err))
-				return fmt.Errorf("failed to create query-worker service: %w", err)
+				slog.Error("Failed to connect to config database", slog.Any("error", err))
+				return fmt.Errorf("failed to connect to config database: %w", err)
 			}
+
+			configservice.NewGlobal(cdb, 5*time.Minute)
+
+			sp := storageprofile.NewStorageProfileProvider(cdb)
 
 			cloudManagers, err := cloudstorage.NewCloudManagers(ctx)
 			if err != nil {
