@@ -37,6 +37,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -65,6 +66,7 @@ type DateintBinManager struct {
 	rpfEstimate int64
 	schema      *filereader.ReaderSchema
 	backendType parquetwriter.BackendType
+	streamField string // Field to use for stream identification
 }
 
 // LogIngestProcessor implements the Processor interface for raw log ingestion
@@ -202,6 +204,9 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	}
 	storageSpan.End()
 
+	// Get stream field config for this organization
+	streamField := configservice.Global().GetLogStreamConfig(ctx, key.OrganizationID).FieldName
+
 	var readers []filereader.Reader
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
@@ -226,7 +231,7 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 			continue
 		}
 
-		reader, err := p.createLogReaderStack(tmpFilename, msg.OrganizationID.String(), msg.Bucket, msg.ObjectID)
+		reader, err := p.createLogReaderStack(tmpFilename, msg.OrganizationID.String(), msg.Bucket, msg.ObjectID, streamField)
 		if err != nil {
 			ll.Error("Failed to create reader stack", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
 			continue
@@ -257,7 +262,7 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	}
 
 	ctx, readerSpan := boxerTracer.Start(ctx, "logs.ingest.create_unified_reader")
-	finalReader, err := p.createUnifiedLogReader(ctx, readers)
+	finalReader, err := p.createUnifiedLogReader(ctx, readers, streamField)
 	if err != nil {
 		readerSpan.RecordError(err)
 		readerSpan.SetStatus(codes.Error, "failed to create unified reader")
@@ -446,6 +451,7 @@ type LogIngestionResult struct {
 //   - rpfEstimate: Rows-per-file estimate for Parquet writer sizing
 //   - fingerprintManager: Optional fingerprint manager (can be nil for benchmarks)
 //   - backendType: Parquet backend type (empty string defaults to go-parquet)
+//   - streamField: Field to use for stream identification (empty = use default priority)
 //
 // Returns:
 //   - LogIngestionResult with statistics and output file information
@@ -459,6 +465,7 @@ func ProcessLogFiles(
 	rpfEstimate int64,
 	fingerprintManager *fingerprint.TenantManager,
 	backendType parquetwriter.BackendType,
+	streamField string,
 ) (*LogIngestionResult, error) {
 	ll := logctx.FromContext(ctx)
 
@@ -473,7 +480,7 @@ func ProcessLogFiles(
 		}
 		totalInputSize += stat.Size()
 
-		reader, err := createLogReaderStackStandalone(filePath, orgID, bucket, filePath, fingerprintManager)
+		reader, err := createLogReaderStackStandalone(filePath, orgID, bucket, filePath, fingerprintManager, streamField)
 		if err != nil {
 			// Close any readers we've already created
 			for _, r := range readers {
@@ -493,7 +500,7 @@ func ProcessLogFiles(
 	}()
 
 	// Create unified reader - always use MergesortReader to ensure proper sorting
-	keyProvider := &filereader.LogSortKeyProvider{}
+	keyProvider := filereader.NewLogSortKeyProvider(streamField)
 	finalReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
@@ -512,6 +519,7 @@ func ProcessLogFiles(
 		rpfEstimate: rpfEstimate,
 		schema:      schema,
 		backendType: backendType,
+		streamField: streamField,
 	}
 
 	var totalRowsProcessed int64
@@ -618,7 +626,7 @@ func ProcessLogFiles(
 
 // createLogReaderStackStandalone creates a reader stack for standalone use (benchmarks, tests)
 // Returns DiskSorter(Translation(LogReader(file))) - raw files are unsorted.
-func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fingerprintManager *fingerprint.TenantManager) (filereader.Reader, error) {
+func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fingerprintManager *fingerprint.TenantManager, streamField string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
 		SignalType: filereader.SignalTypeLogs,
 		BatchSize:  1000,
@@ -637,7 +645,7 @@ func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fi
 	}
 
 	// Raw input files are unsorted - wrap in DiskSortingReader to sort before mergesort
-	keyProvider := &filereader.LogSortKeyProvider{}
+	keyProvider := filereader.NewLogSortKeyProvider(streamField)
 	sortingReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 	if err != nil {
 		_ = reader.Close()
@@ -649,7 +657,7 @@ func createLogReaderStackStandalone(filename, orgID, bucket, objectID string, fi
 
 // createLogReaderStack creates a reader stack: DiskSorter(Translation(LogReader(file)))
 // Raw input files are unsorted, so each must be sorted before feeding to mergesort.
-func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
+func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID, streamField string) (filereader.Reader, error) {
 	// Determine file type from extension for logging
 	var fileType string
 	switch {
@@ -688,7 +696,7 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 	}
 
 	// Raw input files are unsorted - wrap in DiskSortingReader to sort before mergesort
-	keyProvider := &filereader.LogSortKeyProvider{}
+	keyProvider := &filereader.LogSortKeyProvider{StreamField: streamField}
 	sortingReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 	if err != nil {
 		_ = reader.Close()
@@ -709,10 +717,10 @@ func (p *LogIngestProcessor) createLogReader(filename, orgId string) (filereader
 
 // createUnifiedLogReader creates a unified reader from multiple readers
 // Always uses MergesortReader to ensure row normalization happens
-func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
+func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers []filereader.Reader, streamField string) (filereader.Reader, error) {
 	// Always use MergesortReader, even for single files
 	// This ensures rows are normalized according to the schema before writing
-	keyProvider := &filereader.LogSortKeyProvider{}
+	keyProvider := &filereader.LogSortKeyProvider{StreamField: streamField}
 	multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
@@ -727,6 +735,9 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	// Get RPF estimate for this org/instance - use logs estimator logic
 	rpfEstimate := p.store.GetLogEstimate(ctx, storageProfile.OrganizationID)
 
+	// Get stream field config for this organization
+	streamField := configservice.Global().GetLogStreamConfig(ctx, storageProfile.OrganizationID).FieldName
+
 	// Create dateint bin manager
 	// Get schema from reader (GetSchema returns a copy and includes all transformed columns)
 	schema := reader.GetSchema()
@@ -740,6 +751,7 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 		rpfEstimate: rpfEstimate,
 		schema:      schema,
 		backendType: parquetwriter.DefaultBackend,
+		streamField: streamField,
 	}
 
 	var totalRowsProcessed int64
@@ -842,7 +854,7 @@ func (manager *DateintBinManager) getOrCreateBin(_ context.Context, dateint int3
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewLogsWriter(manager.tmpDir, manager.schema, manager.rpfEstimate, manager.backendType)
+	writer, err := factories.NewLogsWriter(manager.tmpDir, manager.schema, manager.rpfEstimate, manager.backendType, manager.streamField)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}

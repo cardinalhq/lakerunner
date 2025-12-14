@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
@@ -83,6 +85,8 @@ func init() {
 			if err != nil {
 				return fmt.Errorf("failed to open ConfigDB store: %w", err)
 			}
+
+			configservice.NewGlobal(cdb, 5*time.Minute)
 
 			cmgr, err := cloudstorage.NewCloudManagers(ctx)
 			if err != nil {

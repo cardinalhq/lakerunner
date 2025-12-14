@@ -35,6 +35,7 @@ import (
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -130,6 +131,8 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	configservice.NewGlobal(cdb, 5*time.Minute)
 
 	var cdbPool *pgxpool.Pool
 	if cmd.syncLegacyTables {

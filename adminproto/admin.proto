@@ -59,6 +59,11 @@ service AdminService {
   rpc ListBucketPrefixMappings(ListBucketPrefixMappingsRequest) returns (ListBucketPrefixMappingsResponse);
   rpc CreateBucketPrefixMapping(CreateBucketPrefixMappingRequest) returns (CreateBucketPrefixMappingResponse);
   rpc DeleteBucketPrefixMapping(DeleteBucketPrefixMappingRequest) returns (DeleteBucketPrefixMappingResponse);
+
+  // Log Stream Configuration Management
+  rpc GetLogStreamConfig(GetLogStreamConfigRequest) returns (GetLogStreamConfigResponse);
+  rpc SetLogStreamConfig(SetLogStreamConfigRequest) returns (SetLogStreamConfigResponse);
+  rpc DeleteLogStreamConfig(DeleteLogStreamConfigRequest) returns (DeleteLogStreamConfigResponse);
 }
 
 message PingRequest {
@@ -279,3 +284,34 @@ message DeleteBucketPrefixMappingRequest {
 }
 
 message DeleteBucketPrefixMappingResponse {}
+
+// Log Stream Configuration Messages
+
+message LogStreamConfig {
+  string organization_id = 1;
+  string field_name = 2; // The field used for stream identification (e.g., "resource_service_name")
+}
+
+message GetLogStreamConfigRequest {
+  string organization_id = 1;
+}
+
+message GetLogStreamConfigResponse {
+  LogStreamConfig config = 1;
+  bool is_default = 2; // True if returning the system default (no org-specific config)
+}
+
+message SetLogStreamConfigRequest {
+  string organization_id = 1;
+  string field_name = 2;
+}
+
+message SetLogStreamConfigResponse {
+  LogStreamConfig config = 1;
+}
+
+message DeleteLogStreamConfigRequest {
+  string organization_id = 1;
+}
+
+message DeleteLogStreamConfigResponse {}

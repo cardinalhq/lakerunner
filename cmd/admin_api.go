@@ -19,11 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/admin"
+	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 )
@@ -74,6 +77,14 @@ func init() {
 
 			// Mark as healthy immediately
 			healthServer.SetStatus(healthcheck.StatusHealthy)
+
+			cdb, err := configdb.ConfigDBStore(ctx)
+			if err != nil {
+				slog.Error("Failed to connect to config database", slog.Any("error", err))
+				return fmt.Errorf("failed to connect to config database: %w", err)
+			}
+
+			configservice.NewGlobal(cdb, 5*time.Minute)
 
 			// Create and start the admin service
 			service, err := admin.NewService(adminGRPCPort)

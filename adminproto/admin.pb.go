@@ -2272,6 +2272,330 @@ func (*DeleteBucketPrefixMappingResponse) Descriptor() ([]byte, []int) {
 	return file_admin_proto_rawDescGZIP(), []int{42}
 }
 
+type LogStreamConfig struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	FieldName      string                 `protobuf:"bytes,2,opt,name=field_name,json=fieldName,proto3" json:"field_name,omitempty"` // The field used for stream identification (e.g., "resource_service_name")
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *LogStreamConfig) Reset() {
+	*x = LogStreamConfig{}
+	mi := &file_admin_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogStreamConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogStreamConfig) ProtoMessage() {}
+
+func (x *LogStreamConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogStreamConfig.ProtoReflect.Descriptor instead.
+func (*LogStreamConfig) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *LogStreamConfig) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *LogStreamConfig) GetFieldName() string {
+	if x != nil {
+		return x.FieldName
+	}
+	return ""
+}
+
+type GetLogStreamConfigRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GetLogStreamConfigRequest) Reset() {
+	*x = GetLogStreamConfigRequest{}
+	mi := &file_admin_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetLogStreamConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetLogStreamConfigRequest) ProtoMessage() {}
+
+func (x *GetLogStreamConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetLogStreamConfigRequest.ProtoReflect.Descriptor instead.
+func (*GetLogStreamConfigRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *GetLogStreamConfigRequest) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+type GetLogStreamConfigResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Config        *LogStreamConfig       `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
+	IsDefault     bool                   `protobuf:"varint,2,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"` // True if returning the system default (no org-specific config)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetLogStreamConfigResponse) Reset() {
+	*x = GetLogStreamConfigResponse{}
+	mi := &file_admin_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetLogStreamConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetLogStreamConfigResponse) ProtoMessage() {}
+
+func (x *GetLogStreamConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetLogStreamConfigResponse.ProtoReflect.Descriptor instead.
+func (*GetLogStreamConfigResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *GetLogStreamConfigResponse) GetConfig() *LogStreamConfig {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+func (x *GetLogStreamConfigResponse) GetIsDefault() bool {
+	if x != nil {
+		return x.IsDefault
+	}
+	return false
+}
+
+type SetLogStreamConfigRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	FieldName      string                 `protobuf:"bytes,2,opt,name=field_name,json=fieldName,proto3" json:"field_name,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SetLogStreamConfigRequest) Reset() {
+	*x = SetLogStreamConfigRequest{}
+	mi := &file_admin_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetLogStreamConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetLogStreamConfigRequest) ProtoMessage() {}
+
+func (x *SetLogStreamConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetLogStreamConfigRequest.ProtoReflect.Descriptor instead.
+func (*SetLogStreamConfigRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *SetLogStreamConfigRequest) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+func (x *SetLogStreamConfigRequest) GetFieldName() string {
+	if x != nil {
+		return x.FieldName
+	}
+	return ""
+}
+
+type SetLogStreamConfigResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Config        *LogStreamConfig       `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetLogStreamConfigResponse) Reset() {
+	*x = SetLogStreamConfigResponse{}
+	mi := &file_admin_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetLogStreamConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetLogStreamConfigResponse) ProtoMessage() {}
+
+func (x *SetLogStreamConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetLogStreamConfigResponse.ProtoReflect.Descriptor instead.
+func (*SetLogStreamConfigResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *SetLogStreamConfigResponse) GetConfig() *LogStreamConfig {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+type DeleteLogStreamConfigRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	OrganizationId string                 `protobuf:"bytes,1,opt,name=organization_id,json=organizationId,proto3" json:"organization_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DeleteLogStreamConfigRequest) Reset() {
+	*x = DeleteLogStreamConfigRequest{}
+	mi := &file_admin_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteLogStreamConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteLogStreamConfigRequest) ProtoMessage() {}
+
+func (x *DeleteLogStreamConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteLogStreamConfigRequest.ProtoReflect.Descriptor instead.
+func (*DeleteLogStreamConfigRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *DeleteLogStreamConfigRequest) GetOrganizationId() string {
+	if x != nil {
+		return x.OrganizationId
+	}
+	return ""
+}
+
+type DeleteLogStreamConfigResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteLogStreamConfigResponse) Reset() {
+	*x = DeleteLogStreamConfigResponse{}
+	mi := &file_admin_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteLogStreamConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteLogStreamConfigResponse) ProtoMessage() {}
+
+func (x *DeleteLogStreamConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteLogStreamConfigResponse.ProtoReflect.Descriptor instead.
+func (*DeleteLogStreamConfigResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{49}
+}
+
 var File_admin_proto protoreflect.FileDescriptor
 
 const file_admin_proto_rawDesc = "" +
@@ -2418,7 +2742,26 @@ const file_admin_proto_rawDesc = "" +
 	"\amapping\x18\x01 \x01(\v2\x1f.adminproto.BucketPrefixMappingR\amapping\"2\n" +
 	" DeleteBucketPrefixMappingRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"#\n" +
-	"!DeleteBucketPrefixMappingResponse2\xb5\x0f\n" +
+	"!DeleteBucketPrefixMappingResponse\"Y\n" +
+	"\x0fLogStreamConfig\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
+	"\n" +
+	"field_name\x18\x02 \x01(\tR\tfieldName\"D\n" +
+	"\x19GetLogStreamConfigRequest\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\"p\n" +
+	"\x1aGetLogStreamConfigResponse\x123\n" +
+	"\x06config\x18\x01 \x01(\v2\x1b.adminproto.LogStreamConfigR\x06config\x12\x1d\n" +
+	"\n" +
+	"is_default\x18\x02 \x01(\bR\tisDefault\"c\n" +
+	"\x19SetLogStreamConfigRequest\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12\x1d\n" +
+	"\n" +
+	"field_name\x18\x02 \x01(\tR\tfieldName\"Q\n" +
+	"\x1aSetLogStreamConfigResponse\x123\n" +
+	"\x06config\x18\x01 \x01(\v2\x1b.adminproto.LogStreamConfigR\x06config\"G\n" +
+	"\x1cDeleteLogStreamConfigRequest\x12'\n" +
+	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\"\x1f\n" +
+	"\x1dDeleteLogStreamConfigResponse2\xed\x11\n" +
 	"\fAdminService\x129\n" +
 	"\x04Ping\x12\x17.adminproto.PingRequest\x1a\x18.adminproto.PingResponse\x12T\n" +
 	"\rInQueueStatus\x12 .adminproto.InQueueStatusRequest\x1a!.adminproto.InQueueStatusResponse\x12`\n" +
@@ -2437,7 +2780,10 @@ const file_admin_proto_rawDesc = "" +
 	"\x19DeleteBucketConfiguration\x12,.adminproto.DeleteBucketConfigurationRequest\x1a-.adminproto.DeleteBucketConfigurationResponse\x12u\n" +
 	"\x18ListBucketPrefixMappings\x12+.adminproto.ListBucketPrefixMappingsRequest\x1a,.adminproto.ListBucketPrefixMappingsResponse\x12x\n" +
 	"\x19CreateBucketPrefixMapping\x12,.adminproto.CreateBucketPrefixMappingRequest\x1a-.adminproto.CreateBucketPrefixMappingResponse\x12x\n" +
-	"\x19DeleteBucketPrefixMapping\x12,.adminproto.DeleteBucketPrefixMappingRequest\x1a-.adminproto.DeleteBucketPrefixMappingResponseB-Z+github.com/cardinalhq/lakerunner/adminprotob\x06proto3"
+	"\x19DeleteBucketPrefixMapping\x12,.adminproto.DeleteBucketPrefixMappingRequest\x1a-.adminproto.DeleteBucketPrefixMappingResponse\x12c\n" +
+	"\x12GetLogStreamConfig\x12%.adminproto.GetLogStreamConfigRequest\x1a&.adminproto.GetLogStreamConfigResponse\x12c\n" +
+	"\x12SetLogStreamConfig\x12%.adminproto.SetLogStreamConfigRequest\x1a&.adminproto.SetLogStreamConfigResponse\x12l\n" +
+	"\x15DeleteLogStreamConfig\x12(.adminproto.DeleteLogStreamConfigRequest\x1a).adminproto.DeleteLogStreamConfigResponseB-Z+github.com/cardinalhq/lakerunner/adminprotob\x06proto3"
 
 var (
 	file_admin_proto_rawDescOnce sync.Once
@@ -2451,7 +2797,7 @@ func file_admin_proto_rawDescGZIP() []byte {
 	return file_admin_proto_rawDescData
 }
 
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
 var file_admin_proto_goTypes = []any{
 	(*PingRequest)(nil),                       // 0: adminproto.PingRequest
 	(*PingResponse)(nil),                      // 1: adminproto.PingResponse
@@ -2496,15 +2842,22 @@ var file_admin_proto_goTypes = []any{
 	(*CreateBucketPrefixMappingResponse)(nil), // 40: adminproto.CreateBucketPrefixMappingResponse
 	(*DeleteBucketPrefixMappingRequest)(nil),  // 41: adminproto.DeleteBucketPrefixMappingRequest
 	(*DeleteBucketPrefixMappingResponse)(nil), // 42: adminproto.DeleteBucketPrefixMappingResponse
-	(*wrapperspb.StringValue)(nil),            // 43: google.protobuf.StringValue
-	(*wrapperspb.BoolValue)(nil),              // 44: google.protobuf.BoolValue
+	(*LogStreamConfig)(nil),                   // 43: adminproto.LogStreamConfig
+	(*GetLogStreamConfigRequest)(nil),         // 44: adminproto.GetLogStreamConfigRequest
+	(*GetLogStreamConfigResponse)(nil),        // 45: adminproto.GetLogStreamConfigResponse
+	(*SetLogStreamConfigRequest)(nil),         // 46: adminproto.SetLogStreamConfigRequest
+	(*SetLogStreamConfigResponse)(nil),        // 47: adminproto.SetLogStreamConfigResponse
+	(*DeleteLogStreamConfigRequest)(nil),      // 48: adminproto.DeleteLogStreamConfigRequest
+	(*DeleteLogStreamConfigResponse)(nil),     // 49: adminproto.DeleteLogStreamConfigResponse
+	(*wrapperspb.StringValue)(nil),            // 50: google.protobuf.StringValue
+	(*wrapperspb.BoolValue)(nil),              // 51: google.protobuf.BoolValue
 }
 var file_admin_proto_depIdxs = []int32{
 	4,  // 0: adminproto.InQueueStatusResponse.items:type_name -> adminproto.InQueueItem
 	5,  // 1: adminproto.ListOrganizationsResponse.organizations:type_name -> adminproto.Organization
 	5,  // 2: adminproto.CreateOrganizationResponse.organization:type_name -> adminproto.Organization
-	43, // 3: adminproto.UpdateOrganizationRequest.name:type_name -> google.protobuf.StringValue
-	44, // 4: adminproto.UpdateOrganizationRequest.enabled:type_name -> google.protobuf.BoolValue
+	50, // 3: adminproto.UpdateOrganizationRequest.name:type_name -> google.protobuf.StringValue
+	51, // 4: adminproto.UpdateOrganizationRequest.enabled:type_name -> google.protobuf.BoolValue
 	5,  // 5: adminproto.UpdateOrganizationResponse.organization:type_name -> adminproto.Organization
 	14, // 6: adminproto.GetConsumerLagResponse.lags:type_name -> adminproto.ConsumerPartitionLag
 	15, // 7: adminproto.ListOrganizationAPIKeysResponse.api_keys:type_name -> adminproto.OrganizationAPIKey
@@ -2515,47 +2868,55 @@ var file_admin_proto_depIdxs = []int32{
 	29, // 12: adminproto.CreateBucketConfigurationResponse.configuration:type_name -> adminproto.BucketConfiguration
 	36, // 13: adminproto.ListBucketPrefixMappingsResponse.mappings:type_name -> adminproto.BucketPrefixMapping
 	36, // 14: adminproto.CreateBucketPrefixMappingResponse.mapping:type_name -> adminproto.BucketPrefixMapping
-	0,  // 15: adminproto.AdminService.Ping:input_type -> adminproto.PingRequest
-	2,  // 16: adminproto.AdminService.InQueueStatus:input_type -> adminproto.InQueueStatusRequest
-	6,  // 17: adminproto.AdminService.ListOrganizations:input_type -> adminproto.ListOrganizationsRequest
-	8,  // 18: adminproto.AdminService.CreateOrganization:input_type -> adminproto.CreateOrganizationRequest
-	10, // 19: adminproto.AdminService.UpdateOrganization:input_type -> adminproto.UpdateOrganizationRequest
-	12, // 20: adminproto.AdminService.GetConsumerLag:input_type -> adminproto.GetConsumerLagRequest
-	16, // 21: adminproto.AdminService.ListOrganizationAPIKeys:input_type -> adminproto.ListOrganizationAPIKeysRequest
-	18, // 22: adminproto.AdminService.CreateOrganizationAPIKey:input_type -> adminproto.CreateOrganizationAPIKeyRequest
-	20, // 23: adminproto.AdminService.DeleteOrganizationAPIKey:input_type -> adminproto.DeleteOrganizationAPIKeyRequest
-	23, // 24: adminproto.AdminService.ListOrganizationBuckets:input_type -> adminproto.ListOrganizationBucketsRequest
-	25, // 25: adminproto.AdminService.AddOrganizationBucket:input_type -> adminproto.AddOrganizationBucketRequest
-	27, // 26: adminproto.AdminService.DeleteOrganizationBucket:input_type -> adminproto.DeleteOrganizationBucketRequest
-	30, // 27: adminproto.AdminService.ListBucketConfigurations:input_type -> adminproto.ListBucketConfigurationsRequest
-	32, // 28: adminproto.AdminService.CreateBucketConfiguration:input_type -> adminproto.CreateBucketConfigurationRequest
-	34, // 29: adminproto.AdminService.DeleteBucketConfiguration:input_type -> adminproto.DeleteBucketConfigurationRequest
-	37, // 30: adminproto.AdminService.ListBucketPrefixMappings:input_type -> adminproto.ListBucketPrefixMappingsRequest
-	39, // 31: adminproto.AdminService.CreateBucketPrefixMapping:input_type -> adminproto.CreateBucketPrefixMappingRequest
-	41, // 32: adminproto.AdminService.DeleteBucketPrefixMapping:input_type -> adminproto.DeleteBucketPrefixMappingRequest
-	1,  // 33: adminproto.AdminService.Ping:output_type -> adminproto.PingResponse
-	3,  // 34: adminproto.AdminService.InQueueStatus:output_type -> adminproto.InQueueStatusResponse
-	7,  // 35: adminproto.AdminService.ListOrganizations:output_type -> adminproto.ListOrganizationsResponse
-	9,  // 36: adminproto.AdminService.CreateOrganization:output_type -> adminproto.CreateOrganizationResponse
-	11, // 37: adminproto.AdminService.UpdateOrganization:output_type -> adminproto.UpdateOrganizationResponse
-	13, // 38: adminproto.AdminService.GetConsumerLag:output_type -> adminproto.GetConsumerLagResponse
-	17, // 39: adminproto.AdminService.ListOrganizationAPIKeys:output_type -> adminproto.ListOrganizationAPIKeysResponse
-	19, // 40: adminproto.AdminService.CreateOrganizationAPIKey:output_type -> adminproto.CreateOrganizationAPIKeyResponse
-	21, // 41: adminproto.AdminService.DeleteOrganizationAPIKey:output_type -> adminproto.DeleteOrganizationAPIKeyResponse
-	24, // 42: adminproto.AdminService.ListOrganizationBuckets:output_type -> adminproto.ListOrganizationBucketsResponse
-	26, // 43: adminproto.AdminService.AddOrganizationBucket:output_type -> adminproto.AddOrganizationBucketResponse
-	28, // 44: adminproto.AdminService.DeleteOrganizationBucket:output_type -> adminproto.DeleteOrganizationBucketResponse
-	31, // 45: adminproto.AdminService.ListBucketConfigurations:output_type -> adminproto.ListBucketConfigurationsResponse
-	33, // 46: adminproto.AdminService.CreateBucketConfiguration:output_type -> adminproto.CreateBucketConfigurationResponse
-	35, // 47: adminproto.AdminService.DeleteBucketConfiguration:output_type -> adminproto.DeleteBucketConfigurationResponse
-	38, // 48: adminproto.AdminService.ListBucketPrefixMappings:output_type -> adminproto.ListBucketPrefixMappingsResponse
-	40, // 49: adminproto.AdminService.CreateBucketPrefixMapping:output_type -> adminproto.CreateBucketPrefixMappingResponse
-	42, // 50: adminproto.AdminService.DeleteBucketPrefixMapping:output_type -> adminproto.DeleteBucketPrefixMappingResponse
-	33, // [33:51] is the sub-list for method output_type
-	15, // [15:33] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	43, // 15: adminproto.GetLogStreamConfigResponse.config:type_name -> adminproto.LogStreamConfig
+	43, // 16: adminproto.SetLogStreamConfigResponse.config:type_name -> adminproto.LogStreamConfig
+	0,  // 17: adminproto.AdminService.Ping:input_type -> adminproto.PingRequest
+	2,  // 18: adminproto.AdminService.InQueueStatus:input_type -> adminproto.InQueueStatusRequest
+	6,  // 19: adminproto.AdminService.ListOrganizations:input_type -> adminproto.ListOrganizationsRequest
+	8,  // 20: adminproto.AdminService.CreateOrganization:input_type -> adminproto.CreateOrganizationRequest
+	10, // 21: adminproto.AdminService.UpdateOrganization:input_type -> adminproto.UpdateOrganizationRequest
+	12, // 22: adminproto.AdminService.GetConsumerLag:input_type -> adminproto.GetConsumerLagRequest
+	16, // 23: adminproto.AdminService.ListOrganizationAPIKeys:input_type -> adminproto.ListOrganizationAPIKeysRequest
+	18, // 24: adminproto.AdminService.CreateOrganizationAPIKey:input_type -> adminproto.CreateOrganizationAPIKeyRequest
+	20, // 25: adminproto.AdminService.DeleteOrganizationAPIKey:input_type -> adminproto.DeleteOrganizationAPIKeyRequest
+	23, // 26: adminproto.AdminService.ListOrganizationBuckets:input_type -> adminproto.ListOrganizationBucketsRequest
+	25, // 27: adminproto.AdminService.AddOrganizationBucket:input_type -> adminproto.AddOrganizationBucketRequest
+	27, // 28: adminproto.AdminService.DeleteOrganizationBucket:input_type -> adminproto.DeleteOrganizationBucketRequest
+	30, // 29: adminproto.AdminService.ListBucketConfigurations:input_type -> adminproto.ListBucketConfigurationsRequest
+	32, // 30: adminproto.AdminService.CreateBucketConfiguration:input_type -> adminproto.CreateBucketConfigurationRequest
+	34, // 31: adminproto.AdminService.DeleteBucketConfiguration:input_type -> adminproto.DeleteBucketConfigurationRequest
+	37, // 32: adminproto.AdminService.ListBucketPrefixMappings:input_type -> adminproto.ListBucketPrefixMappingsRequest
+	39, // 33: adminproto.AdminService.CreateBucketPrefixMapping:input_type -> adminproto.CreateBucketPrefixMappingRequest
+	41, // 34: adminproto.AdminService.DeleteBucketPrefixMapping:input_type -> adminproto.DeleteBucketPrefixMappingRequest
+	44, // 35: adminproto.AdminService.GetLogStreamConfig:input_type -> adminproto.GetLogStreamConfigRequest
+	46, // 36: adminproto.AdminService.SetLogStreamConfig:input_type -> adminproto.SetLogStreamConfigRequest
+	48, // 37: adminproto.AdminService.DeleteLogStreamConfig:input_type -> adminproto.DeleteLogStreamConfigRequest
+	1,  // 38: adminproto.AdminService.Ping:output_type -> adminproto.PingResponse
+	3,  // 39: adminproto.AdminService.InQueueStatus:output_type -> adminproto.InQueueStatusResponse
+	7,  // 40: adminproto.AdminService.ListOrganizations:output_type -> adminproto.ListOrganizationsResponse
+	9,  // 41: adminproto.AdminService.CreateOrganization:output_type -> adminproto.CreateOrganizationResponse
+	11, // 42: adminproto.AdminService.UpdateOrganization:output_type -> adminproto.UpdateOrganizationResponse
+	13, // 43: adminproto.AdminService.GetConsumerLag:output_type -> adminproto.GetConsumerLagResponse
+	17, // 44: adminproto.AdminService.ListOrganizationAPIKeys:output_type -> adminproto.ListOrganizationAPIKeysResponse
+	19, // 45: adminproto.AdminService.CreateOrganizationAPIKey:output_type -> adminproto.CreateOrganizationAPIKeyResponse
+	21, // 46: adminproto.AdminService.DeleteOrganizationAPIKey:output_type -> adminproto.DeleteOrganizationAPIKeyResponse
+	24, // 47: adminproto.AdminService.ListOrganizationBuckets:output_type -> adminproto.ListOrganizationBucketsResponse
+	26, // 48: adminproto.AdminService.AddOrganizationBucket:output_type -> adminproto.AddOrganizationBucketResponse
+	28, // 49: adminproto.AdminService.DeleteOrganizationBucket:output_type -> adminproto.DeleteOrganizationBucketResponse
+	31, // 50: adminproto.AdminService.ListBucketConfigurations:output_type -> adminproto.ListBucketConfigurationsResponse
+	33, // 51: adminproto.AdminService.CreateBucketConfiguration:output_type -> adminproto.CreateBucketConfigurationResponse
+	35, // 52: adminproto.AdminService.DeleteBucketConfiguration:output_type -> adminproto.DeleteBucketConfigurationResponse
+	38, // 53: adminproto.AdminService.ListBucketPrefixMappings:output_type -> adminproto.ListBucketPrefixMappingsResponse
+	40, // 54: adminproto.AdminService.CreateBucketPrefixMapping:output_type -> adminproto.CreateBucketPrefixMappingResponse
+	42, // 55: adminproto.AdminService.DeleteBucketPrefixMapping:output_type -> adminproto.DeleteBucketPrefixMappingResponse
+	45, // 56: adminproto.AdminService.GetLogStreamConfig:output_type -> adminproto.GetLogStreamConfigResponse
+	47, // 57: adminproto.AdminService.SetLogStreamConfig:output_type -> adminproto.SetLogStreamConfigResponse
+	49, // 58: adminproto.AdminService.DeleteLogStreamConfig:output_type -> adminproto.DeleteLogStreamConfigResponse
+	38, // [38:59] is the sub-list for method output_type
+	17, // [17:38] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -2569,7 +2930,7 @@ func file_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   43,
+			NumMessages:   50,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

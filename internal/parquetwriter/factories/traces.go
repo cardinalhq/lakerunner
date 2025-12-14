@@ -53,7 +53,7 @@ func (p *TracesStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &TracesStatsAccumulator{
 		fingerprints:       mapset.NewSet[int64](),
 		labelColumns:       mapset.NewSet[string](),
-		fieldFingerprinter: fingerprint.NewFieldFingerprinter(),
+		fieldFingerprinter: fingerprint.NewFieldFingerprinter(""),
 	}
 }
 

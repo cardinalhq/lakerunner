@@ -169,7 +169,7 @@ func TestToTrigrams(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ToTrigrams(tt.input)
+			got := toTrigrams(tt.input)
 			assert.ElementsMatch(t, tt.expected, got)
 		})
 	}
@@ -278,7 +278,7 @@ func TestGenerateRowFingerprints(t *testing.T) {
 	}
 
 	// Create fingerprinter
-	fp := NewFieldFingerprinter()
+	fp := NewFieldFingerprinter("")
 	fingerprints := fp.GenerateFingerprints(toRow(row))
 
 	// Should generate multiple fingerprints for different dimensions
@@ -368,7 +368,7 @@ func TestGenerateRowFingerprints_Comprehensive(t *testing.T) {
 	}
 
 	// Generate fingerprints with current implementation
-	fp := NewFieldFingerprinter()
+	fp := NewFieldFingerprinter("")
 	fingerprints := fp.GenerateFingerprints(toRow(row))
 
 	// Manually compute expected fingerprints based on the algorithm
@@ -382,42 +382,42 @@ func TestGenerateRowFingerprints_Comprehensive(t *testing.T) {
 	}
 
 	// Only IndexedDimensions fields get value-based fingerprints
-	// 1. chq_telemetry_type - IndexTrigramExact (both exact and trigrams)
+	// chq_telemetry_type - IndexTrigramExact (both exact and trigrams)
 	expected.Add(ComputeFingerprint("chq_telemetry_type", "logs"))
-	for _, trigram := range ToTrigrams("logs") {
+	for _, trigram := range toTrigrams("logs") {
 		expected.Add(ComputeFingerprint("chq_telemetry_type", trigram))
 	}
 
-	// 2. log_level - IndexExact (exact value only)
+	// log_level - IndexExact (exact value only)
 	expected.Add(ComputeFingerprint("log_level", "error"))
 
-	// 3. metric_name - IndexExact (exact value only)
+	// metric_name - IndexExact (exact value only)
 	expected.Add(ComputeFingerprint("metric_name", "log_events"))
 
-	// 4. resource_customer_domain - IndexTrigramExact (both exact and trigrams)
+	// resource_file - IndexExact (exact value only)
+	expected.Add(ComputeFingerprint("resource_file", "auth.log"))
+
+	// resource_customer_domain - IndexTrigramExact (both exact and trigrams)
 	expected.Add(ComputeFingerprint("resource_customer_domain", "example.com"))
-	for _, trigram := range ToTrigrams("example.com") {
+	for _, trigram := range toTrigrams("example.com") {
 		expected.Add(ComputeFingerprint("resource_customer_domain", trigram))
 	}
 
-	// 5. resource_file - IndexExact (exact value only)
-	expected.Add(ComputeFingerprint("resource_file", "auth.log"))
-
-	// 6. resource_k8s_namespace_name - IndexTrigramExact (both exact and trigrams)
+	// resource_k8s_namespace_name - IndexTrigramExact (both exact and trigrams)
 	expected.Add(ComputeFingerprint("resource_k8s_namespace_name", "production"))
-	for _, trigram := range ToTrigrams("production") {
+	for _, trigram := range toTrigrams("production") {
 		expected.Add(ComputeFingerprint("resource_k8s_namespace_name", trigram))
 	}
 
-	// 7. resource_service_name - IndexTrigramExact (both exact and trigrams)
+	// resource_service_name - IndexTrigramExact (both exact and trigrams)
 	expected.Add(ComputeFingerprint("resource_service_name", "auth-service"))
-	for _, trigram := range ToTrigrams("auth-service") {
+	for _, trigram := range toTrigrams("auth-service") {
 		expected.Add(ComputeFingerprint("resource_service_name", trigram))
 	}
 
-	// 8. span_trace_id - IndexTrigramExact (both exact and trigrams)
+	// span_trace_id - IndexTrigramExact (both exact and trigrams)
 	expected.Add(ComputeFingerprint("span_trace_id", "abc123def456"))
-	for _, trigram := range ToTrigrams("abc123def456") {
+	for _, trigram := range toTrigrams("abc123def456") {
 		expected.Add(ComputeFingerprint("span_trace_id", trigram))
 	}
 
@@ -471,11 +471,11 @@ func TestGenerateRowFingerprintsWithCache_IdenticalOutput(t *testing.T) {
 	}
 
 	// Create fingerprinter (simulating accumulator behavior with reused instance)
-	fp := NewFieldFingerprinter()
+	fp := NewFieldFingerprinter("")
 
 	for i, row := range rows {
 		// Generate with fresh fingerprinter for each row (simulates non-cached)
-		freshFp := NewFieldFingerprinter()
+		freshFp := NewFieldFingerprinter("")
 		expectedFps := freshFp.GenerateFingerprints(toRow(row))
 
 		// Generate with shared fingerprinter (simulates cached across rows)
@@ -506,7 +506,7 @@ func TestGenerateRowFingerprintsWithCache_IdenticalOutput(t *testing.T) {
 // actually reduces computation
 func TestFieldFingerprinter_CacheEffectiveness(t *testing.T) {
 	// Create fingerprinter
-	fp := NewFieldFingerprinter()
+	fp := NewFieldFingerprinter("")
 
 	// First row - should populate cache
 	row1 := map[string]any{
@@ -549,7 +549,7 @@ func TestFieldFingerprinter_CacheEffectiveness(t *testing.T) {
 
 // TestFieldFingerprinter_FullValueCache validates that exact-value fingerprints are cached
 func TestFieldFingerprinter_FullValueCache(t *testing.T) {
-	fp := NewFieldFingerprinter()
+	fp := NewFieldFingerprinter("")
 
 	// All indexed fields now have exact fingerprints cached
 	row1 := map[string]any{
@@ -588,7 +588,7 @@ func TestFieldFingerprinter_FullValueCache(t *testing.T) {
 
 // TestFieldFingerprinter_FullValueCacheBounded validates that cache doesn't grow beyond limit
 func TestFieldFingerprinter_FullValueCacheBounded(t *testing.T) {
-	fp := NewFieldFingerprinter()
+	fp := NewFieldFingerprinter("")
 
 	// Fill cache to just under limit
 	for i := range maxFullValueCacheSize - 1 {
@@ -628,8 +628,8 @@ func TestIsIndexed(t *testing.T) {
 		{"resource_k8s_namespace_name", true},
 		{"span_trace_id", true},
 		{"chq_telemetry_type", true},
-		{"resource_customer_domain", true},
 		{"resource_file", true},
+		{"resource_customer_domain", true},
 		{"custom_field", false},
 		{"not_indexed", false},
 		{"", false},
@@ -652,12 +652,11 @@ func TestHasExactIndex(t *testing.T) {
 		{"metric_name", true},
 		{"resource_file", true},
 		// IndexTrigramExact fields (also have exact)
-		{"resource_customer_domain", true},
 		{"resource_service_name", true},
 		{"resource_k8s_namespace_name", true},
 		{"span_trace_id", true},
 		{"chq_telemetry_type", true},
-		// Non-indexed fields
+		{"resource_customer_domain", true},
 		{"custom_field", false},
 		{"not_indexed", false},
 		{"", false},
@@ -679,14 +678,13 @@ func TestHasTrigramIndex(t *testing.T) {
 		{"resource_k8s_namespace_name", true},
 		{"resource_k8s_cluster_name", true},
 		{"resource_service_name", true},
-		{"resource_customer_domain", true},
 		{"span_trace_id", true},
 		{"chq_telemetry_type", true},
 		// IndexExact only fields (no trigrams)
 		{"metric_name", false},
 		{"resource_file", false},
 		{"log_level", false},
-		// Non-indexed fields
+		{"resource_customer_domain", true},
 		{"custom_field", false},
 		{"not_indexed", false},
 		{"", false},

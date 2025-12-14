@@ -6,6 +6,7 @@ package configdb
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -29,6 +30,8 @@ type Querier interface {
 	DeleteAdminAPIKey(ctx context.Context, apiKeyID uuid.UUID) error
 	DeleteBucketConfiguration(ctx context.Context, bucketName string) error
 	DeleteBucketPrefixMapping(ctx context.Context, id uuid.UUID) error
+	// Delete a specific config for an org.
+	DeleteOrgConfig(ctx context.Context, arg DeleteOrgConfigParams) error
 	DeleteOrganization(ctx context.Context, id uuid.UUID) error
 	DeleteOrganizationAPIKey(ctx context.Context, id uuid.UUID) error
 	DeleteOrganizationAPIKeyMapping(ctx context.Context, apiKeyID uuid.UUID) error
@@ -71,6 +74,8 @@ type Querier interface {
 	GetExpiryLastRun(ctx context.Context, arg GetExpiryLastRunParams) (ExpiryRunTracking, error)
 	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (GetLongestPrefixMatchRow, error)
 	GetLowestInstanceOrganizationBucket(ctx context.Context, arg GetLowestInstanceOrganizationBucketParams) (GetLowestInstanceOrganizationBucketRow, error)
+	// Get config for a specific org and key. Returns NULL if not found.
+	GetOrgConfig(ctx context.Context, arg GetOrgConfigParams) (json.RawMessage, error)
 	GetOrganization(ctx context.Context, id uuid.UUID) (Organization, error)
 	GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (GetOrganizationAPIKeyByHashRow, error)
 	GetOrganizationAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (GetOrganizationAPIKeyByIDRow, error)
@@ -86,12 +91,16 @@ type Querier interface {
 	ListBucketConfigurations(ctx context.Context) ([]BucketConfiguration, error)
 	ListBucketPrefixMappings(ctx context.Context) ([]ListBucketPrefixMappingsRow, error)
 	ListEnabledOrganizations(ctx context.Context) ([]Organization, error)
+	// List all config keys/values for an org.
+	ListOrgConfigs(ctx context.Context, organizationID uuid.UUID) ([]ListOrgConfigsRow, error)
 	ListOrganizationAPIKeysByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationAPIKeysByOrgRow, error)
 	ListOrganizationBucketsByOrg(ctx context.Context, organizationID uuid.UUID) ([]ListOrganizationBucketsByOrgRow, error)
 	ListOrganizations(ctx context.Context) ([]Organization, error)
 	UpsertAdminAPIKey(ctx context.Context, arg UpsertAdminAPIKeyParams) (AdminApiKey, error)
 	UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (BucketConfiguration, error)
 	UpsertExpiryRunTracking(ctx context.Context, arg UpsertExpiryRunTrackingParams) error
+	// Insert or update a config value for an org.
+	UpsertOrgConfig(ctx context.Context, arg UpsertOrgConfigParams) error
 	UpsertOrganization(ctx context.Context, arg UpsertOrganizationParams) (Organization, error)
 	UpsertOrganizationAPIKey(ctx context.Context, arg UpsertOrganizationAPIKeyParams) (OrganizationApiKey, error)
 	UpsertOrganizationAPIKeyMapping(ctx context.Context, arg UpsertOrganizationAPIKeyMappingParams) error

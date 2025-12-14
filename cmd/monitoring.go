@@ -29,6 +29,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/externalscaler"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
@@ -127,6 +129,14 @@ func runMonitoringServe(_ context.Context) error {
 		slog.Error("Failed to open LRDB store", "error", err)
 		return err
 	}
+
+	cdb, err := configdb.ConfigDBStore(doneCtx)
+	if err != nil {
+		slog.Error("Failed to open ConfigDB store", "error", err)
+		return err
+	}
+
+	configservice.NewGlobal(cdb, 5*time.Minute)
 
 	queueDepthMonitor, err := workqueue.NewQueueDepthMonitor(
 		mdb,

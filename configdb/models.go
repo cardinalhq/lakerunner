@@ -5,6 +5,7 @@
 package configdb
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -133,6 +134,14 @@ type OrganizationBucket struct {
 	BucketID       uuid.UUID `json:"bucket_id"`
 	InstanceNum    int16     `json:"instance_num"`
 	CollectorName  string    `json:"collector_name"`
+}
+
+type OrganizationConfig struct {
+	OrganizationID uuid.UUID       `json:"organization_id"`
+	Key            string          `json:"key"`
+	Value          json.RawMessage `json:"value"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // Stores data retention policies for each organization and signal type. A value of -1 means use system default, 0 means never expire, >0 means specific retention days.

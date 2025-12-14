@@ -31,3 +31,4 @@ sql:
           - {db_type: "uuid", go_type: {import: "github.com/google/uuid", type: "UUID"}}
           - {db_type: "pg_catalog.float8", nullable: true, go_type: {type: "*float64"}}
           - {db_type: "pg_catalog.int8", nullable: true, go_type: {type: "*int64"}}
+          - {column: "organization_config.value", go_type: {type: "RawMessage", import: "encoding/json"}}

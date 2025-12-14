@@ -51,6 +51,9 @@ const (
 	AdminService_ListBucketPrefixMappings_FullMethodName  = "/adminproto.AdminService/ListBucketPrefixMappings"
 	AdminService_CreateBucketPrefixMapping_FullMethodName = "/adminproto.AdminService/CreateBucketPrefixMapping"
 	AdminService_DeleteBucketPrefixMapping_FullMethodName = "/adminproto.AdminService/DeleteBucketPrefixMapping"
+	AdminService_GetLogStreamConfig_FullMethodName        = "/adminproto.AdminService/GetLogStreamConfig"
+	AdminService_SetLogStreamConfig_FullMethodName        = "/adminproto.AdminService/SetLogStreamConfig"
+	AdminService_DeleteLogStreamConfig_FullMethodName     = "/adminproto.AdminService/DeleteLogStreamConfig"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -85,6 +88,10 @@ type AdminServiceClient interface {
 	ListBucketPrefixMappings(ctx context.Context, in *ListBucketPrefixMappingsRequest, opts ...grpc.CallOption) (*ListBucketPrefixMappingsResponse, error)
 	CreateBucketPrefixMapping(ctx context.Context, in *CreateBucketPrefixMappingRequest, opts ...grpc.CallOption) (*CreateBucketPrefixMappingResponse, error)
 	DeleteBucketPrefixMapping(ctx context.Context, in *DeleteBucketPrefixMappingRequest, opts ...grpc.CallOption) (*DeleteBucketPrefixMappingResponse, error)
+	// Log Stream Configuration Management
+	GetLogStreamConfig(ctx context.Context, in *GetLogStreamConfigRequest, opts ...grpc.CallOption) (*GetLogStreamConfigResponse, error)
+	SetLogStreamConfig(ctx context.Context, in *SetLogStreamConfigRequest, opts ...grpc.CallOption) (*SetLogStreamConfigResponse, error)
+	DeleteLogStreamConfig(ctx context.Context, in *DeleteLogStreamConfigRequest, opts ...grpc.CallOption) (*DeleteLogStreamConfigResponse, error)
 }
 
 type adminServiceClient struct {
@@ -275,6 +282,36 @@ func (c *adminServiceClient) DeleteBucketPrefixMapping(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *adminServiceClient) GetLogStreamConfig(ctx context.Context, in *GetLogStreamConfigRequest, opts ...grpc.CallOption) (*GetLogStreamConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetLogStreamConfigResponse)
+	err := c.cc.Invoke(ctx, AdminService_GetLogStreamConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) SetLogStreamConfig(ctx context.Context, in *SetLogStreamConfigRequest, opts ...grpc.CallOption) (*SetLogStreamConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetLogStreamConfigResponse)
+	err := c.cc.Invoke(ctx, AdminService_SetLogStreamConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) DeleteLogStreamConfig(ctx context.Context, in *DeleteLogStreamConfigRequest, opts ...grpc.CallOption) (*DeleteLogStreamConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteLogStreamConfigResponse)
+	err := c.cc.Invoke(ctx, AdminService_DeleteLogStreamConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -307,6 +344,10 @@ type AdminServiceServer interface {
 	ListBucketPrefixMappings(context.Context, *ListBucketPrefixMappingsRequest) (*ListBucketPrefixMappingsResponse, error)
 	CreateBucketPrefixMapping(context.Context, *CreateBucketPrefixMappingRequest) (*CreateBucketPrefixMappingResponse, error)
 	DeleteBucketPrefixMapping(context.Context, *DeleteBucketPrefixMappingRequest) (*DeleteBucketPrefixMappingResponse, error)
+	// Log Stream Configuration Management
+	GetLogStreamConfig(context.Context, *GetLogStreamConfigRequest) (*GetLogStreamConfigResponse, error)
+	SetLogStreamConfig(context.Context, *SetLogStreamConfigRequest) (*SetLogStreamConfigResponse, error)
+	DeleteLogStreamConfig(context.Context, *DeleteLogStreamConfigRequest) (*DeleteLogStreamConfigResponse, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -370,6 +411,15 @@ func (UnimplementedAdminServiceServer) CreateBucketPrefixMapping(context.Context
 }
 func (UnimplementedAdminServiceServer) DeleteBucketPrefixMapping(context.Context, *DeleteBucketPrefixMappingRequest) (*DeleteBucketPrefixMappingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteBucketPrefixMapping not implemented")
+}
+func (UnimplementedAdminServiceServer) GetLogStreamConfig(context.Context, *GetLogStreamConfigRequest) (*GetLogStreamConfigResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetLogStreamConfig not implemented")
+}
+func (UnimplementedAdminServiceServer) SetLogStreamConfig(context.Context, *SetLogStreamConfigRequest) (*SetLogStreamConfigResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetLogStreamConfig not implemented")
+}
+func (UnimplementedAdminServiceServer) DeleteLogStreamConfig(context.Context, *DeleteLogStreamConfigRequest) (*DeleteLogStreamConfigResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteLogStreamConfig not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -716,6 +766,60 @@ func _AdminService_DeleteBucketPrefixMapping_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_GetLogStreamConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetLogStreamConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).GetLogStreamConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_GetLogStreamConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).GetLogStreamConfig(ctx, req.(*GetLogStreamConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_SetLogStreamConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetLogStreamConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).SetLogStreamConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_SetLogStreamConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).SetLogStreamConfig(ctx, req.(*SetLogStreamConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_DeleteLogStreamConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteLogStreamConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).DeleteLogStreamConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_DeleteLogStreamConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).DeleteLogStreamConfig(ctx, req.(*DeleteLogStreamConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -794,6 +898,18 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteBucketPrefixMapping",
 			Handler:    _AdminService_DeleteBucketPrefixMapping_Handler,
+		},
+		{
+			MethodName: "GetLogStreamConfig",
+			Handler:    _AdminService_GetLogStreamConfig_Handler,
+		},
+		{
+			MethodName: "SetLogStreamConfig",
+			Handler:    _AdminService_SetLogStreamConfig_Handler,
+		},
+		{
+			MethodName: "DeleteLogStreamConfig",
+			Handler:    _AdminService_DeleteLogStreamConfig_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

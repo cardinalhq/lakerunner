@@ -35,6 +35,7 @@ type logProcessingParams struct {
 	StorageProfile storageprofile.StorageProfile
 	ActiveSegments []lrdb.LogSeg
 	MaxRecords     int64
+	StreamField    string // Field to use for stream identification
 }
 
 // processLogsWithSorting performs the common pattern of:
@@ -51,6 +52,7 @@ func processLogsWithSorting(ctx context.Context, params logProcessingParams) ([]
 		params.OrganizationID,
 		params.StorageProfile,
 		params.ActiveSegments,
+		params.StreamField,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create reader stack: %w", err)
@@ -61,7 +63,7 @@ func processLogsWithSorting(ctx context.Context, params logProcessingParams) ([]
 	schema := readerStack.HeadReader.GetSchema()
 
 	// Create logs writer (no aggregation needed, just sorting)
-	writer, err := factories.NewLogsWriter(params.TmpDir, schema, params.MaxRecords, parquetwriter.DefaultBackend)
+	writer, err := factories.NewLogsWriter(params.TmpDir, schema, params.MaxRecords, parquetwriter.DefaultBackend, params.StreamField)
 	if err != nil {
 		return nil, fmt.Errorf("create parquet writer: %w", err)
 	}
