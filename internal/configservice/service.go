@@ -18,11 +18,9 @@ package configservice
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jellydator/ttlcache/v3"
 
 	"github.com/cardinalhq/lakerunner/configdb"
@@ -85,7 +83,15 @@ func New(querier OrgConfigQuerier, ttl time.Duration) *Service {
 	}
 }
 
+// Close stops the cache background goroutine and releases resources.
+func (s *Service) Close() {
+	s.cache.Stop()
+}
+
 // getConfigCached fetches a config value with caching.
+// The loader is created fresh for each call, capturing the current context.
+// Since ttlcache uses lazy expiration (no background refresh), the loader
+// is only invoked synchronously during the Get() call on cache miss.
 func (s *Service) getConfigCached(ctx context.Context, orgID uuid.UUID, key string) (json.RawMessage, error) {
 	cacheKey := configCacheKey{OrgID: orgID, Key: key}
 
@@ -95,23 +101,15 @@ func (s *Service) getConfigCached(ctx context.Context, orgID uuid.UUID, key stri
 				OrganizationID: k.OrgID,
 				Key:            k.Key,
 			})
-			item := cache.Set(k, configCacheValue{
+			return cache.Set(k, configCacheValue{
 				Value: val,
 				Err:   err,
 			}, ttlcache.DefaultTTL)
-			return item
 		},
 	)
 
-	v := s.cache.Get(cacheKey, ttlcache.WithLoader(loader))
-	if v != nil {
-		cached := v.Value()
-		if cached.Err != nil && errors.Is(cached.Err, pgx.ErrNoRows) {
-			return nil, cached.Err
-		}
-		return cached.Value, cached.Err
-	}
-	return nil, errors.New("failed to get config from cache")
+	cached := s.cache.Get(cacheKey, ttlcache.WithLoader(loader)).Value()
+	return cached.Value, cached.Err
 }
 
 // setConfig sets a config value and invalidates the cache.

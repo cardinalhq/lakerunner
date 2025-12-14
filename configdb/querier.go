@@ -76,8 +76,6 @@ type Querier interface {
 	GetLowestInstanceOrganizationBucket(ctx context.Context, arg GetLowestInstanceOrganizationBucketParams) (GetLowestInstanceOrganizationBucketRow, error)
 	// Get config for a specific org and key. Returns NULL if not found.
 	GetOrgConfig(ctx context.Context, arg GetOrgConfigParams) (json.RawMessage, error)
-	// Get config for org, falling back to system default (nil UUID) if not found.
-	GetOrgConfigWithDefault(ctx context.Context, arg GetOrgConfigWithDefaultParams) (interface{}, error)
 	GetOrganization(ctx context.Context, id uuid.UUID) (Organization, error)
 	GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (GetOrganizationAPIKeyByHashRow, error)
 	GetOrganizationAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (GetOrganizationAPIKeyByIDRow, error)

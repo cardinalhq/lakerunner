@@ -48,26 +48,6 @@ func (q *Queries) GetOrgConfig(ctx context.Context, arg GetOrgConfigParams) (jso
 	return value, err
 }
 
-const getOrgConfigWithDefault = `-- name: GetOrgConfigWithDefault :one
-SELECT COALESCE(
-    (SELECT oc1.value FROM organization_config oc1 WHERE oc1.organization_id = $1 AND oc1.key = $2),
-    (SELECT oc2.value FROM organization_config oc2 WHERE oc2.organization_id = '00000000-0000-0000-0000-000000000000' AND oc2.key = $2)
-) AS config_value
-`
-
-type GetOrgConfigWithDefaultParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Key            string    `json:"key"`
-}
-
-// Get config for org, falling back to system default (nil UUID) if not found.
-func (q *Queries) GetOrgConfigWithDefault(ctx context.Context, arg GetOrgConfigWithDefaultParams) (interface{}, error) {
-	row := q.db.QueryRow(ctx, getOrgConfigWithDefault, arg.OrganizationID, arg.Key)
-	var config_value interface{}
-	err := row.Scan(&config_value)
-	return config_value, err
-}
-
 const listOrgConfigs = `-- name: ListOrgConfigs :many
 SELECT key, value, created_at, updated_at
 FROM organization_config

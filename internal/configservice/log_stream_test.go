@@ -49,6 +49,7 @@ func TestGetLogStreamConfig_FallbackChain(t *testing.T) {
 	t.Run("returns org-specific config when set", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		mock.configs[mock.key(orgID, configKeyLogStream)] = json.RawMessage(`{"field_name":"org_specific_field"}`)
@@ -60,6 +61,7 @@ func TestGetLogStreamConfig_FallbackChain(t *testing.T) {
 	t.Run("falls back to system default when org not set", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		// Set system default (DefaultOrgID)
@@ -72,6 +74,7 @@ func TestGetLogStreamConfig_FallbackChain(t *testing.T) {
 	t.Run("falls back to hardcoded default when nothing set", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		// No configs set
@@ -83,6 +86,7 @@ func TestGetLogStreamConfig_FallbackChain(t *testing.T) {
 	t.Run("org config takes precedence over system default", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		mock.configs[mock.key(orgID, configKeyLogStream)] = json.RawMessage(`{"field_name":"org_wins"}`)
@@ -95,6 +99,7 @@ func TestGetLogStreamConfig_FallbackChain(t *testing.T) {
 	t.Run("skips default lookup when querying DefaultOrgID", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		// Set system default
 		mock.configs[mock.key(DefaultOrgID, configKeyLogStream)] = json.RawMessage(`{"field_name":"system_field"}`)
@@ -112,6 +117,7 @@ func TestGetLogStreamConfig_InvalidJSON(t *testing.T) {
 	t.Run("falls back when org config has invalid JSON", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		mock.configs[mock.key(orgID, configKeyLogStream)] = json.RawMessage(`not valid json`)
@@ -124,6 +130,7 @@ func TestGetLogStreamConfig_InvalidJSON(t *testing.T) {
 	t.Run("falls back when field_name is empty", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		mock.configs[mock.key(orgID, configKeyLogStream)] = json.RawMessage(`{"field_name":""}`)
@@ -136,6 +143,7 @@ func TestGetLogStreamConfig_InvalidJSON(t *testing.T) {
 	t.Run("returns hardcoded default when all configs are invalid", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		mock.configs[mock.key(orgID, configKeyLogStream)] = json.RawMessage(`invalid`)
@@ -152,6 +160,7 @@ func TestSetLogStreamConfig(t *testing.T) {
 	t.Run("sets config with correct JSON structure", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		err := svc.SetLogStreamConfig(ctx, orgID, "my_custom_field")
@@ -165,6 +174,7 @@ func TestSetLogStreamConfig(t *testing.T) {
 	t.Run("invalidates cache after set", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 
@@ -187,6 +197,7 @@ func TestSetLogStreamConfig(t *testing.T) {
 		mock := newMockQuerier()
 		mock.setErr = assert.AnError
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		err := svc.SetLogStreamConfig(ctx, uuid.New(), "field")
 		assert.Error(t, err)
@@ -199,6 +210,7 @@ func TestGetLogStreamConfig_Caching(t *testing.T) {
 	t.Run("caches org config", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		mock.configs[mock.key(orgID, configKeyLogStream)] = json.RawMessage(`{"field_name":"cached"}`)
@@ -217,6 +229,7 @@ func TestGetLogStreamConfig_Caching(t *testing.T) {
 	t.Run("caches system default lookup", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		mock.configs[mock.key(DefaultOrgID, configKeyLogStream)] = json.RawMessage(`{"field_name":"default"}`)

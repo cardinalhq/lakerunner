@@ -98,6 +98,7 @@ func TestService_CachingBehavior(t *testing.T) {
 	ctx := context.Background()
 	mock := newMockQuerier()
 	svc := New(mock, 5*time.Minute)
+	t.Cleanup(svc.Close)
 
 	orgID := uuid.New()
 	configKey := "test.key"
@@ -142,6 +143,7 @@ func TestService_SetConfigInvalidatesCache(t *testing.T) {
 	ctx := context.Background()
 	mock := newMockQuerier()
 	svc := New(mock, 5*time.Minute)
+	t.Cleanup(svc.Close)
 
 	orgID := uuid.New()
 	configKey := "test.key"
@@ -168,6 +170,7 @@ func TestService_DeleteConfigInvalidatesCache(t *testing.T) {
 	ctx := context.Background()
 	mock := newMockQuerier()
 	svc := New(mock, 5*time.Minute)
+	t.Cleanup(svc.Close)
 
 	orgID := uuid.New()
 	configKey := "test.key"
@@ -190,6 +193,7 @@ func TestService_ListConfigs(t *testing.T) {
 	ctx := context.Background()
 	mock := newMockQuerier()
 	svc := New(mock, 5*time.Minute)
+	t.Cleanup(svc.Close)
 
 	orgID := uuid.New()
 	mock.configs[mock.key(orgID, "key1")] = json.RawMessage(`{"a": 1}`)
@@ -215,6 +219,7 @@ func TestService_ErrorHandling(t *testing.T) {
 		mock := newMockQuerier()
 		mock.getErr = errors.New("db connection failed")
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		_, err := svc.getConfigCached(ctx, uuid.New(), "key")
 		assert.Error(t, err)
@@ -224,6 +229,7 @@ func TestService_ErrorHandling(t *testing.T) {
 		mock := newMockQuerier()
 		mock.setErr = errors.New("db write failed")
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		err := svc.setConfig(ctx, uuid.New(), "key", json.RawMessage(`{}`))
 		assert.Error(t, err)
@@ -233,6 +239,7 @@ func TestService_ErrorHandling(t *testing.T) {
 	t.Run("set error does not invalidate cache", func(t *testing.T) {
 		mock := newMockQuerier()
 		svc := New(mock, 5*time.Minute)
+		t.Cleanup(svc.Close)
 
 		orgID := uuid.New()
 		configKey := "test.key"
@@ -258,6 +265,7 @@ func TestService_ErrNoRowsCaching(t *testing.T) {
 	ctx := context.Background()
 	mock := newMockQuerier()
 	svc := New(mock, 5*time.Minute)
+	t.Cleanup(svc.Close)
 
 	orgID := uuid.New()
 	configKey := "nonexistent"

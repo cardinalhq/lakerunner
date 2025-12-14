@@ -4,13 +4,6 @@ SELECT value
 FROM organization_config
 WHERE organization_id = $1 AND key = $2;
 
--- name: GetOrgConfigWithDefault :one
--- Get config for org, falling back to system default (nil UUID) if not found.
-SELECT COALESCE(
-    (SELECT oc1.value FROM organization_config oc1 WHERE oc1.organization_id = $1 AND oc1.key = $2),
-    (SELECT oc2.value FROM organization_config oc2 WHERE oc2.organization_id = '00000000-0000-0000-0000-000000000000' AND oc2.key = $2)
-) AS config_value;
-
 -- name: ListOrgConfigs :many
 -- List all config keys/values for an org.
 SELECT key, value, created_at, updated_at
