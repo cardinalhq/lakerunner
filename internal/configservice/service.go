@@ -18,6 +18,7 @@ package configservice
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,11 +30,17 @@ import (
 // DefaultOrgID is the nil UUID used for system-wide default config values.
 var DefaultOrgID = uuid.UUID{}
 
-var global *Service
+var (
+	global     *Service
+	globalOnce sync.Once
+)
 
 // NewGlobal initializes the global config service instance.
+// Thread-safe: only the first call initializes the service; subsequent calls are no-ops.
 func NewGlobal(querier OrgConfigQuerier, ttl time.Duration) {
-	global = New(querier, ttl)
+	globalOnce.Do(func() {
+		global = New(querier, ttl)
+	})
 }
 
 // Global returns the global config service instance.

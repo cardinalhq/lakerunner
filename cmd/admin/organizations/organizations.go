@@ -153,6 +153,7 @@ func GetOrganizationsCmd() *cobra.Command {
 	orgCmd.AddCommand(getBucketsCmd())
 	orgCmd.AddCommand(getPrefixMappingsCmd())
 	orgCmd.AddCommand(getBucketConfigsCmd())
+	orgCmd.AddCommand(getConfigCmd())
 
 	return orgCmd
 }
