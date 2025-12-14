@@ -53,6 +53,10 @@ func NewService(addr string) (*Service, error) {
 	if addr == "" {
 		addr = ":9091"
 	}
+	// Normalize: if just a port number, add colon prefix
+	if !strings.Contains(addr, ":") {
+		addr = ":" + addr
+	}
 
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
