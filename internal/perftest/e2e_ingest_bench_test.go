@@ -96,6 +96,7 @@ func BenchmarkE2ELogIngestion(b *testing.B) {
 			10000,              // rpfEstimate
 			fingerprintManager, // enable fingerprint calculation like production
 			parquetwriter.DefaultBackend,
+			"", // streamField - use default priority
 		)
 		if err != nil {
 			b.Fatal(err)
@@ -186,6 +187,7 @@ func BenchmarkE2ELogIngestionMultiFile(b *testing.B) {
 			10000,
 			fingerprintManager,
 			parquetwriter.DefaultBackend,
+			"", // streamField - use default priority
 		)
 		if err != nil {
 			b.Fatal(err)

@@ -31,17 +31,18 @@ import (
 // by [service_identifier, fingerprint] to keep related log entries together.
 // The schema must be provided from the reader and cannot be nil.
 // If backendType is empty, defaults to go-parquet backend.
-func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64, backendType parquetwriter.BackendType) (parquetwriter.ParquetWriter, error) {
+// If streamField is empty, defaults to priority: resource_customer_domain > resource_service_name.
+func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64, backendType parquetwriter.BackendType, streamField string) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
 		TmpDir: tmpdir,
 		Schema: schema,
 
 		// Group by [service_identifier, fingerprint] - don't split groups with same service+fingerprint
-		GroupKeyFunc:  logsGroupKeyFunc(),
+		GroupKeyFunc:  logsGroupKeyFunc(streamField),
 		NoSplitGroups: true,
 
 		RecordsPerFile: recordsPerFile,
-		StatsProvider:  &LogsStatsProvider{},
+		StatsProvider:  &LogsStatsProvider{StreamField: streamField},
 		BackendType:    backendType,
 	}
 
@@ -51,16 +52,11 @@ func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFil
 // logsGroupKeyFunc returns the grouping key function for logs.
 // Groups by [service_identifier, fingerprint] - keeps all timestamps for the same
 // service+fingerprint together for efficient querying.
-// service_identifier is resource_customer_domain if set, otherwise resource_service_name.
-func logsGroupKeyFunc() func(row pipeline.Row) any {
+// If streamField is specified, that field is used for service_identifier.
+// Otherwise falls back to: resource_customer_domain > resource_service_name.
+func logsGroupKeyFunc(streamField string) func(row pipeline.Row) any {
 	return func(row pipeline.Row) any {
-		// Get service identifier: customer_domain takes priority, then service_name, then empty
-		serviceIdentifier := ""
-		if domain, ok := row[wkk.RowKeyResourceCustomerDomain].(string); ok && domain != "" {
-			serviceIdentifier = domain
-		} else if serviceName, ok := row[wkk.RowKeyResourceServiceName].(string); ok && serviceName != "" {
-			serviceIdentifier = serviceName
-		}
+		serviceIdentifier := getStreamValue(row, streamField)
 
 		// Get fingerprint
 		fingerprint, fpOk := row[wkk.RowKeyCFingerprint].(int64)
@@ -74,14 +70,39 @@ func logsGroupKeyFunc() func(row pipeline.Row) any {
 	}
 }
 
+// getStreamValue extracts the stream identifier value from a row.
+// If streamField is specified, that field is used.
+// Otherwise falls back to: resource_customer_domain > resource_service_name.
+func getStreamValue(row pipeline.Row, streamField string) string {
+	if streamField != "" {
+		rowKey := wkk.NewRowKey(streamField)
+		if val, ok := row[rowKey].(string); ok && val != "" {
+			return val
+		}
+		return ""
+	}
+
+	// Default fallback: resource_customer_domain > resource_service_name
+	if domain, ok := row[wkk.RowKeyResourceCustomerDomain].(string); ok && domain != "" {
+		return domain
+	}
+	if serviceName, ok := row[wkk.RowKeyResourceServiceName].(string); ok && serviceName != "" {
+		return serviceName
+	}
+	return ""
+}
+
 // LogsStatsProvider collects timestamp and fingerprint statistics for logs files.
-type LogsStatsProvider struct{}
+type LogsStatsProvider struct {
+	StreamField string // Optional: specific field to use for stream identification
+}
 
 func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &LogsStatsAccumulator{
 		fingerprints:       mapset.NewSet[int64](),
 		streamValues:       mapset.NewSet[string](),
-		fieldFingerprinter: fingerprint.NewFieldFingerprinter(),
+		fieldFingerprinter: fingerprint.NewFieldFingerprinter(p.StreamField),
+		streamField:        p.StreamField,
 	}
 }
 
@@ -89,12 +110,13 @@ func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 type LogsStatsAccumulator struct {
 	fingerprints       mapset.Set[int64]
 	streamValues       mapset.Set[string]
-	streamIdField      string // "resource_customer_domain", "resource_service_name", or empty
+	streamIdField      string // The field used for stream identification
 	firstTS            int64
 	lastTS             int64
 	first              bool
 	fieldFingerprinter *fingerprint.FieldFingerprinter
 	missingFieldCount  int64
+	streamField        string // Configured stream field (empty = use default priority)
 }
 
 func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
@@ -117,31 +139,41 @@ func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
 	fps := a.fieldFingerprinter.GenerateFingerprints(row)
 	a.fingerprints.Append(fps...)
 
-	// Track stream field and values with priority:
-	// resource_customer_domain > resource_service_name
-	customerDomainField := wkk.RowKeyValue(wkk.RowKeyResourceCustomerDomain)
-	serviceNameField := wkk.RowKeyValue(wkk.RowKeyResourceServiceName)
-
-	if domain, ok := row[wkk.RowKeyResourceCustomerDomain].(string); ok && domain != "" {
-		// Highest priority: resource_customer_domain
-		if a.streamIdField != customerDomainField {
-			// Upgrade to higher priority field - clear previous values
-			a.streamIdField = customerDomainField
-			a.streamValues.Clear()
+	// Track stream field and values
+	if a.streamField != "" {
+		// Use configured stream field
+		a.streamIdField = a.streamField
+		if val, ok := row[wkk.NewRowKey(a.streamField)].(string); ok && val != "" {
+			a.streamValues.Add(val)
+		} else {
+			a.missingFieldCount++
 		}
-		a.streamValues.Add(domain)
-	} else if serviceName, ok := row[wkk.RowKeyResourceServiceName].(string); ok && serviceName != "" {
-		// Second priority: resource_service_name (only if we haven't seen customer_domain)
-		if a.streamIdField == "" {
-			a.streamIdField = serviceNameField
-		}
-		if a.streamIdField == serviceNameField {
-			a.streamValues.Add(serviceName)
-		}
-		// If streamIdField is customer_domain, ignore service_name values
 	} else {
-		// Neither field present
-		a.missingFieldCount++
+		// Default priority: resource_customer_domain > resource_service_name
+		customerDomainField := wkk.RowKeyValue(wkk.RowKeyResourceCustomerDomain)
+		serviceNameField := wkk.RowKeyValue(wkk.RowKeyResourceServiceName)
+
+		if domain, ok := row[wkk.RowKeyResourceCustomerDomain].(string); ok && domain != "" {
+			// Highest priority: resource_customer_domain
+			if a.streamIdField != customerDomainField {
+				// Upgrade to higher priority field - clear previous values
+				a.streamIdField = customerDomainField
+				a.streamValues.Clear()
+			}
+			a.streamValues.Add(domain)
+		} else if serviceName, ok := row[wkk.RowKeyResourceServiceName].(string); ok && serviceName != "" {
+			// Second priority: resource_service_name (only if we haven't seen customer_domain)
+			if a.streamIdField == "" {
+				a.streamIdField = serviceNameField
+			}
+			if a.streamIdField == serviceNameField {
+				a.streamValues.Add(serviceName)
+			}
+			// If streamIdField is customer_domain, ignore service_name values
+		} else {
+			// Neither field present
+			a.missingFieldCount++
+		}
 	}
 }
 

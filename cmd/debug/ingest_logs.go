@@ -63,18 +63,24 @@ The output Parquet file will be written to the current directory and can be exam
 				return fmt.Errorf("failed to get output-dir flag: %w", err)
 			}
 
-			return runIngestLogs(filename, orgID, bucket, outputDir)
+			streamField, err := cmd.Flags().GetString("stream-field")
+			if err != nil {
+				return fmt.Errorf("failed to get stream-field flag: %w", err)
+			}
+
+			return runIngestLogs(filename, orgID, bucket, outputDir, streamField)
 		},
 	}
 
 	cmd.Flags().String("org-id", "debug-org", "Organization ID to use for ingestion")
 	cmd.Flags().String("bucket", "debug-bucket", "Bucket name to use for resource metadata")
 	cmd.Flags().String("output-dir", ".", "Directory to write output Parquet file")
+	cmd.Flags().String("stream-field", "", "Field to use for stream identification (empty = use default priority)")
 
 	return cmd
 }
 
-func runIngestLogs(filename, orgID, bucket, outputDir string) error {
+func runIngestLogs(filename, orgID, bucket, outputDir, streamField string) error {
 	ctx := context.Background()
 
 	// Validate input file exists
@@ -105,7 +111,7 @@ func runIngestLogs(filename, orgID, bucket, outputDir string) error {
 	schema := reader.GetSchema()
 
 	// Create parquet writer using the same factory as production
-	writer, err := factories.NewLogsWriter(outputDir, schema, 10000, parquetwriter.DefaultBackend)
+	writer, err := factories.NewLogsWriter(outputDir, schema, 10000, parquetwriter.DefaultBackend, streamField)
 	if err != nil {
 		return fmt.Errorf("failed to create parquet writer: %w", err)
 	}

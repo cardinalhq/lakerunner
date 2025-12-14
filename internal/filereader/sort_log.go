@@ -66,20 +66,43 @@ func putLogSortKey(key *LogSortKey) {
 	logSortKeyPool.Put(key)
 }
 
-// LogSortKeyProvider creates LogSortKey instances from rows
-type LogSortKeyProvider struct{}
+// LogSortKeyProvider creates LogSortKey instances from rows.
+// If StreamField is set, that field is used for the service identifier.
+// Otherwise, falls back to resource_customer_domain then resource_service_name.
+type LogSortKeyProvider struct {
+	StreamField string // Optional: specific field to use for stream identification
+}
+
+func NewLogSortKeyProvider(streamField string) *LogSortKeyProvider {
+	return &LogSortKeyProvider{
+		StreamField: streamField,
+	}
+}
 
 // MakeKey implements SortKeyProvider interface for logs
 func (p *LogSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
 	key := getLogSortKey()
-	key.ServiceIdentifier, key.ServiceOk = getServiceIdentifier(row)
+	key.ServiceIdentifier, key.ServiceOk = p.getServiceIdentifier(row)
 	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
 	return key
 }
 
-// getServiceIdentifier returns resource_customer_domain if set, otherwise resource_service_name.
-// Returns empty string and true if neither is set (empty string sorts before any non-empty string).
-func getServiceIdentifier(row pipeline.Row) (string, bool) {
+// getServiceIdentifier returns the stream identifier from the row.
+// If StreamField is configured, uses that field.
+// Otherwise falls back to resource_customer_domain > resource_service_name.
+// Returns empty string and true if no field is set (empty string sorts before any non-empty string).
+func (p *LogSortKeyProvider) getServiceIdentifier(row pipeline.Row) (string, bool) {
+	// If a specific stream field is configured, use it
+	if p.StreamField != "" {
+		rowKey := wkk.NewRowKey(p.StreamField)
+		if val, ok := row[rowKey].(string); ok && val != "" {
+			return val, true
+		}
+		// Field not present or empty, return empty string
+		return "", true
+	}
+
+	// Default fallback: resource_customer_domain > resource_service_name
 	if domain, ok := row[wkk.RowKeyResourceCustomerDomain].(string); ok && domain != "" {
 		return domain, true
 	}
@@ -88,12 +111,4 @@ func getServiceIdentifier(row pipeline.Row) (string, bool) {
 	}
 	// Neither is set, use empty string (per user requirement)
 	return "", true
-}
-
-// MakeLogSortKey creates a pooled LogSortKey from a row
-func MakeLogSortKey(row pipeline.Row) *LogSortKey {
-	key := getLogSortKey()
-	key.ServiceIdentifier, key.ServiceOk = getServiceIdentifier(row)
-	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
-	return key
 }

@@ -23,6 +23,10 @@ import (
 
 // LogStreamConfig holds configuration for log stream identification.
 // Stored in DB as: {"field_name": "resource_service_name"}
+//
+// The stream field is always indexed with TrigramFull (IndexTrigramExact)
+// to support both exact matching and substring/regex queries.
+// This assumption is hardcoded and does not need to be stored in config.
 type LogStreamConfig struct {
 	FieldName string `json:"field_name"`
 }

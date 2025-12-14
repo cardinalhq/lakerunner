@@ -45,6 +45,7 @@ func createLogReaderStack(
 	orgID uuid.UUID,
 	profile storageprofile.StorageProfile,
 	rows []lrdb.LogSeg,
+	streamField string,
 ) (*logReaderStackResult, error) {
 	ll := logctx.FromContext(ctx)
 
@@ -111,7 +112,7 @@ func createLogReaderStack(
 		sourceSortedWithCompatibleKey := row.SortVersion == lrdb.CurrentLogSortVersion
 
 		if !sourceSortedWithCompatibleKey {
-			keyProvider := &filereader.LogSortKeyProvider{}
+			keyProvider := filereader.NewLogSortKeyProvider(streamField)
 			sortingReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 			if err != nil {
 				_ = reader.Close()
@@ -128,7 +129,7 @@ func createLogReaderStack(
 	}
 
 	// Always use merge sort reader for consistency
-	keyProvider := &filereader.LogSortKeyProvider{}
+	keyProvider := filereader.NewLogSortKeyProvider(streamField)
 	mergedReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 	if err != nil {
 		return nil, fmt.Errorf("creating mergesort reader: %w", err)

@@ -132,7 +132,7 @@ func BenchmarkWriteFromReader(b *testing.B) {
 		schema := translatingReader.GetSchema()
 
 		// Create writer
-		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000, parquetwriter.DefaultBackend)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000, parquetwriter.DefaultBackend, "")
 		require.NoError(b, err)
 
 		// Benchmark the write operation
@@ -229,7 +229,7 @@ func BenchmarkMemoryLeaks(b *testing.B) {
 		schema := translatingReader.GetSchema()
 
 		// Create writer
-		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000, parquetwriter.DefaultBackend)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000, parquetwriter.DefaultBackend, "")
 		require.NoError(b, err)
 
 		// Process all batches
@@ -321,7 +321,7 @@ func BenchmarkDetailedMemoryProfile(b *testing.B) {
 		schema := translatingReader.GetSchema()
 
 		// Stage 3: Create writer
-		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000, parquetwriter.DefaultBackend)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 10000, parquetwriter.DefaultBackend, "")
 		require.NoError(b, err)
 
 		runtime.GC()

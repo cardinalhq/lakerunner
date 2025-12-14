@@ -29,6 +29,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -296,6 +297,9 @@ func (p *LogCompactionProcessor) ShouldEmitImmediately(msg *messages.LogCompacti
 }
 
 func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.LogCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.LogSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
+	// Get stream field config for this organization
+	streamField := configservice.Global().GetLogStreamConfig(ctx, compactionKey.OrganizationID).FieldName
+
 	params := logProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
@@ -303,6 +307,7 @@ func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, t
 		StorageProfile: storageProfile,
 		ActiveSegments: activeSegments,
 		MaxRecords:     recordCountEstimate * 2, // safety net
+		StreamField:    streamField,
 	}
 
 	results, err := processLogsWithSorting(ctx, params)

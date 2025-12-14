@@ -107,7 +107,7 @@ func BenchmarkBaselineParquetWrite(b *testing.B) {
 		sampler.Start()
 		b.StartTimer()
 
-		writer, err := factories.NewLogsWriter(tmpDir, schema, 100000, parquetwriter.DefaultBackend)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 100000, parquetwriter.DefaultBackend, "")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -220,7 +220,7 @@ func createTestLogParquet(b *testing.B, tmpDir string, numLogs int) (filename st
 
 	batches, schema, totalLogs, totalBytes := generateTestBatches(b, numLogs)
 
-	writer, err := factories.NewLogsWriter(tmpDir, schema, int64(numLogs), parquetwriter.DefaultBackend)
+	writer, err := factories.NewLogsWriter(tmpDir, schema, int64(numLogs), parquetwriter.DefaultBackend, "")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func BenchmarkBaselineReadWritePipeline(b *testing.B) {
 
 		// Write stage
 		timer.StartStage("write")
-		writer, err := factories.NewLogsWriter(outputDir, schema, recordCount, parquetwriter.DefaultBackend)
+		writer, err := factories.NewLogsWriter(outputDir, schema, recordCount, parquetwriter.DefaultBackend, "")
 		if err != nil {
 			b.Fatal(err)
 		}

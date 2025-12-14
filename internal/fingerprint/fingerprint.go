@@ -105,7 +105,7 @@ func ToFingerprints(tagValuesByName map[string]mapset.Set[string]) mapset.Set[in
 
 			// Add trigram fingerprints if configured
 			if flags.HasTrigram() {
-				for _, trigram := range ToTrigrams(tagValue) {
+				for _, trigram := range toTrigrams(tagValue) {
 					fingerprints.Add(ComputeFingerprint(tagName, trigram))
 				}
 			}
@@ -116,7 +116,7 @@ func ToFingerprints(tagValuesByName map[string]mapset.Set[string]) mapset.Set[in
 }
 
 // ToTrigrams builds the set of 3-character substrings plus the wildcard.
-func ToTrigrams(str string) []string {
+func toTrigrams(str string) []string {
 	ngrams := make(map[string]struct{})
 	for i := 0; i < len(str); {
 		j, cnt := i, 0
@@ -174,13 +174,17 @@ const (
 type FieldFingerprinter struct {
 	existsFpCache    map[string]int64
 	fullValueFpCache map[string]int64 // Cache for fieldName:value -> fingerprint (bounded to maxFullValueCacheSize)
+	streamField      string           // Org-specific stream field to treat as IndexTrigramExact
 }
 
 // NewFieldFingerprinter creates a new fingerprinter with empty caches.
-func NewFieldFingerprinter() *FieldFingerprinter {
+// If streamField is non-empty, that field will be treated as IndexTrigramExact
+// in addition to the static IndexedDimensions.
+func NewFieldFingerprinter(streamField string) *FieldFingerprinter {
 	return &FieldFingerprinter{
 		existsFpCache:    make(map[string]int64),
 		fullValueFpCache: make(map[string]int64),
+		streamField:      streamField,
 	}
 }
 
@@ -204,8 +208,14 @@ func (f *FieldFingerprinter) GenerateFingerprints(row pipeline.Row) []int64 {
 		}
 		fingerprints.Add(existsFp)
 
-		// Check if this field should be indexed for value-based fingerprints (O(1) lookup)
+		// Check if this field should be indexed for value-based fingerprints
+		// First check the static map, then check the org-specific stream field
 		flags, isIndexed := IndexedDimensions[fieldName]
+		if !isIndexed && f.streamField != "" && fieldName == f.streamField {
+			// Org-specific stream field always gets IndexTrigramExact
+			flags = IndexTrigramExact
+			isIndexed = true
+		}
 		if !isIndexed {
 			continue
 		}
@@ -243,7 +253,7 @@ func (f *FieldFingerprinter) GenerateFingerprints(row pipeline.Row) []int64 {
 
 		// Add trigram fingerprints if configured
 		if flags.HasTrigram() {
-			for _, trigram := range ToTrigrams(strValue) {
+			for _, trigram := range toTrigrams(strValue) {
 				fingerprints.Add(ComputeFingerprint(fieldName, trigram))
 			}
 		}

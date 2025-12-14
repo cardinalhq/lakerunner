@@ -103,7 +103,7 @@ func BenchmarkReadFingerprintWrite(b *testing.B) {
 		schema.AddColumn(wkk.RowKeyCFingerprint, wkk.RowKeyCFingerprint, filereader.DataTypeInt64, true)
 
 		// Create Parquet writer
-		writer, err := factories.NewLogsWriter(tmpDir, schema, 100000, parquetwriter.DefaultBackend)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 100000, parquetwriter.DefaultBackend, "")
 		if err != nil {
 			_ = reader.Close()
 			b.Fatal(err)
@@ -253,7 +253,7 @@ func BenchmarkParquetWriteOnly(b *testing.B) {
 
 		b.StartTimer()
 
-		writer, err := factories.NewLogsWriter(tmpDir, schema, 100000, parquetwriter.DefaultBackend)
+		writer, err := factories.NewLogsWriter(tmpDir, schema, 100000, parquetwriter.DefaultBackend, "")
 		if err != nil {
 			b.Fatal(err)
 		}
