@@ -177,9 +177,9 @@ func NewWorkerService(
 		return nil, fmt.Errorf("failed to create shared S3DB pool: %w", err)
 	}
 
-	metricsCM := NewCacheManager(downloader, "metrics", sp, s3Pool, disableTableCache)
-	logsCM := NewCacheManager(downloader, "logs", sp, s3Pool, disableTableCache)
-	tracesCM := NewCacheManager(downloader, "traces", sp, s3Pool, disableTableCache)
+	metricsCM := NewCacheManager(downloader, "metrics", sp, s3Pool, disableTableCache, parquetCache)
+	logsCM := NewCacheManager(downloader, "logs", sp, s3Pool, disableTableCache, parquetCache)
+	tracesCM := NewCacheManager(downloader, "traces", sp, s3Pool, disableTableCache, parquetCache)
 
 	// Register metrics once for all cache managers
 	if err := RegisterCacheMetrics(metricsCM, logsCM, tracesCM); err != nil {

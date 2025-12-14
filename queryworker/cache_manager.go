@@ -140,7 +140,8 @@ type CacheManager struct {
 	downloader             DownloadBatchFunc
 	storageProfileProvider storageprofile.StorageProfileProvider
 	dataset                string
-	disableTableCache      bool // when true, skip DuckDB cache entirely
+	disableTableCache      bool              // when true, skip DuckDB cache entirely
+	parquetCache           *ParquetFileCache // shared parquet file cache for cleanup coordination
 
 	// in-memory presence + LRU tracking
 	mu         sync.RWMutex
@@ -178,7 +179,7 @@ const (
 	DefaultDiskUsageBytes = 8 << 30 // 8 GB
 )
 
-func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider, s3Pool *duckdbx.S3DB, disableTableCache bool) *CacheManager {
+func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider, s3Pool *duckdbx.S3DB, disableTableCache bool, parquetCache *ParquetFileCache) *CacheManager {
 	var ddb *DDBSink
 	var err error
 
@@ -200,6 +201,7 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		maxRows:                  MaxRowsDefault,
 		downloader:               dl,
 		disableTableCache:        disableTableCache,
+		parquetCache:             parquetCache,
 		present:                  make(map[int64]struct{}, ChannelBufferSize),
 		lastAccess:               make(map[int64]time.Time, ChannelBufferSize),
 		inflight:                 make(map[int64]*struct{}, ChannelBufferSize),
@@ -936,7 +938,7 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			}
 			parquetSpan.End()
 
-			// Mark present, update lastAccess, release inflight, and delete local files
+			// Mark present, update lastAccess, release inflight, and mark files for delayed deletion
 			now := time.Now()
 			w.mu.Lock()
 			for _, id := range job.ids {
@@ -948,8 +950,14 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			}
 			w.mu.Unlock()
 
+			// Mark files for delayed deletion instead of immediate removal.
+			// This allows concurrent queries to finish using the files.
 			for _, p := range job.paths {
-				_ = os.Remove(p) // best-effort cleanup
+				if w.parquetCache != nil {
+					w.parquetCache.MarkForDeletion(p)
+				} else {
+					_ = os.Remove(p) // fallback to immediate delete if no cache
+				}
 			}
 
 			ingestSpan.SetAttributes(attribute.Int("segments_cached", len(job.ids)))

@@ -35,6 +35,11 @@ const (
 
 	// ParquetCacheBaseDir is the base directory for cached parquet files.
 	ParquetCacheBaseDir = "db"
+
+	// DefaultDeletionDelay is how long to wait before actually deleting a file
+	// after it's been marked for deletion. This allows concurrent queries to
+	// finish using the file before it's removed.
+	DefaultDeletionDelay = 1 * time.Minute
 )
 
 // ParquetFileCache manages downloaded parquet files with TTL-based cleanup.
@@ -59,9 +64,10 @@ type ParquetFileCache struct {
 }
 
 type cachedFileInfo struct {
-	path       string
-	size       int64
-	lastAccess time.Time
+	path        string
+	size        int64
+	lastAccess  time.Time
+	deleteAfter time.Time // if non-zero, file is marked for deletion after this time
 }
 
 // NewParquetFileCache creates a new parquet file cache with TTL-based cleanup.
@@ -181,11 +187,18 @@ func (pfc *ParquetFileCache) TouchFile(path string) bool {
 
 // HasFile checks if a file exists in the cache and touches it if found.
 // This is used by the downloader to check before downloading.
+// Returns false for files marked for deletion (even if still on disk).
 func (pfc *ParquetFileCache) HasFile(path string) bool {
 	// First check our tracking
 	pfc.mu.RLock()
-	_, tracked := pfc.files[path]
+	info, tracked := pfc.files[path]
+	markedForDeletion := tracked && !info.deleteAfter.IsZero()
 	pfc.mu.RUnlock()
+
+	// If marked for deletion, treat as not present (will be re-downloaded)
+	if markedForDeletion {
+		return false
+	}
 
 	if tracked {
 		// Touch to keep alive
@@ -195,7 +208,7 @@ func (pfc *ParquetFileCache) HasFile(path string) bool {
 
 	// File might exist but not be tracked (e.g., from previous run)
 	// Check filesystem and track if found
-	if info, err := os.Stat(path); err == nil {
+	if stat, err := os.Stat(path); err == nil {
 		pfc.mu.Lock()
 		defer pfc.mu.Unlock()
 
@@ -203,11 +216,11 @@ func (pfc *ParquetFileCache) HasFile(path string) bool {
 		if _, exists := pfc.files[path]; !exists {
 			pfc.files[path] = &cachedFileInfo{
 				path:       path,
-				size:       info.Size(),
+				size:       stat.Size(),
 				lastAccess: time.Now(),
 			}
 			pfc.fileCount++
-			pfc.totalBytes += info.Size()
+			pfc.totalBytes += stat.Size()
 		}
 		return true
 	}
@@ -227,6 +240,18 @@ func (pfc *ParquetFileCache) RemoveFile(path string) {
 
 	// Best-effort delete from disk
 	_ = os.Remove(path)
+}
+
+// MarkForDeletion marks a file for delayed deletion. The file will be deleted
+// after DefaultDeletionDelay has passed. Until then, the file remains on disk
+// but HasFile will return false, causing re-downloads if needed.
+func (pfc *ParquetFileCache) MarkForDeletion(path string) {
+	pfc.mu.Lock()
+	defer pfc.mu.Unlock()
+
+	if info, exists := pfc.files[path]; exists {
+		info.deleteAfter = time.Now().Add(DefaultDeletionDelay)
+	}
 }
 
 // FileCount returns the current number of tracked files.
@@ -260,7 +285,8 @@ func (pfc *ParquetFileCache) cleanupLoop(ctx context.Context) {
 	}
 }
 
-// cleanupExpiredFiles removes files that haven't been accessed within the TTL.
+// cleanupExpiredFiles removes files that haven't been accessed within the TTL
+// or have been marked for deletion and their deletion time has passed.
 func (pfc *ParquetFileCache) cleanupExpiredFiles() {
 	now := time.Now()
 	cutoff := now.Add(-pfc.fileTTL)
@@ -269,7 +295,13 @@ func (pfc *ParquetFileCache) cleanupExpiredFiles() {
 
 	pfc.mu.RLock()
 	for path, info := range pfc.files {
+		// Remove if TTL expired
 		if info.lastAccess.Before(cutoff) {
+			toRemove = append(toRemove, path)
+			continue
+		}
+		// Remove if marked for deletion and delay has passed
+		if !info.deleteAfter.IsZero() && now.After(info.deleteAfter) {
 			toRemove = append(toRemove, path)
 		}
 	}
