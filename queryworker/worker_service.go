@@ -206,8 +206,8 @@ func NewWorkerService(
 }
 
 func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}
@@ -270,8 +270,8 @@ func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql
 }
 
 func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}
@@ -303,8 +303,8 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 }
 
 func tagValuesMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}
