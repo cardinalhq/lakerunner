@@ -333,3 +333,326 @@ func TestCacheKey(t *testing.T) {
 		assert.NotEqual(t, key1, key3)
 	})
 }
+
+func TestParquetFileCache_removeFile(t *testing.T) {
+	t.Parallel()
+
+	t.Run("removes tracked file from cache and disk", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		region := "us-east-1"
+		bucket := "test-bucket"
+		objectID := "test/file.parquet"
+
+		// Create and track a file
+		localPath, _, err := pfc.GetOrPrepare(region, bucket, objectID)
+		require.NoError(t, err)
+		err = os.WriteFile(localPath, []byte("test content"), 0644)
+		require.NoError(t, err)
+		err = pfc.TrackFile(region, bucket, objectID)
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(1), pfc.FileCount())
+		assert.Equal(t, int64(12), pfc.TotalBytes())
+
+		// Remove the file
+		pfc.removeFile(localPath)
+
+		// Verify tracking is cleared
+		assert.Equal(t, int64(0), pfc.FileCount())
+		assert.Equal(t, int64(0), pfc.TotalBytes())
+
+		// Verify file is deleted from disk
+		_, err = os.Stat(localPath)
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("handles non-existent file gracefully", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		// Should not panic when removing non-tracked file
+		pfc.removeFile("/nonexistent/path/file.parquet")
+
+		assert.Equal(t, int64(0), pfc.FileCount())
+	})
+}
+
+func TestParquetFileCache_cleanupExpiredFiles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("removes files past TTL", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		// Use very short TTL for testing
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 1*time.Millisecond, 1*time.Hour)
+		require.NoError(t, err)
+		defer pfc.Close()
+
+		region := "us-east-1"
+		bucket := "test-bucket"
+
+		// Create and track a file
+		localPath, _, err := pfc.GetOrPrepare(region, bucket, "test/file.parquet")
+		require.NoError(t, err)
+		err = os.WriteFile(localPath, []byte("test"), 0644)
+		require.NoError(t, err)
+		err = pfc.TrackFile(region, bucket, "test/file.parquet")
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(1), pfc.FileCount())
+
+		// Wait for TTL to expire
+		time.Sleep(10 * time.Millisecond)
+
+		// Trigger cleanup
+		pfc.cleanupExpiredFiles()
+
+		// File should be removed
+		assert.Equal(t, int64(0), pfc.FileCount())
+		_, err = os.Stat(localPath)
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("removes files marked for deletion after delay", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		// Use long TTL but we'll mark for deletion
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 1*time.Hour, 1*time.Hour)
+		require.NoError(t, err)
+		defer pfc.Close()
+
+		region := "us-east-1"
+		bucket := "test-bucket"
+		objectID := "test/file.parquet"
+
+		// Create and track a file
+		localPath, _, err := pfc.GetOrPrepare(region, bucket, objectID)
+		require.NoError(t, err)
+		err = os.WriteFile(localPath, []byte("test"), 0644)
+		require.NoError(t, err)
+		err = pfc.TrackFile(region, bucket, objectID)
+		require.NoError(t, err)
+
+		// Mark for deletion
+		pfc.MarkForDeletion(region, bucket, objectID)
+
+		// Manually set deleteAfter to past time to simulate delay passing
+		pfc.mu.Lock()
+		key := CacheKey{Region: region, Bucket: bucket, ObjectID: objectID}
+		if path, ok := pfc.keyToPath[key]; ok {
+			if info, exists := pfc.files[path]; exists {
+				info.deleteAfter = time.Now().Add(-1 * time.Second)
+			}
+		}
+		pfc.mu.Unlock()
+
+		// Trigger cleanup
+		pfc.cleanupExpiredFiles()
+
+		// File should be removed
+		assert.Equal(t, int64(0), pfc.FileCount())
+	})
+
+	t.Run("keeps files within TTL", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 1*time.Hour, 1*time.Hour)
+		require.NoError(t, err)
+		defer pfc.Close()
+
+		region := "us-east-1"
+		bucket := "test-bucket"
+
+		// Create and track a file
+		localPath, _, err := pfc.GetOrPrepare(region, bucket, "test/file.parquet")
+		require.NoError(t, err)
+		err = os.WriteFile(localPath, []byte("test"), 0644)
+		require.NoError(t, err)
+		err = pfc.TrackFile(region, bucket, "test/file.parquet")
+		require.NoError(t, err)
+
+		// Trigger cleanup immediately
+		pfc.cleanupExpiredFiles()
+
+		// File should still be there
+		assert.Equal(t, int64(1), pfc.FileCount())
+		_, err = os.Stat(localPath)
+		assert.NoError(t, err)
+	})
+}
+
+func TestParquetFileCache_cleanupEmptyDirs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("removes empty directories", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		region := "us-east-1"
+		bucket := "test-bucket"
+		objectID := "deep/nested/path/file.parquet"
+
+		// Create and track a file in a nested directory
+		localPath, _, err := pfc.GetOrPrepare(region, bucket, objectID)
+		require.NoError(t, err)
+		err = os.WriteFile(localPath, []byte("test"), 0644)
+		require.NoError(t, err)
+		err = pfc.TrackFile(region, bucket, objectID)
+		require.NoError(t, err)
+
+		// Remove the file directly (leaving empty directories)
+		err = os.Remove(localPath)
+		require.NoError(t, err)
+
+		// Verify parent directory exists before cleanup
+		parentDir := filepath.Dir(localPath)
+		_, err = os.Stat(parentDir)
+		require.NoError(t, err)
+
+		// Cleanup empty directories
+		pfc.cleanupEmptyDirs()
+
+		// Parent directory should be removed (it's empty)
+		_, err = os.Stat(parentDir)
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("keeps non-empty directories", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		region := "us-east-1"
+		bucket := "test-bucket"
+
+		// Create and track a file
+		localPath, _, err := pfc.GetOrPrepare(region, bucket, "test/file.parquet")
+		require.NoError(t, err)
+		err = os.WriteFile(localPath, []byte("test"), 0644)
+		require.NoError(t, err)
+		err = pfc.TrackFile(region, bucket, "test/file.parquet")
+		require.NoError(t, err)
+
+		// Cleanup empty directories
+		pfc.cleanupEmptyDirs()
+
+		// Directory should still exist (has file in it)
+		parentDir := filepath.Dir(localPath)
+		_, err = os.Stat(parentDir)
+		assert.NoError(t, err)
+	})
+
+	t.Run("does not remove base directory", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		// Cleanup on empty cache
+		pfc.cleanupEmptyDirs()
+
+		// Base directory should still exist
+		_, err := os.Stat(pfc.baseDir)
+		assert.NoError(t, err)
+	})
+}
+
+func TestParquetFileCache_ScanExistingFiles(t *testing.T) {
+	t.Parallel()
+
+	t.Run("discovers existing parquet files", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+
+		// Create some files before creating the cache
+		nestedDir := filepath.Join(baseDir, "us-east-1", "bucket", "path")
+		err := os.MkdirAll(nestedDir, 0755)
+		require.NoError(t, err)
+
+		file1 := filepath.Join(nestedDir, "file1.parquet")
+		file2 := filepath.Join(nestedDir, "file2.parquet")
+		err = os.WriteFile(file1, []byte("content1"), 0644)
+		require.NoError(t, err)
+		err = os.WriteFile(file2, []byte("content2content2"), 0644)
+		require.NoError(t, err)
+
+		// Create cache
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0, 0)
+		require.NoError(t, err)
+		defer pfc.Close()
+
+		// Initially no files tracked
+		assert.Equal(t, int64(0), pfc.FileCount())
+
+		// Scan for existing files
+		err = pfc.ScanExistingFiles()
+		require.NoError(t, err)
+
+		// Should find both files
+		assert.Equal(t, int64(2), pfc.FileCount())
+		assert.Equal(t, int64(8+16), pfc.TotalBytes()) // "content1" (8) + "content2content2" (16)
+	})
+
+	t.Run("ignores non-parquet files", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+
+		// Create mixed files
+		err := os.MkdirAll(filepath.Join(baseDir, "data"), 0755)
+		require.NoError(t, err)
+
+		err = os.WriteFile(filepath.Join(baseDir, "data", "file.parquet"), []byte("parquet"), 0644)
+		require.NoError(t, err)
+		err = os.WriteFile(filepath.Join(baseDir, "data", "file.txt"), []byte("text"), 0644)
+		require.NoError(t, err)
+		err = os.WriteFile(filepath.Join(baseDir, "data", "file.json"), []byte("json"), 0644)
+		require.NoError(t, err)
+
+		// Create cache and scan
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0, 0)
+		require.NoError(t, err)
+		defer pfc.Close()
+
+		err = pfc.ScanExistingFiles()
+		require.NoError(t, err)
+
+		// Should only find the parquet file
+		assert.Equal(t, int64(1), pfc.FileCount())
+		assert.Equal(t, int64(7), pfc.TotalBytes()) // "parquet" is 7 bytes
+	})
+
+	t.Run("does not duplicate already tracked files", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		region := "us-east-1"
+		bucket := "test-bucket"
+		objectID := "test/file.parquet"
+
+		// Create and track a file
+		localPath, _, err := pfc.GetOrPrepare(region, bucket, objectID)
+		require.NoError(t, err)
+		err = os.WriteFile(localPath, []byte("test"), 0644)
+		require.NoError(t, err)
+		err = pfc.TrackFile(region, bucket, objectID)
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(1), pfc.FileCount())
+
+		// Scan should not duplicate
+		err = pfc.ScanExistingFiles()
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(1), pfc.FileCount())
+		assert.Equal(t, int64(4), pfc.TotalBytes())
+	})
+
+	t.Run("handles empty directory", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		err := pfc.ScanExistingFiles()
+		require.NoError(t, err)
+
+		assert.Equal(t, int64(0), pfc.FileCount())
+	})
+}
