@@ -22,6 +22,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
@@ -29,6 +30,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/adminconfig"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 )
+
+const testAPIKey = "ak_test123456789"
 
 const bufSize = 1024 * 1024
 
@@ -38,15 +41,22 @@ func bufDialer(ctx context.Context, address string) (net.Conn, error) {
 	return lis.Dial()
 }
 
+func authContext() context.Context {
+	md := metadata.Pairs("authorization", "Bearer "+testAPIKey)
+	return metadata.NewOutgoingContext(context.Background(), md)
+}
+
 func setupTestServer(t *testing.T) (adminproto.AdminServiceClient, func()) {
 	lis = bufconn.Listen(bufSize)
 
-	// Create mock config provider for backward compatibility (no auth required)
+	// Create mock config provider with a valid test key
 	configProvider := &mockAdminConfigProvider{
-		validKeys: map[string]*adminconfig.AdminAPIKey{},
+		validKeys: map[string]*adminconfig.AdminAPIKey{
+			testAPIKey: {Name: "test-key"},
+		},
 	}
 
-	// Create auth interceptor with empty config (allows all requests)
+	// Create auth interceptor
 	authInterceptor := newAuthInterceptor(configProvider)
 
 	server := grpc.NewServer(
@@ -89,7 +99,7 @@ func TestPing(t *testing.T) {
 	client, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := authContext()
 
 	// Test empty message
 	resp, err := client.Ping(ctx, &adminproto.PingRequest{})
@@ -151,9 +161,9 @@ func TestInQueueStatusWithoutDB(t *testing.T) {
 	client, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := authContext()
 
-	// Should return empty response for backward compatibility
+	// Should return empty response
 	resp, err := client.InQueueStatus(ctx, &adminproto.InQueueStatusRequest{})
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
@@ -193,7 +203,7 @@ func TestListOrganizationsWithoutDB(t *testing.T) {
 	client, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := authContext()
 
 	_, err := client.ListOrganizations(ctx, &adminproto.ListOrganizationsRequest{})
 	if err == nil {
@@ -282,7 +292,7 @@ func TestCreateOrganizationWithoutDB(t *testing.T) {
 	client, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := authContext()
 
 	_, err := client.CreateOrganization(ctx, &adminproto.CreateOrganizationRequest{Name: "test", Enabled: true})
 	if err == nil {
