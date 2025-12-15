@@ -16,9 +16,13 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base32"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -108,5 +112,62 @@ func init() {
 
 	serveCmd.Flags().StringVar(&adminGRPCPort, "grpc-port", ":9091", "gRPC server port")
 	adminAPICmd.AddCommand(serveCmd)
+
+	createInitialKeyCmd := &cobra.Command{
+		Use:   "create-initial-key",
+		Short: "Create the initial admin API key (only works if no keys exist)",
+		Long:  `Generates a secure random API key and stores it in the database. Only works if no admin API keys already exist.`,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			ctx := context.Background()
+
+			cdb, err := configdb.ConfigDBStore(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to connect to config database: %w", err)
+			}
+
+			// Check if any keys already exist
+			existingKeys, err := cdb.GetAllAdminAPIKeys(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to check existing keys: %w", err)
+			}
+
+			if len(existingKeys) > 0 {
+				return fmt.Errorf("admin API keys already exist (%d keys); cannot create initial key", len(existingKeys))
+			}
+
+			// Generate a secure random key
+			keyBytes := make([]byte, 20) // 20 bytes = 32 base32 chars
+			if _, err := rand.Read(keyBytes); err != nil {
+				return fmt.Errorf("failed to generate random key: %w", err)
+			}
+			apiKey := "ak_" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(keyBytes))
+
+			// Hash the key for storage
+			h := sha256.Sum256([]byte(apiKey))
+			keyHash := fmt.Sprintf("%x", h)
+
+			// Store in database
+			description := "Initial admin API key"
+			_, err = cdb.CreateAdminAPIKey(ctx, configdb.CreateAdminAPIKeyParams{
+				KeyHash:     keyHash,
+				Name:        "initial-admin-key",
+				Description: &description,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create admin API key: %w", err)
+			}
+
+			fmt.Println("Initial admin API key created successfully.")
+			fmt.Println("")
+			fmt.Println("API Key (save this, it cannot be retrieved later):")
+			fmt.Println(apiKey)
+			fmt.Println("")
+			fmt.Println("Set this as LAKERUNNER_ADMIN_API_KEY or use --api-key with lakectl.")
+
+			return nil
+		},
+	}
+	adminAPICmd.AddCommand(createInitialKeyCmd)
+
 	rootCmd.AddCommand(adminAPICmd)
 }
