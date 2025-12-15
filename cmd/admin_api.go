@@ -59,9 +59,6 @@ func init() {
 				}
 			}()
 
-			// Start disk usage monitoring
-			go diskUsageLoop(ctx)
-
 			// Start pprof server
 			go debugging.RunPprof(ctx)
 
