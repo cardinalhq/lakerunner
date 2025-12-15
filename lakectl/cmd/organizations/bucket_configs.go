@@ -21,15 +21,15 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc/metadata"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
+	"github.com/cardinalhq/lakerunner/lakectl/cmd/adminclient"
 )
 
 var (
 	cloudProvider string
 	region        string
-	endpoint      string
+	bcEndpoint    string
 	role          string
 	usePathStyle  bool
 	insecureTLS   bool
@@ -45,7 +45,7 @@ func getBucketConfigsCmd() *cobra.Command {
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List all bucket configurations",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runListBucketConfigs()
 		},
 	}
@@ -56,14 +56,14 @@ func getBucketConfigsCmd() *cobra.Command {
 		Use:   "create <bucket-name>",
 		Short: "Create a new bucket configuration",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			bucketName = args[0]
 			return runCreateBucketConfig()
 		},
 	}
 	createCmd.Flags().StringVar(&cloudProvider, "cloud-provider", "", "Cloud provider (aws/gcp/azure)")
 	createCmd.Flags().StringVar(&region, "region", "", "Region")
-	createCmd.Flags().StringVar(&endpoint, "endpoint", "", "Custom endpoint")
+	createCmd.Flags().StringVar(&bcEndpoint, "endpoint", "", "Custom endpoint")
 	createCmd.Flags().StringVar(&role, "role", "", "IAM role")
 	createCmd.Flags().BoolVar(&usePathStyle, "use-path-style", false, "Use path-style S3 URLs")
 	createCmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false, "Allow insecure TLS connections")
@@ -74,7 +74,7 @@ func getBucketConfigsCmd() *cobra.Command {
 		Use:   "delete <bucket-name>",
 		Short: "Delete a bucket configuration",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			bucketName = args[0]
 			return runDeleteBucketConfig()
 		},
@@ -86,20 +86,18 @@ func getBucketConfigsCmd() *cobra.Command {
 
 func runListBucketConfigs() error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for bucket configs")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.ListBucketConfigurations(ctx, &adminproto.ListBucketConfigurationsRequest{})
 	if err != nil {
@@ -125,26 +123,24 @@ func runListBucketConfigs() error {
 
 func runCreateBucketConfig() error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for bucket configs")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
+	ctx = adminclient.AttachAPIKey(ctx)
+
 	resp, err := client.CreateBucketConfiguration(ctx, &adminproto.CreateBucketConfigurationRequest{
 		BucketName:    bucketName,
 		CloudProvider: cloudProvider,
 		Region:        region,
-		Endpoint:      endpoint,
+		Endpoint:      bcEndpoint,
 		Role:          role,
 		UsePathStyle:  usePathStyle,
 		InsecureTls:   insecureTLS,
@@ -175,20 +171,18 @@ func runCreateBucketConfig() error {
 
 func runDeleteBucketConfig() error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for bucket configs")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	_, err = client.DeleteBucketConfiguration(ctx, &adminproto.DeleteBucketConfigurationRequest{
 		BucketName: bucketName,

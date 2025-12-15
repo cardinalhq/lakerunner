@@ -21,9 +21,9 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc/metadata"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
+	"github.com/cardinalhq/lakerunner/lakectl/cmd/adminclient"
 )
 
 var (
@@ -42,7 +42,7 @@ func getAPIKeysCmd() *cobra.Command {
 		Use:   "list <organization-id>",
 		Short: "List API keys for an organization",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			orgID := args[0]
 			return runListAPIKeys(orgID)
 		},
@@ -54,7 +54,7 @@ func getAPIKeysCmd() *cobra.Command {
 		Use:   "create <organization-id>",
 		Short: "Create a new API key for an organization",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			orgID := args[0]
 			return runCreateAPIKey(orgID)
 		},
@@ -69,7 +69,7 @@ func getAPIKeysCmd() *cobra.Command {
 		Use:   "delete <api-key-id>",
 		Short: "Delete an API key",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			keyID := args[0]
 			return runDeleteAPIKey(keyID)
 		},
@@ -81,20 +81,18 @@ func getAPIKeysCmd() *cobra.Command {
 
 func runListAPIKeys(orgID string) error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for API keys")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.ListOrganizationAPIKeys(ctx, &adminproto.ListOrganizationAPIKeysRequest{
 		OrganizationId: orgID,
@@ -120,20 +118,18 @@ func runListAPIKeys(orgID string) error {
 
 func runCreateAPIKey(orgID string) error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for API keys")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.CreateOrganizationAPIKey(ctx, &adminproto.CreateOrganizationAPIKeyRequest{
 		OrganizationId: orgID,
@@ -159,20 +155,18 @@ func runCreateAPIKey(orgID string) error {
 
 func runDeleteAPIKey(keyID string) error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for API keys")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	_, err = client.DeleteOrganizationAPIKey(ctx, &adminproto.DeleteOrganizationAPIKeyRequest{
 		Id: keyID,

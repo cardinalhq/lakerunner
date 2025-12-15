@@ -21,9 +21,9 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc/metadata"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
+	"github.com/cardinalhq/lakerunner/lakectl/cmd/adminclient"
 )
 
 var (
@@ -44,7 +44,7 @@ func getPrefixMappingsCmd() *cobra.Command {
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List bucket prefix mappings",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runListPrefixMappings()
 		},
 	}
@@ -56,7 +56,7 @@ func getPrefixMappingsCmd() *cobra.Command {
 	createCmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a new bucket prefix mapping",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			return runCreatePrefixMapping()
 		},
 	}
@@ -75,7 +75,7 @@ func getPrefixMappingsCmd() *cobra.Command {
 		Use:   "delete <mapping-id>",
 		Short: "Delete a bucket prefix mapping",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			mappingID = args[0]
 			return runDeletePrefixMapping()
 		},
@@ -87,20 +87,18 @@ func getPrefixMappingsCmd() *cobra.Command {
 
 func runListPrefixMappings() error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for prefix mappings")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.ListBucketPrefixMappings(ctx, &adminproto.ListBucketPrefixMappingsRequest{
 		BucketName:     filterBucket,
@@ -129,20 +127,18 @@ func runListPrefixMappings() error {
 
 func runCreatePrefixMapping() error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for prefix mappings")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.CreateBucketPrefixMapping(ctx, &adminproto.CreateBucketPrefixMappingRequest{
 		BucketName:     bucketName,
@@ -166,20 +162,18 @@ func runCreatePrefixMapping() error {
 
 func runDeletePrefixMapping() error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for prefix mappings")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	_, err = client.DeleteBucketPrefixMapping(ctx, &adminproto.DeleteBucketPrefixMappingRequest{
 		Id: mappingID,
