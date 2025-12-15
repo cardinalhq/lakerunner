@@ -20,9 +20,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc/metadata"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
+	"github.com/cardinalhq/lakerunner/lakectl/cmd/adminclient"
 )
 
 var (
@@ -91,15 +91,13 @@ func runGetLogStreamConfig(orgID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.GetLogStreamConfig(ctx, &adminproto.GetLogStreamConfigRequest{
 		OrganizationId: orgID,
@@ -123,15 +121,13 @@ func runSetLogStreamConfig(orgID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.SetLogStreamConfig(ctx, &adminproto.SetLogStreamConfigRequest{
 		OrganizationId: orgID,
@@ -149,15 +145,13 @@ func runDeleteLogStreamConfig(orgID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	_, err = client.DeleteLogStreamConfig(ctx, &adminproto.DeleteLogStreamConfigRequest{
 		OrganizationId: orgID,

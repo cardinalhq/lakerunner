@@ -16,52 +16,27 @@ package organizations
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
-	"google.golang.org/protobuf/types/known/wrapperspb"
-
 	"github.com/google/uuid"
+	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
 	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/lakectl/cmd/adminclient"
 )
 
 var (
-	apiKey             string
-	adminEndpoint      string
-	adminInsecureMode  bool
-	adminTLSSkipVerify bool
-	adminTLSCACert     string
-	useLocal           bool
+	useLocal bool
 
 	createDisabled bool
 	updateName     string
 	updateEnable   bool
 	updateDisable  bool
 )
-
-// SetAPIKey configures the API key used for auth with the admin service.
-func SetAPIKey(key string) {
-	apiKey = key
-}
-
-// SetConnectionConfig configures the endpoint and TLS settings.
-func SetConnectionConfig(ep string, insecure, skipVerify bool, caCert string) {
-	adminEndpoint = ep
-	adminInsecureMode = insecure
-	adminTLSSkipVerify = skipVerify
-	adminTLSCACert = caCert
-}
 
 // GetOrganizationsCmd provides commands for managing organizations.
 func GetOrganizationsCmd() *cobra.Command {
@@ -206,13 +181,13 @@ func runRemoteOrganizationsList() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	ctx = createAuthContext(ctx)
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.ListOrganizations(ctx, &adminproto.ListOrganizationsRequest{})
 	if err != nil {
@@ -263,13 +238,13 @@ func runRemoteOrganizationsCreate(name string, enabled bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	ctx = createAuthContext(ctx)
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.CreateOrganization(ctx, &adminproto.CreateOrganizationRequest{Name: name, Enabled: enabled})
 	if err != nil {
@@ -326,13 +301,13 @@ func runRemoteOrganizationsUpdate(id string, name *string, enabled *bool) error 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	ctx = createAuthContext(ctx)
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	req := &adminproto.UpdateOrganizationRequest{Id: id}
 	if name != nil {
@@ -349,53 +324,6 @@ func runRemoteOrganizationsUpdate(id string, name *string, enabled *bool) error 
 
 	fmt.Printf("Updated organization %s\n", id)
 	return nil
-}
-
-func createAdminClient() (adminproto.AdminServiceClient, func(), error) {
-	var opts []grpc.DialOption
-
-	if adminInsecureMode {
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	} else {
-		tlsConfig := &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		}
-
-		if adminTLSSkipVerify {
-			tlsConfig.InsecureSkipVerify = true
-		}
-
-		if adminTLSCACert != "" {
-			caCert, err := os.ReadFile(adminTLSCACert)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to read CA certificate: %w", err)
-			}
-			caCertPool := x509.NewCertPool()
-			if !caCertPool.AppendCertsFromPEM(caCert) {
-				return nil, nil, fmt.Errorf("failed to parse CA certificate")
-			}
-			tlsConfig.RootCAs = caCertPool
-		}
-
-		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
-	}
-
-	conn, err := grpc.NewClient(adminEndpoint, opts...)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to admin service: %w", err)
-	}
-
-	cleanup := func() { _ = conn.Close() }
-	client := adminproto.NewAdminServiceClient(conn)
-	return client, cleanup, nil
-}
-
-func createAuthContext(ctx context.Context) context.Context {
-	if apiKey != "" {
-		md := metadata.Pairs("authorization", "Bearer "+apiKey)
-		ctx = metadata.NewOutgoingContext(ctx, md)
-	}
-	return ctx
 }
 
 func printOrganizationsTable(orgs []configdb.Organization) {

@@ -21,9 +21,9 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc/metadata"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
+	"github.com/cardinalhq/lakerunner/lakectl/cmd/adminclient"
 )
 
 var (
@@ -43,7 +43,7 @@ func getBucketsCmd() *cobra.Command {
 		Use:   "list <organization-id>",
 		Short: "List buckets for an organization",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			orgID := args[0]
 			return runListBuckets(orgID)
 		},
@@ -55,7 +55,7 @@ func getBucketsCmd() *cobra.Command {
 		Use:   "add <organization-id>",
 		Short: "Add a bucket to an organization",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			orgID := args[0]
 			return runAddBucket(orgID)
 		},
@@ -71,7 +71,7 @@ func getBucketsCmd() *cobra.Command {
 		Use:   "delete <organization-id>",
 		Short: "Remove a bucket from an organization",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			orgID := args[0]
 			return runDeleteBucket(orgID)
 		},
@@ -87,20 +87,18 @@ func getBucketsCmd() *cobra.Command {
 
 func runListBuckets(orgID string) error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for buckets")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.ListOrganizationBuckets(ctx, &adminproto.ListOrganizationBucketsRequest{
 		OrganizationId: orgID,
@@ -126,20 +124,18 @@ func runListBuckets(orgID string) error {
 
 func runAddBucket(orgID string) error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for buckets")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	resp, err := client.AddOrganizationBucket(ctx, &adminproto.AddOrganizationBucketRequest{
 		OrganizationId: orgID,
@@ -164,20 +160,18 @@ func runAddBucket(orgID string) error {
 
 func runDeleteBucket(orgID string) error {
 	ctx := context.Background()
-	if apiKey != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-	}
 
 	if useLocal {
-		// Local implementation would go here
 		return fmt.Errorf("local mode not implemented for buckets")
 	}
 
-	client, cleanup, err := createAdminClient()
+	client, cleanup, err := adminclient.CreateClient()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+
+	ctx = adminclient.AttachAPIKey(ctx)
 
 	_, err = client.DeleteOrganizationBucket(ctx, &adminproto.DeleteOrganizationBucketRequest{
 		OrganizationId: orgID,
