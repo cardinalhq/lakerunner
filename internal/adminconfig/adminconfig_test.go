@@ -63,17 +63,17 @@ func TestFileProvider_ValidateAPIKey(t *testing.T) {
 			expectErr:   false,
 		},
 		{
-			name:        "empty config - backward compatibility",
-			config:      "",
+			name:        "empty config - rejects all keys",
+			config:      "apikeys: []",
 			apiKey:      "any-key",
-			expectValid: true,
+			expectValid: false,
 			expectErr:   false,
 		},
 		{
-			name:        "no apikeys section - backward compatibility",
+			name:        "no apikeys section - rejects all keys",
 			config:      "some_other_config: value",
 			apiKey:      "any-key",
-			expectValid: true,
+			expectValid: false,
 			expectErr:   false,
 		},
 	}
@@ -83,10 +83,8 @@ func TestFileProvider_ValidateAPIKey(t *testing.T) {
 			tempDir := t.TempDir()
 			configFile := filepath.Join(tempDir, "admin.yaml")
 
-			if tt.config != "" {
-				err := os.WriteFile(configFile, []byte(tt.config), 0644)
-				require.NoError(t, err)
-			}
+			err := os.WriteFile(configFile, []byte(tt.config), 0644)
+			require.NoError(t, err)
 
 			provider, err := NewFileProvider(configFile)
 			require.NoError(t, err)
@@ -133,106 +131,12 @@ func TestFileProvider_GetAPIKeyInfo(t *testing.T) {
 	assert.Nil(t, info)
 }
 
-func TestSetupAdminConfig(t *testing.T) {
-	tempDir := t.TempDir()
-	configFile := filepath.Join(tempDir, "admin.yaml")
-
-	config := `apikeys:
-  - name: "test-key"
-    key: "ak_test123"`
-
-	err := os.WriteFile(configFile, []byte(config), 0644)
-	require.NoError(t, err)
-
-	tests := []struct {
-		name    string
-		setup   func()
-		cleanup func()
-		wantErr bool
-	}{
-		{
-			name: "uses ADMIN_CONFIG_FILE environment variable",
-			setup: func() {
-				_ = os.Setenv("ADMIN_CONFIG_FILE", configFile)
-			},
-			cleanup: func() {
-				_ = os.Unsetenv("ADMIN_CONFIG_FILE")
-			},
-			wantErr: false,
-		},
-		{
-			name: "uses default path when env var not set",
-			setup: func() {
-				_ = os.Unsetenv("ADMIN_CONFIG_FILE")
-			},
-			cleanup: func() {},
-			// This will succeed because missing file creates empty provider
-			wantErr: false,
-		},
-		{
-			name: "file provider with env variable",
-			setup: func() {
-				_ = os.Setenv("TEST_ADMIN_CONFIG_CONTENT", config)
-				_ = os.Setenv("ADMIN_CONFIG_FILE", "env:TEST_ADMIN_CONFIG_CONTENT")
-			},
-			cleanup: func() {
-				_ = os.Unsetenv("TEST_ADMIN_CONFIG_CONTENT")
-				_ = os.Unsetenv("ADMIN_CONFIG_FILE")
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.setup != nil {
-				tt.setup()
-			}
-			defer func() {
-				if tt.cleanup != nil {
-					tt.cleanup()
-				}
-			}()
-
-			provider, err := SetupAdminConfig()
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Nil(t, provider)
-				return
-			}
-
-			assert.NoError(t, err)
-			assert.NotNil(t, provider)
-
-			// Test that provider works
-			ctx := context.Background()
-			if tt.name == "uses ADMIN_CONFIG_FILE environment variable" || tt.name == "file provider with env variable" {
-				// These tests use configs with actual keys, so test with the specific key
-				valid, err := provider.ValidateAPIKey(ctx, "ak_test123")
-				assert.NoError(t, err)
-				assert.True(t, valid)
-			} else {
-				// This test uses default/missing config, so any key should work for backward compatibility
-				valid, err := provider.ValidateAPIKey(ctx, "any-key")
-				assert.NoError(t, err)
-				assert.True(t, valid) // Should be true for backward compatibility
-			}
-		})
-	}
-}
-
-func TestFileProvider_BackwardCompatibility(t *testing.T) {
-	// Test that missing file creates empty provider
+func TestFileProvider_MissingFile(t *testing.T) {
+	// Test that missing file returns error
 	provider, err := NewFileProvider("/nonexistent/file.yaml")
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Should allow any key for backward compatibility
-	valid, err := provider.ValidateAPIKey(ctx, "any-key")
-	assert.NoError(t, err)
-	assert.True(t, valid)
+	assert.Error(t, err)
+	assert.Nil(t, provider)
+	assert.Contains(t, err.Error(), "failed to read admin config")
 }
 
 func TestFileProvider_InvalidYAML(t *testing.T) {

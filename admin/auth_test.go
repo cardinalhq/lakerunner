@@ -44,9 +44,8 @@ type mockAdminConfigProvider struct {
 }
 
 func (m *mockAdminConfigProvider) ValidateAPIKey(ctx context.Context, apiKey string) (bool, error) {
-	// Empty config means no auth required (backward compatibility)
-	if len(m.validKeys) == 0 {
-		return true, nil
+	if apiKey == "" {
+		return false, nil
 	}
 	_, exists := m.validKeys[apiKey]
 	return exists, nil
@@ -195,7 +194,9 @@ func TestAuthentication_MissingAuthHeader(t *testing.T) {
 
 func TestAuthentication_InvalidAuthFormat(t *testing.T) {
 	configProvider := &mockAdminConfigProvider{
-		validKeys: map[string]*adminconfig.AdminAPIKey{},
+		validKeys: map[string]*adminconfig.AdminAPIKey{
+			"ak_valid123": {Name: "test-key"},
+		},
 	}
 
 	client, cleanup := setupAuthTestServer(t, configProvider)
@@ -241,8 +242,8 @@ func TestAuthentication_InvalidAuthFormat(t *testing.T) {
 	}
 }
 
-func TestAuthentication_BackwardCompatibility(t *testing.T) {
-	// Empty config provider should allow all requests for backward compatibility
+func TestAuthentication_NoKeysConfigured(t *testing.T) {
+	// Empty config provider should reject all requests
 	configProvider := &mockAdminConfigProvider{
 		validKeys: map[string]*adminconfig.AdminAPIKey{},
 	}
@@ -250,13 +251,18 @@ func TestAuthentication_BackwardCompatibility(t *testing.T) {
 	client, cleanup := setupAuthTestServer(t, configProvider)
 	defer cleanup()
 
-	// Test ping without auth header should succeed with empty config (backward compatibility)
-	resp, err := client.Ping(context.Background(), &adminproto.PingRequest{Message: "test"})
-	if err != nil {
-		t.Fatalf("Expected request to succeed with empty config for backward compatibility, got: %v", err)
+	// Test ping without auth header should fail with empty config
+	_, err := client.Ping(context.Background(), &adminproto.PingRequest{Message: "test"})
+	if err == nil {
+		t.Fatal("Expected authentication error with no keys configured")
 	}
 
-	if resp.Message != "pong: test" {
-		t.Errorf("Expected 'pong: test', got %q", resp.Message)
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatal("Expected GRPC status error")
+	}
+
+	if st.Code() != codes.Unauthenticated {
+		t.Errorf("Expected Unauthenticated error, got %v", st.Code())
 	}
 }

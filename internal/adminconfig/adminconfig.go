@@ -19,6 +19,8 @@ import (
 	"os"
 
 	"github.com/google/uuid"
+
+	"github.com/cardinalhq/lakerunner/configdb"
 )
 
 type AdminAPIKey struct {
@@ -38,13 +40,13 @@ type AdminConfigProvider interface {
 }
 
 func SetupAdminConfig() (AdminConfigProvider, error) {
-	// TODO: Check USE_DB_API_KEYS environment variable and use database provider when available
+	ctx := context.Background()
 
-	// Default to file-based provider
-	adminConfigPath := os.Getenv("ADMIN_CONFIG_FILE")
-	if adminConfigPath == "" {
-		adminConfigPath = "/app/config/admin.yaml"
+	cdb, err := configdb.ConfigDBStore(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	return NewFileProvider(adminConfigPath)
+	initialAPIKey := os.Getenv("ADMIN_INITIAL_API_KEY")
+	return NewDBProvider(cdb, initialAPIKey), nil
 }

@@ -16,12 +16,16 @@ package organizations
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -33,9 +37,12 @@ import (
 )
 
 var (
-	apiKey    string
-	adminAddr string
-	useLocal  bool
+	apiKey             string
+	adminEndpoint      string
+	adminInsecureMode  bool
+	adminTLSSkipVerify bool
+	adminTLSCACert     string
+	useLocal           bool
 
 	createDisabled bool
 	updateName     string
@@ -48,6 +55,14 @@ func SetAPIKey(key string) {
 	apiKey = key
 }
 
+// SetConnectionConfig configures the endpoint and TLS settings.
+func SetConnectionConfig(ep string, insecure, skipVerify bool, caCert string) {
+	adminEndpoint = ep
+	adminInsecureMode = insecure
+	adminTLSSkipVerify = skipVerify
+	adminTLSCACert = caCert
+}
+
 // GetOrganizationsCmd provides commands for managing organizations.
 func GetOrganizationsCmd() *cobra.Command {
 	orgCmd := &cobra.Command{
@@ -55,7 +70,6 @@ func GetOrganizationsCmd() *cobra.Command {
 		Short: "Manage organizations",
 	}
 
-	orgCmd.PersistentFlags().StringVar(&adminAddr, "addr", ":9091", "Address of the admin service")
 	orgCmd.PersistentFlags().BoolVar(&useLocal, "local", false, "Use local database connection instead of remote admin service")
 
 	listCmd := &cobra.Command{
@@ -338,7 +352,35 @@ func runRemoteOrganizationsUpdate(id string, name *string, enabled *bool) error 
 }
 
 func createAdminClient() (adminproto.AdminServiceClient, func(), error) {
-	conn, err := grpc.NewClient(adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	var opts []grpc.DialOption
+
+	if adminInsecureMode {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		}
+
+		if adminTLSSkipVerify {
+			tlsConfig.InsecureSkipVerify = true
+		}
+
+		if adminTLSCACert != "" {
+			caCert, err := os.ReadFile(adminTLSCACert)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to read CA certificate: %w", err)
+			}
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				return nil, nil, fmt.Errorf("failed to parse CA certificate")
+			}
+			tlsConfig.RootCAs = caCertPool
+		}
+
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
+	}
+
+	conn, err := grpc.NewClient(adminEndpoint, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to admin service: %w", err)
 	}

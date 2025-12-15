@@ -16,12 +16,15 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
@@ -31,7 +34,11 @@ import (
 )
 
 var (
-	adminAPIKey string
+	adminAPIKey   string
+	endpoint      string
+	insecureMode  bool
+	tlsSkipVerify bool
+	tlsCACert     string
 )
 
 var rootCmd = &cobra.Command{
@@ -41,13 +48,26 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&adminAPIKey, "api-key", "", "Admin API key (or set LAKERUNNER_ADMIN_API_KEY)")
+	rootCmd.PersistentFlags().StringVar(&endpoint, "endpoint", "", "Admin service endpoint (or set LAKERUNNER_ADMIN_API_ENDPOINT)")
+	rootCmd.PersistentFlags().BoolVar(&insecureMode, "insecure", false, "Disable TLS (not recommended)")
+	rootCmd.PersistentFlags().BoolVar(&tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification")
+	rootCmd.PersistentFlags().StringVar(&tlsCACert, "tls-ca-cert", "", "Path to CA certificate for TLS verification")
 
-	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if adminAPIKey == "" {
 			adminAPIKey = os.Getenv("LAKERUNNER_ADMIN_API_KEY")
 		}
+		if endpoint == "" {
+			endpoint = os.Getenv("LAKERUNNER_ADMIN_API_ENDPOINT")
+		}
+		if endpoint == "" {
+			return fmt.Errorf("endpoint required: set --endpoint flag or LAKERUNNER_ADMIN_API_ENDPOINT environment variable")
+		}
 		organizations.SetAPIKey(adminAPIKey)
+		organizations.SetConnectionConfig(endpoint, insecureMode, tlsSkipVerify, tlsCACert)
 		kafka.SetAPIKey(adminAPIKey)
+		kafka.SetConnectionConfig(endpoint, insecureMode, tlsSkipVerify, tlsCACert)
+		return nil
 	}
 
 	rootCmd.AddCommand(getPingCmd())
@@ -56,7 +76,6 @@ func init() {
 }
 
 func getPingCmd() *cobra.Command {
-	var adminAddr string
 	pingCmd := &cobra.Command{
 		Use:   "ping",
 		Short: "Ping the admin service",
@@ -64,19 +83,13 @@ func getPingCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			conn, err := grpc.NewClient(adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			client, cleanup, err := CreateAdminClient()
 			if err != nil {
-				return fmt.Errorf("failed to connect to admin service: %w", err)
+				return err
 			}
-			defer func() {
-				if err := conn.Close(); err != nil {
-					// Log the error if needed, but don't fail the command
-					_ = err
-				}
-			}()
+			defer cleanup()
 
-			client := adminproto.NewAdminServiceClient(conn)
-			ctx = attachAPIKey(ctx)
+			ctx = AttachAPIKey(ctx)
 			resp, err := client.Ping(ctx, &adminproto.PingRequest{Message: "ping"})
 			if err != nil {
 				return fmt.Errorf("ping failed: %w", err)
@@ -85,16 +98,56 @@ func getPingCmd() *cobra.Command {
 			return nil
 		},
 	}
-	pingCmd.Flags().StringVar(&adminAddr, "addr", ":9091", "Address of the admin service")
 	return pingCmd
 }
 
-func attachAPIKey(ctx context.Context) context.Context {
+// AttachAPIKey adds the API key to the context for gRPC calls.
+func AttachAPIKey(ctx context.Context) context.Context {
 	if adminAPIKey != "" {
 		md := metadata.New(map[string]string{"authorization": "Bearer " + adminAPIKey})
 		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
 	return ctx
+}
+
+// CreateAdminClient creates a gRPC client for the admin service with TLS support.
+func CreateAdminClient() (adminproto.AdminServiceClient, func(), error) {
+	var opts []grpc.DialOption
+
+	if insecureMode {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		}
+
+		if tlsSkipVerify {
+			tlsConfig.InsecureSkipVerify = true
+		}
+
+		if tlsCACert != "" {
+			caCert, err := os.ReadFile(tlsCACert)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to read CA certificate: %w", err)
+			}
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				return nil, nil, fmt.Errorf("failed to parse CA certificate")
+			}
+			tlsConfig.RootCAs = caCertPool
+		}
+
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
+	}
+
+	conn, err := grpc.NewClient(endpoint, opts...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to connect to admin service: %w", err)
+	}
+
+	cleanup := func() { _ = conn.Close() }
+	client := adminproto.NewAdminServiceClient(conn)
+	return client, cleanup, nil
 }
 
 // Execute runs the root command.

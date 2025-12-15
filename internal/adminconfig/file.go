@@ -43,10 +43,6 @@ func NewFileProvider(filename string) (AdminConfigProvider, error) {
 
 	contents, err := os.ReadFile(filename)
 	if err != nil {
-		// If the file doesn't exist, create an empty provider for backward compatibility
-		if os.IsNotExist(err) {
-			return &FileProvider{config: AdminConfig{}}, nil
-		}
 		return nil, fmt.Errorf("failed to read admin config from file %s: %w", filename, err)
 	}
 
@@ -70,9 +66,8 @@ func newFileProviderFromContents(filename string, contents []byte) (AdminConfigP
 }
 
 func (p *FileProvider) ValidateAPIKey(ctx context.Context, apiKey string) (bool, error) {
-	if len(p.config.APIKeys) == 0 {
-		// If no API keys are configured, allow access for backward compatibility
-		return true, nil
+	if apiKey == "" {
+		return false, nil
 	}
 
 	for _, key := range p.config.APIKeys {

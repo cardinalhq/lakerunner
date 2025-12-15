@@ -16,6 +16,8 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
@@ -32,13 +35,24 @@ import (
 )
 
 var (
-	apiKey    string
-	adminAddr string
+	apiKey        string
+	endpoint      string
+	insecureMode  bool
+	tlsSkipVerify bool
+	tlsCACert     string
 )
 
 // SetAPIKey configures the API key used for auth with the admin service.
 func SetAPIKey(key string) {
 	apiKey = key
+}
+
+// SetConnectionConfig configures the endpoint and TLS settings.
+func SetConnectionConfig(ep string, insecure, skipVerify bool, caCert string) {
+	endpoint = ep
+	insecureMode = insecure
+	tlsSkipVerify = skipVerify
+	tlsCACert = caCert
 }
 
 // GetKafkaCmd provides Kafka administrative commands.
@@ -117,7 +131,6 @@ func getConsumerLagCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&adminAddr, "addr", ":9091", "Address of the admin service")
 	cmd.Flags().StringVar(&groupFilter, "group", "", "Filter by consumer group substring (optional)")
 	cmd.Flags().StringVar(&topicFilter, "topic", "", "Filter by topic substring (optional)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
@@ -127,12 +140,41 @@ func getConsumerLagCmd() *cobra.Command {
 }
 
 func createAdminClient() (adminproto.AdminServiceClient, func(), error) {
-	conn, err := grpc.NewClient(adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	var opts []grpc.DialOption
+
+	if insecureMode {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		}
+
+		if tlsSkipVerify {
+			tlsConfig.InsecureSkipVerify = true
+		}
+
+		if tlsCACert != "" {
+			caCert, err := os.ReadFile(tlsCACert)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to read CA certificate: %w", err)
+			}
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				return nil, nil, fmt.Errorf("failed to parse CA certificate")
+			}
+			tlsConfig.RootCAs = caCertPool
+		}
+
+		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
+	}
+
+	conn, err := grpc.NewClient(endpoint, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to admin service: %w", err)
 	}
-	client := adminproto.NewAdminServiceClient(conn)
+
 	cleanup := func() { _ = conn.Close() }
+	client := adminproto.NewAdminServiceClient(conn)
 	return client, cleanup, nil
 }
 
