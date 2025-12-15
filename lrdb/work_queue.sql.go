@@ -9,9 +9,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"time"
-
 	"github.com/google/uuid"
+	"time"
 )
 
 const workQueueAdd = `-- name: WorkQueueAdd :one
