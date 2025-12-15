@@ -33,22 +33,34 @@ const (
 	// DefaultCleanupInterval is how often the cleanup goroutine runs.
 	DefaultCleanupInterval = 5 * time.Minute
 
-	// ParquetCacheBaseDir is the base directory for cached parquet files.
-	ParquetCacheBaseDir = "db"
-
 	// DefaultDeletionDelay is how long to wait before actually deleting a file
 	// after it's been marked for deletion. This allows concurrent queries to
 	// finish using the file before it's removed.
 	DefaultDeletionDelay = 1 * time.Minute
 )
 
+// CacheKey uniquely identifies a cached file by its cloud storage location.
+type CacheKey struct {
+	Region   string // cloud region (e.g., "us-east-1"), can be empty
+	Bucket   string // bucket name
+	ObjectID string // object key/path within the bucket
+}
+
 // ParquetFileCache manages downloaded parquet files with TTL-based cleanup.
 // It tracks file sizes and access times for metrics and cleanup purposes.
+// The cache owns its storage directory and provides a domain-aware API
+// for callers to work with (bucket, region, objectId) rather than file paths.
 type ParquetFileCache struct {
 	mu sync.RWMutex
 
-	// files tracks metadata for each cached file
+	// baseDir is the root directory for all cached files
+	baseDir string
+
+	// files tracks metadata for each cached file, keyed by local path
 	files map[string]*cachedFileInfo
+
+	// keyToPath maps CacheKey to local file path for lookups
+	keyToPath map[CacheKey]string
 
 	// config
 	fileTTL         time.Duration
@@ -64,6 +76,7 @@ type ParquetFileCache struct {
 }
 
 type cachedFileInfo struct {
+	key         CacheKey
 	path        string
 	size        int64
 	lastAccess  time.Time
@@ -71,7 +84,16 @@ type cachedFileInfo struct {
 }
 
 // NewParquetFileCache creates a new parquet file cache with TTL-based cleanup.
-func NewParquetFileCache(fileTTL, cleanupInterval time.Duration) *ParquetFileCache {
+// The cache directory is created under os.TempDir(), which respects the TMPDIR
+// environment variable (typically set by helpers.SetupTempDir()).
+func NewParquetFileCache(fileTTL, cleanupInterval time.Duration) (*ParquetFileCache, error) {
+	baseDir := filepath.Join(os.TempDir(), "parquet-cache")
+	return NewParquetFileCacheWithBaseDir(baseDir, fileTTL, cleanupInterval)
+}
+
+// NewParquetFileCacheWithBaseDir creates a new parquet file cache with a custom base directory.
+// This is useful for testing where each test needs an isolated cache directory.
+func NewParquetFileCacheWithBaseDir(baseDir string, fileTTL, cleanupInterval time.Duration) (*ParquetFileCache, error) {
 	if fileTTL <= 0 {
 		fileTTL = DefaultParquetFileTTL
 	}
@@ -79,8 +101,14 @@ func NewParquetFileCache(fileTTL, cleanupInterval time.Duration) *ParquetFileCac
 		cleanupInterval = DefaultCleanupInterval
 	}
 
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return nil, err
+	}
+
 	pfc := &ParquetFileCache{
+		baseDir:         baseDir,
 		files:           make(map[string]*cachedFileInfo),
+		keyToPath:       make(map[CacheKey]string),
 		fileTTL:         fileTTL,
 		cleanupInterval: cleanupInterval,
 	}
@@ -91,18 +119,39 @@ func NewParquetFileCache(fileTTL, cleanupInterval time.Duration) *ParquetFileCac
 	go pfc.cleanupLoop(ctx)
 
 	slog.Info("ParquetFileCache initialized",
+		slog.String("baseDir", baseDir),
 		slog.Duration("fileTTL", fileTTL),
 		slog.Duration("cleanupInterval", cleanupInterval))
 
-	return pfc
+	return pfc, nil
 }
 
-// Close stops the cleanup goroutine.
+// Close stops the cleanup goroutine and removes all cached files.
 func (pfc *ParquetFileCache) Close() {
 	if pfc.stopCleanup != nil {
 		pfc.stopCleanup()
 	}
 	pfc.cleanupWG.Wait()
+
+	// Clean up all files in the cache directory
+	pfc.mu.Lock()
+	for path := range pfc.files {
+		_ = os.Remove(path)
+	}
+	pfc.files = make(map[string]*cachedFileInfo)
+	pfc.keyToPath = make(map[CacheKey]string)
+	pfc.fileCount = 0
+	pfc.totalBytes = 0
+	pfc.mu.Unlock()
+
+	// Remove any remaining files and empty directories
+	_ = filepath.Walk(pfc.baseDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || path == pfc.baseDir {
+			return nil
+		}
+		_ = os.RemoveAll(path)
+		return nil
+	})
 }
 
 // RegisterMetrics registers OTEL metrics for the parquet file cache.
@@ -140,10 +189,79 @@ func (pfc *ParquetFileCache) RegisterMetrics() error {
 	return nil
 }
 
-// TrackFile adds or updates a file in the cache tracking.
-// Should be called after a file is downloaded.
-func (pfc *ParquetFileCache) TrackFile(path string) error {
-	info, err := os.Stat(path)
+// GetOrPrepare checks if a file is cached and returns its local path.
+// If cached and valid, returns (localPath, true, nil).
+// If not cached, prepares the directory structure and returns (localPath, false, nil).
+// The caller should download to the returned path and then call TrackFile.
+func (pfc *ParquetFileCache) GetOrPrepare(region, bucket, objectID string) (localPath string, exists bool, err error) {
+	key := CacheKey{Region: region, Bucket: bucket, ObjectID: objectID}
+
+	// Check if already cached
+	pfc.mu.RLock()
+	if path, ok := pfc.keyToPath[key]; ok {
+		info := pfc.files[path]
+		// Check if marked for deletion - treat as not cached
+		if info != nil && !info.deleteAfter.IsZero() {
+			pfc.mu.RUnlock()
+			// File is marked for deletion, return path but exists=false
+			return path, false, nil
+		}
+		if info != nil {
+			pfc.mu.RUnlock()
+			// Touch to keep alive
+			pfc.touchFile(path)
+			return path, true, nil
+		}
+	}
+	pfc.mu.RUnlock()
+
+	// Not cached - prepare the path
+	localPath = pfc.pathForKey(key)
+	dir := filepath.Dir(localPath)
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", false, err
+	}
+
+	// Check if file exists on disk but not tracked (e.g., from previous run)
+	if stat, err := os.Stat(localPath); err == nil {
+		pfc.mu.Lock()
+		defer pfc.mu.Unlock()
+
+		// Double-check after acquiring write lock - also check for deletion marker
+		if existingPath, tracked := pfc.keyToPath[key]; tracked {
+			info := pfc.files[existingPath]
+			if info != nil && !info.deleteAfter.IsZero() {
+				// Marked for deletion, don't count as existing
+				return localPath, false, nil
+			}
+			// Already tracked and not marked for deletion
+			return localPath, true, nil
+		}
+
+		// Not tracked, add it
+		pfc.files[localPath] = &cachedFileInfo{
+			key:        key,
+			path:       localPath,
+			size:       stat.Size(),
+			lastAccess: time.Now(),
+		}
+		pfc.keyToPath[key] = localPath
+		pfc.fileCount++
+		pfc.totalBytes += stat.Size()
+		return localPath, true, nil
+	}
+
+	return localPath, false, nil
+}
+
+// TrackFile marks a file as successfully downloaded and starts tracking it.
+// Should be called after a file is downloaded to the path returned by GetOrPrepare.
+func (pfc *ParquetFileCache) TrackFile(region, bucket, objectID string) error {
+	key := CacheKey{Region: region, Bucket: bucket, ObjectID: objectID}
+	localPath := pfc.pathForKey(key)
+
+	info, err := os.Stat(localPath)
 	if err != nil {
 		return err
 	}
@@ -151,20 +269,23 @@ func (pfc *ParquetFileCache) TrackFile(path string) error {
 	pfc.mu.Lock()
 	defer pfc.mu.Unlock()
 
-	existing, exists := pfc.files[path]
+	existing, exists := pfc.files[localPath]
 	if exists {
 		// Update existing entry
 		pfc.totalBytes -= existing.size
 		existing.size = info.Size()
 		existing.lastAccess = time.Now()
+		existing.deleteAfter = time.Time{} // Clear any deletion mark
 		pfc.totalBytes += existing.size
 	} else {
 		// Add new entry
-		pfc.files[path] = &cachedFileInfo{
-			path:       path,
+		pfc.files[localPath] = &cachedFileInfo{
+			key:        key,
+			path:       localPath,
 			size:       info.Size(),
 			lastAccess: time.Now(),
 		}
+		pfc.keyToPath[key] = localPath
 		pfc.fileCount++
 		pfc.totalBytes += info.Size()
 	}
@@ -172,85 +293,19 @@ func (pfc *ParquetFileCache) TrackFile(path string) error {
 	return nil
 }
 
-// TouchFile updates the last access time for a file, keeping it alive.
-// Returns true if the file exists in the cache.
-func (pfc *ParquetFileCache) TouchFile(path string) bool {
-	pfc.mu.Lock()
-	defer pfc.mu.Unlock()
-
-	if info, exists := pfc.files[path]; exists {
-		info.lastAccess = time.Now()
-		return true
-	}
-	return false
-}
-
-// HasFile checks if a file exists in the cache and touches it if found.
-// This is used by the downloader to check before downloading.
-// Returns false for files marked for deletion (even if still on disk).
-func (pfc *ParquetFileCache) HasFile(path string) bool {
-	// First check our tracking
-	pfc.mu.RLock()
-	info, tracked := pfc.files[path]
-	markedForDeletion := tracked && !info.deleteAfter.IsZero()
-	pfc.mu.RUnlock()
-
-	// If marked for deletion, treat as not present (will be re-downloaded)
-	if markedForDeletion {
-		return false
-	}
-
-	if tracked {
-		// Touch to keep alive
-		pfc.TouchFile(path)
-		return true
-	}
-
-	// File might exist but not be tracked (e.g., from previous run)
-	// Check filesystem and track if found
-	if stat, err := os.Stat(path); err == nil {
-		pfc.mu.Lock()
-		defer pfc.mu.Unlock()
-
-		// Double-check after acquiring write lock
-		if _, exists := pfc.files[path]; !exists {
-			pfc.files[path] = &cachedFileInfo{
-				path:       path,
-				size:       stat.Size(),
-				lastAccess: time.Now(),
-			}
-			pfc.fileCount++
-			pfc.totalBytes += stat.Size()
-		}
-		return true
-	}
-
-	return false
-}
-
-// RemoveFile removes a file from tracking and deletes it from disk.
-func (pfc *ParquetFileCache) RemoveFile(path string) {
-	pfc.mu.Lock()
-	if info, exists := pfc.files[path]; exists {
-		pfc.totalBytes -= info.size
-		pfc.fileCount--
-		delete(pfc.files, path)
-	}
-	pfc.mu.Unlock()
-
-	// Best-effort delete from disk
-	_ = os.Remove(path)
-}
-
 // MarkForDeletion marks a file for delayed deletion. The file will be deleted
 // after DefaultDeletionDelay has passed. Until then, the file remains on disk
-// but HasFile will return false, causing re-downloads if needed.
-func (pfc *ParquetFileCache) MarkForDeletion(path string) {
+// but GetOrPrepare will return exists=false, causing re-downloads if needed.
+func (pfc *ParquetFileCache) MarkForDeletion(region, bucket, objectID string) {
+	key := CacheKey{Region: region, Bucket: bucket, ObjectID: objectID}
+
 	pfc.mu.Lock()
 	defer pfc.mu.Unlock()
 
-	if info, exists := pfc.files[path]; exists {
-		info.deleteAfter = time.Now().Add(DefaultDeletionDelay)
+	if path, ok := pfc.keyToPath[key]; ok {
+		if info, exists := pfc.files[path]; exists {
+			info.deleteAfter = time.Now().Add(DefaultDeletionDelay)
+		}
 	}
 }
 
@@ -266,6 +321,41 @@ func (pfc *ParquetFileCache) TotalBytes() int64 {
 	pfc.mu.RLock()
 	defer pfc.mu.RUnlock()
 	return pfc.totalBytes
+}
+
+// pathForKey computes the local file path for a cache key.
+// Structure: <baseDir>/<region>/<bucket>/<objectID>
+// If region is empty, it's omitted from the path.
+func (pfc *ParquetFileCache) pathForKey(key CacheKey) string {
+	if key.Region != "" {
+		return filepath.Join(pfc.baseDir, key.Region, key.Bucket, key.ObjectID)
+	}
+	return filepath.Join(pfc.baseDir, key.Bucket, key.ObjectID)
+}
+
+// touchFile updates the last access time for a file.
+func (pfc *ParquetFileCache) touchFile(path string) {
+	pfc.mu.Lock()
+	defer pfc.mu.Unlock()
+
+	if info, exists := pfc.files[path]; exists {
+		info.lastAccess = time.Now()
+	}
+}
+
+// removeFile removes a file from tracking and deletes it from disk.
+func (pfc *ParquetFileCache) removeFile(path string) {
+	pfc.mu.Lock()
+	if info, exists := pfc.files[path]; exists {
+		pfc.totalBytes -= info.size
+		pfc.fileCount--
+		delete(pfc.keyToPath, info.key)
+		delete(pfc.files, path)
+	}
+	pfc.mu.Unlock()
+
+	// Best-effort delete from disk
+	_ = os.Remove(path)
 }
 
 // cleanupLoop periodically removes expired files.
@@ -316,7 +406,7 @@ func (pfc *ParquetFileCache) cleanupExpiredFiles() {
 		slog.Duration("ttl", pfc.fileTTL))
 
 	for _, path := range toRemove {
-		pfc.RemoveFile(path)
+		pfc.removeFile(path)
 	}
 
 	// Try to remove empty directories
@@ -325,14 +415,14 @@ func (pfc *ParquetFileCache) cleanupExpiredFiles() {
 
 // cleanupEmptyDirs removes empty directories under the cache base dir.
 func (pfc *ParquetFileCache) cleanupEmptyDirs() {
-	_ = filepath.Walk(ParquetCacheBaseDir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(pfc.baseDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // skip errors
 		}
 		if !info.IsDir() {
 			return nil
 		}
-		if path == ParquetCacheBaseDir {
+		if path == pfc.baseDir {
 			return nil // don't remove base dir
 		}
 
@@ -344,8 +434,10 @@ func (pfc *ParquetFileCache) cleanupEmptyDirs() {
 
 // ScanExistingFiles scans the cache directory and tracks any existing files.
 // This is useful on startup to recover state from previous runs.
+// Note: This cannot fully reconstruct CacheKeys since region/bucket info
+// is embedded in the path structure. Files are tracked by path only.
 func (pfc *ParquetFileCache) ScanExistingFiles() error {
-	return filepath.Walk(ParquetCacheBaseDir, func(path string, info os.FileInfo, err error) error {
+	return filepath.Walk(pfc.baseDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // skip errors
 		}
@@ -358,10 +450,12 @@ func (pfc *ParquetFileCache) ScanExistingFiles() error {
 
 		pfc.mu.Lock()
 		if _, exists := pfc.files[path]; !exists {
+			// We can't reconstruct the full CacheKey from path alone,
+			// but we can still track the file for cleanup purposes
 			pfc.files[path] = &cachedFileInfo{
 				path:       path,
 				size:       info.Size(),
-				lastAccess: info.ModTime(), // Use file mtime as last access
+				lastAccess: info.ModTime(),
 			}
 			pfc.fileCount++
 			pfc.totalBytes += info.Size()
