@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/adminproto"
 	"github.com/cardinalhq/lakerunner/cmd/admin/kafka"
 	"github.com/cardinalhq/lakerunner/cmd/admin/organizations"
+	"github.com/cardinalhq/lakerunner/cmd/admin/workqueue"
 )
 
 var (
@@ -67,12 +68,15 @@ func init() {
 		organizations.SetConnectionConfig(endpoint, insecureMode, tlsSkipVerify, tlsCACert)
 		kafka.SetAPIKey(adminAPIKey)
 		kafka.SetConnectionConfig(endpoint, insecureMode, tlsSkipVerify, tlsCACert)
+		workqueue.SetAPIKey(adminAPIKey)
+		workqueue.SetConnectionConfig(endpoint, insecureMode, tlsSkipVerify, tlsCACert)
 		return nil
 	}
 
 	rootCmd.AddCommand(getPingCmd())
 	rootCmd.AddCommand(organizations.GetOrganizationsCmd())
 	rootCmd.AddCommand(kafka.GetKafkaCmd())
+	rootCmd.AddCommand(workqueue.GetWorkQueueCmd())
 }
 
 func getPingCmd() *cobra.Command {

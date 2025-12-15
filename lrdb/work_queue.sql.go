@@ -231,3 +231,49 @@ func (q *Queries) WorkQueueHeartbeat(ctx context.Context, arg WorkQueueHeartbeat
 	_, err := q.db.Exec(ctx, workQueueHeartbeat, arg.Ids, arg.WorkerID)
 	return err
 }
+
+const workQueueStatus = `-- name: WorkQueueStatus :many
+SELECT
+  task_name,
+  COUNT(*) FILTER (WHERE claimed_by = -1 AND failed = false) as pending,
+  COUNT(*) FILTER (WHERE claimed_by <> -1) as in_progress,
+  COUNT(*) FILTER (WHERE failed = true) as failed,
+  COUNT(DISTINCT claimed_by) FILTER (WHERE claimed_by <> -1) as workers
+FROM work_queue
+GROUP BY task_name
+ORDER BY task_name
+`
+
+type WorkQueueStatusRow struct {
+	TaskName   string `json:"task_name"`
+	Pending    int64  `json:"pending"`
+	InProgress int64  `json:"in_progress"`
+	Failed     int64  `json:"failed"`
+	Workers    int64  `json:"workers"`
+}
+
+func (q *Queries) WorkQueueStatus(ctx context.Context) ([]WorkQueueStatusRow, error) {
+	rows, err := q.db.Query(ctx, workQueueStatus)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkQueueStatusRow
+	for rows.Next() {
+		var i WorkQueueStatusRow
+		if err := rows.Scan(
+			&i.TaskName,
+			&i.Pending,
+			&i.InProgress,
+			&i.Failed,
+			&i.Workers,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

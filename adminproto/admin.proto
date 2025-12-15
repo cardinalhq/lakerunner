@@ -64,6 +64,9 @@ service AdminService {
   rpc GetLogStreamConfig(GetLogStreamConfigRequest) returns (GetLogStreamConfigResponse);
   rpc SetLogStreamConfig(SetLogStreamConfigRequest) returns (SetLogStreamConfigResponse);
   rpc DeleteLogStreamConfig(DeleteLogStreamConfigRequest) returns (DeleteLogStreamConfigResponse);
+
+  // Work Queue Status
+  rpc GetWorkQueueStatus(GetWorkQueueStatusRequest) returns (GetWorkQueueStatusResponse);
 }
 
 message PingRequest {
@@ -315,3 +318,19 @@ message DeleteLogStreamConfigRequest {
 }
 
 message DeleteLogStreamConfigResponse {}
+
+// Work Queue Status Messages
+
+message GetWorkQueueStatusRequest {}
+
+message GetWorkQueueStatusResponse {
+  repeated WorkQueueTaskStatus tasks = 1;
+}
+
+message WorkQueueTaskStatus {
+  string task_name = 1;
+  int64 pending = 2;
+  int64 in_progress = 3;
+  int64 failed = 4;
+  int64 workers = 5;
+}

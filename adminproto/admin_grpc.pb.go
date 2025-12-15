@@ -54,6 +54,7 @@ const (
 	AdminService_GetLogStreamConfig_FullMethodName        = "/adminproto.AdminService/GetLogStreamConfig"
 	AdminService_SetLogStreamConfig_FullMethodName        = "/adminproto.AdminService/SetLogStreamConfig"
 	AdminService_DeleteLogStreamConfig_FullMethodName     = "/adminproto.AdminService/DeleteLogStreamConfig"
+	AdminService_GetWorkQueueStatus_FullMethodName        = "/adminproto.AdminService/GetWorkQueueStatus"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -92,6 +93,8 @@ type AdminServiceClient interface {
 	GetLogStreamConfig(ctx context.Context, in *GetLogStreamConfigRequest, opts ...grpc.CallOption) (*GetLogStreamConfigResponse, error)
 	SetLogStreamConfig(ctx context.Context, in *SetLogStreamConfigRequest, opts ...grpc.CallOption) (*SetLogStreamConfigResponse, error)
 	DeleteLogStreamConfig(ctx context.Context, in *DeleteLogStreamConfigRequest, opts ...grpc.CallOption) (*DeleteLogStreamConfigResponse, error)
+	// Work Queue Status
+	GetWorkQueueStatus(ctx context.Context, in *GetWorkQueueStatusRequest, opts ...grpc.CallOption) (*GetWorkQueueStatusResponse, error)
 }
 
 type adminServiceClient struct {
@@ -312,6 +315,16 @@ func (c *adminServiceClient) DeleteLogStreamConfig(ctx context.Context, in *Dele
 	return out, nil
 }
 
+func (c *adminServiceClient) GetWorkQueueStatus(ctx context.Context, in *GetWorkQueueStatusRequest, opts ...grpc.CallOption) (*GetWorkQueueStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetWorkQueueStatusResponse)
+	err := c.cc.Invoke(ctx, AdminService_GetWorkQueueStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -348,6 +361,8 @@ type AdminServiceServer interface {
 	GetLogStreamConfig(context.Context, *GetLogStreamConfigRequest) (*GetLogStreamConfigResponse, error)
 	SetLogStreamConfig(context.Context, *SetLogStreamConfigRequest) (*SetLogStreamConfigResponse, error)
 	DeleteLogStreamConfig(context.Context, *DeleteLogStreamConfigRequest) (*DeleteLogStreamConfigResponse, error)
+	// Work Queue Status
+	GetWorkQueueStatus(context.Context, *GetWorkQueueStatusRequest) (*GetWorkQueueStatusResponse, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -420,6 +435,9 @@ func (UnimplementedAdminServiceServer) SetLogStreamConfig(context.Context, *SetL
 }
 func (UnimplementedAdminServiceServer) DeleteLogStreamConfig(context.Context, *DeleteLogStreamConfigRequest) (*DeleteLogStreamConfigResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteLogStreamConfig not implemented")
+}
+func (UnimplementedAdminServiceServer) GetWorkQueueStatus(context.Context, *GetWorkQueueStatusRequest) (*GetWorkQueueStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetWorkQueueStatus not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -820,6 +838,24 @@ func _AdminService_DeleteLogStreamConfig_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_GetWorkQueueStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWorkQueueStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).GetWorkQueueStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_GetWorkQueueStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).GetWorkQueueStatus(ctx, req.(*GetWorkQueueStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -910,6 +946,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteLogStreamConfig",
 			Handler:    _AdminService_DeleteLogStreamConfig_Handler,
+		},
+		{
+			MethodName: "GetWorkQueueStatus",
+			Handler:    _AdminService_GetWorkQueueStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
