@@ -124,6 +124,7 @@ type Querier interface {
 	WorkQueueDepthAll(ctx context.Context) ([]WorkQueueDepthAllRow, error)
 	WorkQueueFail(ctx context.Context, arg WorkQueueFailParams) (int32, error)
 	WorkQueueHeartbeat(ctx context.Context, arg WorkQueueHeartbeatParams) error
+	WorkQueueStatus(ctx context.Context) ([]WorkQueueStatusRow, error)
 	batchInsertLogSegsDirect(ctx context.Context, arg []batchInsertLogSegsDirectParams) *batchInsertLogSegsDirectBatchResults
 	batchInsertTraceSegsDirect(ctx context.Context, arg []batchInsertTraceSegsDirectParams) *batchInsertTraceSegsDirectBatchResults
 	insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error

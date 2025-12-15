@@ -75,3 +75,14 @@ SELECT task_name, COUNT(*) as depth
  WHERE claimed_by = -1
    AND failed = false
  GROUP BY task_name;
+
+-- name: WorkQueueStatus :many
+SELECT
+  task_name,
+  COUNT(*) FILTER (WHERE claimed_by = -1 AND failed = false) as pending,
+  COUNT(*) FILTER (WHERE claimed_by <> -1) as in_progress,
+  COUNT(*) FILTER (WHERE failed = true) as failed,
+  COUNT(DISTINCT claimed_by) FILTER (WHERE claimed_by <> -1) as workers
+FROM work_queue
+GROUP BY task_name
+ORDER BY task_name;

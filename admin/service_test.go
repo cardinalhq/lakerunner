@@ -264,6 +264,46 @@ func TestGetConsumerLag(t *testing.T) {
 	}
 }
 
+func TestGetWorkQueueStatusWithoutDB(t *testing.T) {
+	originalLRDBVars := map[string]string{
+		"LRDB_HOST":     os.Getenv("LRDB_HOST"),
+		"LRDB_USER":     os.Getenv("LRDB_USER"),
+		"LRDB_PASSWORD": os.Getenv("LRDB_PASSWORD"),
+		"LRDB_DBNAME":   os.Getenv("LRDB_DBNAME"),
+		"LRDB_URL":      os.Getenv("LRDB_URL"),
+	}
+
+	_ = os.Unsetenv("LRDB_HOST")
+	_ = os.Unsetenv("LRDB_USER")
+	_ = os.Unsetenv("LRDB_PASSWORD")
+	_ = os.Unsetenv("LRDB_DBNAME")
+	_ = os.Unsetenv("LRDB_URL")
+
+	defer func() {
+		for key, value := range originalLRDBVars {
+			if value != "" {
+				_ = os.Setenv(key, value)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		}
+	}()
+
+	client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := authContext()
+
+	_, err := client.GetWorkQueueStatus(ctx, &adminproto.GetWorkQueueStatusRequest{})
+	if err == nil {
+		t.Error("Expected error due to missing database connection")
+	}
+
+	if err != nil && err.Error() == "" {
+		t.Error("Expected non-empty error message")
+	}
+}
+
 func TestCreateOrganizationWithoutDB(t *testing.T) {
 	originalConfigDBVars := map[string]string{
 		"CONFIGDB_HOST":     os.Getenv("CONFIGDB_HOST"),

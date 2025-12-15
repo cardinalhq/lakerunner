@@ -32,6 +32,7 @@ import (
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/adminconfig"
 	"github.com/cardinalhq/lakerunner/internal/fly"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 var (
@@ -249,6 +250,34 @@ func (s *Service) GetConsumerLag(ctx context.Context, req *adminproto.GetConsume
 			HighWaterMark: info.HighWaterMark,
 			Lag:           info.Lag,
 			ConsumerGroup: info.GroupID,
+		})
+	}
+
+	return resp, nil
+}
+
+func (s *Service) GetWorkQueueStatus(ctx context.Context, _ *adminproto.GetWorkQueueStatusRequest) (*adminproto.GetWorkQueueStatusResponse, error) {
+	slog.Debug("Received get work queue status request")
+
+	store, err := lrdb.LRDBStore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to lrdb: %w", err)
+	}
+	defer store.Close()
+
+	rows, err := store.WorkQueueStatus(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get work queue status: %w", err)
+	}
+
+	resp := &adminproto.GetWorkQueueStatusResponse{}
+	for _, row := range rows {
+		resp.Tasks = append(resp.Tasks, &adminproto.WorkQueueTaskStatus{
+			TaskName:   row.TaskName,
+			Pending:    row.Pending,
+			InProgress: row.InProgress,
+			Failed:     row.Failed,
+			Workers:    row.Workers,
 		})
 	}
 
