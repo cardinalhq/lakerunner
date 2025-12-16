@@ -350,38 +350,6 @@ func (be *LogLeaf) IsSimpleAggregation() bool {
 	return len(be.Parsers) == 0 && len(be.LineFilters) == 0 && len(be.LabelFilters) == 0
 }
 
-// RequiredColumns returns the minimal set of columns needed for this leaf
-// when used in a simple aggregation context. Returns nil if the leaf is not
-// simple (i.e., requires the full CTE pipeline).
-func (be *LogLeaf) RequiredColumns() []string {
-	if !be.IsSimpleAggregation() {
-		return nil
-	}
-
-	cols := make(map[string]struct{})
-
-	// Always need timestamp for time filtering and bucketing
-	cols["chq_timestamp"] = struct{}{}
-
-	// Add matcher columns (for WHERE clause)
-	for _, m := range be.Matchers {
-		cols[m.Label] = struct{}{}
-	}
-
-	// Add group-by columns
-	for _, g := range be.OutBy {
-		cols[g] = struct{}{}
-	}
-
-	// Convert to sorted slice for deterministic output
-	result := make([]string, 0, len(cols))
-	for c := range cols {
-		result = append(result, c)
-	}
-	sort.Strings(result)
-	return result
-}
-
 func (be *LogLeaf) Label() string {
 	// --- helpers ---
 	quote := func(s string) string {
