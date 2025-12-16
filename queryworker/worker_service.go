@@ -151,7 +151,7 @@ func NewWorkerService(
 
 				// Track the newly downloaded file
 				if err := parquetCache.TrackFile(region, bucket, objectID); err != nil {
-					slog.Warn("Failed to track downloaded file",
+					slog.Error("Failed to track downloaded file - file exists but won't be managed by cache TTL",
 						slog.String("objectID", objectID),
 						slog.String("path", localPath),
 						slog.Any("error", err))
