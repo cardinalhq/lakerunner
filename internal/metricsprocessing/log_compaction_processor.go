@@ -330,6 +330,9 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 	// Merge label name maps from input segments for legacy API support
 	mergedLabelMap := mergeLabelNameMaps(inputSegments)
 
+	// Get stream field for agg_fields
+	streamField := configservice.Global().GetLogStreamConfig(ctx, key.OrganizationID).FieldName
+
 	var segments []lrdb.LogSeg
 	var totalOutputSize, totalOutputRecords int64
 	var segmentIDs []int64
@@ -358,6 +361,44 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 		// Clean up local file
 		_ = os.Remove(result.FileName)
 
+		// Write and upload aggregation parquet file
+		var aggFields []string
+		if len(stats.AggCounts) > 0 {
+			aggFilename := fmt.Sprintf("%s/agg_%d.parquet", os.TempDir(), segmentID)
+			aggSize, aggWriteErr := factories.WriteAggParquet(ctx, aggFilename, stats.AggCounts)
+			if aggWriteErr != nil {
+				ll.Warn("Failed to write agg parquet, continuing without",
+					slog.Int64("segmentID", segmentID),
+					slog.Any("error", aggWriteErr))
+			} else {
+				defer func() { _ = os.Remove(aggFilename) }()
+
+				aggPath := helpers.MakeAggDBObjectID(
+					key.OrganizationID,
+					profile.CollectorName,
+					key.DateInt,
+					p.getHourFromTimestamp(stats.FirstTS),
+					segmentID,
+					"logs",
+				)
+
+				aggUploadErr := client.UploadObject(ctx, profile.Bucket, aggPath, aggFilename)
+				if aggUploadErr != nil {
+					ll.Warn("Failed to upload agg parquet, continuing without",
+						slog.Int64("segmentID", segmentID),
+						slog.String("aggPath", aggPath),
+						slog.Any("error", aggUploadErr))
+				} else {
+					aggFields = factories.GetAggFields(streamField)
+					factories.RecordAggFileWritten(ctx, key.OrganizationID, key.InstanceNum)
+					ll.Debug("Uploaded agg parquet",
+						slog.String("aggPath", aggPath),
+						slog.Int64("aggSize", aggSize),
+						slog.Int("aggBuckets", len(stats.AggCounts)))
+				}
+			}
+		}
+
 		segment := lrdb.LogSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
@@ -379,6 +420,7 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			LabelNameMap:  mergedLabelMap,
 			StreamIds:     stats.StreamValues,
 			StreamIDField: stats.StreamIdField,
+			AggFields:     aggFields,
 		}
 
 		segments = append(segments, segment)

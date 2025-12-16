@@ -5,7 +5,8 @@ SELECT
   segment_id,
   instance_num,
   file_size,
-  lower(ts_range)::bigint as ts_range_lower
+  lower(ts_range)::bigint as ts_range_lower,
+  agg_fields
 FROM log_seg
 WHERE organization_id = @organization_id
   AND dateint = @dateint
