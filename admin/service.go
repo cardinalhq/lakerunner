@@ -16,6 +16,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -354,6 +355,9 @@ func (s *Service) QueueLogRecompact(ctx context.Context, req *adminproto.QueueLo
 	}
 
 	// Queue each segment as a separate work item with Force=true
+	// Collect errors and continue to queue as many segments as possible
+	var queueErrs []error
+	queued := 0
 	for _, seg := range segments {
 		bundle := messages.LogCompactionBundle{
 			Version: 1,
@@ -375,17 +379,24 @@ func (s *Service) QueueLogRecompact(ctx context.Context, req *adminproto.QueueLo
 
 		bundleBytes, err := bundle.Marshal()
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal bundle for segment %d: %w", seg.SegmentID, err)
+			queueErrs = append(queueErrs, fmt.Errorf("segment %d: marshal: %w", seg.SegmentID, err))
+			continue
 		}
 
 		_, err = workqueue.AddBundle(ctx, store, config.BoxerTaskCompactLogs, seg.OrganizationID, seg.InstanceNum, bundleBytes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to queue segment %d: %w", seg.SegmentID, err)
+			queueErrs = append(queueErrs, fmt.Errorf("segment %d: queue: %w", seg.SegmentID, err))
+			continue
 		}
+		queued++
 	}
 
-	resp.SegmentsQueued = int32(len(segments))
-	slog.Info("Queued segments for recompaction", slog.Int("count", len(segments)))
+	resp.SegmentsQueued = int32(queued)
+	slog.Info("Queued segments for recompaction", slog.Int("queued", queued), slog.Int("failed", len(queueErrs)))
+
+	if len(queueErrs) > 0 {
+		return resp, fmt.Errorf("failed to queue %d of %d segments: %w", len(queueErrs), len(segments), errors.Join(queueErrs...))
+	}
 
 	return resp, nil
 }
