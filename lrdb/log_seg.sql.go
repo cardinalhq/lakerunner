@@ -170,6 +170,80 @@ func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmen
 	return items, nil
 }
 
+const listLogSegsForRecompact = `-- name: ListLogSegsForRecompact :many
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids, sort_version, stream_id_field, agg_fields
+FROM log_seg
+WHERE organization_id = $1
+  AND published = true
+  AND compacted = true
+  AND dateint >= $2
+  AND dateint <= $3
+  AND (
+    ($4 = true AND agg_fields IS NULL)
+    OR ($5 = true AND sort_version < $6)
+  )
+ORDER BY upper(ts_range) DESC
+`
+
+type ListLogSegsForRecompactParams struct {
+	OrganizationID      uuid.UUID   `json:"organization_id"`
+	StartDateint        int32       `json:"start_dateint"`
+	EndDateint          int32       `json:"end_dateint"`
+	FilterAggFieldsNull interface{} `json:"filter_agg_fields_null"`
+	FilterSortVersion   interface{} `json:"filter_sort_version"`
+	MinSortVersion      int16       `json:"min_sort_version"`
+}
+
+// Returns log segments that need recompaction based on filter criteria.
+// Used by lakectl logs recompact command to queue segments for reprocessing.
+// Segments are returned in reverse timestamp order (newest first) so that
+// recompaction benefits the most recent data first.
+func (q *Queries) ListLogSegsForRecompact(ctx context.Context, arg ListLogSegsForRecompactParams) ([]LogSeg, error) {
+	rows, err := q.db.Query(ctx, listLogSegsForRecompact,
+		arg.OrganizationID,
+		arg.StartDateint,
+		arg.EndDateint,
+		arg.FilterAggFieldsNull,
+		arg.FilterSortVersion,
+		arg.MinSortVersion,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LogSeg
+	for rows.Next() {
+		var i LogSeg
+		if err := rows.Scan(
+			&i.OrganizationID,
+			&i.Dateint,
+			&i.SegmentID,
+			&i.InstanceNum,
+			&i.Fingerprints,
+			&i.RecordCount,
+			&i.FileSize,
+			&i.IngestDateint,
+			&i.TsRange,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.Compacted,
+			&i.Published,
+			&i.LabelNameMap,
+			&i.StreamIds,
+			&i.SortVersion,
+			&i.StreamIDField,
+			&i.AggFields,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLogStreams = `-- name: ListLogStreams :many
 SELECT DISTINCT
     stream_id_field AS field_name,

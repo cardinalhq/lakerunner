@@ -32,6 +32,8 @@ import (
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/adminconfig"
 	"github.com/cardinalhq/lakerunner/internal/fly"
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -280,6 +282,110 @@ func (s *Service) GetWorkQueueStatus(ctx context.Context, _ *adminproto.GetWorkQ
 			Workers:    row.Workers,
 		})
 	}
+
+	return resp, nil
+}
+
+func (s *Service) QueueLogRecompact(ctx context.Context, req *adminproto.QueueLogRecompactRequest) (*adminproto.QueueLogRecompactResponse, error) {
+	slog.Info("Received queue log recompact request",
+		slog.String("organization_id", req.OrganizationId),
+		slog.Int("start_dateint", int(req.StartDateint)),
+		slog.Int("end_dateint", int(req.EndDateint)),
+		slog.Bool("missing_agg_fields", req.MissingAggFields),
+		slog.Bool("sort_version_below_current", req.SortVersionBelowCurrent),
+		slog.Bool("dry_run", req.DryRun))
+
+	// Validate organization ID
+	orgID, err := uuid.Parse(req.OrganizationId)
+	if err != nil {
+		return nil, fmt.Errorf("invalid organization ID: %w", err)
+	}
+
+	// Validate dateint range
+	if req.StartDateint > req.EndDateint {
+		return nil, fmt.Errorf("start_dateint must be <= end_dateint")
+	}
+
+	// Require at least one filter
+	if !req.MissingAggFields && !req.SortVersionBelowCurrent {
+		return nil, fmt.Errorf("at least one filter required: missing_agg_fields or sort_version_below_current")
+	}
+
+	store, err := lrdb.LRDBStore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to lrdb: %w", err)
+	}
+	defer store.Close()
+
+	// Query segments that need recompaction
+	segments, err := store.ListLogSegsForRecompact(ctx, lrdb.ListLogSegsForRecompactParams{
+		OrganizationID:      orgID,
+		StartDateint:        req.StartDateint,
+		EndDateint:          req.EndDateint,
+		FilterAggFieldsNull: req.MissingAggFields,
+		FilterSortVersion:   req.SortVersionBelowCurrent,
+		MinSortVersion:      lrdb.CurrentLogSortVersion,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to query segments: %w", err)
+	}
+
+	slog.Info("Found segments for recompaction", slog.Int("count", len(segments)))
+
+	// Build response with segment info
+	resp := &adminproto.QueueLogRecompactResponse{
+		Segments: make([]*adminproto.LogSegmentInfo, len(segments)),
+	}
+	for i, seg := range segments {
+		resp.Segments[i] = &adminproto.LogSegmentInfo{
+			SegmentId:    seg.SegmentID,
+			Dateint:      seg.Dateint,
+			InstanceNum:  int32(seg.InstanceNum),
+			RecordCount:  seg.RecordCount,
+			SortVersion:  int32(seg.SortVersion),
+			HasAggFields: seg.AggFields != nil,
+		}
+	}
+
+	// If dry run, return without queueing
+	if req.DryRun {
+		slog.Info("Dry run: not queueing segments")
+		return resp, nil
+	}
+
+	// Queue each segment as a separate work item with Force=true
+	for _, seg := range segments {
+		bundle := messages.LogCompactionBundle{
+			Version: 1,
+			Messages: []*messages.LogCompactionMessage{
+				{
+					Version:        1,
+					OrganizationID: seg.OrganizationID,
+					DateInt:        seg.Dateint,
+					SegmentID:      seg.SegmentID,
+					InstanceNum:    seg.InstanceNum,
+					Records:        seg.RecordCount,
+					FileSize:       seg.FileSize,
+					QueuedAt:       time.Now(),
+				},
+			},
+			QueuedAt: time.Now(),
+			Force:    true,
+		}
+
+		bundleBytes, err := bundle.Marshal()
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal bundle for segment %d: %w", seg.SegmentID, err)
+		}
+
+		_, err = workqueue.AddBundle(ctx, store, config.BoxerTaskCompactLogs, seg.OrganizationID, seg.InstanceNum, bundleBytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to queue segment %d: %w", seg.SegmentID, err)
+		}
+	}
+
+	resp.SegmentsQueued = int32(len(segments))
+	slog.Info("Queued segments for recompaction", slog.Int("count", len(segments)))
 
 	return resp, nil
 }

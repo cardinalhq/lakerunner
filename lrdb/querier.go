@@ -61,6 +61,11 @@ type Querier interface {
 	// Includes today's and yesterday's dateint for partition pruning
 	ListLogQLTags(ctx context.Context, arg ListLogQLTagsParams) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
+	// Returns log segments that need recompaction based on filter criteria.
+	// Used by lakectl logs recompact command to queue segments for reprocessing.
+	// Segments are returned in reverse timestamp order (newest first) so that
+	// recompaction benefits the most recent data first.
+	ListLogSegsForRecompact(ctx context.Context, arg ListLogSegsForRecompactParams) ([]LogSeg, error)
 	// Returns distinct stream values with their source field for an organization within a time range.
 	// Used by /api/v1/logs/series endpoint (Loki-compatible).
 	// Returns both the field name (resource_customer_domain, resource_service_name, or stream_id for legacy)

@@ -80,9 +80,10 @@ func (m *LogCompactionMessage) Unmarshal(data []byte) error {
 // LogCompactionBundle represents a bundle of LogCompactionMessage instances
 // sent from boxer to the compaction consumer
 type LogCompactionBundle struct {
-	Version  int16                   `json:"v"` // message version, current version is 1
-	Messages []*LogCompactionMessage `json:"m"` // the bundled compaction messages
-	QueuedAt time.Time               `json:"q"` // when the bundle was queued to boxer topic
+	Version  int16                   `json:"v"`           // message version, current version is 1
+	Messages []*LogCompactionMessage `json:"m"`           // the bundled compaction messages
+	QueuedAt time.Time               `json:"q"`           // when the bundle was queued to boxer topic
+	Force    bool                    `json:"f,omitempty"` // when true, reprocess even if already compacted
 }
 
 // Marshal converts LogCompactionBundle to JSON bytes
