@@ -25,7 +25,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -60,7 +59,7 @@ func NewWorkerService(
 	metricsGlobSize int,
 	logsGlobSize int,
 	tracesGlobSize int,
-	maxConcurrency int,
+	maxParallelDownloads int,
 	sp storageprofile.StorageProfileProvider,
 	cloudManagers cloudstorage.ClientProvider,
 	disableTableCache bool,
@@ -92,14 +91,12 @@ func NewWorkerService(
 		}
 
 		g, gctx := errgroup.WithContext(ctx)
-		maxConc := min(4*runtime.GOMAXPROCS(0), maxConcurrency)
-		g.SetLimit(maxConc)
+		g.SetLimit(maxParallelDownloads)
 
 		region := profile.Region
 		bucket := profile.Bucket
 
 		for _, objectID := range objectIDs {
-			objectID := objectID // capture loop var
 			g.Go(func() error {
 				select {
 				case <-gctx.Done():
