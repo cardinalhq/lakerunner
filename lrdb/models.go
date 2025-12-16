@@ -128,6 +128,7 @@ type LogSeg struct {
 	StreamIds      []string                  `json:"stream_ids"`
 	SortVersion    int16                     `json:"sort_version"`
 	StreamIDField  *string                   `json:"stream_id_field"`
+	AggFields      []string                  `json:"agg_fields"`
 }
 
 type LrdbExemplarLog struct {

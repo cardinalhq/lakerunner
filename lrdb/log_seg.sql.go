@@ -54,7 +54,7 @@ func (q *Queries) GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsPara
 }
 
 const getLogSeg = `-- name: GetLogSeg :one
-SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids, sort_version, stream_id_field
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids, sort_version, stream_id_field, agg_fields
 FROM log_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -95,6 +95,7 @@ func (q *Queries) GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, e
 		&i.StreamIds,
 		&i.SortVersion,
 		&i.StreamIDField,
+		&i.AggFields,
 	)
 	return i, err
 }
@@ -266,7 +267,8 @@ INSERT INTO log_seg (
   label_name_map,
   stream_ids,
   stream_id_field,
-  sort_version
+  sort_version,
+  agg_fields
 )
 VALUES (
   $1,
@@ -283,7 +285,8 @@ VALUES (
   $13,
   $14::text[],
   $15,
-  $16
+  $16,
+  $17::text[]
 )
 `
 
@@ -304,6 +307,7 @@ type InsertLogSegmentParams struct {
 	StreamIds      []string  `json:"stream_ids"`
 	StreamIDField  *string   `json:"stream_id_field"`
 	SortVersion    int16     `json:"sort_version"`
+	AggFields      []string  `json:"agg_fields"`
 }
 
 func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error {
@@ -324,6 +328,7 @@ func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 		arg.StreamIds,
 		arg.StreamIDField,
 		arg.SortVersion,
+		arg.AggFields,
 	)
 	return err
 }
