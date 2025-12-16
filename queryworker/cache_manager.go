@@ -134,9 +134,11 @@ type ingestJob struct {
 
 // CacheManager coordinates downloads, batch-ingest, queries, and LRU evictions.
 type CacheManager struct {
-	sink                   *DDBSink
-	s3Pool                 *duckdbx.S3DB // shared global pool
-	maxRows                int64
+	sink    *DDBSink
+	s3Pool  *duckdbx.S3DB    // shared pool for DDBSink and disk metrics
+	localDB *duckdbx.LocalDB // lightweight DuckDB for local parquet file queries
+	maxRows int64
+
 	downloader             DownloadBatchFunc
 	storageProfileProvider storageprofile.StorageProfileProvider
 	dataset                string
@@ -192,9 +194,17 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		}
 	}
 
+	// Create lightweight LocalDB for local parquet file queries
+	localDB, err := duckdbx.NewLocalDB()
+	if err != nil {
+		slog.Error("Failed to create LocalDB", slog.Any("error", err))
+		return nil
+	}
+
 	w := &CacheManager{
 		sink:                     ddb,
 		s3Pool:                   s3Pool,
+		localDB:                  localDB,
 		dataset:                  dataset,
 		storageProfileProvider:   storageProfileProvider,
 		profilesByOrgInstanceNum: make(map[uuid.UUID]map[int16]storageprofile.StorageProfile),
@@ -230,6 +240,9 @@ func (w *CacheManager) Close() {
 		w.stopIngest()
 	}
 	w.ingestWG.Wait()
+	if w.localDB != nil {
+		_ = w.localDB.Close()
+	}
 }
 
 // RegisterCacheMetrics registers OTEL metrics for multiple CacheManagers.
@@ -727,7 +740,7 @@ func streamFromLocalFiles[T promql.Timestamped](
 		// Get a local connection (no S3 credentials needed for local files)
 		_, connSpan := tracer.Start(ctx, "query.worker.local_connection_acquire")
 		start := time.Now()
-		conn, release, err := w.s3Pool.GetConnection(ctx)
+		conn, release, err := w.localDB.GetConnection(ctx)
 		connectionAcquireTime := time.Since(start)
 		connSpan.SetAttributes(attribute.Int64("duration_ms", connectionAcquireTime.Milliseconds()))
 		connSpan.End()
