@@ -69,16 +69,16 @@ func main() {
 	for _, poolSize := range testPoolSizes {
 		fmt.Printf("\n=== Testing with pool size %d ===\n", poolSize)
 
-		// Create S3DB with specified pool size
-		os.Setenv("DUCKDB_S3_POOL_SIZE", fmt.Sprintf("%d", poolSize))
+		// Create DB with specified pool size
+		os.Setenv("DUCKDB_POOL_SIZE", fmt.Sprintf("%d", poolSize))
 		os.Setenv("DUCKDB_MEMORY_LIMIT", "256") // 256MB limit per DuckDB instance
 
-		s3db, err := duckdbx.NewS3DB()
+		db, err := duckdbx.NewDB()
 		if err != nil {
-			log.Fatal("Failed to create S3DB:", err)
+			log.Fatal("Failed to create DB:", err)
 		}
 
-		printMemory(fmt.Sprintf("After creating S3DB (pool=%d)", poolSize))
+		printMemory(fmt.Sprintf("After creating DB (pool=%d)", poolSize))
 
 		// Get connections up to pool size and run queries
 		ctx := context.Background()
@@ -86,7 +86,7 @@ func main() {
 		releaseFuncs := make([]func(), 0, poolSize)
 
 		for i := 0; i < poolSize; i++ {
-			conn, release, err := s3db.GetConnection(ctx)
+			conn, release, err := db.GetConnection(ctx)
 			if err != nil {
 				log.Fatal("Failed to get connection:", err)
 			}
@@ -148,9 +148,9 @@ func main() {
 		}
 		printMemory(fmt.Sprintf("After releasing all %d connections", poolSize))
 
-		// Close S3DB
-		s3db.Close()
-		printMemory(fmt.Sprintf("After closing S3DB (pool=%d)", poolSize))
+		// Close DB
+		db.Close()
+		printMemory(fmt.Sprintf("After closing DB (pool=%d)", poolSize))
 
 		// Force GC and wait a bit
 		runtime.GC()

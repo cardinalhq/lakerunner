@@ -32,9 +32,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// S3DB manages a pool of DuckDB connections to a single shared on-disk database.
+// DB manages a pool of DuckDB connections to a single shared on-disk database.
 // All connections open the same file and thus share the same in-process database instance.
-type S3DB struct {
+type DB struct {
 	dbPath         string // single on-disk database file for all connections
 	cleanupOnClose bool   // whether to remove the database directory on Close
 
@@ -49,7 +49,7 @@ type S3DB struct {
 	setupOnce sync.Once
 	setupErr  error
 
-	// Single global pool (per S3DB instance)
+	// Single global pool (per DB instance)
 	pool *connectionPool
 
 	// metrics
@@ -62,7 +62,7 @@ type S3DB struct {
 }
 
 type connectionPool struct {
-	parent *S3DB
+	parent *DB
 	size   int
 
 	mu  sync.Mutex
@@ -78,21 +78,21 @@ type pooledConn struct {
 	deadline time.Time
 }
 
-// s3DBConfig holds configuration options for S3DB
-type s3DBConfig struct {
+// dbConfig holds configuration options for DB
+type dbConfig struct {
 	dbPath        *string
 	metricsPeriod time.Duration
 	metricsCtx    context.Context
 	connMaxAge    time.Duration
 }
 
-// S3DBOption is a functional option for configuring S3DB
-type S3DBOption func(*s3DBConfig)
+// DBOption is a functional option for configuring DB
+type DBOption func(*dbConfig)
 
-// WithDatabasePath sets the database path for S3DB.
+// WithDatabasePath sets the database path for DB.
 // The path must not be empty.
-func WithDatabasePath(path string) S3DBOption {
-	return func(cfg *s3DBConfig) {
+func WithDatabasePath(path string) DBOption {
+	return func(cfg *dbConfig) {
 		if path == "" {
 			panic("WithDatabasePath: path must not be empty")
 		}
@@ -100,10 +100,10 @@ func WithDatabasePath(path string) S3DBOption {
 	}
 }
 
-// WithS3DBMetrics enables periodic polling of DuckDB memory metrics.
+// WithMetrics enables periodic polling of DuckDB memory metrics.
 // If period is 0, uses default of 30 seconds.
-func WithS3DBMetrics(period time.Duration) S3DBOption {
-	return func(cfg *s3DBConfig) {
+func WithMetrics(period time.Duration) DBOption {
+	return func(cfg *dbConfig) {
 		if period == 0 {
 			period = 30 * time.Second
 		}
@@ -111,17 +111,17 @@ func WithS3DBMetrics(period time.Duration) S3DBOption {
 	}
 }
 
-// WithS3DBMetricsContext sets the context used for metrics polling.
+// WithMetricsContext sets the context used for metrics polling.
 // If not set, uses context.Background().
-func WithS3DBMetricsContext(ctx context.Context) S3DBOption {
-	return func(cfg *s3DBConfig) {
+func WithMetricsContext(ctx context.Context) DBOption {
+	return func(cfg *dbConfig) {
 		cfg.metricsCtx = ctx
 	}
 }
 
 // WithConnectionMaxAge sets the maximum lifetime for a pooled physical connection.
-func WithConnectionMaxAge(d time.Duration) S3DBOption {
-	return func(cfg *s3DBConfig) {
+func WithConnectionMaxAge(d time.Duration) DBOption {
+	return func(cfg *dbConfig) {
 		if d < time.Minute {
 			d = time.Minute
 		}
@@ -129,12 +129,12 @@ func WithConnectionMaxAge(d time.Duration) S3DBOption {
 	}
 }
 
-// NewS3DB creates a new S3DB instance with a shared database.
+// NewDB creates a new DB instance with a shared database.
 // Database location behavior:
 //   - No options provided: creates a temporary file database (persistent across connections)
 //   - WithDatabasePath("/path/to/db"): uses specified file database (persistent across connections)
-func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
-	cfg := &s3DBConfig{}
+func NewDB(opts ...DBOption) (*DB, error) {
+	cfg := &dbConfig{}
 	for _, opt := range opts {
 		opt(cfg)
 	}
@@ -149,7 +149,7 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 		// No options provided - create a temp file that we'll clean up
 		dbDir, err := os.MkdirTemp("", "")
 		if err != nil {
-			return nil, fmt.Errorf("create temp dir for S3DB: %w", err)
+			return nil, fmt.Errorf("create temp dir for DB: %w", err)
 		}
 		dbPath = filepath.Join(dbDir, "global.ddb")
 		cleanupOnClose = true
@@ -159,7 +159,7 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 
 	// Default pool: half the cores, capped at 8, min 2.
 	poolDefault := min(8, max(2, runtime.GOMAXPROCS(0)/2))
-	poolSize := envIntClamp("DUCKDB_S3_POOL_SIZE", poolDefault, 1, 512)
+	poolSize := envIntClamp("DUCKDB_POOL_SIZE", poolDefault, 1, 512)
 
 	total := runtime.GOMAXPROCS(0)
 	// All connections share the same database, so threads setting applies to the shared instance
@@ -182,7 +182,7 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 		"connMaxAge", connMaxAge,
 	)
 
-	s3db := &S3DB{
+	d := &DB{
 		dbPath:         dbPath,
 		cleanupOnClose: cleanupOnClose,
 		memoryLimitMB:  memoryMB,
@@ -194,8 +194,8 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 		connMaxAge:     connMaxAge,
 	}
 
-	s3db.pool = &connectionPool{
-		parent: s3db,
+	d.pool = &connectionPool{
+		parent: d,
 		size:   poolSize,
 		ch:     make(chan *pooledConn, poolSize),
 	}
@@ -206,46 +206,46 @@ func NewS3DB(opts ...S3DBOption) (*S3DB, error) {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		s3db.metricsCtx, s3db.metricsCancel = context.WithCancel(ctx)
-		go s3db.pollMemoryMetrics(s3db.metricsCtx)
+		d.metricsCtx, d.metricsCancel = context.WithCancel(ctx)
+		go d.pollMemoryMetrics(d.metricsCtx)
 	}
 
-	return s3db, nil
+	return d, nil
 }
 
-func (s *S3DB) Close() error {
+func (d *DB) Close() error {
 	// Cancel metrics polling if running
-	if s.metricsCancel != nil {
-		s.metricsCancel()
+	if d.metricsCancel != nil {
+		d.metricsCancel()
 	}
 
-	if s.pool != nil {
-		s.pool.closeAll()
+	if d.pool != nil {
+		d.pool.closeAll()
 	}
 
 	// Only clean up the directory if we created it (temp directories)
 	// Never remove user-provided paths
-	if s.cleanupOnClose && s.dbPath != "" {
-		dbDir := filepath.Dir(s.dbPath)
+	if d.cleanupOnClose && d.dbPath != "" {
+		dbDir := filepath.Dir(d.dbPath)
 		_ = os.RemoveAll(dbDir)
 	}
 	return nil
 }
 
 // GetDatabasePath returns the path to the database file.
-func (s *S3DB) GetDatabasePath() string {
-	return s.dbPath
+func (d *DB) GetDatabasePath() string {
+	return d.dbPath
 }
 
 // GetConnection returns a connection for local database queries.
-func (s *S3DB) GetConnection(ctx context.Context) (*sql.Conn, func(), error) {
-	return s.pool.acquire(ctx)
+func (d *DB) GetConnection(ctx context.Context) (*sql.Conn, func(), error) {
+	return d.pool.acquire(ctx)
 }
 
 // ---------- connectionPool implementation ----------
 
 func (p *connectionPool) acquire(ctx context.Context) (*sql.Conn, func(), error) {
-	// Ensure extensions are loaded and database is set up before any connection is used
+	// Ensure database is set up before any connection is used
 	if err := p.parent.ensureSetup(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -374,60 +374,60 @@ func (p *connectionPool) closeAll() {
 	}
 }
 
-// ---------- S3DB setup ----------
+// ---------- DB setup ----------
 
 // ensureSetup runs once to configure the shared database instance
-func (s *S3DB) ensureSetup(ctx context.Context) error {
-	s.setupOnce.Do(func() {
-		db, err := sql.Open("duckdb", s.dbPath)
+func (d *DB) ensureSetup(ctx context.Context) error {
+	d.setupOnce.Do(func() {
+		db, err := sql.Open("duckdb", d.dbPath)
 		if err != nil {
-			s.setupErr = fmt.Errorf("open db for setup: %w", err)
+			d.setupErr = fmt.Errorf("open db for setup: %w", err)
 			return
 		}
 		defer func() { _ = db.Close() }()
 
 		conn, err := db.Conn(ctx)
 		if err != nil {
-			s.setupErr = fmt.Errorf("get conn for setup: %w", err)
+			d.setupErr = fmt.Errorf("get conn for setup: %w", err)
 			return
 		}
 		defer func() { _ = conn.Close() }()
 
 		// Set home_directory
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET home_directory='%s';", escapeSingle(filepath.Dir(s.dbPath)))); err != nil {
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET home_directory='%s';", escapeSingle(filepath.Dir(d.dbPath)))); err != nil {
 			slog.Warn("Failed to set home_directory", "error", err)
 		}
 
-		if s.memoryLimitMB > 0 {
-			slog.Info("Setting memory limit for shared DuckDB instance", "memoryLimitMB", s.memoryLimitMB)
-			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", s.memoryLimitMB)); err != nil {
-				s.setupErr = fmt.Errorf("set memory_limit: %w", err)
+		if d.memoryLimitMB > 0 {
+			slog.Info("Setting memory limit for shared DuckDB instance", "memoryLimitMB", d.memoryLimitMB)
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", d.memoryLimitMB)); err != nil {
+				d.setupErr = fmt.Errorf("set memory_limit: %w", err)
 				return
 			}
 		}
-		if s.tempDir != "" {
-			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET temp_directory = '%s';", escapeSingle(s.tempDir))); err != nil {
-				s.setupErr = fmt.Errorf("set temp_directory: %w", err)
+		if d.tempDir != "" {
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET temp_directory = '%s';", escapeSingle(d.tempDir))); err != nil {
+				d.setupErr = fmt.Errorf("set temp_directory: %w", err)
 				return
 			}
 		}
-		if s.maxTempSize != "" {
-			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET max_temp_directory_size = '%s';", escapeSingle(s.maxTempSize))); err != nil {
-				s.setupErr = fmt.Errorf("set max_temp_directory_size: %w", err)
+		if d.maxTempSize != "" {
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET max_temp_directory_size = '%s';", escapeSingle(d.maxTempSize))); err != nil {
+				d.setupErr = fmt.Errorf("set max_temp_directory_size: %w", err)
 				return
 			}
 		}
 
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA threads=%d;", s.threads)); err != nil {
-			s.setupErr = fmt.Errorf("set threads: %w", err)
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA threads=%d;", d.threads)); err != nil {
+			d.setupErr = fmt.Errorf("set threads: %w", err)
 			return
 		}
 		if _, err := conn.ExecContext(ctx, "PRAGMA enable_object_cache;"); err != nil {
-			s.setupErr = fmt.Errorf("enable_object_cache: %w", err)
+			d.setupErr = fmt.Errorf("enable_object_cache: %w", err)
 			return
 		}
 	})
-	return s.setupErr
+	return d.setupErr
 }
 
 // ---------- helpers & metrics ----------
@@ -476,7 +476,7 @@ func envDuration(name string, def time.Duration) time.Duration {
 }
 
 // pollMemoryMetrics periodically polls DuckDB memory statistics and records them as OpenTelemetry metrics
-func (s *S3DB) pollMemoryMetrics(ctx context.Context) {
+func (d *DB) pollMemoryMetrics(ctx context.Context) {
 	meter := otel.Meter("github.com/cardinalhq/lakerunner/duckdbx")
 
 	dbSizeGauge, err := meter.Int64Gauge("lakerunner.duckdb.memory.database_size",
@@ -552,7 +552,7 @@ func (s *S3DB) pollMemoryMetrics(ctx context.Context) {
 	}
 
 	for {
-		conn, release, err := s.GetConnection(ctx)
+		conn, release, err := d.GetConnection(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -561,7 +561,7 @@ func (s *S3DB) pollMemoryMetrics(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(s.metricsPeriod):
+			case <-time.After(d.metricsPeriod):
 				continue
 			}
 		}
@@ -574,7 +574,7 @@ func (s *S3DB) pollMemoryMetrics(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(s.metricsPeriod):
+			case <-time.After(d.metricsPeriod):
 				continue
 			}
 		}
@@ -598,7 +598,7 @@ func (s *S3DB) pollMemoryMetrics(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(s.metricsPeriod):
+		case <-time.After(d.metricsPeriod):
 		}
 	}
 }

@@ -49,20 +49,20 @@ func getVersionCmd() *cobra.Command {
 
 // runVersion checks DuckDB version and validates it matches expected version.
 func runVersion(ctx context.Context) error {
-	// Use temporary file-based S3DB pool
-	s3db, err := duckdbx.NewS3DB()
+	// Use temporary file-based DB pool
+	db, err := duckdbx.NewDB()
 	if err != nil {
 		return err
 	}
 	defer func() {
-		_ = s3db.Close()
+		_ = db.Close()
 		// Clean up the temp database file
-		if dbPath := s3db.GetDatabasePath(); dbPath != "" {
+		if dbPath := db.GetDatabasePath(); dbPath != "" {
 			_ = os.RemoveAll(filepath.Dir(dbPath))
 		}
 	}()
 
-	c, release, err := s3db.GetConnection(ctx)
+	c, release, err := db.GetConnection(ctx)
 	if err != nil {
 		return err
 	}

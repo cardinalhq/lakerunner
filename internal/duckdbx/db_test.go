@@ -25,19 +25,19 @@ import (
 )
 
 // Test that two connections from the pool share the same database state
-func TestS3DB_SharedDataBetweenConnections(t *testing.T) {
+func TestDB_SharedDataBetweenConnections(t *testing.T) {
 	ctx := context.Background()
 
-	// Create S3DB instance
-	s3db, err := NewS3DB()
+	// Create DB instance
+	db, err := NewDB()
 	require.NoError(t, err)
 	defer func() {
-		err := s3db.Close()
+		err := db.Close()
 		require.NoError(t, err)
 	}()
 
 	// Get first connection and create a table with data
-	conn1, release1, err := s3db.GetConnection(ctx)
+	conn1, release1, err := db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release1()
 
@@ -50,7 +50,7 @@ func TestS3DB_SharedDataBetweenConnections(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get second connection and verify data is visible
-	conn2, release2, err := s3db.GetConnection(ctx)
+	conn2, release2, err := db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release2()
 
@@ -84,33 +84,33 @@ func TestS3DB_SharedDataBetweenConnections(t *testing.T) {
 }
 
 // Test that pool size limits are respected
-func TestS3DB_PoolSizeLimits(t *testing.T) {
+func TestDB_PoolSizeLimits(t *testing.T) {
 	ctx := context.Background()
 
 	// Set a small pool size for testing
-	oldVal := os.Getenv("DUCKDB_S3_POOL_SIZE")
-	_ = os.Setenv("DUCKDB_S3_POOL_SIZE", "2")
+	oldVal := os.Getenv("DUCKDB_POOL_SIZE")
+	_ = os.Setenv("DUCKDB_POOL_SIZE", "2")
 	defer func() {
 		if oldVal != "" {
-			_ = os.Setenv("DUCKDB_S3_POOL_SIZE", oldVal)
+			_ = os.Setenv("DUCKDB_POOL_SIZE", oldVal)
 		} else {
-			_ = os.Unsetenv("DUCKDB_S3_POOL_SIZE")
+			_ = os.Unsetenv("DUCKDB_POOL_SIZE")
 		}
 	}()
 
-	// Create S3DB instance with pool size of 2
-	s3db, err := NewS3DB()
+	// Create DB instance with pool size of 2
+	db, err := NewDB()
 	require.NoError(t, err)
 	defer func() {
-		err := s3db.Close()
+		err := db.Close()
 		require.NoError(t, err)
 	}()
 
 	// Get two connections (fills the pool)
-	conn1, release1, err := s3db.GetConnection(ctx)
+	conn1, release1, err := db.GetConnection(ctx)
 	require.NoError(t, err)
 
-	conn2, release2, err := s3db.GetConnection(ctx)
+	conn2, release2, err := db.GetConnection(ctx)
 	require.NoError(t, err)
 
 	// Both connections should work
@@ -124,7 +124,7 @@ func TestS3DB_PoolSizeLimits(t *testing.T) {
 	release1()
 
 	// Should be able to get another connection now
-	conn3, release3, err := s3db.GetConnection(ctx)
+	conn3, release3, err := db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release3()
 
@@ -136,19 +136,19 @@ func TestS3DB_PoolSizeLimits(t *testing.T) {
 }
 
 // Test concurrent access to the pool
-func TestS3DB_ConcurrentAccess(t *testing.T) {
+func TestDB_ConcurrentAccess(t *testing.T) {
 	ctx := context.Background()
 
-	// Create S3DB instance
-	s3db, err := NewS3DB()
+	// Create DB instance
+	db, err := NewDB()
 	require.NoError(t, err)
 	defer func() {
-		err := s3db.Close()
+		err := db.Close()
 		require.NoError(t, err)
 	}()
 
 	// Create a shared table
-	conn, release, err := s3db.GetConnection(ctx)
+	conn, release, err := db.GetConnection(ctx)
 	require.NoError(t, err)
 	_, err = conn.ExecContext(ctx, `CREATE TABLE concurrent_test (id INTEGER)`)
 	require.NoError(t, err)
@@ -158,7 +158,7 @@ func TestS3DB_ConcurrentAccess(t *testing.T) {
 	done := make(chan error, 10)
 	for i := 0; i < 10; i++ {
 		go func(id int) {
-			conn, release, err := s3db.GetConnection(ctx)
+			conn, release, err := db.GetConnection(ctx)
 			if err != nil {
 				done <- fmt.Errorf("failed to get connection %d: %w", id, err)
 				return
@@ -183,7 +183,7 @@ func TestS3DB_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Verify all inserts succeeded
-	conn, release, err = s3db.GetConnection(ctx)
+	conn, release, err = db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release()
 
@@ -197,26 +197,26 @@ func TestS3DB_ConcurrentAccess(t *testing.T) {
 func TestPooledConnectionReuse(t *testing.T) {
 	ctx := context.Background()
 
-	// Create S3DB instance with small pool to force reuse
-	oldPoolSize := os.Getenv("DUCKDB_S3_POOL_SIZE")
-	_ = os.Setenv("DUCKDB_S3_POOL_SIZE", "2") // Small pool
+	// Create DB instance with small pool to force reuse
+	oldPoolSize := os.Getenv("DUCKDB_POOL_SIZE")
+	_ = os.Setenv("DUCKDB_POOL_SIZE", "2") // Small pool
 	defer func() {
 		if oldPoolSize != "" {
-			_ = os.Setenv("DUCKDB_S3_POOL_SIZE", oldPoolSize)
+			_ = os.Setenv("DUCKDB_POOL_SIZE", oldPoolSize)
 		} else {
-			_ = os.Unsetenv("DUCKDB_S3_POOL_SIZE")
+			_ = os.Unsetenv("DUCKDB_POOL_SIZE")
 		}
 	}()
 
-	s3db, err := NewS3DB()
+	db, err := NewDB()
 	require.NoError(t, err)
 	defer func() {
-		err := s3db.Close()
+		err := db.Close()
 		require.NoError(t, err)
 	}()
 
 	// Test 1: Get connection, use it, return it, get it again
-	conn1, release1, err := s3db.GetConnection(ctx)
+	conn1, release1, err := db.GetConnection(ctx)
 	require.NoError(t, err)
 
 	// Create a table and insert data
@@ -229,7 +229,7 @@ func TestPooledConnectionReuse(t *testing.T) {
 	release1()
 
 	// Get connection again (should get the same one from pool)
-	conn2, release2, err := s3db.GetConnection(ctx)
+	conn2, release2, err := db.GetConnection(ctx)
 	require.NoError(t, err)
 	defer release2()
 
@@ -258,7 +258,7 @@ func TestWithDatabasePathEmptyPanics(t *testing.T) {
 	}()
 
 	// This should panic when the option is applied
-	cfg := &s3DBConfig{}
+	cfg := &dbConfig{}
 	opt := WithDatabasePath("")
 	opt(cfg)
 }
@@ -266,27 +266,27 @@ func TestWithDatabasePathEmptyPanics(t *testing.T) {
 // TestGetDatabasePath verifies that GetDatabasePath returns the correct path.
 func TestGetDatabasePath(t *testing.T) {
 	// Test with auto-generated temp path
-	s3db1, err := NewS3DB()
+	db1, err := NewDB()
 	require.NoError(t, err)
-	defer func() { _ = s3db1.Close() }()
+	defer func() { _ = db1.Close() }()
 
-	path1 := s3db1.GetDatabasePath()
+	path1 := db1.GetDatabasePath()
 	require.NotEmpty(t, path1)
 	require.Contains(t, path1, "global.ddb")
 	t.Logf("Auto-generated path: %s", path1)
 
 	// Test with explicit path
 	testPath := filepath.Join(t.TempDir(), "test.ddb")
-	s3db2, err := NewS3DB(WithDatabasePath(testPath))
+	db2, err := NewDB(WithDatabasePath(testPath))
 	require.NoError(t, err)
-	defer func() { _ = s3db2.Close() }()
+	defer func() { _ = db2.Close() }()
 
-	path2 := s3db2.GetDatabasePath()
+	path2 := db2.GetDatabasePath()
 	require.Equal(t, testPath, path2)
 	t.Logf("Explicit path: %s", path2)
 }
 
-// TestCloseDoesNotDeleteUserProvidedPaths verifies that S3DB.Close() only removes
+// TestCloseDoesNotDeleteUserProvidedPaths verifies that DB.Close() only removes
 // internally-created temp directories and not user-provided paths.
 func TestCloseDoesNotDeleteUserProvidedPaths(t *testing.T) {
 	ctx := context.Background()
@@ -302,19 +302,19 @@ func TestCloseDoesNotDeleteUserProvidedPaths(t *testing.T) {
 		err := os.WriteFile(otherFile, []byte("important data"), 0644)
 		require.NoError(t, err)
 
-		// Create S3DB with user-provided path
-		s3db, err := NewS3DB(WithDatabasePath(dbPath))
+		// Create DB with user-provided path
+		db, err := NewDB(WithDatabasePath(dbPath))
 		require.NoError(t, err)
 
 		// Use it briefly to ensure it's working
-		conn, release, err := s3db.GetConnection(ctx)
+		conn, release, err := db.GetConnection(ctx)
 		require.NoError(t, err)
 		_, err = conn.ExecContext(ctx, `SELECT 1`)
 		require.NoError(t, err)
 		release()
 
 		// Close the database
-		err = s3db.Close()
+		err = db.Close()
 		require.NoError(t, err)
 
 		// Verify that the directory and files still exist
@@ -331,11 +331,11 @@ func TestCloseDoesNotDeleteUserProvidedPaths(t *testing.T) {
 
 	// Test that internally-created temp directories ARE deleted
 	t.Run("InternalTempPath", func(t *testing.T) {
-		// Create S3DB without specifying a path (uses temp)
-		s3db, err := NewS3DB()
+		// Create DB without specifying a path (uses temp)
+		db, err := NewDB()
 		require.NoError(t, err)
 
-		dbPath := s3db.GetDatabasePath()
+		dbPath := db.GetDatabasePath()
 		dbDir := filepath.Dir(dbPath)
 
 		// Verify the temp directory exists
@@ -343,14 +343,14 @@ func TestCloseDoesNotDeleteUserProvidedPaths(t *testing.T) {
 		require.NoError(t, err, "temp directory should exist before close")
 
 		// Use it briefly
-		conn, release, err := s3db.GetConnection(ctx)
+		conn, release, err := db.GetConnection(ctx)
 		require.NoError(t, err)
 		_, err = conn.ExecContext(ctx, `SELECT 1`)
 		require.NoError(t, err)
 		release()
 
 		// Close the database
-		err = s3db.Close()
+		err = db.Close()
 		require.NoError(t, err)
 
 		// Verify that the temp directory was deleted

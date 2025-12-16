@@ -37,7 +37,7 @@ import (
 // DuckDBParquetBatchedReader reads rows from a Parquet file using DuckDB with SQL-level batching.
 // Uses LIMIT/OFFSET to avoid loading the entire file into memory at once.
 type DuckDBParquetBatchedReader struct {
-	s3db      *duckdbx.S3DB
+	db        *duckdbx.DB
 	batchSize int
 
 	// Query template and args
@@ -60,7 +60,7 @@ type DuckDBParquetBatchedReader struct {
 
 // NewDuckDBParquetBatchedReader creates a new batched DuckDB reader for the given
 // Parquet file paths. Uses LIMIT/OFFSET for memory-efficient streaming.
-func NewDuckDBParquetBatchedReader(ctx context.Context, s3db *duckdbx.S3DB, paths []string, batchSize int) (*DuckDBParquetBatchedReader, error) {
+func NewDuckDBParquetBatchedReader(ctx context.Context, db *duckdbx.DB, paths []string, batchSize int) (*DuckDBParquetBatchedReader, error) {
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
@@ -85,7 +85,7 @@ func NewDuckDBParquetBatchedReader(ctx context.Context, s3db *duckdbx.S3DB, path
 	}
 
 	return &DuckDBParquetBatchedReader{
-		s3db:      s3db,
+		db:        db,
 		batchSize: batchSize,
 		baseQuery: baseQuery,
 		queryArgs: queryArgs,
@@ -99,7 +99,7 @@ func (r *DuckDBParquetBatchedReader) initSchema(ctx context.Context) error {
 	}
 
 	// Query just the first row to get schema
-	conn, release, err := r.s3db.GetConnection(ctx)
+	conn, release, err := r.db.GetConnection(ctx)
 	if err != nil {
 		return fmt.Errorf("get connection: %w", err)
 	}
@@ -184,7 +184,7 @@ func (r *DuckDBParquetBatchedReader) Next(ctx context.Context) (*filereader.Batc
 	}
 
 	// Execute batched query with LIMIT/OFFSET
-	conn, release, err := r.s3db.GetConnection(ctx)
+	conn, release, err := r.db.GetConnection(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get connection: %w", err)
 	}

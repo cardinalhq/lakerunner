@@ -62,21 +62,21 @@ func main() {
 
 	// Set a strict 1GB limit
 	os.Setenv("DUCKDB_MEMORY_LIMIT", "1024")
-	os.Setenv("DUCKDB_S3_POOL_SIZE", "2")
+	os.Setenv("DUCKDB_POOL_SIZE", "2")
 
 	printMemory("Initial (before DuckDB)")
 
-	// Create S3DB
-	s3db, err := duckdbx.NewS3DB()
+	// Create DB
+	db, err := duckdbx.NewDB()
 	if err != nil {
-		log.Fatal("Failed to create S3DB:", err)
+		log.Fatal("Failed to create DB:", err)
 	}
-	defer s3db.Close()
+	defer db.Close()
 
-	printMemory("After creating S3DB")
+	printMemory("After creating DB")
 
 	ctx := context.Background()
-	conn, release, err := s3db.GetConnection(ctx)
+	conn, release, err := db.GetConnection(ctx)
 	if err != nil {
 		log.Fatal("Failed to get connection:", err)
 	}

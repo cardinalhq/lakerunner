@@ -123,7 +123,7 @@ type RowMapper[T promql.Timestamped] func(queryapi.PushDownRequest, []string, *s
 
 // CacheManager coordinates downloads and queries over local parquet files.
 type CacheManager struct {
-	s3Pool                 *duckdbx.S3DB // shared global pool
+	pool                   *duckdbx.DB // shared global pool
 	downloader             DownloadBatchFunc
 	storageProfileProvider storageprofile.StorageProfileProvider
 	dataset                string
@@ -133,14 +133,14 @@ type CacheManager struct {
 	profilesMu               sync.RWMutex
 }
 
-func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider, s3Pool *duckdbx.S3DB, parquetCache *ParquetFileCache) *CacheManager {
+func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider, pool *duckdbx.DB, parquetCache *ParquetFileCache) *CacheManager {
 	if parquetCache == nil {
 		slog.Error("parquetCache is required but was nil")
 		return nil
 	}
 
 	w := &CacheManager{
-		s3Pool:                   s3Pool,
+		pool:                     pool,
 		dataset:                  dataset,
 		storageProfileProvider:   storageProfileProvider,
 		profilesByOrgInstanceNum: make(map[uuid.UUID]map[int16]storageprofile.StorageProfile),
@@ -358,7 +358,7 @@ func streamFromLocalFiles[T promql.Timestamped](
 		// Get a local connection (no S3 credentials needed for local files)
 		_, connSpan := tracer.Start(ctx, "query.worker.local_connection_acquire")
 		start := time.Now()
-		conn, release, err := w.s3Pool.GetConnection(ctx)
+		conn, release, err := w.pool.GetConnection(ctx)
 		connectionAcquireTime := time.Since(start)
 		connSpan.SetAttributes(attribute.Int64("duration_ms", connectionAcquireTime.Milliseconds()))
 		connSpan.End()

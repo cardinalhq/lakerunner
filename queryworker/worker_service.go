@@ -51,7 +51,7 @@ type WorkerService struct {
 	MetricsGlobSize      int
 	LogsGlobSize         int
 	TracesGlobSize       int
-	s3Pool               *duckdbx.S3DB     // shared pool for all queries
+	pool                 *duckdbx.DB       // shared pool for all queries
 	parquetCache         *ParquetFileCache // shared parquet file cache
 }
 
@@ -170,18 +170,18 @@ func NewWorkerService(
 		return nil
 	}
 
-	// Create a single shared S3DB pool for all queries with metrics enabled
-	s3Pool, err := duckdbx.NewS3DB(
-		duckdbx.WithS3DBMetrics(10*time.Second),
+	// Create a single shared DB pool for all queries with metrics enabled
+	pool, err := duckdbx.NewDB(
+		duckdbx.WithMetrics(10*time.Second),
 		duckdbx.WithConnectionMaxAge(30*time.Minute),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create shared S3DB pool: %w", err)
+		return nil, fmt.Errorf("failed to create shared DB pool: %w", err)
 	}
 
-	metricsCM := NewCacheManager(downloader, "metrics", sp, s3Pool, parquetCache)
-	logsCM := NewCacheManager(downloader, "logs", sp, s3Pool, parquetCache)
-	tracesCM := NewCacheManager(downloader, "traces", sp, s3Pool, parquetCache)
+	metricsCM := NewCacheManager(downloader, "metrics", sp, pool, parquetCache)
+	logsCM := NewCacheManager(downloader, "logs", sp, pool, parquetCache)
+	tracesCM := NewCacheManager(downloader, "traces", sp, pool, parquetCache)
 
 	return &WorkerService{
 		MetricsCM:            metricsCM,
@@ -191,7 +191,7 @@ func NewWorkerService(
 		MetricsGlobSize:      metricsGlobSize,
 		LogsGlobSize:         logsGlobSize,
 		TracesGlobSize:       tracesGlobSize,
-		s3Pool:               s3Pool,
+		pool:                 pool,
 		parquetCache:         parquetCache,
 	}, nil
 }
@@ -674,7 +674,7 @@ func (ws *WorkerService) Close() {
 	if ws.parquetCache != nil {
 		ws.parquetCache.Close()
 	}
-	if ws.s3Pool != nil {
-		_ = ws.s3Pool.Close()
+	if ws.pool != nil {
+		_ = ws.pool.Close()
 	}
 }
