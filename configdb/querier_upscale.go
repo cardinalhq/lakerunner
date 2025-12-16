@@ -31,6 +31,9 @@ type StoreFull interface {
 	DeleteOrganizationAPIKeyWithMappings(ctx context.Context, keyID uuid.UUID) error
 	AddOrganizationBucket(ctx context.Context, orgID uuid.UUID, bucketName string, instanceNum int16, collectorName string) error
 	CreateBucketPrefixMappingForOrg(ctx context.Context, bucketName string, orgID uuid.UUID, pathPrefix string, signal string) (*BucketPrefixMapping, error)
+
+	// Close stops background goroutines and closes the connection pool.
+	Close()
 }
 
 // QuerierFull is deprecated, use StoreFull instead

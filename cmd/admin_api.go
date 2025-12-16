@@ -33,6 +33,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 var (
@@ -84,11 +85,19 @@ func init() {
 				slog.Error("Failed to connect to config database", slog.Any("error", err))
 				return fmt.Errorf("failed to connect to config database: %w", err)
 			}
+			defer cdb.Close()
+
+			mdb, err := lrdb.LRDBStore(ctx)
+			if err != nil {
+				slog.Error("Failed to connect to lrdb", slog.Any("error", err))
+				return fmt.Errorf("failed to connect to lrdb: %w", err)
+			}
+			defer mdb.Close()
 
 			configservice.NewGlobal(cdb, 5*time.Minute)
 
 			// Create and start the admin service
-			service, err := admin.NewService(adminGRPCPort)
+			service, err := admin.NewService(adminGRPCPort, cdb, mdb)
 			if err != nil {
 				slog.Error("Failed to create admin service", slog.Any("error", err))
 				return fmt.Errorf("failed to create admin service: %w", err)

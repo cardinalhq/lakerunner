@@ -75,10 +75,13 @@ func (store *Store) GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
 	return store.estimator.(*PackEstimator).GetTrace(ctx, orgID)
 }
 
-// Close stops the background goroutines and cleans up resources
+// Close stops the background goroutines, closes the connection pool, and cleans up resources.
 func (store *Store) Close() {
 	if estimator, ok := store.estimator.(*MetricPackEstimator); ok {
 		estimator.Stop()
+	}
+	if store.connPool != nil {
+		store.connPool.Close()
 	}
 }
 

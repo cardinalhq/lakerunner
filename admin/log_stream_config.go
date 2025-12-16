@@ -23,7 +23,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
-	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/configservice"
 )
 
@@ -39,13 +38,7 @@ func (s *Service) GetLogStreamConfig(ctx context.Context, req *adminproto.GetLog
 		return nil, status.Errorf(codes.InvalidArgument, "invalid organization_id: %v", err)
 	}
 
-	store, err := configdb.ConfigDBStore(ctx)
-	if err != nil {
-		slog.Error("Failed to connect to config database", slog.Any("error", err))
-		return nil, status.Error(codes.Internal, "failed to connect to database")
-	}
-
-	result, err := configservice.GetLogStreamConfigDirect(ctx, store, orgID)
+	result, err := configservice.GetLogStreamConfigDirect(ctx, s.configDB, orgID)
 	if err != nil {
 		slog.Error("Failed to get log stream config", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to get config")
@@ -74,13 +67,7 @@ func (s *Service) SetLogStreamConfig(ctx context.Context, req *adminproto.SetLog
 		return nil, status.Errorf(codes.InvalidArgument, "invalid organization_id: %v", err)
 	}
 
-	store, err := configdb.ConfigDBStore(ctx)
-	if err != nil {
-		slog.Error("Failed to connect to config database", slog.Any("error", err))
-		return nil, status.Error(codes.Internal, "failed to connect to database")
-	}
-
-	if err := configservice.SetLogStreamConfigDirect(ctx, store, orgID, req.FieldName); err != nil {
+	if err := configservice.SetLogStreamConfigDirect(ctx, s.configDB, orgID, req.FieldName); err != nil {
 		slog.Error("Failed to set config", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to set config")
 	}
@@ -105,13 +92,7 @@ func (s *Service) DeleteLogStreamConfig(ctx context.Context, req *adminproto.Del
 		return nil, status.Errorf(codes.InvalidArgument, "invalid organization_id: %v", err)
 	}
 
-	store, err := configdb.ConfigDBStore(ctx)
-	if err != nil {
-		slog.Error("Failed to connect to config database", slog.Any("error", err))
-		return nil, status.Error(codes.Internal, "failed to connect to database")
-	}
-
-	if err := configservice.DeleteLogStreamConfigDirect(ctx, store, orgID); err != nil {
+	if err := configservice.DeleteLogStreamConfigDirect(ctx, s.configDB, orgID); err != nil {
 		slog.Error("Failed to delete config", slog.Any("error", err))
 		return nil, status.Error(codes.Internal, "failed to delete config")
 	}

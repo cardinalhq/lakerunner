@@ -47,6 +47,7 @@ func NewEmptyStore() *Store {
 	}
 	go store.storageProfileCache.Start()
 	go store.storageProfileByCollectorNameCache.Start()
+	go store.storageProfilesByBucketNameCache.Start()
 	return store
 }
 
@@ -95,4 +96,14 @@ func (store *Store) execTx(ctx context.Context, fn func(*Store) error) (err erro
 		closed = true
 	}
 	return
+}
+
+// Close stops the cache background goroutines and closes the connection pool.
+func (s *Store) Close() {
+	s.storageProfileCache.Stop()
+	s.storageProfileByCollectorNameCache.Stop()
+	s.storageProfilesByBucketNameCache.Stop()
+	if s.connPool != nil {
+		s.connPool.Close()
+	}
 }

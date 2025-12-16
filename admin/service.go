@@ -45,15 +45,24 @@ var (
 	}
 )
 
+// LRDBStore defines the lrdb operations needed by the admin service.
+type LRDBStore interface {
+	workqueue.EnqueueDB
+	WorkQueueStatus(ctx context.Context) ([]lrdb.WorkQueueStatusRow, error)
+	ListLogSegsForRecompact(ctx context.Context, arg lrdb.ListLogSegsForRecompactParams) ([]lrdb.LogSeg, error)
+}
+
 type Service struct {
 	adminproto.UnimplementedAdminServiceServer
 	server   *grpc.Server
 	listener net.Listener
 	addr     string
 	serverID string
+	configDB configdb.StoreFull
+	lrDB     LRDBStore
 }
 
-func NewService(addr string) (*Service, error) {
+func NewService(addr string, configDB configdb.StoreFull, lrDB LRDBStore) (*Service, error) {
 	if addr == "" {
 		addr = ":9091"
 	}
@@ -89,6 +98,8 @@ func NewService(addr string) (*Service, error) {
 		listener: listener,
 		addr:     addr,
 		serverID: serverID,
+		configDB: configDB,
+		lrDB:     lrDB,
 	}
 
 	adminproto.RegisterAdminServiceServer(server, service)
@@ -146,12 +157,7 @@ func (s *Service) InQueueStatus(ctx context.Context, req *adminproto.InQueueStat
 func (s *Service) ListOrganizations(ctx context.Context, _ *adminproto.ListOrganizationsRequest) (*adminproto.ListOrganizationsResponse, error) {
 	slog.Debug("Received list organizations request")
 
-	store, err := configdb.ConfigDBStore(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
-	}
-
-	orgs, err := store.ListOrganizations(ctx)
+	orgs, err := s.configDB.ListOrganizations(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list organizations: %w", err)
 	}
@@ -167,12 +173,7 @@ func (s *Service) ListOrganizations(ctx context.Context, _ *adminproto.ListOrgan
 func (s *Service) CreateOrganization(ctx context.Context, req *adminproto.CreateOrganizationRequest) (*adminproto.CreateOrganizationResponse, error) {
 	slog.Debug("Received create organization request", slog.String("name", req.Name))
 
-	store, err := configdb.ConfigDBStore(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
-	}
-
-	org, err := store.UpsertOrganization(ctx, configdb.UpsertOrganizationParams{ID: uuid.New(), Name: req.Name, Enabled: req.Enabled})
+	org, err := s.configDB.UpsertOrganization(ctx, configdb.UpsertOrganizationParams{ID: uuid.New(), Name: req.Name, Enabled: req.Enabled})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create organization: %w", err)
 	}
@@ -183,17 +184,12 @@ func (s *Service) CreateOrganization(ctx context.Context, req *adminproto.Create
 func (s *Service) UpdateOrganization(ctx context.Context, req *adminproto.UpdateOrganizationRequest) (*adminproto.UpdateOrganizationResponse, error) {
 	slog.Debug("Received update organization request", slog.String("id", req.Id))
 
-	store, err := configdb.ConfigDBStore(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
-	}
-
 	orgID, err := uuid.Parse(req.Id)
 	if err != nil {
 		return nil, fmt.Errorf("invalid organization ID: %w", err)
 	}
 
-	org, err := store.GetOrganization(ctx, orgID)
+	org, err := s.configDB.GetOrganization(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get organization: %w", err)
 	}
@@ -205,7 +201,7 @@ func (s *Service) UpdateOrganization(ctx context.Context, req *adminproto.Update
 		org.Enabled = req.Enabled.Value
 	}
 
-	updated, err := store.UpsertOrganization(ctx, configdb.UpsertOrganizationParams{ID: orgID, Name: org.Name, Enabled: org.Enabled})
+	updated, err := s.configDB.UpsertOrganization(ctx, configdb.UpsertOrganizationParams{ID: orgID, Name: org.Name, Enabled: org.Enabled})
 	if err != nil {
 		return nil, fmt.Errorf("failed to update organization: %w", err)
 	}
@@ -262,13 +258,7 @@ func (s *Service) GetConsumerLag(ctx context.Context, req *adminproto.GetConsume
 func (s *Service) GetWorkQueueStatus(ctx context.Context, _ *adminproto.GetWorkQueueStatusRequest) (*adminproto.GetWorkQueueStatusResponse, error) {
 	slog.Debug("Received get work queue status request")
 
-	store, err := lrdb.LRDBStore(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to lrdb: %w", err)
-	}
-	defer store.Close()
-
-	rows, err := store.WorkQueueStatus(ctx)
+	rows, err := s.lrDB.WorkQueueStatus(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get work queue status: %w", err)
 	}
@@ -312,14 +302,8 @@ func (s *Service) QueueLogRecompact(ctx context.Context, req *adminproto.QueueLo
 		return nil, fmt.Errorf("at least one filter required: missing_agg_fields or sort_version_below_current")
 	}
 
-	store, err := lrdb.LRDBStore(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to lrdb: %w", err)
-	}
-	defer store.Close()
-
 	// Query segments that need recompaction
-	segments, err := store.ListLogSegsForRecompact(ctx, lrdb.ListLogSegsForRecompactParams{
+	segments, err := s.lrDB.ListLogSegsForRecompact(ctx, lrdb.ListLogSegsForRecompactParams{
 		OrganizationID:      orgID,
 		StartDateint:        req.StartDateint,
 		EndDateint:          req.EndDateint,
@@ -383,7 +367,7 @@ func (s *Service) QueueLogRecompact(ctx context.Context, req *adminproto.QueueLo
 			continue
 		}
 
-		_, err = workqueue.AddBundle(ctx, store, config.BoxerTaskCompactLogs, seg.OrganizationID, seg.InstanceNum, bundleBytes)
+		_, err = workqueue.AddBundle(ctx, s.lrDB, config.BoxerTaskCompactLogs, seg.OrganizationID, seg.InstanceNum, bundleBytes)
 		if err != nil {
 			queueErrs = append(queueErrs, fmt.Errorf("segment %d: queue: %w", seg.SegmentID, err))
 			continue
