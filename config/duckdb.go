@@ -24,12 +24,6 @@ import (
 
 // DuckDBConfig holds DuckDB-specific configuration
 type DuckDBConfig struct {
-	// Extension paths for air-gapped mode
-	ExtensionsPath  string `mapstructure:"extensions_path"`
-	HTTPFSExtension string `mapstructure:"httpfs_extension"`
-	AzureExtension  string `mapstructure:"azure_extension"`
-	AWSExtension    string `mapstructure:"aws_extension"`
-
 	// Memory and performance settings
 	MemoryLimit          int64  `mapstructure:"memory_limit"`            // Memory limit in MB (0 = unlimited)
 	TempDirectory        string `mapstructure:"temp_directory"`          // Directory for temporary files
@@ -42,10 +36,6 @@ type DuckDBConfig struct {
 // DefaultDuckDBConfig returns default DuckDB configuration
 func DefaultDuckDBConfig() DuckDBConfig {
 	return DuckDBConfig{
-		ExtensionsPath:       "",
-		HTTPFSExtension:      "",
-		AzureExtension:       "",
-		AWSExtension:         "",
 		MemoryLimit:          0,   // No limit by default
 		TempDirectory:        "",  // Empty means use system default
 		MaxTempDirectorySize: "",  // Empty means no limit
@@ -53,55 +43,6 @@ func DefaultDuckDBConfig() DuckDBConfig {
 		S3ConnTTLSeconds:     240, // 4 minutes default
 		ThreadsPerConn:       0,   // 0 means use default calculation
 	}
-}
-
-// GetExtensionsPath returns the configured extensions path, checking both
-// config and environment variables with appropriate fallbacks
-func (c *DuckDBConfig) GetExtensionsPath() string {
-	if c.ExtensionsPath != "" {
-		return c.ExtensionsPath
-	}
-	// Check LAKERUNNER_EXTENSIONS_PATH for compatibility
-	if path := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); path != "" {
-		return path
-	}
-	return ""
-}
-
-// GetHTTPFSExtension returns the configured HTTPFS extension path
-func (c *DuckDBConfig) GetHTTPFSExtension() string {
-	if c.HTTPFSExtension != "" {
-		return c.HTTPFSExtension
-	}
-	// Check LAKERUNNER_HTTPFS_EXTENSION for compatibility
-	if path := os.Getenv("LAKERUNNER_HTTPFS_EXTENSION"); path != "" {
-		return path
-	}
-	return ""
-}
-
-// GetAzureExtension returns the configured Azure extension path
-func (c *DuckDBConfig) GetAzureExtension() string {
-	if c.AzureExtension != "" {
-		return c.AzureExtension
-	}
-	// Check LAKERUNNER_AZURE_EXTENSION for compatibility
-	if path := os.Getenv("LAKERUNNER_AZURE_EXTENSION"); path != "" {
-		return path
-	}
-	return ""
-}
-
-// GetAWSExtension returns the configured AWS extension path
-func (c *DuckDBConfig) GetAWSExtension() string {
-	if c.AWSExtension != "" {
-		return c.AWSExtension
-	}
-	// Check LAKERUNNER_AWS_EXTENSION for compatibility
-	if path := os.Getenv("LAKERUNNER_AWS_EXTENSION"); path != "" {
-		return path
-	}
-	return ""
 }
 
 // GetTempDirectory returns the configured temp directory

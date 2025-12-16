@@ -17,14 +17,12 @@ package duckdbx
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -33,10 +31,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
-
-// Global mutex to serialize extension loading across the process.
-// DuckDB extension loading may crash when done concurrently in many engines.
-var duckdbDDLMu sync.Mutex
 
 // S3DB manages a pool of DuckDB connections to a single shared on-disk database.
 // All connections open the same file and thus share the same in-process database instance.
@@ -338,34 +332,12 @@ func (p *connectionPool) isConnExpired(pc *pooledConn) bool {
 
 // newConn creates a new pooled connection with standard configuration.
 func (p *connectionPool) newConn(ctx context.Context) (*pooledConn, error) {
-	// Ensure extensions are installed and database-wide settings are applied (once)
+	// Ensure database-wide settings are applied (once)
 	if err := p.parent.ensureSetup(ctx); err != nil {
 		return nil, err
 	}
 
-	connector, err := duckdb.NewConnector(p.parent.dbPath, func(execer driver.ExecerContext) error {
-		// FIRST: Disable automatic extension loading/downloading before anything else
-		if _, err := execer.ExecContext(ctx, "SET autoinstall_known_extensions = false;", nil); err != nil {
-			slog.Warn("Failed to disable automatic extension installation", "error", err)
-		}
-		if _, err := execer.ExecContext(ctx, "SET autoload_known_extensions = false;", nil); err != nil {
-			slog.Warn("Failed to disable automatic extension loading", "error", err)
-		}
-
-		// CRITICAL: Set memory limit on EVERY connection
-		if p.parent.memoryLimitMB > 0 {
-			if _, err := execer.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", p.parent.memoryLimitMB), nil); err != nil {
-				slog.Warn("Failed to set memory_limit on connection", "error", err)
-			}
-		}
-
-		// Load extensions for this connection
-		if err := p.parent.loadExtensionsWithExecer(ctx, execer); err != nil {
-			return fmt.Errorf("load extensions for connection: %w", err)
-		}
-
-		return nil
-	})
+	connector, err := duckdb.NewConnector(p.parent.dbPath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create connector: %w", err)
 	}
@@ -402,9 +374,9 @@ func (p *connectionPool) closeAll() {
 	}
 }
 
-// ---------- S3DB setup & extensions ----------
+// ---------- S3DB setup ----------
 
-// ensureSetup runs once to configure the shared database instance and load extensions
+// ensureSetup runs once to configure the shared database instance
 func (s *S3DB) ensureSetup(ctx context.Context) error {
 	s.setupOnce.Do(func() {
 		db, err := sql.Open("duckdb", s.dbPath)
@@ -420,23 +392,6 @@ func (s *S3DB) ensureSetup(ctx context.Context) error {
 			return
 		}
 		defer func() { _ = conn.Close() }()
-
-		// Disable automatic extension loading/downloading
-		if _, err := conn.ExecContext(ctx, "SET autoinstall_known_extensions = false;"); err != nil {
-			slog.Warn("Failed to disable automatic extension installation", "error", err)
-		}
-		if _, err := conn.ExecContext(ctx, "SET autoload_known_extensions = false;"); err != nil {
-			slog.Warn("Failed to disable automatic extension loading", "error", err)
-		}
-
-		// Set extension_directory
-		extensionDir := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
-		if extensionDir == "" {
-			extensionDir = filepath.Join(filepath.Dir(s.dbPath), "extensions")
-		}
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET extension_directory='%s';", escapeSingle(extensionDir))); err != nil {
-			slog.Warn("Failed to set extension_directory", "error", err)
-		}
 
 		// Set home_directory
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET home_directory='%s';", escapeSingle(filepath.Dir(s.dbPath)))); err != nil {
@@ -471,126 +426,23 @@ func (s *S3DB) ensureSetup(ctx context.Context) error {
 			s.setupErr = fmt.Errorf("enable_object_cache: %w", err)
 			return
 		}
-
-		// LOAD extensions from local files (serialize LOAD across engines)
-		duckdbDDLMu.Lock()
-		err = s.loadExtensions(ctx, conn)
-		duckdbDDLMu.Unlock()
-		if err != nil {
-			s.setupErr = err
-			return
-		}
 	})
 	return s.setupErr
 }
 
-func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
-	execer := &connExecer{conn: conn, ctx: ctx}
-	return s.loadExtensionsWithExecer(ctx, execer)
-}
-
-// loadExtensionsWithExecer loads extensions using a driver.ExecerContext interface.
-func (s *S3DB) loadExtensionsWithExecer(ctx context.Context, execer driver.ExecerContext) error {
-	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
-	if base == "" {
-		base = discoverExtensionsPath()
-		if base == "" {
-			return fmt.Errorf("extensions required but not found: LAKERUNNER_EXTENSIONS_PATH not set")
-		}
-	}
-
-	extensions := []string{"httpfs", "aws", "azure"}
-
-	for _, name := range extensions {
-		path := filepath.Join(base, fmt.Sprintf("%s.duckdb_extension", name))
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("%s extension file not found at %s", name, path)
-		}
-
-		if _, err := execer.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path)), nil); err != nil {
-			if strings.Contains(err.Error(), "already registered") || strings.Contains(err.Error(), "already exists") {
-				continue
-			}
-			return fmt.Errorf("load %s: %w", name, err)
-		}
-	}
-
-	// Configure Azure transport after loading
-	if _, err := execer.ExecContext(ctx, "SET azure_transport_option_type = 'curl';", nil); err != nil {
-		slog.Debug("Failed to set azure transport option", "error", err)
-	}
-
-	return nil
-}
-
-// connExecer wraps a sql.Conn to implement driver.ExecerContext
-type connExecer struct {
-	conn *sql.Conn
-	ctx  context.Context
-}
-
-func (c *connExecer) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	result, err := c.conn.ExecContext(ctx, query)
-	return result, err
-}
-
 // ---------- helpers & metrics ----------
 
-// discoverExtensionsPath attempts to find DuckDB extensions in the repository.
-func discoverExtensionsPath() string {
-	dir, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-
-	platform := getPlatformDir()
-	if platform == "" {
-		return ""
-	}
-
-	for {
-		extensionsPath := filepath.Join(dir, "docker", "duckdb-extensions", platform)
-		if info, err := os.Stat(extensionsPath); err == nil && info.IsDir() {
-			httpfsPath := filepath.Join(extensionsPath, "httpfs.duckdb_extension")
-			if _, err := os.Stat(httpfsPath); err == nil {
-				return extensionsPath
-			}
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-
-		if strings.Count(dir, string(filepath.Separator)) < 2 {
-			break
+func escapeSingle(s string) string {
+	var result []byte
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\'' {
+			result = append(result, '\'', '\'')
+		} else {
+			result = append(result, s[i])
 		}
 	}
-
-	return ""
+	return string(result)
 }
-
-// getPlatformDir returns the platform-specific directory name for DuckDB extensions
-func getPlatformDir() string {
-	goos := runtime.GOOS
-	goarch := runtime.GOARCH
-
-	switch {
-	case goos == "darwin" && goarch == "arm64":
-		return "osx_arm64"
-	case goos == "darwin" && goarch == "amd64":
-		return "osx_amd64"
-	case goos == "linux" && goarch == "arm64":
-		return "linux_arm64"
-	case goos == "linux" && goarch == "amd64":
-		return "linux_amd64"
-	default:
-		return ""
-	}
-}
-
-func escapeSingle(s string) string { return strings.ReplaceAll(s, `'`, `''`) }
 
 func envInt64(name string, def int64) int64 {
 	if v := os.Getenv(name); v != "" {

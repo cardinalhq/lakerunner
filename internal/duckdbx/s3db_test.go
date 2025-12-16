@@ -83,64 +83,6 @@ func TestS3DB_SharedDataBetweenConnections(t *testing.T) {
 	require.Equal(t, len(expected), i, "fewer rows than expected")
 }
 
-// Test that extensions are properly configured in connections
-func TestS3DB_ExtensionsLoaded(t *testing.T) {
-	ctx := context.Background()
-
-	// Create S3DB instance
-	s3db, err := NewS3DB()
-	require.NoError(t, err)
-	defer func() {
-		err := s3db.Close()
-		require.NoError(t, err)
-	}()
-
-	// Get a connection
-	conn, release, err := s3db.GetConnection(ctx)
-	require.NoError(t, err)
-	defer release()
-
-	// The most important test: can we actually use the functions we need?
-	// Extensions loaded from disk might not show up in duckdb_extensions()
-	// but their functions should still be available.
-
-	// Check if read_parquet function is available (core functionality)
-	rows, err := conn.QueryContext(ctx, `SELECT COUNT(*) FROM duckdb_functions() WHERE function_name = 'read_parquet'`)
-	require.NoError(t, err)
-	defer func() { _ = rows.Close() }()
-
-	var count int
-	require.True(t, rows.Next())
-	err = rows.Scan(&count)
-	require.NoError(t, err)
-	require.Greater(t, count, 0, "read_parquet function should be available")
-	t.Logf("read_parquet function available: %d overload(s)", count)
-
-	// Check if read_csv is available (from httpfs)
-	rows2, err := conn.QueryContext(ctx, `SELECT COUNT(*) FROM duckdb_functions() WHERE function_name = 'read_csv'`)
-	require.NoError(t, err)
-	defer func() { _ = rows2.Close() }()
-
-	var csvCount int
-	require.True(t, rows2.Next())
-	err = rows2.Scan(&csvCount)
-	require.NoError(t, err)
-	// read_csv might be built-in, so we just check it exists
-	t.Logf("read_csv function available: %d overload(s)", csvCount)
-
-	// Log extension status for debugging (don't require, as loaded extensions might not show)
-	rows3, err := conn.QueryContext(ctx, `SELECT extension_name, loaded, installed FROM duckdb_extensions() WHERE extension_name IN ('httpfs', 'aws', 'azure')`)
-	require.NoError(t, err)
-	defer func() { _ = rows3.Close() }()
-
-	for rows3.Next() {
-		var name, loaded, installed string
-		err := rows3.Scan(&name, &loaded, &installed)
-		require.NoError(t, err)
-		t.Logf("Extension %s - loaded: %s, installed: %s", name, loaded, installed)
-	}
-}
-
 // Test that pool size limits are respected
 func TestS3DB_PoolSizeLimits(t *testing.T) {
 	ctx := context.Background()
