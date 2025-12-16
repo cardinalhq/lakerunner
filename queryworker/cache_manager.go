@@ -620,20 +620,12 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 				aggObjectID := tblToAggObjectID(tblObjectID)
 				aggLocalPath, aggExists, _ := w.parquetCache.GetOrPrepare(profile.Region, profile.Bucket, aggObjectID)
 
-				canUseAgg := promql.CanUseAggFile(seg.AggFields, groupBy, matcherFields)
-				if aggExists && canUseAgg {
+				if aggExists && promql.CanUseAggFile(seg.AggFields, groupBy, matcherFields) {
 					aggLocalPaths = append(aggLocalPaths, aggLocalPath)
 					promql.RecordLogAggregationSource(ctx, profile.OrganizationID.String(), "agg", profile.InstanceNum)
 				} else {
 					tblLocalPaths = append(tblLocalPaths, tblLocalPath)
 					promql.RecordLogAggregationSource(ctx, profile.OrganizationID.String(), "tbl", profile.InstanceNum)
-					slog.Info("Using tbl_ file instead of agg_",
-						slog.Int64("segmentID", seg.SegmentID),
-						slog.Bool("aggFileExists", aggExists),
-						slog.Bool("canUseAggFile", canUseAgg),
-						slog.Any("segAggFields", seg.AggFields),
-						slog.Any("queryGroupBy", groupBy),
-						slog.Any("queryMatcherFields", matcherFields))
 				}
 			}
 
