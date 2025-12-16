@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -327,6 +328,60 @@ func (pfc *ParquetFileCache) pathForKey(key CacheKey) string {
 	return filepath.Join(pfc.baseDir, key.Bucket, key.ObjectID)
 }
 
+// keyFromPath attempts to reconstruct a CacheKey from a file path.
+// The objectID is expected to start with "db/" which serves as a marker.
+// Returns (key, true) if successful, (CacheKey{}, false) if the path
+// structure cannot be parsed (e.g., files from incompatible versions).
+func (pfc *ParquetFileCache) keyFromPath(path string) (CacheKey, bool) {
+	// Remove baseDir prefix
+	relPath := strings.TrimPrefix(path, pfc.baseDir)
+	relPath = strings.TrimPrefix(relPath, string(filepath.Separator))
+
+	// Split into components
+	parts := strings.Split(relPath, string(filepath.Separator))
+	if len(parts) < 2 {
+		return CacheKey{}, false
+	}
+
+	// Find the "db" component which starts the objectID
+	dbIndex := -1
+	for i, part := range parts {
+		if part == "db" {
+			dbIndex = i
+			break
+		}
+	}
+
+	if dbIndex < 0 || dbIndex < 1 {
+		// No "db" marker found, or it's at position 0 (no bucket)
+		return CacheKey{}, false
+	}
+
+	// Reconstruct based on how many components precede "db"
+	// - 1 component before "db" = bucket only (no region)
+	// - 2 components before "db" = region + bucket
+	objectID := strings.Join(parts[dbIndex:], string(filepath.Separator))
+
+	var region, bucket string
+	if dbIndex == 1 {
+		// Path: <bucket>/db/...
+		bucket = parts[0]
+	} else if dbIndex == 2 {
+		// Path: <region>/<bucket>/db/...
+		region = parts[0]
+		bucket = parts[1]
+	} else {
+		// Unexpected path structure
+		return CacheKey{}, false
+	}
+
+	return CacheKey{
+		Region:   region,
+		Bucket:   bucket,
+		ObjectID: objectID,
+	}, true
+}
+
 // touchFile updates the last access time for a file.
 func (pfc *ParquetFileCache) touchFile(path string) {
 	pfc.mu.Lock()
@@ -428,8 +483,8 @@ func (pfc *ParquetFileCache) cleanupEmptyDirs() {
 
 // ScanExistingFiles scans the cache directory and tracks any existing files.
 // This is useful on startup to recover state from previous runs.
-// Note: This cannot fully reconstruct CacheKeys since region/bucket info
-// is embedded in the path structure. Files are tracked by path only.
+// Files with parseable paths (containing "db/" marker) are fully tracked
+// with CacheKey reconstruction. Other files are tracked for cleanup only.
 func (pfc *ParquetFileCache) ScanExistingFiles() error {
 	return filepath.Walk(pfc.baseDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -444,13 +499,19 @@ func (pfc *ParquetFileCache) ScanExistingFiles() error {
 
 		pfc.mu.Lock()
 		if _, exists := pfc.files[path]; !exists {
-			// We can't reconstruct the full CacheKey from path alone,
-			// but we can still track the file for cleanup purposes
-			pfc.files[path] = &cachedFileInfo{
+			fileInfo := &cachedFileInfo{
 				path:       path,
 				size:       info.Size(),
 				lastAccess: info.ModTime(),
 			}
+
+			// Try to reconstruct the CacheKey from the path
+			if key, ok := pfc.keyFromPath(path); ok {
+				fileInfo.key = key
+				pfc.keyToPath[key] = path
+			}
+
+			pfc.files[path] = fileInfo
 			pfc.fileCount++
 			pfc.totalBytes += info.Size()
 		}

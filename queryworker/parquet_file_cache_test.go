@@ -335,6 +335,90 @@ func TestCacheKey(t *testing.T) {
 	})
 }
 
+func TestParquetFileCache_keyFromPath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("parses path with region", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		path := filepath.Join(pfc.baseDir, "us-east-1", "my-bucket", "db", "org", "collector", "file.parquet")
+		key, ok := pfc.keyFromPath(path)
+
+		assert.True(t, ok)
+		assert.Equal(t, "us-east-1", key.Region)
+		assert.Equal(t, "my-bucket", key.Bucket)
+		assert.Equal(t, filepath.Join("db", "org", "collector", "file.parquet"), key.ObjectID)
+	})
+
+	t.Run("parses path without region", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		path := filepath.Join(pfc.baseDir, "my-bucket", "db", "org", "collector", "file.parquet")
+		key, ok := pfc.keyFromPath(path)
+
+		assert.True(t, ok)
+		assert.Equal(t, "", key.Region)
+		assert.Equal(t, "my-bucket", key.Bucket)
+		assert.Equal(t, filepath.Join("db", "org", "collector", "file.parquet"), key.ObjectID)
+	})
+
+	t.Run("returns false for path without db marker", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		path := filepath.Join(pfc.baseDir, "bucket", "some", "path", "file.parquet")
+		_, ok := pfc.keyFromPath(path)
+
+		assert.False(t, ok)
+	})
+
+	t.Run("returns false for too short path", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		path := filepath.Join(pfc.baseDir, "file.parquet")
+		_, ok := pfc.keyFromPath(path)
+
+		assert.False(t, ok)
+	})
+
+	t.Run("roundtrip with pathForKey", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		original := CacheKey{
+			Region:   "eu-west-1",
+			Bucket:   "test-bucket",
+			ObjectID: filepath.Join("db", "org123", "collector", "20241215", "logs", "seg1", "tbl_123.parquet"),
+		}
+
+		path := pfc.pathForKey(original)
+		recovered, ok := pfc.keyFromPath(path)
+
+		assert.True(t, ok)
+		assert.Equal(t, original, recovered)
+	})
+
+	t.Run("roundtrip without region", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		original := CacheKey{
+			Region:   "",
+			Bucket:   "test-bucket",
+			ObjectID: filepath.Join("db", "org123", "collector", "tbl_123.parquet"),
+		}
+
+		path := pfc.pathForKey(original)
+		recovered, ok := pfc.keyFromPath(path)
+
+		assert.True(t, ok)
+		assert.Equal(t, original, recovered)
+	})
+}
+
 func TestParquetFileCache_removeFile(t *testing.T) {
 	t.Parallel()
 
@@ -655,5 +739,61 @@ func TestParquetFileCache_ScanExistingFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, int64(0), pfc.FileCount())
+	})
+
+	t.Run("reconstructs CacheKey for files with db marker", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+
+		// Create a file with proper db/ structure
+		region := "us-east-1"
+		bucket := "my-bucket"
+		objectID := filepath.Join("db", "org123", "collector", "tbl_1.parquet")
+
+		filePath := filepath.Join(baseDir, region, bucket, objectID)
+		err := os.MkdirAll(filepath.Dir(filePath), 0755)
+		require.NoError(t, err)
+		err = os.WriteFile(filePath, []byte("test data"), 0644)
+		require.NoError(t, err)
+
+		// Create cache and scan
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0, 0)
+		require.NoError(t, err)
+		defer pfc.Close()
+
+		err = pfc.ScanExistingFiles()
+		require.NoError(t, err)
+
+		// File should be findable via GetOrPrepare
+		localPath, exists, err := pfc.GetOrPrepare(region, bucket, objectID)
+		require.NoError(t, err)
+		assert.True(t, exists, "scanned file should be found via GetOrPrepare")
+		assert.Equal(t, filePath, localPath)
+	})
+
+	t.Run("scanned files without db marker tracked for cleanup only", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+
+		// Create a file without db/ structure (non-standard path)
+		filePath := filepath.Join(baseDir, "some", "random", "file.parquet")
+		err := os.MkdirAll(filepath.Dir(filePath), 0755)
+		require.NoError(t, err)
+		err = os.WriteFile(filePath, []byte("test data"), 0644)
+		require.NoError(t, err)
+
+		// Create cache and scan
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0, 0)
+		require.NoError(t, err)
+		defer pfc.Close()
+
+		err = pfc.ScanExistingFiles()
+		require.NoError(t, err)
+
+		// File should be counted
+		assert.Equal(t, int64(1), pfc.FileCount())
+
+		// But won't be findable via GetOrPrepare since we can't reconstruct the key
+		// (would need to know what region/bucket it belongs to)
 	})
 }
