@@ -621,8 +621,10 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 
 				if aggExists && promql.CanUseAggFile(seg.AggFields, groupBy) {
 					aggLocalPaths = append(aggLocalPaths, aggLocalPath)
+					promql.RecordLogAggregationSource(ctx, profile.OrganizationID.String(), "agg", profile.InstanceNum)
 				} else {
 					tblLocalPaths = append(tblLocalPaths, tblLocalPath)
+					promql.RecordLogAggregationSource(ctx, profile.OrganizationID.String(), "tbl", profile.InstanceNum)
 				}
 			}
 
@@ -639,7 +641,6 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 					return nil, fmt.Errorf("stream from agg files: %w", err)
 				}
 				outs = append(outs, aggChannels...)
-				promql.RecordLogQueryAgg(len(aggLocalPaths))
 			}
 
 			// Stream from tbl_ files with tbl SQL
