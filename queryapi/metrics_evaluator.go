@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -142,9 +141,8 @@ func (q *QuerierService) EvaluateMetricsQuery(
 		defer close(out)
 		defer evalSpan.End()
 
-		// ---------- Stage 0: coordinator & EvalFlow ----------
-		regs := make(chan groupReg, 256)
-		coordinated := runOrderedCoordinator(ctx, regs)
+		// ---------- Stage 0: EvalFlow ----------
+		coordinated := make(chan promql.SketchInput, 4096)
 
 		// Give the aggregator a bit more slack; this also smooths seams.
 		flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
@@ -174,10 +172,8 @@ func (q *QuerierService) EvaluateMetricsQuery(
 			}
 		}()
 
-		// IMPORTANT: a single pushdown context that lives for the WHOLE query.
-		// We cancel this ONLY after EvalFlow completes (see <-done below).
+		// Single pushdown context that lives for the whole query.
 		pushCtx, cancelAllPush := context.WithCancel(ctx)
-		defer cancelAllPush()
 
 		// ---------- Stage 1: build segment universe ----------
 		_, segmentSpan := tracer.Start(ctx, "query.api.segment_lookup")
@@ -240,127 +236,122 @@ func (q *QuerierService) EvaluateMetricsQuery(
 		)
 		evalSpan.SetAttributes(attribute.Int("group_count", len(groups)))
 
-		// ---------- Stage 3: launch groups concurrently & register ----------
-		maxParallel := computeMaxParallel(len(workers))
-		sem := make(chan struct{}, maxParallel)
-		var regWG sync.WaitGroup
-
+		// ---------- Stage 3: execute groups SEQUENTIALLY ----------
+	outer:
 		for gi, group := range groups {
-			regWG.Add(1)
-			sem <- struct{}{}
-			go func(gi int, group SegmentGroup) {
-				defer func() { <-sem }()
-				defer regWG.Done()
+			select {
+			case <-pushCtx.Done():
+				break outer
+			default:
+			}
 
-				// split group by leaf
-				segmentsByLeaf := make(map[string][]SegmentInfo)
-				for _, s := range group.Segments {
-					segmentsByLeaf[s.ExprID] = append(segmentsByLeaf[s.ExprID], s)
+			// split group by leaf
+			segmentsByLeaf := make(map[string][]SegmentInfo)
+			for _, s := range group.Segments {
+				segmentsByLeaf[s.ExprID] = append(segmentsByLeaf[s.ExprID], s)
+			}
+
+			leafChans := make([]<-chan promql.SketchInput, 0, len(segmentsByLeaf))
+			for leafID, segmentsForLeaf := range segmentsByLeaf {
+				leaf := leavesByID[leafID]
+				offMs, err := parseOffsetMs(leaf.Offset)
+				if err != nil {
+					slog.Error("invalid offset on leaf; ignoring offset", "offset", leaf.Offset, "err", err)
+					offMs = 0
 				}
 
-				leafChans := make([]<-chan promql.SketchInput, 0, len(segmentsByLeaf))
-				for leafID, segmentsForLeaf := range segmentsByLeaf {
-					leaf := leavesByID[leafID]
-					offMs, err := parseOffsetMs(leaf.Offset)
+				// worker mapping just for this leaf’s segments
+				segmentIDs := make([]int64, 0, len(segmentsForLeaf))
+				segmentMap := make(map[int64]SegmentInfo, len(segmentsForLeaf))
+				for _, s := range segmentsForLeaf {
+					segmentIDs = append(segmentIDs, s.SegmentID)
+					segmentMap[s.SegmentID] = s
+				}
+				mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+				if err != nil {
+					slog.Error("failed to get worker assignments", "err", err)
+					continue
+				}
+				workerGroups := make(map[Worker][]SegmentInfo)
+				for _, m := range mappings {
+					workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
+				}
+				if len(workerGroups) == 0 {
+					slog.Error("no worker assignments for leaf segments; skipping leaf", "leafID", leafID, "numLeafSegments", len(segmentsForLeaf))
+					continue
+				}
+
+				loc := time.Local
+				slog.Info("Pushing down segments (aggregates)",
+					"groupIndex", gi, "leafID", leafID, "leafSegments", len(segmentsForLeaf),
+					"groupStart", time.UnixMilli(group.StartTs).In(loc).Format("15:04:05"),
+					"groupEnd", time.UnixMilli(group.EndTs).In(loc).Format("15:04:05"),
+				)
+
+				workerChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
+				for worker, wsegs := range workerGroups {
+					req := PushDownRequest{
+						OrganizationID: orgID,
+						BaseExpr:       &leaf,
+						StartTs:        group.StartTs - offMs,
+						EndTs:          group.EndTs - offMs,
+						Segments:       wsegs,
+						Step:           stepDuration,
+					}
+
+					ch, err := q.metricsPushDown(pushCtx, worker, req)
 					if err != nil {
-						slog.Error("invalid offset on leaf; ignoring offset", "offset", leaf.Offset, "err", err)
-						offMs = 0
-					}
-
-					// worker mapping just for this leaf’s segments
-					segmentIDs := make([]int64, 0, len(segmentsForLeaf))
-					segmentMap := make(map[int64]SegmentInfo, len(segmentsForLeaf))
-					for _, s := range segmentsForLeaf {
-						segmentIDs = append(segmentIDs, s.SegmentID)
-						segmentMap[s.SegmentID] = s
-					}
-					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
-					if err != nil {
-						slog.Error("failed to get worker assignments", "err", err)
+						slog.Error("pushdown failed", "worker", worker, "err", err)
 						continue
 					}
-					workerGroups := make(map[Worker][]SegmentInfo)
-					for _, m := range mappings {
-						workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
-					}
-					if len(workerGroups) == 0 {
-						slog.Error("no worker assignments for leaf segments; skipping leaf", "leafID", leafID, "numLeafSegments", len(segmentsForLeaf))
-						continue
+					if offMs != 0 {
+						ch = shiftTimestamps(pushCtx, ch, offMs, 256)
 					}
 
-					loc := time.Local
-					slog.Info("Pushing down segments (aggregates)",
-						"groupIndex", gi, "leafID", leafID, "leafSegments", len(segmentsForLeaf),
-						"groupStart", time.UnixMilli(group.StartTs).In(loc).Format("15:04:05"),
-						"groupEnd", time.UnixMilli(group.EndTs).In(loc).Format("15:04:05"),
-					)
+					tag := fmt.Sprintf("g=%d leaf=%s %s:%d", gi, leafID, worker.IP, worker.Port)
+					ch = tapStream(pushCtx, ch, tag)
 
-					workerChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
-					for worker, wsegs := range workerGroups {
-						//slog.Info("Pushdown to worker", "worker", worker, "numSegments", len(wsegs), "leafID", leafID)
-
-						req := PushDownRequest{
-							OrganizationID: orgID,
-							BaseExpr:       &leaf,
-							StartTs:        group.StartTs - offMs,
-							EndTs:          group.EndTs - offMs,
-							Segments:       wsegs,
-							Step:           stepDuration,
-						}
-
-						ch, err := q.metricsPushDown(pushCtx, worker, req)
-						if err != nil {
-							slog.Error("pushdown failed", "worker", worker, "err", err)
-							continue
-						}
-						if offMs != 0 {
-							ch = shiftTimestamps(pushCtx, ch, offMs, 256)
-						}
-
-						tag := fmt.Sprintf("g=%d leaf=%s %s:%d", gi, leafID, worker.IP, worker.Port)
-						ch = tapStream(pushCtx, ch, tag)
-
-						workerChans = append(workerChans, ch)
-					}
-					if len(workerChans) == 0 {
-						slog.Error("no worker pushdowns survived; skipping leaf", "leafID", leafID)
-						continue
-					}
-
-					leafChans = append(leafChans, workerChans...)
+					workerChans = append(workerChans, ch)
+				}
+				if len(workerChans) == 0 {
+					slog.Error("no worker pushdowns survived; skipping leaf", "leafID", leafID)
+					continue
 				}
 
-				// If nothing survived, register a closed stream so ordering advances.
-				if len(leafChans) == 0 {
-					empty := make(chan promql.SketchInput)
-					close(empty)
-					select {
-					case regs <- groupReg{idx: gi, startTs: group.StartTs, endTs: group.EndTs, ch: empty}:
-					case <-ctx.Done():
-					}
-					return
-				}
+				leafChans = append(leafChans, workerChans...)
+			}
 
-				// Merge across leaves within this group and register immediately.
-				groupChan := promql.MergeSorted(pushCtx, 1024, false, 0, leafChans...)
-				slog.Info("Registering group stream", "idx", gi, "groupStart", group.StartTs, "groupEnd", group.EndTs)
+			if len(leafChans) == 0 {
+				// nothing to do for this group; move on
+				continue
+			}
+
+			groupChan := promql.MergeSorted(pushCtx, 1024, false, 0, leafChans...)
+
+		groupLoop:
+			for {
 				select {
-				case regs <- groupReg{idx: gi, startTs: group.StartTs, endTs: group.EndTs, ch: groupChan}:
-				case <-ctx.Done():
-					empty := make(chan promql.SketchInput)
-					close(empty)
+				case <-pushCtx.Done():
+					break outer
+				case si, ok := <-groupChan:
+					if !ok {
+						// finished this group, move to next
+						break groupLoop
+					}
 					select {
-					case regs <- groupReg{idx: gi, startTs: group.StartTs, endTs: group.EndTs, ch: empty}:
-					case <-ctx.Done():
+					case coordinated <- si:
+					case <-pushCtx.Done():
+						break outer
 					}
 				}
-			}(gi, group)
+			}
 		}
 
-		// close registry when all groups have registered
-		go func() { regWG.Wait(); close(regs) }()
+		// Finished all groups (or ctx canceled) → no more samples.
+		close(coordinated)
 
-		// wait for EvalFlow to finish, then stop all pushdowns
+		// Wait for EvalFlow to finish consuming and producing results,
+		// then cancel any remaining pushdowns.
 		<-done
 		cancelAllPush()
 	}()
