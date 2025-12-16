@@ -103,12 +103,6 @@ type QueryConfig struct {
 	// Default: 20
 	MaxSegmentsPerWorkerPerWave int `mapstructure:"max_segments_per_worker_per_wave"`
 
-	// DisableTableCache disables the DuckDB table cache in query-workers.
-	// When true, query-workers will only use downloaded parquet files directly
-	// without populating or querying the local DuckDB cache.
-	// Default: false
-	DisableTableCache bool `mapstructure:"disable_table_cache"`
-
 	// MaxParallelDownloads is the maximum number of concurrent S3 downloads
 	// allowed per query. Higher values increase throughput but risk exhausting
 	// file descriptors, memory, and triggering S3 rate limits.
@@ -287,9 +281,8 @@ func Load() (*Config, error) {
 			BatchSize:                20000, // Default batch size for expiry operations
 		},
 		Query: QueryConfig{
-			MaxSegmentsPerWorkerPerWave: 50,    // Default wave size
-			DisableTableCache:           false, // Use table cache by default
-			MaxParallelDownloads:        100,   // Default max parallel downloads
+			MaxSegmentsPerWorkerPerWave: 50,  // Default wave size
+			MaxParallelDownloads:        100, // Default max parallel downloads
 		},
 	}
 

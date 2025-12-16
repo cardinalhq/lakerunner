@@ -19,7 +19,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"hash/fnv"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -29,44 +28,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/marcboeker/go-duckdb/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 // Global mutex to serialize extension loading across the process.
 // DuckDB extension loading may crash when done concurrently in many engines.
-// Note: Secret DDL uses per-S3DB, per-identity locks instead.
 var duckdbDDLMu sync.Mutex
-
-// credentialRefreshBuffer is subtracted from credential expiration to ensure
-// we refresh before the actual expiry.
-const credentialRefreshBuffer = 5 * time.Minute
-
-// bucketSecretState tracks when credentials expire for a given identity key.
-// Credentials are cached to avoid repeated AWS SDK calls, but the DuckDB secret
-// must still be created on every connection since secrets are in-memory only.
-type bucketSecretState struct {
-	mu          sync.Mutex
-	expiresAt   time.Time       // zero means not yet fetched, neverExpiresSentinel means env creds
-	cachedCreds aws.Credentials // cached credentials to reuse when not expired
-}
-
-// seedResult holds the result of seeding credentials.
-type seedResult struct {
-	expiresAt time.Time
-	creds     aws.Credentials
-}
 
 // S3DB manages a pool of DuckDB connections to a single shared on-disk database.
 // All connections open the same file and thus share the same in-process database instance.
-// Credentials are set per-bucket/profile on each connection acquisition to support multiple buckets.
 type S3DB struct {
 	dbPath         string // single on-disk database file for all connections
 	cleanupOnClose bool   // whether to remove the database directory on Close
@@ -92,9 +65,6 @@ type S3DB struct {
 
 	// connection lifecycle
 	connMaxAge time.Duration // max lifetime for a pooled physical connection
-
-	// Secret cache is PER S3DB instance to avoid cross-DBPath contamination.
-	secretCache sync.Map // identityKey -> *bucketSecretState
 }
 
 type connectionPool struct {
@@ -273,26 +243,14 @@ func (s *S3DB) GetDatabasePath() string {
 	return s.dbPath
 }
 
-// GetConnection returns a connection for local database queries (no S3 authentication).
+// GetConnection returns a connection for local database queries.
 func (s *S3DB) GetConnection(ctx context.Context) (*sql.Conn, func(), error) {
-	return s.pool.acquire(ctx, nil)
-}
-
-// GetConnectionForBucket returns a connection configured with S3/Azure credentials
-// for the specified storage profile.
-func (s *S3DB) GetConnectionForBucket(ctx context.Context, profile storageprofile.StorageProfile) (*sql.Conn, func(), error) {
-	if profile.Bucket == "" {
-		return nil, nil, fmt.Errorf("bucket is required")
-	}
-	ensure := func(pc *pooledConn) error {
-		return s.seedCloudSecretFromEnv(ctx, pc.conn, profile)
-	}
-	return s.pool.acquire(ctx, ensure)
+	return s.pool.acquire(ctx)
 }
 
 // ---------- connectionPool implementation ----------
 
-func (p *connectionPool) acquire(ctx context.Context, ensure func(*pooledConn) error) (*sql.Conn, func(), error) {
+func (p *connectionPool) acquire(ctx context.Context) (*sql.Conn, func(), error) {
 	// Ensure extensions are loaded and database is set up before any connection is used
 	if err := p.parent.ensureSetup(ctx); err != nil {
 		return nil, nil, err
@@ -305,23 +263,16 @@ func (p *connectionPool) acquire(ctx context.Context, ensure func(*pooledConn) e
 			p.destroy(pc)
 			// fall through to creation path below
 		} else {
-			if ensure != nil {
-				if err := ensure(pc); err != nil {
-					p.destroy(pc)
-					// try to create a fresh one
-					return p.createAndEnsure(ctx, ensure)
-				}
-			}
 			return pc.conn, func() { p.release(pc) }, nil
 		}
 	default:
 	}
 
 	// Try to create a new one if capacity allows
-	return p.createAndEnsure(ctx, ensure)
+	return p.createConn(ctx)
 }
 
-func (p *connectionPool) createAndEnsure(ctx context.Context, ensure func(*pooledConn) error) (*sql.Conn, func(), error) {
+func (p *connectionPool) createConn(ctx context.Context) (*sql.Conn, func(), error) {
 	p.mu.Lock()
 	canCreate := p.cur < p.size
 	if canCreate {
@@ -337,12 +288,6 @@ func (p *connectionPool) createAndEnsure(ctx context.Context, ensure func(*poole
 			p.mu.Unlock()
 			return nil, nil, err
 		}
-		if ensure != nil {
-			if err := ensure(pc); err != nil {
-				p.destroy(pc)
-				return nil, nil, err
-			}
-		}
 		return pc.conn, func() { p.release(pc) }, nil
 	}
 
@@ -354,14 +299,7 @@ func (p *connectionPool) createAndEnsure(ctx context.Context, ensure func(*poole
 		if p.isConnExpired(pc) {
 			p.destroy(pc)
 			// After destroying, capacity likely exists -> try create again
-			return p.createAndEnsure(ctx, ensure)
-		}
-		if ensure != nil {
-			if err := ensure(pc); err != nil {
-				p.destroy(pc)
-				// After destroy, capacity exists -> try create again
-				return p.createAndEnsure(ctx, ensure)
-			}
+			return p.createConn(ctx)
 		}
 		return pc.conn, func() { p.release(pc) }, nil
 	}
@@ -596,459 +534,6 @@ func (c *connExecer) ExecContext(ctx context.Context, query string, args []drive
 	return result, err
 }
 
-// ---------- Secrets (AWS/Azure) ----------
-
-// seedCloudSecretFromEnv is the public entry point that uses per-S3DB caching.
-// Detects cloud provider and credentials source, then creates appropriate secret.
-func (s *S3DB) seedCloudSecretFromEnv(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) error {
-	return s.ensureBucketSecret(ctx, conn, profile)
-}
-
-// ensureBucketSecret checks if the secret for a profile identity needs credential refresh,
-// and creates/replaces it. DuckDB secrets must be created on every connection since they
-// are in-memory only and not shared across different connector instances.
-// Uses per-identity locking to serialize credential fetching (especially for AssumeRole).
-func (s *S3DB) ensureBucketSecret(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) error {
-	if strings.TrimSpace(profile.Bucket) == "" {
-		return fmt.Errorf("bucket is required")
-	}
-
-	key := secretIdentityKey(profile)
-
-	stateAny, _ := s.secretCache.LoadOrStore(key, &bucketSecretState{})
-	state := stateAny.(*bucketSecretState)
-
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	// Check if credentials need refresh.
-	// Note: We still need to create the secret on THIS connection even if credentials are cached,
-	// because DuckDB secrets are in-memory and may not be visible across different connectors.
-	needsCredentialRefresh := true
-	if state.expiresAt.Equal(neverExpiresSentinel) {
-		needsCredentialRefresh = false
-	} else if !state.expiresAt.IsZero() && time.Now().Before(state.expiresAt.Add(-credentialRefreshBuffer)) {
-		needsCredentialRefresh = false
-	}
-
-	expiresAt, err := seedCloudSecretFromEnvLocked(ctx, conn, profile, needsCredentialRefresh, state.cachedCreds)
-	if err != nil {
-		return err
-	}
-
-	state.expiresAt = expiresAt.expiresAt
-	state.cachedCreds = expiresAt.creds
-	return nil
-}
-
-// neverExpiresSentinel is used to mark credentials that never expire.
-var neverExpiresSentinel = time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
-
-// seedCloudSecretFromEnvLocked does the actual secret creation.
-// If needsCredentialRefresh is false and cachedCreds is valid, reuses cached credentials.
-// Otherwise fetches fresh credentials.
-// Always creates the DuckDB secret on the connection since secrets are in-memory only.
-// Caller must hold the per-identity lock.
-func seedCloudSecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile, needsCredentialRefresh bool, cachedCreds aws.Credentials) (seedResult, error) {
-	if hasAzureCredentials() || profile.CloudProvider == "azure" {
-		return seedAzureSecretFromEnvLocked(ctx, conn, profile)
-	}
-
-	// Real AWS is identified by: cloudProvider == "aws" AND no custom endpoint
-	useAWSSDK := profile.CloudProvider == "aws" && strings.TrimSpace(profile.Endpoint) == ""
-
-	if useAWSSDK {
-		return seedS3SecretFromAWSSDKLocked(ctx, conn, profile, needsCredentialRefresh, cachedCreds)
-	}
-
-	return seedS3SecretFromEnvLocked(ctx, conn, profile)
-}
-
-// Check if Azure credentials are available
-func hasAzureCredentials() bool {
-	authType := os.Getenv("AZURE_AUTH_TYPE")
-	return authType != ""
-}
-
-// seedAzureSecretFromEnvLocked creates an Azure secret.
-// Azure credentials from env vars are treated as non-expiring.
-// Caller must hold the per-identity lock.
-func seedAzureSecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) (seedResult, error) {
-	authType := os.Getenv("AZURE_AUTH_TYPE")
-	if authType == "" {
-		authType = "credential_chain"
-	}
-
-	if strings.TrimSpace(profile.Endpoint) == "" {
-		return seedResult{}, fmt.Errorf("azure storage profiles require an endpoint to extract storage account name")
-	}
-
-	storageAccount := extractStorageAccountFromEndpoint(profile.Endpoint)
-	secretName := secretNameFromProfile(profile)
-
-	var b strings.Builder
-	_, _ = fmt.Fprintf(&b, "CREATE OR REPLACE SECRET %s (\n", quoteIdent(secretName))
-	_, _ = fmt.Fprintf(&b, "  TYPE azure,\n")
-
-	switch authType {
-	case "service_principal":
-		clientId := os.Getenv("AZURE_CLIENT_ID")
-		clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
-		tenantId := os.Getenv("AZURE_TENANT_ID")
-
-		if clientId == "" || clientSecret == "" || tenantId == "" {
-			return seedResult{}, fmt.Errorf("missing Azure service principal credentials: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID")
-		}
-
-		_, _ = fmt.Fprintf(&b, "  PROVIDER service_principal,\n")
-		_, _ = fmt.Fprintf(&b, "  TENANT_ID '%s',\n", escapeSingle(tenantId))
-		_, _ = fmt.Fprintf(&b, "  CLIENT_ID '%s',\n", escapeSingle(clientId))
-		_, _ = fmt.Fprintf(&b, "  CLIENT_SECRET '%s',\n", escapeSingle(clientSecret))
-		_, _ = fmt.Fprintf(&b, "  ACCOUNT_NAME '%s'\n", escapeSingle(storageAccount))
-
-	case "connection_string":
-		connectionString := os.Getenv("AZURE_STORAGE_CONNECTION_STRING")
-		if connectionString == "" {
-			return seedResult{}, fmt.Errorf("missing Azure connection string: AZURE_STORAGE_CONNECTION_STRING")
-		}
-
-		_, _ = fmt.Fprintf(&b, "  PROVIDER connection_string,\n")
-		_, _ = fmt.Fprintf(&b, "  CONNECTION_STRING '%s'\n", escapeSingle(connectionString))
-
-	default:
-		_, _ = fmt.Fprintf(&b, "  PROVIDER credential_chain,\n")
-		_, _ = fmt.Fprintf(&b, "  ACCOUNT_NAME '%s'\n", escapeSingle(storageAccount))
-	}
-
-	_, _ = fmt.Fprintf(&b, ");")
-
-	_, err := conn.ExecContext(ctx, b.String())
-	if err != nil {
-		return seedResult{}, err
-	}
-	// Azure env creds don't have explicit expiration - treat as never expiring
-	return seedResult{expiresAt: neverExpiresSentinel}, nil
-}
-
-// Extract storage account name from Azure Blob endpoint
-func extractStorageAccountFromEndpoint(endpoint string) string {
-	endpoint = strings.TrimPrefix(endpoint, "https://")
-	endpoint = strings.TrimPrefix(endpoint, "http://")
-
-	if idx := strings.Index(endpoint, "."); idx > 0 {
-		return endpoint[:idx]
-	}
-	return endpoint
-}
-
-// S3SecretConfig holds the configuration for creating an S3 secret in DuckDB.
-type S3SecretConfig struct {
-	Bucket       string
-	Region       string
-	Endpoint     string
-	KeyID        string
-	Secret       string
-	SessionToken string
-	URLStyle     string
-	UseSSL       bool
-}
-
-// seedS3SecretFromAWSSDKLocked uses AWS chain/AssumeRole and creates a DuckDB secret.
-// If needsCredentialRefresh is false, reuses cachedCreds instead of fetching new ones.
-// Always creates the DuckDB secret on the connection.
-// Caller must hold the per-identity lock.
-func seedS3SecretFromAWSSDKLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile, needsCredentialRefresh bool, cachedCreds aws.Credentials) (seedResult, error) {
-	var creds aws.Credentials
-	var err error
-
-	if needsCredentialRefresh || cachedCreds.AccessKeyID == "" {
-		// Fetch fresh credentials from AWS SDK
-		creds, err = getAWSCredsFromChainOrAssume(ctx, profile)
-		if err != nil {
-			return seedResult{}, err
-		}
-	} else {
-		// Reuse cached credentials
-		creds = cachedCreds
-	}
-
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return seedResult{}, fmt.Errorf("load AWS config: %w", err)
-	}
-
-	region := strings.TrimSpace(profile.Region)
-	if region == "" {
-		region = cfg.Region
-		if region == "" {
-			region = "us-east-1"
-		}
-	}
-
-	useSSL := true
-	endpoint := strings.TrimSpace(profile.Endpoint)
-	if endpoint == "" {
-		endpoint = fmt.Sprintf("s3.%s.amazonaws.com", region)
-	} else {
-		if after, ok := strings.CutPrefix(endpoint, "http://"); ok {
-			endpoint = after
-			useSSL = false
-		} else if after, ok = strings.CutPrefix(endpoint, "https://"); ok {
-			endpoint = after
-			useSSL = true
-		}
-	}
-
-	secretConfig := S3SecretConfig{
-		Bucket:       profile.Bucket,
-		Region:       region,
-		Endpoint:     endpoint,
-		KeyID:        creds.AccessKeyID,
-		Secret:       creds.SecretAccessKey,
-		SessionToken: creds.SessionToken,
-		URLStyle:     "path",
-		UseSSL:       useSSL,
-	}
-
-	if err := createS3SecretWithCredsLocked(ctx, conn, secretConfig, creds, profile); err != nil {
-		return seedResult{}, err
-	}
-
-	// Return the credentials and expiration time
-	var expiresAt time.Time
-	if creds.CanExpire {
-		expiresAt = creds.Expires
-	} else {
-		expiresAt = neverExpiresSentinel
-	}
-	return seedResult{expiresAt: expiresAt, creds: creds}, nil
-}
-
-// seedS3SecretFromEnvLocked uses env creds for S3-compatible systems.
-// Environment credentials are treated as non-expiring.
-// Caller must hold the per-identity lock.
-func seedS3SecretFromEnvLocked(ctx context.Context, conn *sql.Conn, profile storageprofile.StorageProfile) (seedResult, error) {
-	keyID := os.Getenv("S3_ACCESS_KEY_ID")
-	if keyID == "" {
-		keyID = os.Getenv("AWS_ACCESS_KEY_ID")
-	}
-
-	secret := os.Getenv("S3_SECRET_ACCESS_KEY")
-	if secret == "" {
-		secret = os.Getenv("AWS_SECRET_ACCESS_KEY")
-	}
-
-	if keyID == "" || secret == "" {
-		return seedResult{}, fmt.Errorf("missing S3/AWS credentials: S3_ACCESS_KEY_ID/AWS_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY/AWS_SECRET_ACCESS_KEY are required")
-	}
-
-	session := os.Getenv("S3_SESSION_TOKEN")
-	if session == "" {
-		session = os.Getenv("AWS_SESSION_TOKEN")
-	}
-
-	region := strings.TrimSpace(profile.Region)
-	if region == "" {
-		if r := os.Getenv("S3_REGION"); r != "" {
-			region = r
-		} else if r := os.Getenv("AWS_REGION"); r != "" {
-			region = r
-		} else if r := os.Getenv("AWS_DEFAULT_REGION"); r != "" {
-			region = r
-		} else {
-			region = "us-east-1"
-		}
-	}
-
-	useSSL := true
-	endpoint := strings.TrimSpace(profile.Endpoint)
-	if endpoint == "" {
-		endpoint = fmt.Sprintf("s3.%s.amazonaws.com", region)
-	} else {
-		if after, ok := strings.CutPrefix(endpoint, "http://"); ok {
-			endpoint = after
-			useSSL = false
-		} else if after, ok = strings.CutPrefix(endpoint, "https://"); ok {
-			endpoint = after
-			useSSL = true
-		}
-	}
-
-	urlStyle := os.Getenv("S3_URL_STYLE")
-	if urlStyle == "" {
-		urlStyle = os.Getenv("AWS_S3_URL_STYLE")
-	}
-	if urlStyle == "" {
-		urlStyle = "path"
-	}
-
-	secretConfig := S3SecretConfig{
-		Bucket:       profile.Bucket,
-		Region:       region,
-		Endpoint:     endpoint,
-		KeyID:        keyID,
-		Secret:       secret,
-		SessionToken: session,
-		URLStyle:     urlStyle,
-		UseSSL:       useSSL,
-	}
-
-	creds := aws.Credentials{
-		AccessKeyID:     keyID,
-		SecretAccessKey: secret,
-		SessionToken:    session,
-		Source:          "env",
-		CanExpire:       false,
-	}
-
-	if err := createS3SecretWithCredsLocked(ctx, conn, secretConfig, creds, profile); err != nil {
-		return seedResult{}, err
-	}
-	// Environment credentials don't expire
-	return seedResult{expiresAt: neverExpiresSentinel, creds: creds}, nil
-}
-
-// chooseSTSRegion picks a region for STS calls. Prefer profile.Region, otherwise env/defaults.
-func chooseSTSRegion(ctx context.Context, profile storageprofile.StorageProfile) (string, error) {
-	if r := strings.TrimSpace(profile.Region); r != "" {
-		return r, nil
-	}
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err == nil && cfg.Region != "" {
-		return cfg.Region, nil
-	}
-	return "us-east-1", nil
-}
-
-// getAWSCredsFromChainOrAssume returns credentials using the default chain,
-// or assumes the provided role with externalId if profile.Role is non-empty.
-func getAWSCredsFromChainOrAssume(ctx context.Context, profile storageprofile.StorageProfile) (aws.Credentials, error) {
-	region, _ := chooseSTSRegion(ctx, profile)
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
-	if err != nil {
-		return aws.Credentials{}, fmt.Errorf("load AWS config: %w", err)
-	}
-
-	roleArn := strings.TrimSpace(profile.Role)
-	if roleArn == "" {
-		creds, err := cfg.Credentials.Retrieve(ctx)
-		if err != nil {
-			return aws.Credentials{}, fmt.Errorf("retrieve default chain credentials: %w", err)
-		}
-		return creds, nil
-	}
-
-	extID := strings.TrimSpace(profile.OrganizationID.String())
-	stsClient := sts.NewFromConfig(cfg)
-	out, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
-		RoleArn:         &roleArn,
-		RoleSessionName: aws.String(fmt.Sprintf("CardinalHQ-%d", time.Now().Unix())),
-		ExternalId:      aws.String(extID),
-		DurationSeconds: aws.Int32(3600),
-	})
-	if err != nil {
-		return aws.Credentials{}, fmt.Errorf("assume role %s: %w", roleArn, err)
-	}
-	c := out.Credentials
-	return aws.Credentials{
-		AccessKeyID:     aws.ToString(c.AccessKeyId),
-		SecretAccessKey: aws.ToString(c.SecretAccessKey),
-		SessionToken:    aws.ToString(c.SessionToken),
-		Source:          "AssumeRole",
-		CanExpire:       true,
-		Expires:         aws.ToTime(c.Expiration),
-	}, nil
-}
-
-// createS3SecretWithCredsLocked builds and executes DuckDB SECRET DDL
-// using the provided explicit credentials.
-// Caller must hold the per-identity lock.
-func createS3SecretWithCredsLocked(
-	ctx context.Context,
-	conn *sql.Conn,
-	config S3SecretConfig,
-	creds aws.Credentials,
-	profile storageprofile.StorageProfile,
-) error {
-	if strings.TrimSpace(config.Bucket) == "" {
-		return fmt.Errorf("bucket is required")
-	}
-	if strings.TrimSpace(config.Region) == "" {
-		config.Region = "us-east-1"
-	}
-	if strings.TrimSpace(config.URLStyle) == "" {
-		config.URLStyle = "path"
-	}
-	if creds.AccessKeyID == "" || creds.SecretAccessKey == "" {
-		return fmt.Errorf("missing access key/secret for secret creation")
-	}
-
-	endpointHost := config.Endpoint
-	useSSL := config.UseSSL
-	slog.Info("Creating S3 secret", "endpoint", endpointHost, "useSSL", useSSL, "bucket", config.Bucket)
-
-	secretName := secretNameFromProfile(profile)
-
-	useSSLStr := "false"
-	if useSSL {
-		useSSLStr = "true"
-	}
-
-	var b strings.Builder
-	_, _ = fmt.Fprintf(&b, "CREATE OR REPLACE SECRET %s (\n", quoteIdent(secretName))
-	_, _ = fmt.Fprintf(&b, "  TYPE S3,\n")
-	_, _ = fmt.Fprintf(&b, "  ENDPOINT '%s',\n", escapeSingle(endpointHost))
-	_, _ = fmt.Fprintf(&b, "  URL_STYLE '%s',\n", escapeSingle(config.URLStyle))
-	_, _ = fmt.Fprintf(&b, "  USE_SSL %s,\n", useSSLStr)
-	_, _ = fmt.Fprintf(&b, "  KEY_ID '%s',\n", escapeSingle(creds.AccessKeyID))
-	_, _ = fmt.Fprintf(&b, "  SECRET '%s',\n", escapeSingle(creds.SecretAccessKey))
-	if creds.SessionToken != "" {
-		_, _ = fmt.Fprintf(&b, "  SESSION_TOKEN '%s',\n", escapeSingle(creds.SessionToken))
-	}
-	_, _ = fmt.Fprintf(&b, "  REGION '%s',\n", escapeSingle(config.Region))
-	_, _ = fmt.Fprintf(&b, "  SCOPE 's3://%s'\n", escapeSingle(config.Bucket))
-	_, _ = fmt.Fprintf(&b, ");")
-
-	_, err := conn.ExecContext(ctx, b.String())
-	return err
-}
-
-// ---------- identity + secret naming ----------
-
-func secretIdentityKey(p storageprofile.StorageProfile) string {
-	parts := []string{
-		strings.TrimSpace(p.CloudProvider),
-		strings.TrimSpace(p.Bucket),
-		strings.TrimSpace(p.Endpoint),
-		strings.TrimSpace(p.Region),
-		strings.TrimSpace(p.Role),
-		p.OrganizationID.String(),
-	}
-	return strings.Join(parts, "|")
-}
-
-func shortHash(s string) string {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(s))
-	return fmt.Sprintf("%x", h.Sum64())
-}
-
-// Secret name used within DuckDB.
-// Include a short hash of the identity key to avoid collisions when
-// multiple roles/endpoints/tenants target the same bucket in one process.
-func secretNameFromProfile(p storageprofile.StorageProfile) string {
-	b := strings.ReplaceAll(strings.TrimSpace(p.Bucket), "-", "_")
-	if b == "" {
-		b = "bucket"
-	}
-	key := secretIdentityKey(p)
-	h := shortHash(key)
-	if len(h) > 8 {
-		h = h[:8]
-	}
-	return "secret_" + b + "_" + h
-}
-
 // ---------- helpers & metrics ----------
 
 // discoverExtensionsPath attempts to find DuckDB extensions in the repository.
@@ -1106,7 +591,6 @@ func getPlatformDir() string {
 }
 
 func escapeSingle(s string) string { return strings.ReplaceAll(s, `'`, `''`) }
-func quoteIdent(s string) string   { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
 func envInt64(name string, def int64) int64 {
 	if v := os.Getenv(name); v != "" {

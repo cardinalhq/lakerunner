@@ -19,8 +19,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -28,9 +30,6 @@ import (
 )
 
 const (
-	// DefaultParquetFileTTL is how long downloaded parquet files are kept before cleanup.
-	DefaultParquetFileTTL = 30 * time.Minute
-
 	// DefaultCleanupInterval is how often the cleanup goroutine runs.
 	DefaultCleanupInterval = 5 * time.Minute
 
@@ -38,6 +37,14 @@ const (
 	// after it's been marked for deletion. This allows concurrent queries to
 	// finish using the file before it's removed.
 	DefaultDeletionDelay = 1 * time.Minute
+
+	// DiskUsageHighWatermark is the disk utilization level that triggers eviction.
+	// When disk usage exceeds this fraction, the cache will start evicting files.
+	DiskUsageHighWatermark = 0.80
+
+	// DiskUsageLowWatermark is the target disk utilization after eviction.
+	// Eviction continues until disk usage drops below this level.
+	DiskUsageLowWatermark = 0.70
 )
 
 // CacheKey uniquely identifies a cached file by its cloud storage location.
@@ -47,8 +54,11 @@ type CacheKey struct {
 	ObjectID string // object key/path within the bucket
 }
 
-// ParquetFileCache manages downloaded parquet files with TTL-based cleanup.
-// It tracks file sizes and access times for metrics and cleanup purposes.
+// DiskUsageFunc is a function that returns disk usage statistics.
+type DiskUsageFunc func(path string) (usedBytes, totalBytes uint64, err error)
+
+// ParquetFileCache manages downloaded parquet files with disk pressure-based cleanup.
+// It tracks file sizes and access times for metrics and LRU eviction purposes.
 // The cache owns its storage directory and provides a domain-aware API
 // for callers to work with (bucket, region, objectId) rather than file paths.
 type ParquetFileCache struct {
@@ -64,8 +74,10 @@ type ParquetFileCache struct {
 	keyToPath map[CacheKey]string
 
 	// config
-	fileTTL         time.Duration
 	cleanupInterval time.Duration
+
+	// getDiskUsage is the function to check disk usage (injectable for testing)
+	getDiskUsage DiskUsageFunc
 
 	// metrics
 	fileCount  int64
@@ -84,20 +96,17 @@ type cachedFileInfo struct {
 	deleteAfter time.Time // if non-zero, file is marked for deletion after this time
 }
 
-// NewParquetFileCache creates a new parquet file cache with TTL-based cleanup.
+// NewParquetFileCache creates a new parquet file cache with disk pressure-based cleanup.
 // The cache directory is created under os.TempDir(), which respects the TMPDIR
 // environment variable (typically set by helpers.SetupTempDir()).
-func NewParquetFileCache(fileTTL, cleanupInterval time.Duration) (*ParquetFileCache, error) {
+func NewParquetFileCache(cleanupInterval time.Duration) (*ParquetFileCache, error) {
 	baseDir := filepath.Join(os.TempDir(), "parquet-cache")
-	return NewParquetFileCacheWithBaseDir(baseDir, fileTTL, cleanupInterval)
+	return NewParquetFileCacheWithBaseDir(baseDir, cleanupInterval)
 }
 
 // NewParquetFileCacheWithBaseDir creates a new parquet file cache with a custom base directory.
 // This is useful for testing where each test needs an isolated cache directory.
-func NewParquetFileCacheWithBaseDir(baseDir string, fileTTL, cleanupInterval time.Duration) (*ParquetFileCache, error) {
-	if fileTTL <= 0 {
-		fileTTL = DefaultParquetFileTTL
-	}
+func NewParquetFileCacheWithBaseDir(baseDir string, cleanupInterval time.Duration) (*ParquetFileCache, error) {
 	if cleanupInterval <= 0 {
 		cleanupInterval = DefaultCleanupInterval
 	}
@@ -110,8 +119,8 @@ func NewParquetFileCacheWithBaseDir(baseDir string, fileTTL, cleanupInterval tim
 		baseDir:         baseDir,
 		files:           make(map[string]*cachedFileInfo),
 		keyToPath:       make(map[CacheKey]string),
-		fileTTL:         fileTTL,
 		cleanupInterval: cleanupInterval,
+		getDiskUsage:    defaultGetDiskUsage,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,8 +130,9 @@ func NewParquetFileCacheWithBaseDir(baseDir string, fileTTL, cleanupInterval tim
 
 	slog.Info("ParquetFileCache initialized",
 		slog.String("baseDir", baseDir),
-		slog.Duration("fileTTL", fileTTL),
-		slog.Duration("cleanupInterval", cleanupInterval))
+		slog.Duration("cleanupInterval", cleanupInterval),
+		slog.Float64("diskHighWatermark", DiskUsageHighWatermark),
+		slog.Float64("diskLowWatermark", DiskUsageLowWatermark))
 
 	return pfc, nil
 }
@@ -415,7 +425,7 @@ func (pfc *ParquetFileCache) removeFile(path string) {
 	}
 }
 
-// cleanupLoop periodically removes expired files.
+// cleanupLoop periodically checks for disk pressure and removes marked files.
 func (pfc *ParquetFileCache) cleanupLoop(ctx context.Context) {
 	defer pfc.cleanupWG.Done()
 
@@ -427,26 +437,20 @@ func (pfc *ParquetFileCache) cleanupLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			pfc.cleanupExpiredFiles()
+			pfc.cleanupMarkedFiles()
 		}
 	}
 }
 
-// cleanupExpiredFiles removes files that haven't been accessed within the TTL
-// or have been marked for deletion and their deletion time has passed.
-func (pfc *ParquetFileCache) cleanupExpiredFiles() {
+// cleanupMarkedFiles removes files that have been marked for deletion and
+// whose deletion delay has passed. Also triggers disk-pressure eviction if needed.
+func (pfc *ParquetFileCache) cleanupMarkedFiles() {
 	now := time.Now()
-	cutoff := now.Add(-pfc.fileTTL)
 
 	var toRemove []string
 
 	pfc.mu.RLock()
 	for path, info := range pfc.files {
-		// Remove if TTL expired
-		if info.lastAccess.Before(cutoff) {
-			toRemove = append(toRemove, path)
-			continue
-		}
 		// Remove if marked for deletion and delay has passed
 		if !info.deleteAfter.IsZero() && now.After(info.deleteAfter) {
 			toRemove = append(toRemove, path)
@@ -454,20 +458,103 @@ func (pfc *ParquetFileCache) cleanupExpiredFiles() {
 	}
 	pfc.mu.RUnlock()
 
-	if len(toRemove) == 0 {
-		return
+	if len(toRemove) > 0 {
+		slog.Info("Cleaning up marked-for-deletion parquet files",
+			slog.Int("count", len(toRemove)))
+
+		for _, path := range toRemove {
+			pfc.removeFile(path)
+		}
 	}
 
-	slog.Info("Cleaning up expired parquet files",
-		slog.Int("count", len(toRemove)),
-		slog.Duration("ttl", pfc.fileTTL))
-
-	for _, path := range toRemove {
-		pfc.removeFile(path)
-	}
+	// Check disk pressure and evict if needed
+	pfc.evictForDiskPressure()
 
 	// Try to remove empty directories
 	pfc.cleanupEmptyDirs()
+}
+
+// evictForDiskPressure removes files LRU-style when disk usage exceeds the high watermark.
+// Eviction continues until disk usage drops below the low watermark.
+func (pfc *ParquetFileCache) evictForDiskPressure() {
+	usedBytes, totalBytes, err := pfc.getDiskUsage(pfc.baseDir)
+	if err != nil {
+		slog.Warn("Failed to get disk usage for eviction check",
+			slog.String("baseDir", pfc.baseDir),
+			slog.Any("error", err))
+		return
+	}
+
+	diskUtilization := float64(usedBytes) / float64(totalBytes)
+	if diskUtilization < DiskUsageHighWatermark {
+		return // No pressure, nothing to do
+	}
+
+	slog.Info("Disk pressure detected, starting LRU eviction",
+		slog.Float64("utilization", diskUtilization),
+		slog.Float64("highWatermark", DiskUsageHighWatermark),
+		slog.Float64("lowWatermark", DiskUsageLowWatermark),
+		slog.Uint64("usedBytes", usedBytes),
+		slog.Uint64("totalBytes", totalBytes))
+
+	// Build LRU list of files (oldest access first)
+	type fileEntry struct {
+		path       string
+		lastAccess time.Time
+	}
+
+	pfc.mu.RLock()
+	entries := make([]fileEntry, 0, len(pfc.files))
+	for path, info := range pfc.files {
+		entries = append(entries, fileEntry{path: path, lastAccess: info.lastAccess})
+	}
+	pfc.mu.RUnlock()
+
+	// Sort by last access time (oldest first)
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].lastAccess.Before(entries[j].lastAccess)
+	})
+
+	// Evict until we're below the low watermark
+	evictedCount := 0
+	for _, entry := range entries {
+		// Re-check disk usage
+		usedBytes, totalBytes, err = pfc.getDiskUsage(pfc.baseDir)
+		if err != nil {
+			break
+		}
+		diskUtilization = float64(usedBytes) / float64(totalBytes)
+		if diskUtilization <= DiskUsageLowWatermark {
+			break // We've evicted enough
+		}
+
+		pfc.removeFile(entry.path)
+		evictedCount++
+	}
+
+	if evictedCount > 0 {
+		// Final disk usage check for logging
+		usedBytes, totalBytes, _ = pfc.getDiskUsage(pfc.baseDir)
+		finalUtilization := float64(usedBytes) / float64(totalBytes)
+		slog.Info("Disk pressure eviction complete",
+			slog.Int("evictedCount", evictedCount),
+			slog.Float64("finalUtilization", finalUtilization))
+	}
+}
+
+// defaultGetDiskUsage returns current disk usage statistics for the filesystem containing
+// the given path. Returns used bytes and total bytes.
+func defaultGetDiskUsage(path string) (usedBytes, totalBytes uint64, err error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return 0, 0, err
+	}
+
+	totalBytes = stat.Blocks * uint64(stat.Bsize)
+	freeBytes := stat.Bfree * uint64(stat.Bsize)
+	usedBytes = totalBytes - freeBytes
+
+	return usedBytes, totalBytes, nil
 }
 
 // cleanupEmptyDirs removes empty directories under the cache base dir.

@@ -62,10 +62,9 @@ func NewWorkerService(
 	maxParallelDownloads int,
 	sp storageprofile.StorageProfileProvider,
 	cloudManagers cloudstorage.ClientProvider,
-	disableTableCache bool,
 ) (*WorkerService, error) {
 	// Create shared parquet file cache for downloaded files
-	parquetCache, err := NewParquetFileCache(DefaultParquetFileTTL, DefaultCleanupInterval)
+	parquetCache, err := NewParquetFileCache(DefaultCleanupInterval)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create parquet file cache: %w", err)
 	}
@@ -151,7 +150,7 @@ func NewWorkerService(
 
 				// Track the newly downloaded file
 				if err := parquetCache.TrackFile(region, bucket, objectID); err != nil {
-					slog.Error("Failed to track downloaded file - file exists but won't be managed by cache TTL",
+					slog.Error("Failed to track downloaded file - file exists but won't be managed by cache",
 						slog.String("objectID", objectID),
 						slog.String("path", localPath),
 						slog.Any("error", err))
@@ -180,14 +179,9 @@ func NewWorkerService(
 		return nil, fmt.Errorf("failed to create shared S3DB pool: %w", err)
 	}
 
-	metricsCM := NewCacheManager(downloader, "metrics", sp, s3Pool, disableTableCache, parquetCache)
-	logsCM := NewCacheManager(downloader, "logs", sp, s3Pool, disableTableCache, parquetCache)
-	tracesCM := NewCacheManager(downloader, "traces", sp, s3Pool, disableTableCache, parquetCache)
-
-	// Register metrics once for all cache managers
-	if err := RegisterCacheMetrics(metricsCM, logsCM, tracesCM); err != nil {
-		slog.Error("Failed to register cache metrics", slog.Any("error", err))
-	}
+	metricsCM := NewCacheManager(downloader, "metrics", sp, s3Pool, parquetCache)
+	logsCM := NewCacheManager(downloader, "logs", sp, s3Pool, parquetCache)
+	tracesCM := NewCacheManager(downloader, "traces", sp, s3Pool, parquetCache)
 
 	return &WorkerService{
 		MetricsCM:            metricsCM,

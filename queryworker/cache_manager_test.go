@@ -132,42 +132,6 @@ func TestRemoveFingerprintNormalization(t *testing.T) {
 	}
 }
 
-func TestDiskUsageWatermarks(t *testing.T) {
-	t.Parallel()
-
-	t.Run("high watermark is greater than low watermark", func(t *testing.T) {
-		t.Parallel()
-		require.Greater(t, DiskUsageHighWatermark, DiskUsageLowWatermark)
-	})
-
-	t.Run("watermarks are valid fractions", func(t *testing.T) {
-		t.Parallel()
-		require.Greater(t, DiskUsageHighWatermark, 0.0)
-		require.LessOrEqual(t, DiskUsageHighWatermark, 1.0)
-		require.Greater(t, DiskUsageLowWatermark, 0.0)
-		require.LessOrEqual(t, DiskUsageLowWatermark, 1.0)
-	})
-}
-
-func TestGetDiskUsage(t *testing.T) {
-	t.Parallel()
-
-	t.Run("valid path returns usage", func(t *testing.T) {
-		t.Parallel()
-		usedBytes, totalBytes, err := getDiskUsage("/tmp")
-		require.NoError(t, err)
-		require.Greater(t, totalBytes, uint64(0))
-		// Used bytes should be <= total bytes
-		require.LessOrEqual(t, usedBytes, totalBytes)
-	})
-
-	t.Run("non-existent path returns error", func(t *testing.T) {
-		t.Parallel()
-		_, _, err := getDiskUsage("/path/that/does/not/exist/anywhere")
-		require.Error(t, err)
-	})
-}
-
 func TestDownloadForQuery(t *testing.T) {
 	t.Parallel()
 
