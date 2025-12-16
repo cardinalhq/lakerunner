@@ -27,11 +27,17 @@ import (
 )
 
 // newTestCache creates a ParquetFileCache with an isolated test directory.
+// It injects a mock disk usage function that reports low disk usage to prevent
+// disk pressure eviction from interfering with tests.
 func newTestCache(t *testing.T) *ParquetFileCache {
 	t.Helper()
 	baseDir := t.TempDir()
-	pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0, 0)
+	pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0)
 	require.NoError(t, err)
+	// Mock disk usage to report low usage so eviction doesn't trigger
+	pfc.getDiskUsage = func(path string) (usedBytes, totalBytes uint64, err error) {
+		return 50, 100, nil // 50% usage - below high watermark
+	}
 	t.Cleanup(func() { pfc.Close() })
 	return pfc
 }
@@ -39,29 +45,27 @@ func newTestCache(t *testing.T) *ParquetFileCache {
 func TestNewParquetFileCache(t *testing.T) {
 	t.Parallel()
 
-	t.Run("creates cache with default TTLs", func(t *testing.T) {
+	t.Run("creates cache with default cleanup interval", func(t *testing.T) {
 		t.Parallel()
 		pfc := newTestCache(t)
 
-		assert.Equal(t, DefaultParquetFileTTL, pfc.fileTTL)
 		assert.Equal(t, DefaultCleanupInterval, pfc.cleanupInterval)
 		assert.NotEmpty(t, pfc.baseDir)
 	})
 
-	t.Run("creates cache with custom TTLs", func(t *testing.T) {
+	t.Run("creates cache with custom cleanup interval", func(t *testing.T) {
 		t.Parallel()
 		baseDir := t.TempDir()
-		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 10*time.Minute, 2*time.Minute)
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 2*time.Minute)
 		require.NoError(t, err)
 		defer pfc.Close()
 
-		assert.Equal(t, 10*time.Minute, pfc.fileTTL)
 		assert.Equal(t, 2*time.Minute, pfc.cleanupInterval)
 	})
 
 	t.Run("base directory is under temp dir", func(t *testing.T) {
 		t.Parallel()
-		pfc, err := NewParquetFileCache(0, 0)
+		pfc, err := NewParquetFileCache(0)
 		require.NoError(t, err)
 		defer pfc.Close()
 
@@ -362,7 +366,7 @@ func TestParquetFileCache_Close(t *testing.T) {
 	t.Run("cleans up all files on close", func(t *testing.T) {
 		t.Parallel()
 		baseDir := t.TempDir()
-		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0, 0)
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0)
 		require.NoError(t, err)
 
 		region := "us-east-1"
@@ -569,49 +573,19 @@ func TestParquetFileCache_removeFile(t *testing.T) {
 	})
 }
 
-func TestParquetFileCache_cleanupExpiredFiles(t *testing.T) {
+func TestParquetFileCache_cleanupMarkedFiles(t *testing.T) {
 	t.Parallel()
-
-	t.Run("removes files past TTL", func(t *testing.T) {
-		t.Parallel()
-		baseDir := t.TempDir()
-		// Use very short TTL for testing
-		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 1*time.Millisecond, 1*time.Hour)
-		require.NoError(t, err)
-		defer pfc.Close()
-
-		region := "us-east-1"
-		bucket := "test-bucket"
-
-		// Create and track a file
-		localPath, _, err := pfc.GetOrPrepare(region, bucket, "test/file.parquet")
-		require.NoError(t, err)
-		err = os.WriteFile(localPath, []byte("test"), 0644)
-		require.NoError(t, err)
-		err = pfc.TrackFile(region, bucket, "test/file.parquet")
-		require.NoError(t, err)
-
-		assert.Equal(t, int64(1), pfc.FileCount())
-
-		// Wait for TTL to expire
-		time.Sleep(10 * time.Millisecond)
-
-		// Trigger cleanup
-		pfc.cleanupExpiredFiles()
-
-		// File should be removed
-		assert.Equal(t, int64(0), pfc.FileCount())
-		_, err = os.Stat(localPath)
-		assert.True(t, os.IsNotExist(err))
-	})
 
 	t.Run("removes files marked for deletion after delay", func(t *testing.T) {
 		t.Parallel()
 		baseDir := t.TempDir()
-		// Use long TTL but we'll mark for deletion
-		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 1*time.Hour, 1*time.Hour)
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 1*time.Hour)
 		require.NoError(t, err)
 		defer pfc.Close()
+		// Mock disk usage to prevent eviction
+		pfc.getDiskUsage = func(path string) (usedBytes, totalBytes uint64, err error) {
+			return 50, 100, nil
+		}
 
 		region := "us-east-1"
 		bucket := "test-bucket"
@@ -639,18 +613,22 @@ func TestParquetFileCache_cleanupExpiredFiles(t *testing.T) {
 		pfc.mu.Unlock()
 
 		// Trigger cleanup
-		pfc.cleanupExpiredFiles()
+		pfc.cleanupMarkedFiles()
 
 		// File should be removed
 		assert.Equal(t, int64(0), pfc.FileCount())
 	})
 
-	t.Run("keeps files within TTL", func(t *testing.T) {
+	t.Run("keeps files not marked for deletion", func(t *testing.T) {
 		t.Parallel()
 		baseDir := t.TempDir()
-		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 1*time.Hour, 1*time.Hour)
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 1*time.Hour)
 		require.NoError(t, err)
 		defer pfc.Close()
+		// Mock disk usage to prevent eviction
+		pfc.getDiskUsage = func(path string) (usedBytes, totalBytes uint64, err error) {
+			return 50, 100, nil
+		}
 
 		region := "us-east-1"
 		bucket := "test-bucket"
@@ -663,8 +641,8 @@ func TestParquetFileCache_cleanupExpiredFiles(t *testing.T) {
 		err = pfc.TrackFile(region, bucket, "test/file.parquet")
 		require.NoError(t, err)
 
-		// Trigger cleanup immediately
-		pfc.cleanupExpiredFiles()
+		// Trigger cleanup without marking for deletion
+		pfc.cleanupMarkedFiles()
 
 		// File should still be there
 		assert.Equal(t, int64(1), pfc.FileCount())
@@ -766,7 +744,7 @@ func TestParquetFileCache_ScanExistingFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create cache
-		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0, 0)
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0)
 		require.NoError(t, err)
 		defer pfc.Close()
 
@@ -798,7 +776,7 @@ func TestParquetFileCache_ScanExistingFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create cache and scan
-		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0, 0)
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0)
 		require.NoError(t, err)
 		defer pfc.Close()
 
@@ -862,7 +840,7 @@ func TestParquetFileCache_ScanExistingFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create cache and scan
-		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0, 0)
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0)
 		require.NoError(t, err)
 		defer pfc.Close()
 
@@ -888,7 +866,7 @@ func TestParquetFileCache_ScanExistingFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create cache and scan
-		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0, 0)
+		pfc, err := NewParquetFileCacheWithBaseDir(baseDir, 0)
 		require.NoError(t, err)
 		defer pfc.Close()
 
@@ -900,5 +878,41 @@ func TestParquetFileCache_ScanExistingFiles(t *testing.T) {
 
 		// But won't be findable via GetOrPrepare since we can't reconstruct the key
 		// (would need to know what region/bucket it belongs to)
+	})
+}
+
+func TestDiskUsageWatermarks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("high watermark is greater than low watermark", func(t *testing.T) {
+		t.Parallel()
+		require.Greater(t, DiskUsageHighWatermark, DiskUsageLowWatermark)
+	})
+
+	t.Run("watermarks are valid fractions", func(t *testing.T) {
+		t.Parallel()
+		require.Greater(t, DiskUsageHighWatermark, 0.0)
+		require.LessOrEqual(t, DiskUsageHighWatermark, 1.0)
+		require.Greater(t, DiskUsageLowWatermark, 0.0)
+		require.LessOrEqual(t, DiskUsageLowWatermark, 1.0)
+	})
+}
+
+func TestDefaultGetDiskUsage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid path returns usage", func(t *testing.T) {
+		t.Parallel()
+		usedBytes, totalBytes, err := defaultGetDiskUsage("/tmp")
+		require.NoError(t, err)
+		require.Greater(t, totalBytes, uint64(0))
+		// Used bytes should be <= total bytes
+		require.LessOrEqual(t, usedBytes, totalBytes)
+	})
+
+	t.Run("non-existent path returns error", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := defaultGetDiskUsage("/path/that/does/not/exist/anywhere")
+		require.Error(t, err)
 	})
 }

@@ -79,10 +79,6 @@ External override file can be specified via `--kafka-topics-file` flag or `KAFKA
 
 | Setting | Default | Environment Variable | Description |
 |---------|---------|---------------------|-------------|
-| duckdb.extensions_path | `""` | `LAKERUNNER_DUCKDB_EXTENSIONS_PATH` or `LAKERUNNER_EXTENSIONS_PATH` | Path to DuckDB extensions for air-gapped mode |
-| duckdb.httpfs_extension | `""` | `LAKERUNNER_DUCKDB_HTTPFS_EXTENSION` or `LAKERUNNER_HTTPFS_EXTENSION` | Path to HTTPFS extension |
-| duckdb.azure_extension | `""` | `LAKERUNNER_DUCKDB_AZURE_EXTENSION` or `LAKERUNNER_AZURE_EXTENSION` | Path to Azure extension |
-| duckdb.aws_extension | `""` | `LAKERUNNER_DUCKDB_AWS_EXTENSION` or `LAKERUNNER_AWS_EXTENSION` | Path to AWS extension |
 | duckdb.memory_limit | `0` (unlimited) | `LAKERUNNER_DUCKDB_MEMORY_LIMIT` | Memory limit in MB |
 | duckdb.temp_directory | `$TMPDIR` or `/tmp` | `LAKERUNNER_DUCKDB_TEMP_DIRECTORY` | Directory for temporary files (defaults to TMPDIR environment variable) |
 | duckdb.max_temp_directory_size | 90% of volume size | `LAKERUNNER_DUCKDB_MAX_TEMP_DIRECTORY_SIZE` | Maximum size for temp directory (defaults to 90% of temp volume size) |

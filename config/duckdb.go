@@ -24,84 +24,25 @@ import (
 
 // DuckDBConfig holds DuckDB-specific configuration
 type DuckDBConfig struct {
-	// Extension paths for air-gapped mode
-	ExtensionsPath  string `mapstructure:"extensions_path"`
-	HTTPFSExtension string `mapstructure:"httpfs_extension"`
-	AzureExtension  string `mapstructure:"azure_extension"`
-	AWSExtension    string `mapstructure:"aws_extension"`
-
 	// Memory and performance settings
 	MemoryLimit          int64  `mapstructure:"memory_limit"`            // Memory limit in MB (0 = unlimited)
 	TempDirectory        string `mapstructure:"temp_directory"`          // Directory for temporary files
 	MaxTempDirectorySize string `mapstructure:"max_temp_directory_size"` // Max size for temp directory
-	S3PoolSize           int    `mapstructure:"s3_pool_size"`            // Connection pool size for S3
-	S3ConnTTLSeconds     int    `mapstructure:"s3_conn_ttl_seconds"`     // Connection TTL in seconds
+	PoolSize             int    `mapstructure:"pool_size"`               // Connection pool size
+	ConnTTLSeconds       int    `mapstructure:"conn_ttl_seconds"`        // Connection TTL in seconds
 	ThreadsPerConn       int    `mapstructure:"threads_per_conn"`        // Threads per connection
 }
 
 // DefaultDuckDBConfig returns default DuckDB configuration
 func DefaultDuckDBConfig() DuckDBConfig {
 	return DuckDBConfig{
-		ExtensionsPath:       "",
-		HTTPFSExtension:      "",
-		AzureExtension:       "",
-		AWSExtension:         "",
 		MemoryLimit:          0,   // No limit by default
 		TempDirectory:        "",  // Empty means use system default
 		MaxTempDirectorySize: "",  // Empty means no limit
-		S3PoolSize:           0,   // 0 means use default calculation in s3db.go
-		S3ConnTTLSeconds:     240, // 4 minutes default
+		PoolSize:             0,   // 0 means use default calculation in db.go
+		ConnTTLSeconds:       240, // 4 minutes default
 		ThreadsPerConn:       0,   // 0 means use default calculation
 	}
-}
-
-// GetExtensionsPath returns the configured extensions path, checking both
-// config and environment variables with appropriate fallbacks
-func (c *DuckDBConfig) GetExtensionsPath() string {
-	if c.ExtensionsPath != "" {
-		return c.ExtensionsPath
-	}
-	// Check LAKERUNNER_EXTENSIONS_PATH for compatibility
-	if path := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); path != "" {
-		return path
-	}
-	return ""
-}
-
-// GetHTTPFSExtension returns the configured HTTPFS extension path
-func (c *DuckDBConfig) GetHTTPFSExtension() string {
-	if c.HTTPFSExtension != "" {
-		return c.HTTPFSExtension
-	}
-	// Check LAKERUNNER_HTTPFS_EXTENSION for compatibility
-	if path := os.Getenv("LAKERUNNER_HTTPFS_EXTENSION"); path != "" {
-		return path
-	}
-	return ""
-}
-
-// GetAzureExtension returns the configured Azure extension path
-func (c *DuckDBConfig) GetAzureExtension() string {
-	if c.AzureExtension != "" {
-		return c.AzureExtension
-	}
-	// Check LAKERUNNER_AZURE_EXTENSION for compatibility
-	if path := os.Getenv("LAKERUNNER_AZURE_EXTENSION"); path != "" {
-		return path
-	}
-	return ""
-}
-
-// GetAWSExtension returns the configured AWS extension path
-func (c *DuckDBConfig) GetAWSExtension() string {
-	if c.AWSExtension != "" {
-		return c.AWSExtension
-	}
-	// Check LAKERUNNER_AWS_EXTENSION for compatibility
-	if path := os.Getenv("LAKERUNNER_AWS_EXTENSION"); path != "" {
-		return path
-	}
-	return ""
 }
 
 // GetTempDirectory returns the configured temp directory
@@ -149,13 +90,13 @@ func (c *DuckDBConfig) GetMemoryLimit() int64 {
 	return 0 // No limit
 }
 
-// GetS3PoolSize returns the S3 connection pool size
-func (c *DuckDBConfig) GetS3PoolSize() int {
-	if c.S3PoolSize > 0 {
-		return c.S3PoolSize
+// GetPoolSize returns the connection pool size
+func (c *DuckDBConfig) GetPoolSize() int {
+	if c.PoolSize > 0 {
+		return c.PoolSize
 	}
 	// Check environment variable for override
-	if poolStr := os.Getenv("DUCKDB_S3_POOL_SIZE"); poolStr != "" {
+	if poolStr := os.Getenv("DUCKDB_POOL_SIZE"); poolStr != "" {
 		if pool, err := strconv.Atoi(poolStr); err == nil && pool > 0 {
 			return pool
 		}
@@ -163,13 +104,13 @@ func (c *DuckDBConfig) GetS3PoolSize() int {
 	return 0 // Use default calculation
 }
 
-// GetS3ConnTTLSeconds returns the S3 connection TTL in seconds
-func (c *DuckDBConfig) GetS3ConnTTLSeconds() int {
-	if c.S3ConnTTLSeconds > 0 {
-		return c.S3ConnTTLSeconds
+// GetConnTTLSeconds returns the connection TTL in seconds
+func (c *DuckDBConfig) GetConnTTLSeconds() int {
+	if c.ConnTTLSeconds > 0 {
+		return c.ConnTTLSeconds
 	}
 	// Check environment variable for override
-	if ttlStr := os.Getenv("DUCKDB_S3_CONN_TTL_SECONDS"); ttlStr != "" {
+	if ttlStr := os.Getenv("DUCKDB_CONN_TTL_SECONDS"); ttlStr != "" {
 		if ttl, err := strconv.Atoi(ttlStr); err == nil && ttl > 0 {
 			return ttl
 		}

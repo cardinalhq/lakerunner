@@ -38,7 +38,7 @@ import (
 // DuckDBParquetRawReader reads rows from a Parquet file using DuckDB.
 // It streams rows in batches without loading the entire file into memory.
 type DuckDBParquetRawReader struct {
-	s3db      *duckdbx.S3DB
+	db        *duckdbx.DB
 	conn      *sql.Conn
 	release   func()
 	rows      *sql.Rows
@@ -65,8 +65,8 @@ var rollupFieldNames = []string{
 // NewDuckDBParquetRawReader creates a new DuckDBParquetRawReader for the given
 // Parquet file paths. Multiple files will be read using DuckDB's
 // union_by_name option to unify schemas.
-// The s3db parameter provides the DuckDB connection pool to use.
-func NewDuckDBParquetRawReader(ctx context.Context, s3db *duckdbx.S3DB, paths []string, batchSize int) (*DuckDBParquetRawReader, error) {
+// The db parameter provides the DuckDB connection pool to use.
+func NewDuckDBParquetRawReader(ctx context.Context, db *duckdbx.DB, paths []string, batchSize int) (*DuckDBParquetRawReader, error) {
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
@@ -75,7 +75,7 @@ func NewDuckDBParquetRawReader(ctx context.Context, s3db *duckdbx.S3DB, paths []
 	}
 
 	// Get a connection from the pool
-	conn, release, err := s3db.GetConnection(ctx)
+	conn, release, err := db.GetConnection(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get connection from pool: %w", err)
 	}
@@ -142,7 +142,7 @@ func NewDuckDBParquetRawReader(ctx context.Context, s3db *duckdbx.S3DB, paths []
 	}
 
 	return &DuckDBParquetRawReader{
-		s3db:      s3db,
+		db:        db,
 		conn:      conn,
 		release:   release,
 		rows:      rows,

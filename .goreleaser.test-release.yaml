@@ -83,8 +83,6 @@ dockers:
       - --label=org.opencontainers.image.revision={{.FullCommit}}
       - --label=org.opencontainers.image.version={{.Version}}
       - --label=org.opencontainers.image.source={{.GitURL}}
-    extra_files:
-      - docker/duckdb-extensions
   - goos: linux
     goarch: arm64
     dockerfile: Dockerfile
@@ -105,8 +103,6 @@ dockers:
       - --label=org.opencontainers.image.revision={{.FullCommit}}
       - --label=org.opencontainers.image.version={{.Version}}
       - --label=org.opencontainers.image.source={{.GitURL}}
-    extra_files:
-      - docker/duckdb-extensions
 
 docker_manifests:
   - name_template: "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Tag }}"
