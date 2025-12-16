@@ -50,44 +50,59 @@ func init() {
 	}
 }
 
-// LogAggRow represents a single row in the aggregation parquet file.
-type LogAggRow struct {
-	BucketTs  int64  `parquet:"bucket_ts"`
-	LogLevel  string `parquet:"log_level"`
-	StreamId  string `parquet:"stream_id"`
-	Frequency int64  `parquet:"frequency"`
-	Count     int64  `parquet:"count"`
-}
-
 // WriteAggParquet writes the aggregation data to a parquet file.
 // The file is sorted by bucket_ts.
+// The stream field column uses the actual field name (e.g., "resource_service_name")
+// rather than a generic "stream_id" column.
 // Returns the file size in bytes.
 func WriteAggParquet(ctx context.Context, filename string, counts map[LogAggKey]int64) (int64, error) {
 	if len(counts) == 0 {
 		return 0, nil
 	}
 
-	// Convert map to sorted slice of rows
-	rows := make([]LogAggRow, 0, len(counts))
+	// Determine the stream field name from the keys (all should be the same)
+	var streamFieldName string
+	for key := range counts {
+		streamFieldName = key.StreamFieldName
+		break
+	}
+	if streamFieldName == "" {
+		// Fallback to resource_customer_domain as default column name
+		streamFieldName = "resource_customer_domain"
+	}
+
+	// Convert map to sorted slice of rows (using map[string]any for dynamic schema)
+	rows := make([]map[string]any, 0, len(counts))
 	for key, count := range counts {
-		rows = append(rows, LogAggRow{
-			BucketTs:  key.TimestampBucket,
-			LogLevel:  key.LogLevel,
-			StreamId:  key.StreamId,
-			Frequency: AggFrequency,
-			Count:     count,
+		rows = append(rows, map[string]any{
+			"bucket_ts":     key.TimestampBucket,
+			"log_level":     key.LogLevel,
+			streamFieldName: key.StreamFieldValue,
+			"frequency":     AggFrequency,
+			"count":         count,
 		})
 	}
 
 	// Sort by bucket_ts for efficient querying
-	slices.SortFunc(rows, func(a, b LogAggRow) int {
-		if a.BucketTs < b.BucketTs {
+	slices.SortFunc(rows, func(a, b map[string]any) int {
+		aTs := a["bucket_ts"].(int64)
+		bTs := b["bucket_ts"].(int64)
+		if aTs < bTs {
 			return -1
 		}
-		if a.BucketTs > b.BucketTs {
+		if aTs > bTs {
 			return 1
 		}
 		return 0
+	})
+
+	// Build dynamic schema
+	schema := parquet.NewSchema("log_agg", parquet.Group{
+		"bucket_ts":     parquet.Leaf(parquet.Int64Type),
+		"log_level":     parquet.String(),
+		streamFieldName: parquet.String(),
+		"frequency":     parquet.Leaf(parquet.Int64Type),
+		"count":         parquet.Leaf(parquet.Int64Type),
 	})
 
 	// Create output file
@@ -97,8 +112,8 @@ func WriteAggParquet(ctx context.Context, filename string, counts map[LogAggKey]
 	}
 	defer func() { _ = f.Close() }()
 
-	// Create parquet writer
-	writer := parquet.NewGenericWriter[LogAggRow](f,
+	// Create parquet writer with dynamic schema
+	writer := parquet.NewGenericWriter[map[string]any](f, schema,
 		parquet.Compression(&parquet.Zstd),
 	)
 

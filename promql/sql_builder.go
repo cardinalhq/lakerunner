@@ -283,8 +283,7 @@ func buildComplexLogAggSQL(be *BaseExpr, step time.Duration) string {
 
 // CanUseAggFile returns true if a segment's agg_fields support the query's GROUP BY fields.
 // The query can use the agg_ file if GROUP BY fields are a subset of agg_fields.
-// Note: agg_fields contain the original field names (e.g., "resource_customer_domain"),
-// while the agg_ file stores them in "stream_id" column.
+// The agg_ files use the actual field names as column names (e.g., "resource_customer_domain").
 func CanUseAggFile(aggFields []string, groupBy []string) bool {
 	if len(aggFields) == 0 {
 		return false
@@ -305,19 +304,9 @@ func CanUseAggFile(aggFields []string, groupBy []string) bool {
 	return true
 }
 
-// mapToAggColumn maps query field names to agg_ file column names.
-// log_level stays as log_level, all other stream fields map to stream_id.
-func mapToAggColumn(fieldName string) string {
-	if fieldName == "log_level" {
-		return "log_level"
-	}
-	// All other fields (resource_customer_domain, resource_service_name, etc.)
-	// are stored in the stream_id column
-	return "stream_id"
-}
-
 // BuildAggFileSQL generates SQL for querying pre-aggregated agg_ files.
 // The agg_ files have 10s buckets that are re-aggregated to the query step.
+// The agg_ files use the actual field names as column names (e.g., "resource_customer_domain").
 func BuildAggFileSQL(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
 
@@ -330,11 +319,10 @@ func BuildAggFileSQL(be *BaseExpr, step time.Duration) string {
 
 	cols := []string{rebucketExpr + " AS bucket_ts"}
 
-	// Add GROUP BY columns mapped to agg_ column names
+	// Add GROUP BY columns - use the actual field name (agg_ files have the real column names)
 	for _, g := range be.GroupBy {
 		fieldName := normalizeFieldName(g)
-		aggCol := mapToAggColumn(fieldName)
-		cols = append(cols, fmt.Sprintf("\"%s\"", aggCol))
+		cols = append(cols, fmt.Sprintf("\"%s\"", fieldName))
 	}
 
 	// SUM the pre-aggregated counts

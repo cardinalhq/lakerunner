@@ -712,18 +712,23 @@ func TestCanUseAggFile(t *testing.T) {
 	}
 }
 
-// createAggTable creates a table that mimics the agg_ parquet file structure
-func createAggTable(t *testing.T, db *sql.DB) {
+// createAggTable creates a table that mimics the agg_ parquet file structure.
+// The stream field column uses the actual field name (e.g., "resource_service_name")
+// rather than a generic "stream_id" column.
+func createAggTable(t *testing.T, db *sql.DB, streamFieldName string) {
 	t.Helper()
 	mustDropTable(db, "agg_logs")
+	if streamFieldName == "" {
+		streamFieldName = "resource_customer_domain"
+	}
 	// Note: "count" is a reserved word but works in DuckDB when quoted
-	stmt := `CREATE TABLE agg_logs(
+	stmt := fmt.Sprintf(`CREATE TABLE agg_logs(
 		bucket_ts BIGINT,
 		log_level TEXT,
-		stream_id TEXT,
+		"%s" TEXT,
 		frequency BIGINT,
 		"count" BIGINT
-	);`
+	);`, streamFieldName)
 	mustExec(t, db, stmt)
 }
 
@@ -733,7 +738,7 @@ func replaceTableAgg(sql string) string {
 
 func TestBuildAggFileSQL_ReaggregateToLargerStep(t *testing.T) {
 	db := openDuckDB(t)
-	createAggTable(t, db)
+	createAggTable(t, db, "resource_customer_domain")
 
 	// Insert 10s bucket data (AggFrequency = 10000ms)
 	// Six 10s buckets: 0, 10000, 20000, 30000, 40000, 50000
@@ -798,7 +803,7 @@ func TestBuildAggFileSQL_ReaggregateToLargerStep(t *testing.T) {
 
 func TestBuildAggFileSQL_NoGroupBy(t *testing.T) {
 	db := openDuckDB(t)
-	createAggTable(t, db)
+	createAggTable(t, db, "resource_customer_domain")
 
 	mustExec(t, db, `INSERT INTO agg_logs VALUES
 	 (    0, 'INFO',  'example.com', 10000, 10),
@@ -833,24 +838,50 @@ func TestBuildAggFileSQL_NoGroupBy(t *testing.T) {
 	}
 }
 
-func TestMapToAggColumn(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"log_level", "log_level"},
-		{"resource_customer_domain", "stream_id"},
-		{"resource_service_name", "stream_id"},
-		{"other_field", "stream_id"},
+func TestBuildAggFileSQL_GroupByStreamField(t *testing.T) {
+	db := openDuckDB(t)
+	createAggTable(t, db, "resource_service_name")
+
+	mustExec(t, db, `INSERT INTO agg_logs VALUES
+	 (    0, 'INFO',  'service-a', 10000, 10),
+	 (    0, 'INFO',  'service-b', 10000, 20),
+	 (10000, 'INFO',  'service-a', 10000, 30),
+	 (10000, 'INFO',  'service-b', 10000, 40)`)
+
+	be := &BaseExpr{
+		GroupBy: []string{"resource_service_name"},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := mapToAggColumn(tt.input)
-			if result != tt.expected {
-				t.Fatalf("mapToAggColumn(%s) = %s, want %s", tt.input, result, tt.expected)
-			}
-		})
+	sql := BuildAggFileSQL(be, 10*time.Second)
+	sql = replaceStartEnd(replaceTableAgg(sql), 0, 20000)
+	rows := queryAll(t, db, sql)
+
+	// Should have 4 rows: 2 services × 2 time buckets
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	type key struct {
+		service string
+		ts      int64
+	}
+	got := map[key]float64{}
+	for _, r := range rows {
+		got[key{service: asString(r["resource_service_name"]), ts: getInt64(r["bucket_ts"])}] = getFloat(r["count"])
+	}
+
+	want := map[key]float64{
+		{"service-a", 0}:     10,
+		{"service-b", 0}:     20,
+		{"service-a", 10000}: 30,
+		{"service-b", 10000}: 40,
+	}
+	for k, v := range want {
+		if g, ok := got[k]; !ok {
+			t.Fatalf("missing row service=%s ts=%d", k.service, k.ts)
+		} else if g != v {
+			t.Fatalf("service=%s ts=%d count got=%f want=%f", k.service, k.ts, g, v)
+		}
 	}
 }
 

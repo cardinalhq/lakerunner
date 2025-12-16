@@ -230,7 +230,7 @@ func TestLogsStatsAccumulator_AggregationCounts(t *testing.T) {
 				},
 			},
 			expectedCounts: map[LogAggKey]int64{
-				{TimestampBucket: 1234567890000, LogLevel: "info", StreamId: "example.com"}: 1,
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
 			},
 		},
 		{
@@ -241,7 +241,7 @@ func TestLogsStatsAccumulator_AggregationCounts(t *testing.T) {
 				{wkk.RowKeyCTimestamp: int64(1234567899999), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
 			},
 			expectedCounts: map[LogAggKey]int64{
-				{TimestampBucket: 1234567890000, LogLevel: "info", StreamId: "example.com"}: 3,
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 3,
 			},
 		},
 		{
@@ -251,8 +251,8 @@ func TestLogsStatsAccumulator_AggregationCounts(t *testing.T) {
 				{wkk.RowKeyCTimestamp: int64(1234567900000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
 			},
 			expectedCounts: map[LogAggKey]int64{
-				{TimestampBucket: 1234567890000, LogLevel: "info", StreamId: "example.com"}: 1,
-				{TimestampBucket: 1234567900000, LogLevel: "info", StreamId: "example.com"}: 1,
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
+				{TimestampBucket: 1234567900000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
 			},
 		},
 		{
@@ -263,19 +263,19 @@ func TestLogsStatsAccumulator_AggregationCounts(t *testing.T) {
 				{wkk.RowKeyCTimestamp: int64(1234567890002), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
 			},
 			expectedCounts: map[LogAggKey]int64{
-				{TimestampBucket: 1234567890000, LogLevel: "info", StreamId: "example.com"}:  2,
-				{TimestampBucket: 1234567890000, LogLevel: "error", StreamId: "example.com"}: 1,
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}:  2,
+				{TimestampBucket: 1234567890000, LogLevel: "error", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
 			},
 		},
 		{
-			name: "different stream ids",
+			name: "different stream values",
 			rows: []pipeline.Row{
 				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
 				{wkk.RowKeyCTimestamp: int64(1234567890001), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "other.com"},
 			},
 			expectedCounts: map[LogAggKey]int64{
-				{TimestampBucket: 1234567890000, LogLevel: "info", StreamId: "example.com"}: 1,
-				{TimestampBucket: 1234567890000, LogLevel: "info", StreamId: "other.com"}:   1,
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "other.com"}:   1,
 			},
 		},
 		{
@@ -284,7 +284,7 @@ func TestLogsStatsAccumulator_AggregationCounts(t *testing.T) {
 				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceServiceName: "my-service"},
 			},
 			expectedCounts: map[LogAggKey]int64{
-				{TimestampBucket: 1234567890000, LogLevel: "info", StreamId: "my-service"}: 1,
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_service_name", StreamFieldValue: "my-service"}: 1,
 			},
 		},
 		{
@@ -293,16 +293,16 @@ func TestLogsStatsAccumulator_AggregationCounts(t *testing.T) {
 				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyResourceCustomerDomain: "example.com"},
 			},
 			expectedCounts: map[LogAggKey]int64{
-				{TimestampBucket: 1234567890000, LogLevel: "", StreamId: "example.com"}: 1,
+				{TimestampBucket: 1234567890000, LogLevel: "", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
 			},
 		},
 		{
-			name: "empty stream id",
+			name: "empty stream value",
 			rows: []pipeline.Row{
 				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyCLevel: "info"},
 			},
 			expectedCounts: map[LogAggKey]int64{
-				{TimestampBucket: 1234567890000, LogLevel: "info", StreamId: ""}: 1,
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "", StreamFieldValue: ""}: 1,
 			},
 		},
 		{
@@ -314,9 +314,9 @@ func TestLogsStatsAccumulator_AggregationCounts(t *testing.T) {
 				{wkk.RowKeyCTimestamp: int64(20000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "a.com"}, // bucket 20000
 			},
 			expectedCounts: map[LogAggKey]int64{
-				{TimestampBucket: 0, LogLevel: "info", StreamId: "a.com"}:     1,
-				{TimestampBucket: 10000, LogLevel: "info", StreamId: "a.com"}: 2,
-				{TimestampBucket: 20000, LogLevel: "info", StreamId: "a.com"}: 1,
+				{TimestampBucket: 0, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "a.com"}:     1,
+				{TimestampBucket: 10000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "a.com"}: 2,
+				{TimestampBucket: 20000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "a.com"}: 1,
 			},
 		},
 	}
@@ -365,8 +365,8 @@ func TestLogsStatsAccumulator_AggregationWithConfiguredStreamField(t *testing.T)
 	require.True(t, ok)
 
 	expectedCounts := map[LogAggKey]int64{
-		{TimestampBucket: 1234567890000, LogLevel: "info", StreamId: "production"}: 2,
-		{TimestampBucket: 1234567890000, LogLevel: "info", StreamId: "staging"}:    1,
+		{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_k8s_namespace_name", StreamFieldValue: "production"}: 2,
+		{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_k8s_namespace_name", StreamFieldValue: "staging"}:    1,
 	}
 
 	assert.Equal(t, len(expectedCounts), len(stats.AggCounts))
