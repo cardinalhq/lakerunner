@@ -484,7 +484,7 @@ func escapeSQL(s string) string {
 
 // EvaluatePushDownWithAggSplit evaluates a pushdown query with intelligent
 // routing between agg_ and tbl_ files based on segment eligibility.
-// For segments where agg_ files exist and support the query's GROUP BY,
+// For segments where agg_ files exist and support the query's GROUP BY and matchers,
 // use aggSQL on agg_ files. Otherwise use tblSQL on tbl_ files.
 func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 	ctx context.Context,
@@ -493,6 +493,7 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 	tblSQL string,
 	aggSQL string,
 	groupBy []string,
+	matcherFields []string,
 	s3GlobSize int,
 	mapper RowMapper[T],
 ) (<-chan T, error) {
@@ -619,7 +620,7 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 				aggObjectID := tblToAggObjectID(tblObjectID)
 				aggLocalPath, aggExists, _ := w.parquetCache.GetOrPrepare(profile.Region, profile.Bucket, aggObjectID)
 
-				if aggExists && promql.CanUseAggFile(seg.AggFields, groupBy) {
+				if aggExists && promql.CanUseAggFile(seg.AggFields, groupBy, matcherFields) {
 					aggLocalPaths = append(aggLocalPaths, aggLocalPath)
 					promql.RecordLogAggregationSource(ctx, profile.OrganizationID.String(), "agg", profile.InstanceNum)
 				} else {

@@ -512,7 +512,14 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// For simple log aggregations, use agg_ file optimization
 		if isSimpleLogAgg && aggSql != "" {
-			sketchChannel, err = EvaluatePushDownWithAggSplit(ctx, cacheManager, req, workerSql, aggSql, req.BaseExpr.GroupBy, globSize, sketchInputMapper)
+			// Extract matcher field names for agg_ file eligibility check
+			var matcherFields []string
+			if req.BaseExpr.LogLeaf != nil {
+				for _, m := range req.BaseExpr.LogLeaf.Matchers {
+					matcherFields = append(matcherFields, m.Label)
+				}
+			}
+			sketchChannel, err = EvaluatePushDownWithAggSplit(ctx, cacheManager, req, workerSql, aggSql, req.BaseExpr.GroupBy, matcherFields, globSize, sketchInputMapper)
 		} else {
 			sketchChannel, err = EvaluatePushDown(ctx, cacheManager, req, workerSql, globSize, sketchInputMapper)
 		}

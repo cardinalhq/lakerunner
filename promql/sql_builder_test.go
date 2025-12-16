@@ -646,67 +646,111 @@ func TestBuildSimpleLogAggSQL_NoMatchers(t *testing.T) {
 
 func TestCanUseAggFile(t *testing.T) {
 	tests := []struct {
-		name      string
-		aggFields []string
-		groupBy   []string
-		expected  bool
+		name          string
+		aggFields     []string
+		groupBy       []string
+		matcherFields []string
+		expected      bool
 	}{
 		{
-			name:      "empty aggFields returns false",
-			aggFields: []string{},
-			groupBy:   []string{"log_level"},
-			expected:  false,
+			name:          "empty aggFields returns false",
+			aggFields:     []string{},
+			groupBy:       []string{"log_level"},
+			matcherFields: []string{},
+			expected:      false,
 		},
 		{
-			name:      "nil aggFields returns false",
-			aggFields: nil,
-			groupBy:   []string{"log_level"},
-			expected:  false,
+			name:          "nil aggFields returns false",
+			aggFields:     nil,
+			groupBy:       []string{"log_level"},
+			matcherFields: []string{},
+			expected:      false,
 		},
 		{
-			name:      "empty groupBy with aggFields returns true",
-			aggFields: []string{"log_level", "resource_customer_domain"},
-			groupBy:   []string{},
-			expected:  true,
+			name:          "empty groupBy with aggFields returns true",
+			aggFields:     []string{"log_level", "resource_customer_domain"},
+			groupBy:       []string{},
+			matcherFields: []string{},
+			expected:      true,
 		},
 		{
-			name:      "exact match returns true",
-			aggFields: []string{"log_level", "resource_customer_domain"},
-			groupBy:   []string{"log_level", "resource_customer_domain"},
-			expected:  true,
+			name:          "exact match returns true",
+			aggFields:     []string{"log_level", "resource_customer_domain"},
+			groupBy:       []string{"log_level", "resource_customer_domain"},
+			matcherFields: []string{},
+			expected:      true,
 		},
 		{
-			name:      "subset match returns true",
-			aggFields: []string{"log_level", "resource_customer_domain"},
-			groupBy:   []string{"log_level"},
-			expected:  true,
+			name:          "subset match returns true",
+			aggFields:     []string{"log_level", "resource_customer_domain"},
+			groupBy:       []string{"log_level"},
+			matcherFields: []string{},
+			expected:      true,
 		},
 		{
-			name:      "groupBy has field not in aggFields returns false",
-			aggFields: []string{"log_level", "resource_customer_domain"},
-			groupBy:   []string{"log_level", "other_field"},
-			expected:  false,
+			name:          "groupBy has field not in aggFields returns false",
+			aggFields:     []string{"log_level", "resource_customer_domain"},
+			groupBy:       []string{"log_level", "other_field"},
+			matcherFields: []string{},
+			expected:      false,
 		},
 		{
-			name:      "groupBy superset of aggFields returns false",
-			aggFields: []string{"log_level"},
-			groupBy:   []string{"log_level", "resource_customer_domain"},
-			expected:  false,
+			name:          "groupBy superset of aggFields returns false",
+			aggFields:     []string{"log_level"},
+			groupBy:       []string{"log_level", "resource_customer_domain"},
+			matcherFields: []string{},
+			expected:      false,
 		},
 		{
-			name:      "dotted field names normalized",
-			aggFields: []string{"resource.customer.domain"},
-			groupBy:   []string{"resource_customer_domain"},
-			expected:  true,
+			name:          "dotted field names normalized",
+			aggFields:     []string{"resource.customer.domain"},
+			groupBy:       []string{"resource_customer_domain"},
+			matcherFields: []string{},
+			expected:      true,
+		},
+		{
+			name:          "matcher field in aggFields returns true",
+			aggFields:     []string{"log_level", "resource_service_name"},
+			groupBy:       []string{"log_level"},
+			matcherFields: []string{"resource_service_name"},
+			expected:      true,
+		},
+		{
+			name:          "matcher field not in aggFields returns false",
+			aggFields:     []string{"log_level", "resource_customer_domain"},
+			groupBy:       []string{"log_level"},
+			matcherFields: []string{"resource_service_name"},
+			expected:      false,
+		},
+		{
+			name:          "multiple matcher fields all in aggFields returns true",
+			aggFields:     []string{"log_level", "resource_service_name", "resource_customer_domain"},
+			groupBy:       []string{"log_level"},
+			matcherFields: []string{"resource_service_name", "resource_customer_domain"},
+			expected:      true,
+		},
+		{
+			name:          "one matcher field missing from aggFields returns false",
+			aggFields:     []string{"log_level", "resource_service_name"},
+			groupBy:       []string{"log_level"},
+			matcherFields: []string{"resource_service_name", "other_field"},
+			expected:      false,
+		},
+		{
+			name:          "matcher field with dotted name normalized",
+			aggFields:     []string{"log_level", "resource.service.name"},
+			groupBy:       []string{"log_level"},
+			matcherFields: []string{"resource_service_name"},
+			expected:      true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := CanUseAggFile(tt.aggFields, tt.groupBy)
+			result := CanUseAggFile(tt.aggFields, tt.groupBy, tt.matcherFields)
 			if result != tt.expected {
-				t.Fatalf("CanUseAggFile(%v, %v) = %v, want %v",
-					tt.aggFields, tt.groupBy, result, tt.expected)
+				t.Fatalf("CanUseAggFile(%v, %v, %v) = %v, want %v",
+					tt.aggFields, tt.groupBy, tt.matcherFields, result, tt.expected)
 			}
 		})
 	}
@@ -882,6 +926,125 @@ func TestBuildAggFileSQL_GroupByStreamField(t *testing.T) {
 		} else if g != v {
 			t.Fatalf("service=%s ts=%d count got=%f want=%f", k.service, k.ts, g, v)
 		}
+	}
+}
+
+func TestBuildAggFileSQL_WithMatchers(t *testing.T) {
+	db := openDuckDB(t)
+	createAggTable(t, db, "resource_service_name")
+
+	// Insert test data for multiple services
+	mustExec(t, db, `INSERT INTO agg_logs VALUES
+	 (    0, 'INFO',  'service-a', 10000, 10),
+	 (    0, 'INFO',  'service-b', 10000, 20),
+	 (    0, 'ERROR', 'service-a', 10000, 5),
+	 (10000, 'INFO',  'service-a', 10000, 30),
+	 (10000, 'INFO',  'service-b', 10000, 40),
+	 (10000, 'ERROR', 'service-b', 10000, 15)`)
+
+	// Query with matcher filtering to service-a only
+	be := &BaseExpr{
+		GroupBy: []string{"log_level"},
+		LogLeaf: &logql.LogLeaf{
+			ID: "test-matcher",
+			Matchers: []logql.LabelMatch{
+				{Label: "resource_service_name", Op: logql.MatchEq, Value: "service-a"},
+			},
+			OutBy: []string{"log_level"},
+		},
+	}
+
+	sql := BuildAggFileSQL(be, 10*time.Second)
+	if sql == "" {
+		t.Fatal("empty SQL from BuildAggFileSQL")
+	}
+
+	// Verify the WHERE clause contains the matcher
+	if !strings.Contains(sql, `"resource_service_name" = 'service-a'`) {
+		t.Fatalf("expected matcher in WHERE clause, got:\n%s", sql)
+	}
+
+	sql = replaceStartEnd(replaceTableAgg(sql), 0, 20000)
+	rows := queryAll(t, db, sql)
+
+	// Should have 3 rows for service-a only: INFO@0, ERROR@0, INFO@10000
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	type key struct {
+		level string
+		ts    int64
+	}
+	got := map[key]float64{}
+	for _, r := range rows {
+		got[key{level: asString(r["log_level"]), ts: getInt64(r["bucket_ts"])}] = getFloat(r["count"])
+	}
+
+	// Only service-a counts
+	want := map[key]float64{
+		{"INFO", 0}:     10,
+		{"ERROR", 0}:    5,
+		{"INFO", 10000}: 30,
+	}
+	for k, v := range want {
+		if g, ok := got[k]; !ok {
+			t.Fatalf("missing row level=%s ts=%d", k.level, k.ts)
+		} else if g != v {
+			t.Fatalf("level=%s ts=%d count got=%f want=%f", k.level, k.ts, g, v)
+		}
+	}
+}
+
+func TestBuildAggFileSQL_WithNegativeMatcher(t *testing.T) {
+	db := openDuckDB(t)
+	createAggTable(t, db, "resource_service_name")
+
+	mustExec(t, db, `INSERT INTO agg_logs VALUES
+	 (    0, 'INFO',  'service-a', 10000, 10),
+	 (    0, 'INFO',  'service-b', 10000, 20),
+	 (    0, 'INFO',  'service-c', 10000, 30)`)
+
+	// Query with negative matcher excluding service-a
+	be := &BaseExpr{
+		GroupBy: []string{"resource_service_name"},
+		LogLeaf: &logql.LogLeaf{
+			ID: "test-negative-matcher",
+			Matchers: []logql.LabelMatch{
+				{Label: "resource_service_name", Op: logql.MatchNe, Value: "service-a"},
+			},
+			OutBy: []string{"resource_service_name"},
+		},
+	}
+
+	sql := BuildAggFileSQL(be, 10*time.Second)
+
+	// Verify the WHERE clause contains the negative matcher
+	if !strings.Contains(sql, `"resource_service_name" <> 'service-a'`) {
+		t.Fatalf("expected negative matcher in WHERE clause, got:\n%s", sql)
+	}
+
+	sql = replaceStartEnd(replaceTableAgg(sql), 0, 10000)
+	rows := queryAll(t, db, sql)
+
+	// Should have 2 rows: service-b and service-c
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := map[string]float64{}
+	for _, r := range rows {
+		got[asString(r["resource_service_name"])] = getFloat(r["count"])
+	}
+
+	if got["service-b"] != 20 {
+		t.Fatalf("service-b count got=%f want=20", got["service-b"])
+	}
+	if got["service-c"] != 30 {
+		t.Fatalf("service-c count got=%f want=30", got["service-c"])
+	}
+	if _, exists := got["service-a"]; exists {
+		t.Fatal("service-a should have been excluded by negative matcher")
 	}
 }
 

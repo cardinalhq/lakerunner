@@ -281,10 +281,11 @@ func buildComplexLogAggSQL(be *BaseExpr, step time.Duration) string {
 	return sql
 }
 
-// CanUseAggFile returns true if a segment's agg_fields support the query's GROUP BY fields.
-// The query can use the agg_ file if GROUP BY fields are a subset of agg_fields.
+// CanUseAggFile returns true if a segment's agg_fields support the query's GROUP BY fields
+// and matcher fields. The query can use the agg_ file if both GROUP BY fields and matcher
+// fields are subsets of agg_fields.
 // The agg_ files use the actual field names as column names (e.g., "resource_customer_domain").
-func CanUseAggFile(aggFields []string, groupBy []string) bool {
+func CanUseAggFile(aggFields []string, groupBy []string, matcherFields []string) bool {
 	if len(aggFields) == 0 {
 		return false
 	}
@@ -301,12 +302,22 @@ func CanUseAggFile(aggFields []string, groupBy []string) bool {
 			return false
 		}
 	}
+
+	// Check that all matcher fields are in agg_fields
+	for _, m := range matcherFields {
+		if !aggFieldSet[normalizeFieldName(m)] {
+			return false
+		}
+	}
+
 	return true
 }
 
 // BuildAggFileSQL generates SQL for querying pre-aggregated agg_ files.
 // The agg_ files have 10s buckets that are re-aggregated to the query step.
 // The agg_ files use the actual field names as column names (e.g., "resource_customer_domain").
+// Matchers from the LogLeaf are applied as WHERE filters since the agg_ files contain
+// the same columns that were used to create the aggregation.
 func BuildAggFileSQL(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
 
@@ -332,6 +343,24 @@ func BuildAggFileSQL(be *BaseExpr, step time.Duration) string {
 	whereParts := []string{
 		"bucket_ts >= {start}",
 		"bucket_ts < {end}",
+	}
+
+	// Add matchers from LogLeaf as WHERE filters
+	// The agg_ files contain the columns used in matchers (log_level, stream field)
+	if be.LogLeaf != nil {
+		for _, m := range be.LogLeaf.Matchers {
+			fieldName := normalizeFieldName(m.Label)
+			switch m.Op {
+			case logql.MatchEq:
+				whereParts = append(whereParts, fmt.Sprintf("\"%s\" = %s", fieldName, sqlLit(m.Value)))
+			case logql.MatchNe:
+				whereParts = append(whereParts, fmt.Sprintf("\"%s\" <> %s", fieldName, sqlLit(m.Value)))
+			case logql.MatchRe:
+				whereParts = append(whereParts, fmt.Sprintf("\"%s\" ~ %s", fieldName, sqlLit(m.Value)))
+			case logql.MatchNre:
+				whereParts = append(whereParts, fmt.Sprintf("\"%s\" !~ %s", fieldName, sqlLit(m.Value)))
+			}
+		}
 	}
 
 	// Build GROUP BY clause
