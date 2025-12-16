@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/prometheus/common/model"
 )
 
@@ -100,6 +101,99 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 }
 
 func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
+	// Fast path: for simple aggregations without parsers/filters, generate flat SQL
+	// that only reads the columns we need. This avoids the SELECT * CTE pipeline.
+	if be.LogLeaf.IsSimpleAggregation() {
+		return buildSimpleLogAggSQL(be, step)
+	}
+
+	// Complex path: use CTE pipeline for queries with parsers/filters
+	return buildComplexLogAggSQL(be, step)
+}
+
+// buildSimpleLogAggSQL generates optimized flat SQL for simple log aggregations.
+// This path is used when no parsers or filters are needed, allowing us to
+// SELECT only the columns required for the aggregation.
+func buildSimpleLogAggSQL(be *BaseExpr, step time.Duration) string {
+	stepMs := step.Milliseconds()
+
+	bucketExpr := fmt.Sprintf(
+		"(CAST(\"chq_timestamp\" AS BIGINT) - (CAST(\"chq_timestamp\" AS BIGINT) %% %d))",
+		stepMs,
+	)
+
+	// Build column list for SELECT
+	cols := []string{bucketExpr + " AS bucket_ts"}
+	if len(be.GroupBy) > 0 {
+		for _, g := range be.GroupBy {
+			fieldName := normalizeFieldName(g)
+			cols = append(cols, fmt.Sprintf("\"%s\"", fieldName))
+		}
+	}
+
+	// Build GROUP BY list
+	gb := []string{"bucket_ts"}
+	if len(be.GroupBy) > 0 {
+		for _, g := range be.GroupBy {
+			fieldName := normalizeFieldName(g)
+			gb = append(gb, fmt.Sprintf("\"%s\"", fieldName))
+		}
+	}
+
+	// Build WHERE clause from matchers
+	var whereParts []string
+	for _, m := range be.LogLeaf.Matchers {
+		fieldName := normalizeFieldName(m.Label)
+		switch m.Op {
+		case logql.MatchEq:
+			whereParts = append(whereParts, fmt.Sprintf("\"%s\" = %s", fieldName, sqlLit(m.Value)))
+		case logql.MatchNe:
+			whereParts = append(whereParts, fmt.Sprintf("\"%s\" <> %s", fieldName, sqlLit(m.Value)))
+		case logql.MatchRe:
+			whereParts = append(whereParts, fmt.Sprintf("\"%s\" ~ %s", fieldName, sqlLit(m.Value)))
+		case logql.MatchNre:
+			whereParts = append(whereParts, fmt.Sprintf("\"%s\" !~ %s", fieldName, sqlLit(m.Value)))
+		}
+	}
+
+	// Add time predicate
+	whereParts = append(whereParts, timePredicate)
+
+	// Determine aggregation based on metric type and function
+	aggregationToFetch := "sum"
+	if be.WantCount || be.FuncName == "count_over_time" {
+		aggregationToFetch = "count"
+	}
+
+	switch be.Metric {
+	case SynthLogUnwrap:
+		// Unwrap requires the full pipeline since it needs parsed values
+		return buildComplexLogAggSQL(be, step)
+
+	case SynthLogBytes:
+		// Bytes requires log_message column
+		return buildComplexLogAggSQL(be, step)
+
+	default:
+		if aggregationToFetch == "count" {
+			cols = append(cols, "COUNT(*) AS count")
+		} else {
+			cols = append(cols, "SUM(1) AS sum")
+		}
+	}
+
+	sql := "SELECT " + strings.Join(cols, ", ") +
+		" FROM {table}" +
+		" WHERE " + strings.Join(whereParts, " AND ") +
+		" GROUP BY " + strings.Join(gb, ", ") +
+		" ORDER BY bucket_ts ASC"
+
+	return sql
+}
+
+// buildComplexLogAggSQL generates CTE-based SQL for log aggregations that
+// require parsers, line filters, or label filters.
+func buildComplexLogAggSQL(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	tsCol := "\"chq_timestamp\""
 	bodyCol := "\"log_message\""

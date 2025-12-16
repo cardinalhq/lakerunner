@@ -746,3 +746,99 @@ func indexOfLabel(lfs []LabelFilter, label string) (int, bool) {
 	}
 	return -1, false
 }
+
+// --- Tests for IsSimpleAggregation and RequiredColumns ---
+
+func TestLogLeaf_IsSimpleAggregation_True(t *testing.T) {
+	leaf := LogLeaf{
+		ID:       "simple1",
+		Matchers: []LabelMatch{{Label: "resource_service_name", Op: MatchEq, Value: "svc1"}},
+		OutBy:    []string{"log_level"},
+	}
+	if !leaf.IsSimpleAggregation() {
+		t.Fatal("expected IsSimpleAggregation() = true for leaf with no parsers/filters")
+	}
+}
+
+func TestLogLeaf_IsSimpleAggregation_FalseWithParser(t *testing.T) {
+	leaf := LogLeaf{
+		ID:       "complex1",
+		Matchers: []LabelMatch{{Label: "resource_service_name", Op: MatchEq, Value: "svc1"}},
+		OutBy:    []string{"log_level"},
+		Parsers:  []ParserStage{{Type: "json"}},
+	}
+	if leaf.IsSimpleAggregation() {
+		t.Fatal("expected IsSimpleAggregation() = false for leaf with parser")
+	}
+}
+
+func TestLogLeaf_IsSimpleAggregation_FalseWithLineFilter(t *testing.T) {
+	leaf := LogLeaf{
+		ID:          "complex2",
+		Matchers:    []LabelMatch{{Label: "resource_service_name", Op: MatchEq, Value: "svc1"}},
+		OutBy:       []string{"log_level"},
+		LineFilters: []LineFilter{{Op: LineContains, Match: "error"}},
+	}
+	if leaf.IsSimpleAggregation() {
+		t.Fatal("expected IsSimpleAggregation() = false for leaf with line filter")
+	}
+}
+
+func TestLogLeaf_IsSimpleAggregation_FalseWithLabelFilter(t *testing.T) {
+	leaf := LogLeaf{
+		ID:           "complex3",
+		Matchers:     []LabelMatch{{Label: "resource_service_name", Op: MatchEq, Value: "svc1"}},
+		OutBy:        []string{"log_level"},
+		LabelFilters: []LabelFilter{{Label: "level", Op: MatchEq, Value: "ERROR"}},
+	}
+	if leaf.IsSimpleAggregation() {
+		t.Fatal("expected IsSimpleAggregation() = false for leaf with label filter")
+	}
+}
+
+func TestLogLeaf_RequiredColumns_Simple(t *testing.T) {
+	leaf := LogLeaf{
+		ID:       "cols1",
+		Matchers: []LabelMatch{{Label: "resource_service_name", Op: MatchEq, Value: "svc1"}},
+		OutBy:    []string{"log_level"},
+	}
+
+	cols := leaf.RequiredColumns()
+	if cols == nil {
+		t.Fatal("expected non-nil RequiredColumns() for simple leaf")
+	}
+
+	// Should have: chq_timestamp, resource_service_name, log_level
+	want := map[string]bool{
+		"chq_timestamp":         true,
+		"resource_service_name": true,
+		"log_level":             true,
+	}
+	got := make(map[string]bool)
+	for _, c := range cols {
+		got[c] = true
+	}
+
+	for k := range want {
+		if !got[k] {
+			t.Fatalf("missing expected column %q in RequiredColumns(); got %v", k, cols)
+		}
+	}
+	if len(cols) != len(want) {
+		t.Fatalf("expected %d columns, got %d: %v", len(want), len(cols), cols)
+	}
+}
+
+func TestLogLeaf_RequiredColumns_ReturnsNilForComplex(t *testing.T) {
+	leaf := LogLeaf{
+		ID:       "cols2",
+		Matchers: []LabelMatch{{Label: "resource_service_name", Op: MatchEq, Value: "svc1"}},
+		OutBy:    []string{"log_level"},
+		Parsers:  []ParserStage{{Type: "json"}}, // Has parser
+	}
+
+	cols := leaf.RequiredColumns()
+	if cols != nil {
+		t.Fatalf("expected nil RequiredColumns() for complex leaf, got %v", cols)
+	}
+}

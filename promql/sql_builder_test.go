@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/logql"
 	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
@@ -455,6 +456,183 @@ func TestToWorkerSQLForTagValues_WithMatchers(t *testing.T) {
 
 	if asString(rows[0]["tag_value"]) != "pod1" {
 		t.Fatalf("expected pod1, got %s", asString(rows[0]["tag_value"]))
+	}
+}
+
+// --- Log aggregation optimization tests ---
+
+// createLogsTable creates a table that mimics log segment parquet structure
+func createLogsTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	mustDropTable(db, "logs")
+	stmt := `CREATE TABLE logs(
+		"chq_timestamp" BIGINT,
+		"log_message" TEXT,
+		"log_level" TEXT,
+		"resource_service_name" TEXT,
+		"chq_fingerprint" TEXT
+	);`
+	mustExec(t, db, stmt)
+}
+
+func replaceTableLogs(sql string) string {
+	return strings.ReplaceAll(sql, "{table}", `(SELECT * FROM logs) AS _t`)
+}
+
+// TestBuildSimpleLogAggSQL_CountByLogLevel verifies the optimized flat SQL path
+// generates correct SQL for simple count_over_time queries.
+func TestBuildSimpleLogAggSQL_CountByLogLevel(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data: 3 INFO, 2 ERROR at t=0; 1 INFO, 3 ERROR at t=10000
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (    0, 'msg1', 'INFO',  'svc1', 'fp1'),
+	 (    0, 'msg2', 'INFO',  'svc1', 'fp2'),
+	 (    0, 'msg3', 'INFO',  'svc1', 'fp3'),
+	 (    0, 'msg4', 'ERROR', 'svc1', 'fp4'),
+	 (    0, 'msg5', 'ERROR', 'svc1', 'fp5'),
+	 (10000, 'msg6', 'INFO',  'svc1', 'fp6'),
+	 (10000, 'msg7', 'ERROR', 'svc1', 'fp7'),
+	 (10000, 'msg8', 'ERROR', 'svc1', 'fp8'),
+	 (10000, 'msg9', 'ERROR', 'svc1', 'fp9')`)
+
+	// Create a BaseExpr with a simple LogLeaf (no parsers/filters)
+	be := &BaseExpr{
+		Metric:   SynthLogCount,
+		FuncName: "count_over_time",
+		GroupBy:  []string{"log_level"},
+		LogLeaf: &logql.LogLeaf{
+			ID:       "test1",
+			Matchers: []logql.LabelMatch{{Label: "resource_service_name", Op: logql.MatchEq, Value: "svc1"}},
+			OutBy:    []string{"log_level"},
+		},
+	}
+
+	// Verify the leaf is detected as simple
+	if !be.LogLeaf.IsSimpleAggregation() {
+		t.Fatal("expected LogLeaf to be detected as simple aggregation")
+	}
+
+	sql := be.ToWorkerSQL(10 * time.Second)
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSQL")
+	}
+
+	// Verify it's using the simple path (no CTEs)
+	if strings.Contains(sql, "WITH") {
+		t.Fatalf("expected flat SQL without CTEs for simple aggregation, got:\n%s", sql)
+	}
+
+	// Verify it does NOT contain SELECT * (column projection optimization)
+	if strings.Contains(sql, "SELECT *") {
+		t.Fatalf("expected column-specific SELECT for simple aggregation, got:\n%s", sql)
+	}
+
+	// Verify GROUP BY is present
+	if !strings.Contains(sql, "GROUP BY") {
+		t.Fatalf("expected GROUP BY in SQL, got:\n%s", sql)
+	}
+
+	sql = replaceStartEnd(replaceTableLogs(sql), 0, 20000)
+	rows := queryAll(t, db, sql)
+
+	// Should have 4 rows: INFO@0, ERROR@0, INFO@10000, ERROR@10000
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	// Verify counts
+	type key struct {
+		level string
+		ts    int64
+	}
+	got := map[key]int64{}
+	for _, r := range rows {
+		got[key{level: asString(r["log_level"]), ts: getInt64(r["bucket_ts"])}] = getInt64(r["count"])
+	}
+
+	want := map[key]int64{
+		{"INFO", 0}:      3,
+		{"ERROR", 0}:     2,
+		{"INFO", 10000}:  1,
+		{"ERROR", 10000}: 3,
+	}
+	for k, v := range want {
+		if g, ok := got[k]; !ok {
+			t.Fatalf("missing row level=%s ts=%d", k.level, k.ts)
+		} else if g != v {
+			t.Fatalf("level=%s ts=%d count got=%d want=%d", k.level, k.ts, g, v)
+		}
+	}
+}
+
+// TestBuildComplexLogAggSQL_WithParser verifies that queries with parsers
+// fall back to the CTE-based SQL path.
+func TestBuildComplexLogAggSQL_WithParser(t *testing.T) {
+	be := &BaseExpr{
+		Metric:   SynthLogCount,
+		FuncName: "count_over_time",
+		GroupBy:  []string{"log_level"},
+		LogLeaf: &logql.LogLeaf{
+			ID:       "test2",
+			Matchers: []logql.LabelMatch{{Label: "resource_service_name", Op: logql.MatchEq, Value: "svc1"}},
+			OutBy:    []string{"log_level"},
+			Parsers:  []logql.ParserStage{{Type: "json"}}, // Has a parser
+		},
+	}
+
+	// Verify the leaf is NOT detected as simple
+	if be.LogLeaf.IsSimpleAggregation() {
+		t.Fatal("expected LogLeaf with parser to NOT be detected as simple aggregation")
+	}
+
+	sql := be.ToWorkerSQL(10 * time.Second)
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSQL")
+	}
+
+	// Verify it's using the complex path (has CTEs)
+	if !strings.Contains(sql, "WITH") {
+		t.Fatalf("expected CTE-based SQL for complex aggregation, got:\n%s", sql)
+	}
+}
+
+// TestBuildSimpleLogAggSQL_NoMatchers verifies SQL works with no matchers
+func TestBuildSimpleLogAggSQL_NoMatchers(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (0, 'msg1', 'INFO', 'svc1', 'fp1'),
+	 (0, 'msg2', 'ERROR', 'svc1', 'fp2')`)
+
+	be := &BaseExpr{
+		Metric:   SynthLogCount,
+		FuncName: "count_over_time",
+		GroupBy:  []string{"log_level"},
+		LogLeaf: &logql.LogLeaf{
+			ID:    "test3",
+			OutBy: []string{"log_level"},
+			// No matchers
+		},
+	}
+
+	sql := be.ToWorkerSQL(10 * time.Second)
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSQL")
+	}
+
+	// Should still use simple path
+	if strings.Contains(sql, "WITH") {
+		t.Fatalf("expected flat SQL for simple aggregation, got:\n%s", sql)
+	}
+
+	sql = replaceStartEnd(replaceTableLogs(sql), 0, 10000)
+	rows := queryAll(t, db, sql)
+
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
 	}
 }
 
