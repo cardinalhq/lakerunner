@@ -179,6 +179,11 @@ const (
 )
 
 func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider, s3Pool *duckdbx.S3DB, disableTableCache bool, parquetCache *ParquetFileCache) *CacheManager {
+	if parquetCache == nil {
+		slog.Error("parquetCache is required but was nil")
+		return nil
+	}
+
 	var ddb *DDBSink
 	var err error
 
@@ -981,9 +986,7 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			// Mark files for delayed deletion instead of immediate removal.
 			// This allows concurrent queries to finish using the files.
 			for _, objID := range job.objectIDs {
-				if w.parquetCache != nil {
-					w.parquetCache.MarkForDeletion(region, bucket, objID)
-				}
+				w.parquetCache.MarkForDeletion(region, bucket, objID)
 			}
 
 			ingestSpan.SetAttributes(attribute.Int("segments_cached", len(job.ids)))
