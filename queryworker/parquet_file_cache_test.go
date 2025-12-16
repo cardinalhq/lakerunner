@@ -15,6 +15,7 @@
 package queryworker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -264,7 +265,7 @@ func TestParquetFileCache_Close(t *testing.T) {
 
 		// Create and track multiple files
 		for i := 0; i < 3; i++ {
-			objectID := filepath.Join("test", "file"+string(rune('0'+i))+".parquet")
+			objectID := filepath.Join("test", fmt.Sprintf("file%d.parquet", i))
 			localPath, _, err := pfc.GetOrPrepare(region, bucket, objectID)
 			require.NoError(t, err)
 			err = os.WriteFile(localPath, []byte("test"), 0644)

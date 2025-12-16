@@ -525,11 +525,14 @@ func EvaluatePushDown[T promql.Timestamped](
 			// Convert object IDs to local paths for streaming (cache has already downloaded them)
 			localPaths := make([]string, len(objectIDs))
 			for i, objID := range objectIDs {
-				localPath, _, err := w.parquetCache.GetOrPrepare(profile.Region, profile.Bucket, objID)
+				localPath, exists, err := w.parquetCache.GetOrPrepare(profile.Region, profile.Bucket, objID)
 				if err != nil {
 					evalSpan.RecordError(err)
 					evalSpan.SetStatus(codes.Error, "failed to get local path")
 					return nil, fmt.Errorf("get local path for %s: %w", objID, err)
+				}
+				if !exists {
+					slog.Warn("Expected file to exist after download", "objectID", objID, "localPath", localPath)
 				}
 				localPaths[i] = localPath
 			}
@@ -887,16 +890,29 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			// Convert object IDs to local paths and filter out ones that need download
 			localPaths := make([]string, len(job.objectIDs))
 			var objectIDsToDownload []string
+			var prepareErr error
 			for i, objID := range job.objectIDs {
 				localPath, exists, err := w.parquetCache.GetOrPrepare(region, bucket, objID)
 				if err != nil {
 					slog.Error("Failed to get local path for ingest", "objectID", objID, "error", err)
-					continue
+					prepareErr = err
+					break
 				}
 				localPaths[i] = localPath
 				if !exists {
 					objectIDsToDownload = append(objectIDsToDownload, objID)
 				}
+			}
+			if prepareErr != nil {
+				ingestSpan.RecordError(prepareErr)
+				ingestSpan.SetStatus(codes.Error, "failed to prepare local paths")
+				ingestSpan.End()
+				w.mu.Lock()
+				for _, id := range job.ids {
+					delete(w.inflight, id)
+				}
+				w.mu.Unlock()
+				continue
 			}
 
 			if w.downloader != nil && len(objectIDsToDownload) > 0 {

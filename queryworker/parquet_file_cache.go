@@ -144,14 +144,8 @@ func (pfc *ParquetFileCache) Close() {
 	pfc.totalBytes = 0
 	pfc.mu.Unlock()
 
-	// Remove any remaining files and empty directories
-	_ = filepath.Walk(pfc.baseDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || path == pfc.baseDir {
-			return nil
-		}
-		_ = os.RemoveAll(path)
-		return nil
-	})
+	// Remove any remaining empty directories
+	pfc.cleanupEmptyDirs()
 }
 
 // RegisterMetrics registers OTEL metrics for the parquet file cache.
