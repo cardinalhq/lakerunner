@@ -137,7 +137,11 @@ func (pfc *ParquetFileCache) Close() {
 	// Clean up all files in the cache directory
 	pfc.mu.Lock()
 	for path := range pfc.files {
-		_ = os.Remove(path)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			slog.Warn("Failed to remove cached file during Close",
+				slog.String("path", path),
+				slog.Any("error", err))
+		}
 	}
 	pfc.files = make(map[string]*cachedFileInfo)
 	pfc.keyToPath = make(map[CacheKey]string)
@@ -404,7 +408,11 @@ func (pfc *ParquetFileCache) removeFile(path string) {
 	pfc.mu.Unlock()
 
 	// Best-effort delete from disk
-	_ = os.Remove(path)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		slog.Warn("Failed to remove cached file from disk",
+			slog.String("path", path),
+			slog.Any("error", err))
+	}
 }
 
 // cleanupLoop periodically removes expired files.
