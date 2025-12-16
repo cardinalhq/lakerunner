@@ -16,10 +16,14 @@ package admin
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"net"
-	"os"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -27,8 +31,10 @@ import (
 
 	"github.com/cardinalhq/lakerunner/adminproto"
 	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/adminconfig"
 	"github.com/cardinalhq/lakerunner/internal/fly"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 const testAPIKey = "ak_test123456789"
@@ -36,6 +42,103 @@ const testAPIKey = "ak_test123456789"
 const bufSize = 1024 * 1024
 
 var lis *bufconn.Listener
+
+// mockConfigDBStore is a minimal mock for configdb.StoreFull for testing
+type mockConfigDBStore struct {
+	configdb.Querier
+	listOrgsErr error
+	orgs        []configdb.Organization
+}
+
+func (m *mockConfigDBStore) Close() {}
+
+func (m *mockConfigDBStore) GetStorageProfile(ctx context.Context, arg configdb.GetStorageProfileParams) (configdb.GetStorageProfileRow, error) {
+	return configdb.GetStorageProfileRow{}, errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) GetStorageProfileByCollectorName(ctx context.Context, organizationID uuid.UUID) (configdb.GetStorageProfileByCollectorNameRow, error) {
+	return configdb.GetStorageProfileByCollectorNameRow{}, errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]configdb.GetStorageProfilesByBucketNameRow, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) CreateOrganizationAPIKeyWithMapping(ctx context.Context, params configdb.CreateOrganizationAPIKeyParams, orgID uuid.UUID) (*configdb.OrganizationApiKey, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) DeleteOrganizationAPIKeyWithMappings(ctx context.Context, keyID uuid.UUID) error {
+	return errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) AddOrganizationBucket(ctx context.Context, orgID uuid.UUID, bucketName string, instanceNum int16, collectorName string) error {
+	return errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) CreateBucketPrefixMappingForOrg(ctx context.Context, bucketName string, orgID uuid.UUID, pathPrefix string, signal string) (*configdb.BucketPrefixMapping, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) ListOrganizations(ctx context.Context) ([]configdb.Organization, error) {
+	if m.listOrgsErr != nil {
+		return nil, m.listOrgsErr
+	}
+	return m.orgs, nil
+}
+
+func (m *mockConfigDBStore) UpsertOrganization(ctx context.Context, arg configdb.UpsertOrganizationParams) (configdb.Organization, error) {
+	return configdb.Organization{}, errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) GetOrganization(ctx context.Context, id uuid.UUID) (configdb.Organization, error) {
+	return configdb.Organization{}, errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) GetOrgConfig(ctx context.Context, arg configdb.GetOrgConfigParams) (json.RawMessage, error) {
+	return nil, sql.ErrNoRows
+}
+
+func (m *mockConfigDBStore) UpsertOrgConfig(ctx context.Context, arg configdb.UpsertOrgConfigParams) error {
+	return errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) DeleteOrgConfig(ctx context.Context, arg configdb.DeleteOrgConfigParams) error {
+	return errors.New("not implemented")
+}
+
+func (m *mockConfigDBStore) ListOrgConfigs(ctx context.Context, organizationID uuid.UUID) ([]configdb.ListOrgConfigsRow, error) {
+	return nil, errors.New("not implemented")
+}
+
+// mockLRDBStore is a minimal mock for LRDBStore interface for testing
+type mockLRDBStore struct {
+	workQueueStatusErr error
+	workQueueStatus    []lrdb.WorkQueueStatusRow
+}
+
+func (m *mockLRDBStore) WorkQueueStatus(ctx context.Context) ([]lrdb.WorkQueueStatusRow, error) {
+	if m.workQueueStatusErr != nil {
+		return nil, m.workQueueStatusErr
+	}
+	return m.workQueueStatus, nil
+}
+
+func (m *mockLRDBStore) WorkQueueAdd(ctx context.Context, arg lrdb.WorkQueueAddParams) (lrdb.WorkQueue, error) {
+	return lrdb.WorkQueue{}, errors.New("not implemented")
+}
+
+func (m *mockLRDBStore) WorkQueueDepth(ctx context.Context, taskName string) (int64, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (m *mockLRDBStore) WorkQueueCleanup(ctx context.Context, heartbeatTimeout time.Duration) error {
+	return errors.New("not implemented")
+}
+
+func (m *mockLRDBStore) ListLogSegsForRecompact(ctx context.Context, arg lrdb.ListLogSegsForRecompactParams) ([]lrdb.LogSeg, error) {
+	return nil, errors.New("not implemented")
+}
 
 func bufDialer(ctx context.Context, address string) (net.Conn, error) {
 	return lis.Dial()
@@ -46,7 +149,12 @@ func authContext() context.Context {
 	return metadata.NewOutgoingContext(context.Background(), md)
 }
 
-func setupTestServer(t *testing.T) (adminproto.AdminServiceClient, func()) {
+type testServerOpts struct {
+	configDB configdb.StoreFull
+	lrDB     LRDBStore
+}
+
+func setupTestServer(t *testing.T, opts ...testServerOpts) (adminproto.AdminServiceClient, func()) {
 	lis = bufconn.Listen(bufSize)
 
 	// Create mock config provider with a valid test key
@@ -63,9 +171,23 @@ func setupTestServer(t *testing.T) (adminproto.AdminServiceClient, func()) {
 		grpc.UnaryInterceptor(authInterceptor.unaryInterceptor),
 	)
 
-	// Create our admin service
+	// Use provided stores or default mocks
+	var configDB configdb.StoreFull = &mockConfigDBStore{}
+	var lrDB LRDBStore = &mockLRDBStore{}
+	if len(opts) > 0 {
+		if opts[0].configDB != nil {
+			configDB = opts[0].configDB
+		}
+		if opts[0].lrDB != nil {
+			lrDB = opts[0].lrDB
+		}
+	}
+
+	// Create our admin service with mock stores
 	adminService := &Service{
 		serverID: "test-server",
+		configDB: configDB,
+		lrDB:     lrDB,
 	}
 
 	adminproto.RegisterAdminServiceServer(server, adminService)
@@ -130,40 +252,13 @@ func TestPing(t *testing.T) {
 	}
 }
 
-func TestInQueueStatusWithoutDB(t *testing.T) {
-	// Save original database environment variables
-	originalLRDBVars := map[string]string{
-		"LRDB_HOST":     os.Getenv("LRDB_HOST"),
-		"LRDB_USER":     os.Getenv("LRDB_USER"),
-		"LRDB_PASSWORD": os.Getenv("LRDB_PASSWORD"),
-		"LRDB_DBNAME":   os.Getenv("LRDB_DBNAME"),
-		"LRDB_URL":      os.Getenv("LRDB_URL"),
-	}
-
-	// Temporarily unset database environment variables to force database connection failure
-	_ = os.Unsetenv("LRDB_HOST")
-	_ = os.Unsetenv("LRDB_USER")
-	_ = os.Unsetenv("LRDB_PASSWORD")
-	_ = os.Unsetenv("LRDB_DBNAME")
-	_ = os.Unsetenv("LRDB_URL")
-
-	// Restore environment variables when test completes
-	defer func() {
-		for key, value := range originalLRDBVars {
-			if value != "" {
-				_ = os.Setenv(key, value)
-			} else {
-				_ = os.Unsetenv(key)
-			}
-		}
-	}()
-
+func TestInQueueStatus(t *testing.T) {
 	client, cleanup := setupTestServer(t)
 	defer cleanup()
 
 	ctx := authContext()
 
-	// Should return empty response
+	// Should return empty response (InQueueStatus returns empty for backward compatibility)
 	resp, err := client.InQueueStatus(ctx, &adminproto.InQueueStatusRequest{})
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
@@ -175,43 +270,20 @@ func TestInQueueStatusWithoutDB(t *testing.T) {
 	}
 }
 
-func TestListOrganizationsWithoutDB(t *testing.T) {
-	originalConfigDBVars := map[string]string{
-		"CONFIGDB_HOST":     os.Getenv("CONFIGDB_HOST"),
-		"CONFIGDB_USER":     os.Getenv("CONFIGDB_USER"),
-		"CONFIGDB_PASSWORD": os.Getenv("CONFIGDB_PASSWORD"),
-		"CONFIGDB_DBNAME":   os.Getenv("CONFIGDB_DBNAME"),
-		"CONFIGDB_URL":      os.Getenv("CONFIGDB_URL"),
+func TestListOrganizationsWithDBError(t *testing.T) {
+	// Create mock that returns an error
+	mockStore := &mockConfigDBStore{
+		listOrgsErr: errors.New("database error"),
 	}
 
-	_ = os.Unsetenv("CONFIGDB_HOST")
-	_ = os.Unsetenv("CONFIGDB_USER")
-	_ = os.Unsetenv("CONFIGDB_PASSWORD")
-	_ = os.Unsetenv("CONFIGDB_DBNAME")
-	_ = os.Unsetenv("CONFIGDB_URL")
-
-	defer func() {
-		for key, value := range originalConfigDBVars {
-			if value != "" {
-				_ = os.Setenv(key, value)
-			} else {
-				_ = os.Unsetenv(key)
-			}
-		}
-	}()
-
-	client, cleanup := setupTestServer(t)
+	client, cleanup := setupTestServer(t, testServerOpts{configDB: mockStore})
 	defer cleanup()
 
 	ctx := authContext()
 
 	_, err := client.ListOrganizations(ctx, &adminproto.ListOrganizationsRequest{})
 	if err == nil {
-		t.Error("Expected error due to missing database connection")
-	}
-
-	if err != nil && err.Error() == "" {
-		t.Error("Expected non-empty error message")
+		t.Error("Expected error due to database error")
 	}
 }
 
@@ -264,71 +336,25 @@ func TestGetConsumerLag(t *testing.T) {
 	}
 }
 
-func TestGetWorkQueueStatusWithoutDB(t *testing.T) {
-	originalLRDBVars := map[string]string{
-		"LRDB_HOST":     os.Getenv("LRDB_HOST"),
-		"LRDB_USER":     os.Getenv("LRDB_USER"),
-		"LRDB_PASSWORD": os.Getenv("LRDB_PASSWORD"),
-		"LRDB_DBNAME":   os.Getenv("LRDB_DBNAME"),
-		"LRDB_URL":      os.Getenv("LRDB_URL"),
+func TestGetWorkQueueStatusWithDBError(t *testing.T) {
+	// Create mock that returns an error
+	mockLRDB := &mockLRDBStore{
+		workQueueStatusErr: errors.New("database error"),
 	}
 
-	_ = os.Unsetenv("LRDB_HOST")
-	_ = os.Unsetenv("LRDB_USER")
-	_ = os.Unsetenv("LRDB_PASSWORD")
-	_ = os.Unsetenv("LRDB_DBNAME")
-	_ = os.Unsetenv("LRDB_URL")
-
-	defer func() {
-		for key, value := range originalLRDBVars {
-			if value != "" {
-				_ = os.Setenv(key, value)
-			} else {
-				_ = os.Unsetenv(key)
-			}
-		}
-	}()
-
-	client, cleanup := setupTestServer(t)
+	client, cleanup := setupTestServer(t, testServerOpts{lrDB: mockLRDB})
 	defer cleanup()
 
 	ctx := authContext()
 
 	_, err := client.GetWorkQueueStatus(ctx, &adminproto.GetWorkQueueStatusRequest{})
 	if err == nil {
-		t.Error("Expected error due to missing database connection")
-	}
-
-	if err != nil && err.Error() == "" {
-		t.Error("Expected non-empty error message")
+		t.Error("Expected error due to database error")
 	}
 }
 
-func TestCreateOrganizationWithoutDB(t *testing.T) {
-	originalConfigDBVars := map[string]string{
-		"CONFIGDB_HOST":     os.Getenv("CONFIGDB_HOST"),
-		"CONFIGDB_USER":     os.Getenv("CONFIGDB_USER"),
-		"CONFIGDB_PASSWORD": os.Getenv("CONFIGDB_PASSWORD"),
-		"CONFIGDB_DBNAME":   os.Getenv("CONFIGDB_DBNAME"),
-		"CONFIGDB_URL":      os.Getenv("CONFIGDB_URL"),
-	}
-
-	_ = os.Unsetenv("CONFIGDB_HOST")
-	_ = os.Unsetenv("CONFIGDB_USER")
-	_ = os.Unsetenv("CONFIGDB_PASSWORD")
-	_ = os.Unsetenv("CONFIGDB_DBNAME")
-	_ = os.Unsetenv("CONFIGDB_URL")
-
-	defer func() {
-		for key, value := range originalConfigDBVars {
-			if value != "" {
-				_ = os.Setenv(key, value)
-			} else {
-				_ = os.Unsetenv(key)
-			}
-		}
-	}()
-
+func TestCreateOrganizationWithDBError(t *testing.T) {
+	// Uses the default mock which returns "not implemented" for UpsertOrganization
 	client, cleanup := setupTestServer(t)
 	defer cleanup()
 

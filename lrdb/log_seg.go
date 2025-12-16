@@ -63,4 +63,5 @@ type CompactLogSegsNew struct {
 	StreamIds     []string
 	StreamIdField *string
 	SortVersion   int16
+	AggFields     []string
 }

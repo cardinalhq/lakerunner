@@ -104,12 +104,10 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	// Fast path: for simple aggregations without parsers/filters, generate flat SQL
 	// that only reads the columns we need. This avoids the SELECT * CTE pipeline.
 	if be.LogLeaf.IsSimpleAggregation() {
-		recordLogQuerySimple()
 		return buildSimpleLogAggSQL(be, step)
 	}
 
 	// Complex path: use CTE pipeline for queries with parsers/filters
-	recordLogQueryComplex()
 	return buildComplexLogAggSQL(be, step)
 }
 
@@ -277,6 +275,103 @@ func buildComplexLogAggSQL(be *BaseExpr, step time.Duration) string {
 		" SELECT " + strings.Join(cols, ", ") +
 		" FROM _leaf" +
 		" WHERE " + timePredicate +
+		" GROUP BY " + strings.Join(gb, ", ") +
+		" ORDER BY bucket_ts ASC"
+
+	return sql
+}
+
+// CanUseAggFile returns true if a segment's agg_fields support the query's GROUP BY fields
+// and matcher fields. The query can use the agg_ file if both GROUP BY fields and matcher
+// fields are subsets of agg_fields.
+// The agg_ files use the actual field names as column names (e.g., "resource_customer_domain").
+func CanUseAggFile(aggFields []string, groupBy []string, matcherFields []string) bool {
+	if len(aggFields) == 0 {
+		return false
+	}
+
+	// Build set of normalized agg_fields
+	aggFieldSet := make(map[string]bool)
+	for _, f := range aggFields {
+		aggFieldSet[normalizeFieldName(f)] = true
+	}
+
+	// Check that all GROUP BY fields are in agg_fields
+	for _, g := range groupBy {
+		if !aggFieldSet[normalizeFieldName(g)] {
+			return false
+		}
+	}
+
+	// Check that all matcher fields are in agg_fields
+	for _, m := range matcherFields {
+		if !aggFieldSet[normalizeFieldName(m)] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// BuildAggFileSQL generates SQL for querying pre-aggregated agg_ files.
+// The agg_ files have 10s buckets that are re-aggregated to the query step.
+// The agg_ files use the actual field names as column names (e.g., "resource_customer_domain").
+// Matchers from the LogLeaf are applied as WHERE filters since the agg_ files contain
+// the same columns that were used to create the aggregation.
+func BuildAggFileSQL(be *BaseExpr, step time.Duration) string {
+	stepMs := step.Milliseconds()
+
+	// Re-bucket from 10s buckets to query step size
+	// bucket_ts is already floored to 10s boundaries, re-floor to step
+	rebucketExpr := fmt.Sprintf(
+		"(bucket_ts - (bucket_ts %% %d))",
+		stepMs,
+	)
+
+	cols := []string{rebucketExpr + " AS bucket_ts"}
+
+	// Add GROUP BY columns - use the actual field name (agg_ files have the real column names)
+	for _, g := range be.GroupBy {
+		fieldName := normalizeFieldName(g)
+		cols = append(cols, fmt.Sprintf("\"%s\"", fieldName))
+	}
+
+	// SUM the pre-aggregated counts
+	cols = append(cols, `SUM("count") AS count`)
+
+	// Build WHERE with time predicate using bucket_ts
+	whereParts := []string{
+		"bucket_ts >= {start}",
+		"bucket_ts < {end}",
+	}
+
+	// Add matchers from LogLeaf as WHERE filters
+	// The agg_ files contain the columns used in matchers (log_level, stream field)
+	if be.LogLeaf != nil {
+		for _, m := range be.LogLeaf.Matchers {
+			fieldName := normalizeFieldName(m.Label)
+			switch m.Op {
+			case logql.MatchEq:
+				whereParts = append(whereParts, fmt.Sprintf("\"%s\" = %s", fieldName, sqlLit(m.Value)))
+			case logql.MatchNe:
+				whereParts = append(whereParts, fmt.Sprintf("\"%s\" <> %s", fieldName, sqlLit(m.Value)))
+			case logql.MatchRe:
+				whereParts = append(whereParts, fmt.Sprintf("\"%s\" ~ %s", fieldName, sqlLit(m.Value)))
+			case logql.MatchNre:
+				whereParts = append(whereParts, fmt.Sprintf("\"%s\" !~ %s", fieldName, sqlLit(m.Value)))
+			}
+		}
+	}
+
+	// Build GROUP BY clause
+	gb := []string{"1"} // Reference bucket_ts by position due to expression
+	for i := range be.GroupBy {
+		gb = append(gb, fmt.Sprintf("%d", i+2)) // Positional reference
+	}
+
+	sql := "SELECT " + strings.Join(cols, ", ") +
+		" FROM {table}" +
+		" WHERE " + strings.Join(whereParts, " AND ") +
 		" GROUP BY " + strings.Join(gb, ", ") +
 		" ORDER BY bucket_ts ASC"
 

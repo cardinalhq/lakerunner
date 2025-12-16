@@ -14,7 +14,8 @@ INSERT INTO log_seg (
   label_name_map,
   stream_ids,
   stream_id_field,
-  sort_version
+  sort_version,
+  agg_fields
 )
 VALUES (
   @organization_id,
@@ -31,7 +32,8 @@ VALUES (
   @label_name_map,
   @stream_ids::text[],
   @stream_id_field,
-  @sort_version
+  @sort_version,
+  @agg_fields::text[]
 );
 
 -- name: GetLogSeg :one
@@ -58,7 +60,8 @@ INSERT INTO log_seg (
   label_name_map,
   stream_ids,
   stream_id_field,
-  sort_version
+  sort_version,
+  agg_fields
 )
 VALUES (
   @organization_id,
@@ -75,7 +78,8 @@ VALUES (
   @label_name_map,
   @stream_ids::text[],
   @stream_id_field,
-  @sort_version
+  @sort_version,
+  @agg_fields::text[]
 );
 
 -- name: MarkLogSegsCompactedByKeys :exec
@@ -93,8 +97,7 @@ SET compacted = true, published = false
 WHERE organization_id = @organization_id
   AND dateint         = @dateint
   AND instance_num    = @instance_num
-  AND segment_id      = ANY(@segment_ids::bigint[])
-  AND compacted       = false;
+  AND segment_id      = ANY(@segment_ids::bigint[]);
 
 -- name: ListLogSegmentsForQuery :many
 SELECT
@@ -102,7 +105,8 @@ SELECT
     s.instance_num,
     s.segment_id,
     lower(s.ts_range)::bigint        AS start_ts,
-    (upper(s.ts_range) - 1)::bigint  AS end_ts
+    (upper(s.ts_range) - 1)::bigint  AS end_ts,
+    s.agg_fields
 FROM log_seg AS s
          CROSS JOIN LATERAL
     unnest(s.fingerprints) AS t(fp)
@@ -140,3 +144,21 @@ WHERE organization_id = @organization_id
   AND published = true
   AND stream_ids IS NOT NULL
   AND stream_id_field IS NOT NULL;
+
+-- name: ListLogSegsForRecompact :many
+-- Returns log segments that need recompaction based on filter criteria.
+-- Used by lakectl logs recompact command to queue segments for reprocessing.
+-- Segments are returned in reverse timestamp order (newest first) so that
+-- recompaction benefits the most recent data first.
+SELECT *
+FROM log_seg
+WHERE organization_id = @organization_id
+  AND published = true
+  AND compacted = true
+  AND dateint >= @start_dateint
+  AND dateint <= @end_dateint
+  AND (
+    (@filter_agg_fields_null = true AND agg_fields IS NULL)
+    OR (@filter_sort_version = true AND sort_version < @min_sort_version)
+  )
+ORDER BY upper(ts_range) DESC;

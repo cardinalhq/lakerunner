@@ -88,12 +88,17 @@ func (p *LogCompactionProcessor) ProcessBundleFromQueue(ctx context.Context, wor
 	firstMsg := bundle.Messages[0]
 	key := firstMsg.GroupingKey().(messages.LogCompactionKey)
 
-	// Call the existing ProcessBundle with 0 for partition and offset (not needed anymore)
-	return p.ProcessBundle(ctx, key, bundle.Messages, 0, 0)
+	return p.processBundleInternal(ctx, key, bundle.Messages, bundle.Force)
 }
 
 // ProcessBundle processes a compaction bundle directly (simplified interface)
 func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages.LogCompactionKey, msgs []*messages.LogCompactionMessage, partition int32, offset int64) error {
+	return p.processBundleInternal(ctx, key, msgs, false)
+}
+
+// processBundleInternal is the core compaction logic with force flag support.
+// When force=true, segments are reprocessed even if already marked as compacted.
+func (p *LogCompactionProcessor) processBundleInternal(ctx context.Context, key messages.LogCompactionKey, msgs []*messages.LogCompactionMessage, force bool) error {
 	ll := logctx.FromContext(ctx)
 
 	defer runtime.GC() // TODO find a way to not need this
@@ -106,7 +111,8 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 		slog.String("organizationID", key.OrganizationID.String()),
 		slog.Int("dateint", int(key.DateInt)),
 		slog.Int("instanceNum", int(key.InstanceNum)),
-		slog.Int("messageCount", len(msgs)))
+		slog.Int("messageCount", len(msgs)),
+		slog.Bool("force", force))
 
 	recordCountEstimate := p.store.GetLogEstimate(ctx, key.OrganizationID)
 
@@ -170,6 +176,23 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 			continue
 		}
 
+		// Force recompaction: process segment regardless of compacted state,
+		// but require it to still be published (safety check)
+		if force {
+			if !segment.Published {
+				ll.Warn("Force recompaction: segment not published, skipping",
+					slog.Int64("segmentID", segment.SegmentID))
+				continue
+			}
+			ll.Info("Force recompaction: processing segment",
+				slog.Int64("segmentID", segment.SegmentID),
+				slog.Int("sortVersion", int(segment.SortVersion)),
+				slog.Bool("hasAggFields", segment.AggFields != nil))
+			activeSegments = append(activeSegments, segment)
+			continue
+		}
+
+		// Normal compaction flow
 		if !segment.Compacted && segment.FileSize >= targetSizeThreshold {
 			ll.Info("Segment already close to target size, marking as compacted",
 				slog.Int64("segmentID", segment.SegmentID),
@@ -330,6 +353,9 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 	// Merge label name maps from input segments for legacy API support
 	mergedLabelMap := mergeLabelNameMaps(inputSegments)
 
+	// Get stream field for agg_fields
+	streamField := configservice.Global().GetLogStreamConfig(ctx, key.OrganizationID).FieldName
+
 	var segments []lrdb.LogSeg
 	var totalOutputSize, totalOutputRecords int64
 	var segmentIDs []int64
@@ -358,6 +384,44 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 		// Clean up local file
 		_ = os.Remove(result.FileName)
 
+		// Write and upload aggregation parquet file
+		var aggFields []string
+		if len(stats.AggCounts) > 0 {
+			aggFilename := fmt.Sprintf("%s/agg_%d.parquet", os.TempDir(), segmentID)
+			aggSize, aggWriteErr := factories.WriteAggParquet(ctx, aggFilename, stats.AggCounts)
+			if aggWriteErr != nil {
+				ll.Warn("Failed to write agg parquet, continuing without",
+					slog.Int64("segmentID", segmentID),
+					slog.Any("error", aggWriteErr))
+			} else {
+				defer func() { _ = os.Remove(aggFilename) }()
+
+				aggPath := helpers.MakeAggDBObjectID(
+					key.OrganizationID,
+					profile.CollectorName,
+					key.DateInt,
+					p.getHourFromTimestamp(stats.FirstTS),
+					segmentID,
+					"logs",
+				)
+
+				aggUploadErr := client.UploadObject(ctx, profile.Bucket, aggPath, aggFilename)
+				if aggUploadErr != nil {
+					ll.Warn("Failed to upload agg parquet, continuing without",
+						slog.Int64("segmentID", segmentID),
+						slog.String("aggPath", aggPath),
+						slog.Any("error", aggUploadErr))
+				} else {
+					aggFields = factories.GetAggFields(streamField)
+					factories.RecordAggFileWritten(ctx, key.OrganizationID, key.InstanceNum)
+					ll.Debug("Uploaded agg parquet",
+						slog.String("aggPath", aggPath),
+						slog.Int64("aggSize", aggSize),
+						slog.Int("aggBuckets", len(stats.AggCounts)))
+				}
+			}
+		}
+
 		segment := lrdb.LogSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
@@ -379,6 +443,7 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			LabelNameMap:  mergedLabelMap,
 			StreamIds:     stats.StreamValues,
 			StreamIDField: stats.StreamIdField,
+			AggFields:     aggFields,
 		}
 
 		segments = append(segments, segment)
@@ -422,6 +487,7 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 			StreamIds:     seg.StreamIds,
 			StreamIdField: seg.StreamIDField,
 			SortVersion:   lrdb.CurrentLogSortVersion,
+			AggFields:     seg.AggFields,
 		}
 	}
 

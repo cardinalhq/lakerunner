@@ -54,7 +54,7 @@ func (q *Queries) GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsPara
 }
 
 const getLogSeg = `-- name: GetLogSeg :one
-SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids, sort_version, stream_id_field
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids, sort_version, stream_id_field, agg_fields
 FROM log_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -95,6 +95,7 @@ func (q *Queries) GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, e
 		&i.StreamIds,
 		&i.SortVersion,
 		&i.StreamIDField,
+		&i.AggFields,
 	)
 	return i, err
 }
@@ -105,7 +106,8 @@ SELECT
     s.instance_num,
     s.segment_id,
     lower(s.ts_range)::bigint        AS start_ts,
-    (upper(s.ts_range) - 1)::bigint  AS end_ts
+    (upper(s.ts_range) - 1)::bigint  AS end_ts,
+    s.agg_fields
 FROM log_seg AS s
          CROSS JOIN LATERAL
     unnest(s.fingerprints) AS t(fp)
@@ -127,11 +129,12 @@ type ListLogSegmentsForQueryParams struct {
 }
 
 type ListLogSegmentsForQueryRow struct {
-	Fingerprint int64 `json:"fingerprint"`
-	InstanceNum int16 `json:"instance_num"`
-	SegmentID   int64 `json:"segment_id"`
-	StartTs     int64 `json:"start_ts"`
-	EndTs       int64 `json:"end_ts"`
+	Fingerprint int64    `json:"fingerprint"`
+	InstanceNum int16    `json:"instance_num"`
+	SegmentID   int64    `json:"segment_id"`
+	StartTs     int64    `json:"start_ts"`
+	EndTs       int64    `json:"end_ts"`
+	AggFields   []string `json:"agg_fields"`
 }
 
 func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error) {
@@ -155,6 +158,81 @@ func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmen
 			&i.SegmentID,
 			&i.StartTs,
 			&i.EndTs,
+			&i.AggFields,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLogSegsForRecompact = `-- name: ListLogSegsForRecompact :many
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published, label_name_map, stream_ids, sort_version, stream_id_field, agg_fields
+FROM log_seg
+WHERE organization_id = $1
+  AND published = true
+  AND compacted = true
+  AND dateint >= $2
+  AND dateint <= $3
+  AND (
+    ($4 = true AND agg_fields IS NULL)
+    OR ($5 = true AND sort_version < $6)
+  )
+ORDER BY upper(ts_range) DESC
+`
+
+type ListLogSegsForRecompactParams struct {
+	OrganizationID      uuid.UUID   `json:"organization_id"`
+	StartDateint        int32       `json:"start_dateint"`
+	EndDateint          int32       `json:"end_dateint"`
+	FilterAggFieldsNull interface{} `json:"filter_agg_fields_null"`
+	FilterSortVersion   interface{} `json:"filter_sort_version"`
+	MinSortVersion      int16       `json:"min_sort_version"`
+}
+
+// Returns log segments that need recompaction based on filter criteria.
+// Used by lakectl logs recompact command to queue segments for reprocessing.
+// Segments are returned in reverse timestamp order (newest first) so that
+// recompaction benefits the most recent data first.
+func (q *Queries) ListLogSegsForRecompact(ctx context.Context, arg ListLogSegsForRecompactParams) ([]LogSeg, error) {
+	rows, err := q.db.Query(ctx, listLogSegsForRecompact,
+		arg.OrganizationID,
+		arg.StartDateint,
+		arg.EndDateint,
+		arg.FilterAggFieldsNull,
+		arg.FilterSortVersion,
+		arg.MinSortVersion,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LogSeg
+	for rows.Next() {
+		var i LogSeg
+		if err := rows.Scan(
+			&i.OrganizationID,
+			&i.Dateint,
+			&i.SegmentID,
+			&i.InstanceNum,
+			&i.Fingerprints,
+			&i.RecordCount,
+			&i.FileSize,
+			&i.IngestDateint,
+			&i.TsRange,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.Compacted,
+			&i.Published,
+			&i.LabelNameMap,
+			&i.StreamIds,
+			&i.SortVersion,
+			&i.StreamIDField,
+			&i.AggFields,
 		); err != nil {
 			return nil, err
 		}
@@ -266,7 +344,8 @@ INSERT INTO log_seg (
   label_name_map,
   stream_ids,
   stream_id_field,
-  sort_version
+  sort_version,
+  agg_fields
 )
 VALUES (
   $1,
@@ -283,7 +362,8 @@ VALUES (
   $13,
   $14::text[],
   $15,
-  $16
+  $16,
+  $17::text[]
 )
 `
 
@@ -304,6 +384,7 @@ type InsertLogSegmentParams struct {
 	StreamIds      []string  `json:"stream_ids"`
 	StreamIDField  *string   `json:"stream_id_field"`
 	SortVersion    int16     `json:"sort_version"`
+	AggFields      []string  `json:"agg_fields"`
 }
 
 func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error {
@@ -324,6 +405,7 @@ func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 		arg.StreamIds,
 		arg.StreamIDField,
 		arg.SortVersion,
+		arg.AggFields,
 	)
 	return err
 }
@@ -335,7 +417,6 @@ WHERE organization_id = $1
   AND dateint         = $2
   AND instance_num    = $3
   AND segment_id      = ANY($4::bigint[])
-  AND compacted       = false
 `
 
 type markLogSegsCompactedUnpublishedByKeysParams struct {

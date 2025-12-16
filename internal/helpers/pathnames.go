@@ -44,6 +44,27 @@ func MakeDBObjectID(
 	)
 }
 
+// MakeAggDBObjectID returns the S3 object key for an aggregation parquet file.
+// The path format is: db/{org}/{collector}/{dateint}/{type}/{hour}/agg_{segmentID}.parquet
+func MakeAggDBObjectID(
+	orgID uuid.UUID,
+	collectorName string,
+	dateint int32,
+	hour int16,
+	segmentID int64,
+	ttype string,
+) string {
+	return path.Join(
+		DBPrefix,
+		orgID.String(),
+		collectorName,
+		strconv.Itoa(int(dateint)),
+		ttype,
+		fmt.Sprintf("%02d", hour),
+		fmt.Sprintf("agg_%d.parquet", segmentID),
+	)
+}
+
 func MakeDBObjectIDbad(
 	orgID uuid.UUID,
 	dateint int32,

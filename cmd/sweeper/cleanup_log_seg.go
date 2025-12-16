@@ -97,6 +97,18 @@ func (w *LogCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		}
 		s3ObjectsToDelete[instanceKey] = append(s3ObjectsToDelete[instanceKey], objectKey)
 
+		// Always try to delete agg_ file alongside tbl_ file.
+		// This handles orphaned agg_ files and ensures cleanup of both files.
+		aggObjectKey := helpers.MakeAggDBObjectID(
+			segment.OrganizationID,
+			profile.CollectorName,
+			segment.Dateint,
+			getHourFromTimestamp(segment.TsRangeLower),
+			segment.SegmentID,
+			"logs",
+		)
+		s3ObjectsToDelete[instanceKey] = append(s3ObjectsToDelete[instanceKey], aggObjectKey)
+
 		// Collect DB deletion params
 		dbRecordsToDelete = append(dbRecordsToDelete, lrdb.LogSegmentCleanupDeleteParams{
 			OrganizationID: segment.OrganizationID,

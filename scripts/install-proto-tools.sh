@@ -17,8 +17,8 @@ set -euo pipefail
 
 # Proto tool versions - update these to change versions across the project
 BUF_VERSION="v1.56.0"
-PROTOC_GEN_GO_VERSION="v1.36.7"
-PROTOC_GEN_GO_GRPC_VERSION="v1.5.1"
+PROTOC_GEN_GO_VERSION="v1.36.10"
+PROTOC_GEN_GO_GRPC_VERSION="v1.6.0"
 
 # Project root directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

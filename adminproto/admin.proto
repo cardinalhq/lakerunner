@@ -67,6 +67,9 @@ service AdminService {
 
   // Work Queue Status
   rpc GetWorkQueueStatus(GetWorkQueueStatusRequest) returns (GetWorkQueueStatusResponse);
+
+  // Queue log segments for recompaction
+  rpc QueueLogRecompact(QueueLogRecompactRequest) returns (QueueLogRecompactResponse);
 }
 
 message PingRequest {
@@ -333,4 +336,29 @@ message WorkQueueTaskStatus {
   int64 in_progress = 3;
   int64 failed = 4;
   int64 workers = 5;
+}
+
+// Log Recompaction Messages
+
+message QueueLogRecompactRequest {
+  string organization_id = 1;
+  int32 start_dateint = 2;
+  int32 end_dateint = 3;
+  bool missing_agg_fields = 4;        // Filter: segments where agg_fields IS NULL
+  bool sort_version_below_current = 5; // Filter: segments where sort_version < current
+  bool dry_run = 6;                    // If true, return matching segments without queueing
+}
+
+message QueueLogRecompactResponse {
+  int32 segments_queued = 1;
+  repeated LogSegmentInfo segments = 2; // Segments that were (or would be) queued
+}
+
+message LogSegmentInfo {
+  int64 segment_id = 1;
+  int32 dateint = 2;
+  int32 instance_num = 3;
+  int64 record_count = 4;
+  int32 sort_version = 5;
+  bool has_agg_fields = 6;
 }

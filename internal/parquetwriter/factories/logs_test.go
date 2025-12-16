@@ -214,6 +214,198 @@ func TestLogsFileStats_Structure(t *testing.T) {
 	assert.Equal(t, int64(5), stats.MissingStreamFieldCount)
 }
 
+func TestLogsStatsAccumulator_AggregationCounts(t *testing.T) {
+	tests := []struct {
+		name           string
+		rows           []pipeline.Row
+		expectedCounts map[LogAggKey]int64
+	}{
+		{
+			name: "single row single bucket",
+			rows: []pipeline.Row{
+				{
+					wkk.RowKeyCTimestamp:             int64(1234567890000), // bucket: 1234567890000
+					wkk.RowKeyCLevel:                 "info",
+					wkk.RowKeyResourceCustomerDomain: "example.com",
+				},
+			},
+			expectedCounts: map[LogAggKey]int64{
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
+			},
+		},
+		{
+			name: "multiple rows same bucket",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
+				{wkk.RowKeyCTimestamp: int64(1234567890001), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
+				{wkk.RowKeyCTimestamp: int64(1234567899999), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
+			},
+			expectedCounts: map[LogAggKey]int64{
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 3,
+			},
+		},
+		{
+			name: "different buckets (10s apart)",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
+				{wkk.RowKeyCTimestamp: int64(1234567900000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
+			},
+			expectedCounts: map[LogAggKey]int64{
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
+				{TimestampBucket: 1234567900000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
+			},
+		},
+		{
+			name: "different log levels",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
+				{wkk.RowKeyCTimestamp: int64(1234567890001), wkk.RowKeyCLevel: "error", wkk.RowKeyResourceCustomerDomain: "example.com"},
+				{wkk.RowKeyCTimestamp: int64(1234567890002), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
+			},
+			expectedCounts: map[LogAggKey]int64{
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}:  2,
+				{TimestampBucket: 1234567890000, LogLevel: "error", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
+			},
+		},
+		{
+			name: "different stream values",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "example.com"},
+				{wkk.RowKeyCTimestamp: int64(1234567890001), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "other.com"},
+			},
+			expectedCounts: map[LogAggKey]int64{
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "other.com"}:   1,
+			},
+		},
+		{
+			name: "uses service_name when no customer_domain",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceServiceName: "my-service"},
+			},
+			expectedCounts: map[LogAggKey]int64{
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_service_name", StreamFieldValue: "my-service"}: 1,
+			},
+		},
+		{
+			name: "empty log level",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyResourceCustomerDomain: "example.com"},
+			},
+			expectedCounts: map[LogAggKey]int64{
+				{TimestampBucket: 1234567890000, LogLevel: "", StreamFieldName: "resource_customer_domain", StreamFieldValue: "example.com"}: 1,
+			},
+		},
+		{
+			name: "empty stream value",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyCLevel: "info"},
+			},
+			expectedCounts: map[LogAggKey]int64{
+				{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "", StreamFieldValue: ""}: 1,
+			},
+		},
+		{
+			name: "bucket boundary test - 10s = 10000ms",
+			rows: []pipeline.Row{
+				{wkk.RowKeyCTimestamp: int64(9999), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "a.com"},  // bucket 0
+				{wkk.RowKeyCTimestamp: int64(10000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "a.com"}, // bucket 10000
+				{wkk.RowKeyCTimestamp: int64(19999), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "a.com"}, // bucket 10000
+				{wkk.RowKeyCTimestamp: int64(20000), wkk.RowKeyCLevel: "info", wkk.RowKeyResourceCustomerDomain: "a.com"}, // bucket 20000
+			},
+			expectedCounts: map[LogAggKey]int64{
+				{TimestampBucket: 0, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "a.com"}:     1,
+				{TimestampBucket: 10000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "a.com"}: 2,
+				{TimestampBucket: 20000, LogLevel: "info", StreamFieldName: "resource_customer_domain", StreamFieldValue: "a.com"}: 1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &LogsStatsProvider{}
+			acc := provider.NewAccumulator()
+
+			for _, row := range tt.rows {
+				acc.Add(row)
+			}
+
+			result := acc.Finalize()
+			stats, ok := result.(LogsFileStats)
+			require.True(t, ok, "Finalize should return LogsFileStats")
+
+			assert.Equal(t, len(tt.expectedCounts), len(stats.AggCounts), "AggCounts length mismatch")
+			for key, expectedCount := range tt.expectedCounts {
+				actualCount, exists := stats.AggCounts[key]
+				assert.True(t, exists, "Missing key: %+v", key)
+				assert.Equal(t, expectedCount, actualCount, "Count mismatch for key %+v", key)
+			}
+		})
+	}
+}
+
+func TestLogsStatsAccumulator_AggregationWithConfiguredStreamField(t *testing.T) {
+	// Test aggregation when a specific stream field is configured
+	provider := &LogsStatsProvider{StreamField: "resource_k8s_namespace_name"}
+	acc := provider.NewAccumulator()
+
+	namespaceKey := wkk.NewRowKey("resource_k8s_namespace_name")
+	rows := []pipeline.Row{
+		{wkk.RowKeyCTimestamp: int64(1234567890000), wkk.RowKeyCLevel: "info", namespaceKey: "production"},
+		{wkk.RowKeyCTimestamp: int64(1234567890001), wkk.RowKeyCLevel: "info", namespaceKey: "staging"},
+		{wkk.RowKeyCTimestamp: int64(1234567890002), wkk.RowKeyCLevel: "info", namespaceKey: "production"},
+	}
+
+	for _, row := range rows {
+		acc.Add(row)
+	}
+
+	result := acc.Finalize()
+	stats, ok := result.(LogsFileStats)
+	require.True(t, ok)
+
+	expectedCounts := map[LogAggKey]int64{
+		{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_k8s_namespace_name", StreamFieldValue: "production"}: 2,
+		{TimestampBucket: 1234567890000, LogLevel: "info", StreamFieldName: "resource_k8s_namespace_name", StreamFieldValue: "staging"}:    1,
+	}
+
+	assert.Equal(t, len(expectedCounts), len(stats.AggCounts))
+	for key, expectedCount := range expectedCounts {
+		assert.Equal(t, expectedCount, stats.AggCounts[key], "Count mismatch for key %+v", key)
+	}
+}
+
+func TestGetAggFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		streamField string
+		expected    []string
+	}{
+		{
+			name:        "empty stream field uses default",
+			streamField: "",
+			expected:    []string{"log_level", "resource_customer_domain"},
+		},
+		{
+			name:        "custom stream field",
+			streamField: "resource_service_name",
+			expected:    []string{"log_level", "resource_service_name"},
+		},
+		{
+			name:        "k8s namespace field",
+			streamField: "resource_k8s_namespace_name",
+			expected:    []string{"log_level", "resource_k8s_namespace_name"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetAggFields(tt.streamField)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func stringPtr(s string) *string {
 	return &s
 }

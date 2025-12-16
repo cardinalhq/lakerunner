@@ -44,7 +44,8 @@ SELECT
   segment_id,
   instance_num,
   file_size,
-  lower(ts_range)::bigint as ts_range_lower
+  lower(ts_range)::bigint as ts_range_lower,
+  agg_fields
 FROM log_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -67,6 +68,7 @@ type LogSegmentCleanupGetRow struct {
 	InstanceNum    int16     `json:"instance_num"`
 	FileSize       int64     `json:"file_size"`
 	TsRangeLower   int64     `json:"ts_range_lower"`
+	AggFields      []string  `json:"agg_fields"`
 }
 
 func (q *Queries) LogSegmentCleanupGet(ctx context.Context, arg LogSegmentCleanupGetParams) ([]LogSegmentCleanupGetRow, error) {
@@ -90,6 +92,7 @@ func (q *Queries) LogSegmentCleanupGet(ctx context.Context, arg LogSegmentCleanu
 			&i.InstanceNum,
 			&i.FileSize,
 			&i.TsRangeLower,
+			&i.AggFields,
 		); err != nil {
 			return nil, err
 		}

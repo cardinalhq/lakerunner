@@ -190,3 +190,42 @@ func TestDownloadForQuery(t *testing.T) {
 		require.Contains(t, err.Error(), "download files for query")
 	})
 }
+
+func TestTblToAggObjectID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "standard tbl_ path",
+			input:    "db/org-id/collector/20250101/logs/00/tbl_123.parquet",
+			expected: "db/org-id/collector/20250101/logs/00/agg_123.parquet",
+		},
+		{
+			name:     "path with uuid org",
+			input:    "db/550e8400-e29b-41d4-a716-446655440000/mycol/20250615/logs/12/tbl_456789.parquet",
+			expected: "db/550e8400-e29b-41d4-a716-446655440000/mycol/20250615/logs/12/agg_456789.parquet",
+		},
+		{
+			name:     "path without tbl_ (no change)",
+			input:    "db/org/col/123/logs/00/other_456.parquet",
+			expected: "db/org/col/123/logs/00/other_456.parquet",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := tblToAggObjectID(tt.input)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}

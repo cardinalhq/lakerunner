@@ -318,6 +318,19 @@ func (pfc *ParquetFileCache) MarkForDeletion(region, bucket, objectID string) {
 	}
 }
 
+// MarkForDeletionWithCompanion marks a tbl_ file and its corresponding agg_ file
+// for delayed deletion. This ensures tbl_ and agg_ files are treated as a unit.
+func (pfc *ParquetFileCache) MarkForDeletionWithCompanion(region, bucket, objectID string) {
+	// Mark the primary file
+	pfc.MarkForDeletion(region, bucket, objectID)
+
+	// If this is a tbl_ file, also mark the corresponding agg_ file
+	if strings.Contains(objectID, "/tbl_") {
+		aggObjectID := strings.Replace(objectID, "/tbl_", "/agg_", 1)
+		pfc.MarkForDeletion(region, bucket, aggObjectID)
+	}
+}
+
 // FileCount returns the current number of tracked files.
 func (pfc *ParquetFileCache) FileCount() int64 {
 	pfc.mu.RLock()

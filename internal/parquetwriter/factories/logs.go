@@ -74,22 +74,42 @@ func logsGroupKeyFunc(streamField string) func(row pipeline.Row) any {
 // If streamField is specified, that field is used.
 // Otherwise falls back to: resource_customer_domain > resource_service_name.
 func getStreamValue(row pipeline.Row, streamField string) string {
+	_, value := getStreamFieldAndValue(row, streamField)
+	return value
+}
+
+// getStreamFieldAndValue extracts both the stream field name and value from a row.
+// If streamField is specified, that field is used.
+// Otherwise falls back to: resource_customer_domain > resource_service_name.
+// Returns (field_name, value) - both may be empty if no stream field is found.
+func getStreamFieldAndValue(row pipeline.Row, streamField string) (string, string) {
 	if streamField != "" {
 		rowKey := wkk.NewRowKey(streamField)
 		if val, ok := row[rowKey].(string); ok && val != "" {
-			return val
+			return streamField, val
 		}
-		return ""
+		return streamField, ""
 	}
 
 	// Default fallback: resource_customer_domain > resource_service_name
+	customerDomainField := wkk.RowKeyValue(wkk.RowKeyResourceCustomerDomain)
+	serviceNameField := wkk.RowKeyValue(wkk.RowKeyResourceServiceName)
+
 	if domain, ok := row[wkk.RowKeyResourceCustomerDomain].(string); ok && domain != "" {
-		return domain
+		return customerDomainField, domain
 	}
 	if serviceName, ok := row[wkk.RowKeyResourceServiceName].(string); ok && serviceName != "" {
-		return serviceName
+		return serviceNameField, serviceName
 	}
-	return ""
+	return "", ""
+}
+
+// LogAggKey is the grouping key for log aggregation (10s buckets).
+type LogAggKey struct {
+	TimestampBucket  int64  // Timestamp floored to 10s (10000ms) bucket
+	LogLevel         string // Log level (info, error, etc.)
+	StreamFieldName  string // Field name used for stream identification (e.g., "resource_service_name")
+	StreamFieldValue string // Stream identifier value
 }
 
 // LogsStatsProvider collects timestamp and fingerprint statistics for logs files.
@@ -103,6 +123,7 @@ func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 		streamValues:       mapset.NewSet[string](),
 		fieldFingerprinter: fingerprint.NewFieldFingerprinter(p.StreamField),
 		streamField:        p.StreamField,
+		aggCounts:          make(map[LogAggKey]int64),
 	}
 }
 
@@ -116,7 +137,8 @@ type LogsStatsAccumulator struct {
 	first              bool
 	fieldFingerprinter *fingerprint.FieldFingerprinter
 	missingFieldCount  int64
-	streamField        string // Configured stream field (empty = use default priority)
+	streamField        string              // Configured stream field (empty = use default priority)
+	aggCounts          map[LogAggKey]int64 // Aggregation counts for 10s buckets
 }
 
 func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
@@ -175,6 +197,20 @@ func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
 			a.missingFieldCount++
 		}
 	}
+
+	// Aggregation: floor timestamp to 10s bucket and count
+	if ts, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
+		bucket := (ts / 10000) * 10000 // 10s = 10000ms
+		logLevel, _ := row[wkk.RowKeyCLevel].(string)
+		streamFieldName, streamFieldValue := getStreamFieldAndValue(row, a.streamField)
+		key := LogAggKey{
+			TimestampBucket:  bucket,
+			LogLevel:         logLevel,
+			StreamFieldName:  streamFieldName,
+			StreamFieldValue: streamFieldValue,
+		}
+		a.aggCounts[key]++
+	}
 }
 
 func (a *LogsStatsAccumulator) Finalize() any {
@@ -193,15 +229,17 @@ func (a *LogsStatsAccumulator) Finalize() any {
 		StreamIdField:           streamIdField,
 		StreamValues:            streamValues,
 		MissingStreamFieldCount: a.missingFieldCount,
+		AggCounts:               a.aggCounts,
 	}
 }
 
 // LogsFileStats contains statistics about a logs file.
 type LogsFileStats struct {
-	FirstTS                 int64    // Earliest timestamp
-	LastTS                  int64    // Latest timestamp
-	Fingerprints            []int64  // Actual list of unique fingerprints in this file
-	StreamIdField           *string  // The field used for stream identification (resource_customer_domain or resource_service_name)
-	StreamValues            []string // Unique values from the stream field
-	MissingStreamFieldCount int64    // Count of rows missing stream identification fields
+	FirstTS                 int64               // Earliest timestamp
+	LastTS                  int64               // Latest timestamp
+	Fingerprints            []int64             // Actual list of unique fingerprints in this file
+	StreamIdField           *string             // The field used for stream identification (resource_customer_domain or resource_service_name)
+	StreamValues            []string            // Unique values from the stream field
+	MissingStreamFieldCount int64               // Count of rows missing stream identification fields
+	AggCounts               map[LogAggKey]int64 // Aggregation counts for 10s buckets (timestamp, log_level, stream_id) -> count
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/cardinalhq/lakerunner/adminproto"
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/adminconfig"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func TestEndToEndOrganizationAPIKeys(t *testing.T) {
@@ -279,6 +280,13 @@ func setupE2ETestServer(t *testing.T, ctx context.Context) (*Service, adminproto
 	_, err := adminconfig.SetupAdminConfig()
 	require.NoError(t, err)
 
+	// Connect to test databases
+	cdb, err := configdb.ConfigDBStore(ctx)
+	require.NoError(t, err)
+
+	mdb, err := lrdb.LRDBStore(ctx)
+	require.NoError(t, err)
+
 	// Create service with a random port
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -290,6 +298,8 @@ func setupE2ETestServer(t *testing.T, ctx context.Context) (*Service, adminproto
 		listener: listener,
 		addr:     addr,
 		serverID: "test-server",
+		configDB: cdb,
+		lrDB:     mdb,
 	}
 	adminproto.RegisterAdminServiceServer(service.server, service)
 
@@ -311,6 +321,8 @@ func setupE2ETestServer(t *testing.T, ctx context.Context) (*Service, adminproto
 		conn.Close()
 		service.server.GracefulStop()
 		listener.Close()
+		cdb.Close()
+		mdb.Close()
 	}
 
 	// Wait for server to be ready
@@ -322,19 +334,12 @@ func setupE2ETestServer(t *testing.T, ctx context.Context) (*Service, adminproto
 func cleanupTestOrg(t *testing.T, service *Service, orgID string) {
 	ctx := context.Background()
 
-	// Connect to database
-	pool, err := configdb.ConnectToConfigDB(ctx)
-	require.NoError(t, err)
-	defer pool.Close()
-
-	store := configdb.NewStore(pool)
-
 	// Parse org ID
 	orgUUID, err := uuid.Parse(orgID)
 	require.NoError(t, err)
 
-	// Delete organization
-	err = store.DeleteOrganization(ctx, orgUUID)
+	// Delete organization using service's configDB
+	err = service.configDB.DeleteOrganization(ctx, orgUUID)
 	if err != nil {
 		// Best effort cleanup
 		fmt.Printf("Warning: failed to clean up organization %s: %v\n", orgID, err)

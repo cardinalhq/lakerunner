@@ -19,12 +19,12 @@ import (
 	"log"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
 var (
-	logQuerySimpleCounter  metric.Int64Counter
-	logQueryComplexCounter metric.Int64Counter
+	logAggregationSourceCounter metric.Int64Counter
 )
 
 func init() {
@@ -32,27 +32,19 @@ func init() {
 
 	var err error
 
-	logQuerySimpleCounter, err = meter.Int64Counter(
-		"lakerunner.query.log.simple",
-		metric.WithDescription("Number of log queries using the simple flat SQL path"),
+	logAggregationSourceCounter, err = meter.Int64Counter(
+		"lakerunner.promql.log.aggregation.source",
+		metric.WithDescription("Number of log aggregations by source (tbl or agg)"),
 	)
 	if err != nil {
-		log.Fatalf("failed to create query.log.simple counter: %v", err)
-	}
-
-	logQueryComplexCounter, err = meter.Int64Counter(
-		"lakerunner.query.log.complex",
-		metric.WithDescription("Number of log queries using the complex CTE pipeline"),
-	)
-	if err != nil {
-		log.Fatalf("failed to create query.log.complex counter: %v", err)
+		log.Fatalf("failed to create query.log.aggregation.source counter: %v", err)
 	}
 }
 
-func recordLogQuerySimple() {
-	logQuerySimpleCounter.Add(context.Background(), 1)
-}
-
-func recordLogQueryComplex() {
-	logQueryComplexCounter.Add(context.Background(), 1)
+func RecordLogAggregationSource(ctx context.Context, organization_id, source string, instance_num int16) {
+	logAggregationSourceCounter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("organization_id", organization_id),
+		attribute.String("source", source),
+		attribute.Int("instance_num", int(instance_num)),
+	))
 }

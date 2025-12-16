@@ -25,6 +25,7 @@ import (
 	"github.com/cardinalhq/lakerunner/adminproto"
 	"github.com/cardinalhq/lakerunner/lakectl/cmd/adminclient"
 	"github.com/cardinalhq/lakerunner/lakectl/cmd/kafka"
+	"github.com/cardinalhq/lakerunner/lakectl/cmd/logs"
 	"github.com/cardinalhq/lakerunner/lakectl/cmd/organizations"
 	"github.com/cardinalhq/lakerunner/lakectl/cmd/workqueue"
 )
@@ -68,6 +69,7 @@ func init() {
 	rootCmd.AddCommand(organizations.GetOrganizationsCmd())
 	rootCmd.AddCommand(kafka.GetKafkaCmd())
 	rootCmd.AddCommand(workqueue.GetWorkQueueCmd())
+	rootCmd.AddCommand(logs.GetLogsCmd())
 }
 
 func getPingCmd() *cobra.Command {

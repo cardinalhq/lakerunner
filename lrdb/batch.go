@@ -559,7 +559,8 @@ INSERT INTO log_seg (
   label_name_map,
   stream_ids,
   stream_id_field,
-  sort_version
+  sort_version,
+  agg_fields
 )
 VALUES (
   $1,
@@ -576,7 +577,8 @@ VALUES (
   $13,
   $14::text[],
   $15,
-  $16
+  $16,
+  $17::text[]
 )
 `
 
@@ -603,6 +605,7 @@ type batchInsertLogSegsDirectParams struct {
 	StreamIds      []string  `json:"stream_ids"`
 	StreamIDField  *string   `json:"stream_id_field"`
 	SortVersion    int16     `json:"sort_version"`
+	AggFields      []string  `json:"agg_fields"`
 }
 
 func (q *Queries) batchInsertLogSegsDirect(ctx context.Context, arg []batchInsertLogSegsDirectParams) *batchInsertLogSegsDirectBatchResults {
@@ -625,6 +628,7 @@ func (q *Queries) batchInsertLogSegsDirect(ctx context.Context, arg []batchInser
 			a.StreamIds,
 			a.StreamIDField,
 			a.SortVersion,
+			a.AggFields,
 		}
 		batch.Queue(batchInsertLogSegsDirect, vals...)
 	}

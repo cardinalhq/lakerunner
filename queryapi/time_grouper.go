@@ -34,6 +34,25 @@ type SegmentInfo struct {
 	OrganizationID   uuid.UUID `json:"organizationID"`
 	InstanceNum      int16     `json:"instanceNum"`
 	Frequency        int64     `json:"frequency"`
+	AggFields        []string  `json:"aggFields,omitempty"`
+}
+
+// SegmentKey is a comparable key for deduplicating segments in maps.
+type SegmentKey struct {
+	DateInt        int
+	SegmentID      int64
+	InstanceNum    int16
+	OrganizationID uuid.UUID
+}
+
+// Key returns the SegmentKey for this SegmentInfo.
+func (s SegmentInfo) Key() SegmentKey {
+	return SegmentKey{
+		DateInt:        s.DateInt,
+		SegmentID:      s.SegmentID,
+		InstanceNum:    s.InstanceNum,
+		OrganizationID: s.OrganizationID,
+	}
 }
 
 type SegmentGroup struct {

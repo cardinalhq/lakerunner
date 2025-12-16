@@ -611,7 +611,7 @@ func TestFilterToTrigramQuery_WithSegmentLookupSimulation(t *testing.T) {
 	finalSegments := computeSegmentSet(root, fpToSegments)
 
 	t.Logf("Final segments returned: %d", len(finalSegments))
-	for seg := range finalSegments {
+	for _, seg := range finalSegments {
 		t.Logf("  - segment %d", seg.SegmentID)
 	}
 
@@ -619,11 +619,11 @@ func TestFilterToTrigramQuery_WithSegmentLookupSimulation(t *testing.T) {
 	// Should match: seg1 (error+"api"), seg2 (warn+"web"), seg4 (both)
 	// Should NOT match: seg3 (error but no "api"), seg5 (warn but no "web")
 	assert.Len(t, finalSegments, 3, "Should return exactly 3 segments")
-	assert.Contains(t, finalSegments, seg1, "segment 1 should match (error AND service_name contains 'api')")
-	assert.Contains(t, finalSegments, seg2, "segment 2 should match (warn AND service_name contains 'web')")
-	assert.Contains(t, finalSegments, seg4, "segment 4 should match (both branches)")
-	assert.NotContains(t, finalSegments, seg3, "segment 3 should NOT match (error but no 'api' trigram)")
-	assert.NotContains(t, finalSegments, seg5, "segment 5 should NOT match (warn but no 'web' trigram)")
+	assert.Contains(t, finalSegments, seg1.Key(), "segment 1 should match (error AND service_name contains 'api')")
+	assert.Contains(t, finalSegments, seg2.Key(), "segment 2 should match (warn AND service_name contains 'web')")
+	assert.Contains(t, finalSegments, seg4.Key(), "segment 4 should match (both branches)")
+	assert.NotContains(t, finalSegments, seg3.Key(), "segment 3 should NOT match (error but no 'api' trigram)")
+	assert.NotContains(t, finalSegments, seg5.Key(), "segment 5 should NOT match (warn but no 'web' trigram)")
 }
 
 func TestFilterToTrigramQuery_ComplexOrSegmentSelection(t *testing.T) {
@@ -702,7 +702,7 @@ func TestFilterToTrigramQuery_ComplexOrSegmentSelection(t *testing.T) {
 	finalSegments := computeSegmentSet(root, fpToSegments)
 
 	t.Logf("Final segments returned: %d", len(finalSegments))
-	for seg := range finalSegments {
+	for _, seg := range finalSegments {
 		t.Logf("  - segment %d", seg.SegmentID)
 	}
 
@@ -710,7 +710,7 @@ func TestFilterToTrigramQuery_ComplexOrSegmentSelection(t *testing.T) {
 	// Should match: seg1 (has file_type field), seg2 (has log_source field)
 	// Should NOT match: seg3 (has neither field)
 	assert.Len(t, finalSegments, 2, "Should return exactly 2 segments")
-	assert.Contains(t, finalSegments, seg1, "segment 1 should match (has file_type field)")
-	assert.Contains(t, finalSegments, seg2, "segment 2 should match (has log_source field)")
-	assert.NotContains(t, finalSegments, seg3, "segment 3 should NOT match (missing both OR fields)")
+	assert.Contains(t, finalSegments, seg1.Key(), "segment 1 should match (has file_type field)")
+	assert.Contains(t, finalSegments, seg2.Key(), "segment 2 should match (has log_source field)")
+	assert.NotContains(t, finalSegments, seg3.Key(), "segment 3 should NOT match (missing both OR fields)")
 }

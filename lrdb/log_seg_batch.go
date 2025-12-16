@@ -106,6 +106,7 @@ func (q *Store) CompactLogSegments(
 					StreamIds:      r.StreamIds,
 					StreamIDField:  r.StreamIdField,
 					SortVersion:    r.SortVersion,
+					AggFields:      r.AggFields,
 				}
 			}
 
