@@ -97,8 +97,7 @@ SET compacted = true, published = false
 WHERE organization_id = @organization_id
   AND dateint         = @dateint
   AND instance_num    = @instance_num
-  AND segment_id      = ANY(@segment_ids::bigint[])
-  AND compacted       = false;
+  AND segment_id      = ANY(@segment_ids::bigint[]);
 
 -- name: ListLogSegmentsForQuery :many
 SELECT

@@ -417,7 +417,6 @@ WHERE organization_id = $1
   AND dateint         = $2
   AND instance_num    = $3
   AND segment_id      = ANY($4::bigint[])
-  AND compacted       = false
 `
 
 type markLogSegsCompactedUnpublishedByKeysParams struct {
