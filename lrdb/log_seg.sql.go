@@ -106,7 +106,8 @@ SELECT
     s.instance_num,
     s.segment_id,
     lower(s.ts_range)::bigint        AS start_ts,
-    (upper(s.ts_range) - 1)::bigint  AS end_ts
+    (upper(s.ts_range) - 1)::bigint  AS end_ts,
+    s.agg_fields
 FROM log_seg AS s
          CROSS JOIN LATERAL
     unnest(s.fingerprints) AS t(fp)
@@ -128,11 +129,12 @@ type ListLogSegmentsForQueryParams struct {
 }
 
 type ListLogSegmentsForQueryRow struct {
-	Fingerprint int64 `json:"fingerprint"`
-	InstanceNum int16 `json:"instance_num"`
-	SegmentID   int64 `json:"segment_id"`
-	StartTs     int64 `json:"start_ts"`
-	EndTs       int64 `json:"end_ts"`
+	Fingerprint int64    `json:"fingerprint"`
+	InstanceNum int16    `json:"instance_num"`
+	SegmentID   int64    `json:"segment_id"`
+	StartTs     int64    `json:"start_ts"`
+	EndTs       int64    `json:"end_ts"`
+	AggFields   []string `json:"agg_fields"`
 }
 
 func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error) {
@@ -156,6 +158,7 @@ func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmen
 			&i.SegmentID,
 			&i.StartTs,
 			&i.EndTs,
+			&i.AggFields,
 		); err != nil {
 			return nil, err
 		}

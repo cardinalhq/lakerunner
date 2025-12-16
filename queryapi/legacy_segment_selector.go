@@ -112,7 +112,7 @@ func SelectSegmentsFromLegacyFilter(
 		"final_count", len(finalSet))
 
 	out := make([]SegmentInfo, 0, len(finalSet))
-	for s := range finalSet {
+	for _, s := range finalSet {
 		out = append(out, s)
 	}
 	return out, fpToSegments, nil

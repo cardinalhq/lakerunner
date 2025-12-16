@@ -106,7 +106,8 @@ SELECT
     s.instance_num,
     s.segment_id,
     lower(s.ts_range)::bigint        AS start_ts,
-    (upper(s.ts_range) - 1)::bigint  AS end_ts
+    (upper(s.ts_range) - 1)::bigint  AS end_ts,
+    s.agg_fields
 FROM log_seg AS s
          CROSS JOIN LATERAL
     unnest(s.fingerprints) AS t(fp)

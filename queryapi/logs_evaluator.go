@@ -388,6 +388,7 @@ func (q *QuerierService) lookupLogsSegments(
 			OrganizationID: orgUUID,
 			InstanceNum:    row.InstanceNum,
 			Frequency:      10000,
+			AggFields:      row.AggFields,
 		}
 		fpToSegments[row.Fingerprint] = append(fpToSegments[row.Fingerprint], seg)
 	}
@@ -395,7 +396,7 @@ func (q *QuerierService) lookupLogsSegments(
 	finalSet := computeSegmentSet(root, fpToSegments)
 
 	out := make([]SegmentInfo, 0, len(finalSet))
-	for s := range finalSet {
+	for _, s := range finalSet {
 		out = append(out, s)
 	}
 	return out, nil
@@ -454,7 +455,7 @@ func fromIndexQuery(label string, iq *index.Query) *TrigramQuery {
 	return node
 }
 
-func computeSegmentSet(q *TrigramQuery, fpToSegs map[int64][]SegmentInfo) map[SegmentInfo]struct{} {
+func computeSegmentSet(q *TrigramQuery, fpToSegs map[int64][]SegmentInfo) map[SegmentKey]SegmentInfo {
 	if q == nil {
 		return flattenAll(fpToSegs)
 	}
@@ -463,18 +464,18 @@ func computeSegmentSet(q *TrigramQuery, fpToSegs map[int64][]SegmentInfo) map[Se
 		case index.QAll:
 			return flattenAll(fpToSegs)
 		case index.QNone:
-			return map[SegmentInfo]struct{}{}
+			return map[SegmentKey]SegmentInfo{}
 		case index.QAnd:
-			sets := make([]map[SegmentInfo]struct{}, 0, len(q.Sub))
+			sets := make([]map[SegmentKey]SegmentInfo, 0, len(q.Sub))
 			for _, ch := range q.Sub {
 				sets = append(sets, computeSegmentSet(ch, fpToSegs))
 			}
 			return intersectSets(sets...)
 		case index.QOr:
-			out := make(map[SegmentInfo]struct{})
+			out := make(map[SegmentKey]SegmentInfo)
 			for _, ch := range q.Sub {
-				for s := range computeSegmentSet(ch, fpToSegs) {
-					out[s] = struct{}{}
+				for k, s := range computeSegmentSet(ch, fpToSegs) {
+					out[k] = s
 				}
 			}
 			return out
@@ -487,28 +488,28 @@ func computeSegmentSet(q *TrigramQuery, fpToSegs map[int64][]SegmentInfo) map[Se
 	case index.QAll:
 		return flattenAll(fpToSegs)
 	case index.QNone:
-		return map[SegmentInfo]struct{}{}
+		return map[SegmentKey]SegmentInfo{}
 	case index.QAnd:
 		// Intersect sets of segments for all leaf trigrams
 		if len(q.Trigram) == 0 {
 			return flattenAll(fpToSegs)
 		}
-		sets := make([]map[SegmentInfo]struct{}, 0, len(q.Trigram))
+		sets := make([]map[SegmentKey]SegmentInfo, 0, len(q.Trigram))
 		for _, tri := range q.Trigram {
 			fp := fingerprint.ComputeFingerprint(q.fieldName, tri)
-			set := make(map[SegmentInfo]struct{})
+			set := make(map[SegmentKey]SegmentInfo)
 			for _, s := range fpToSegs[fp] {
-				set[s] = struct{}{}
+				set[s.Key()] = s
 			}
 			sets = append(sets, set)
 		}
 		return intersectSets(sets...)
 	case index.QOr:
-		out := make(map[SegmentInfo]struct{})
+		out := make(map[SegmentKey]SegmentInfo)
 		for _, tri := range q.Trigram {
 			fp := fingerprint.ComputeFingerprint(q.fieldName, tri)
 			for _, s := range fpToSegs[fp] {
-				out[s] = struct{}{}
+				out[s.Key()] = s
 			}
 		}
 		return out
@@ -517,25 +518,25 @@ func computeSegmentSet(q *TrigramQuery, fpToSegs map[int64][]SegmentInfo) map[Se
 	}
 }
 
-func flattenAll(fpToSegs map[int64][]SegmentInfo) map[SegmentInfo]struct{} {
-	out := make(map[SegmentInfo]struct{})
+func flattenAll(fpToSegs map[int64][]SegmentInfo) map[SegmentKey]SegmentInfo {
+	out := make(map[SegmentKey]SegmentInfo)
 	for _, segs := range fpToSegs {
 		for _, s := range segs {
-			out[s] = struct{}{}
+			out[s.Key()] = s
 		}
 	}
 	return out
 }
 
-func intersectSets(sets ...map[SegmentInfo]struct{}) map[SegmentInfo]struct{} {
+func intersectSets(sets ...map[SegmentKey]SegmentInfo) map[SegmentKey]SegmentInfo {
 	switch len(sets) {
 	case 0:
-		return map[SegmentInfo]struct{}{}
+		return map[SegmentKey]SegmentInfo{}
 	case 1:
 		// clone
-		out := make(map[SegmentInfo]struct{}, len(sets[0]))
-		for s := range sets[0] {
-			out[s] = struct{}{}
+		out := make(map[SegmentKey]SegmentInfo, len(sets[0]))
+		for k, s := range sets[0] {
+			out[k] = s
 		}
 		return out
 	}
@@ -547,20 +548,20 @@ func intersectSets(sets ...map[SegmentInfo]struct{}) map[SegmentInfo]struct{} {
 		}
 	}
 	base := sets[minIdx]
-	out := make(map[SegmentInfo]struct{})
-	for s := range base {
+	out := make(map[SegmentKey]SegmentInfo)
+	for k, s := range base {
 		ok := true
 		for i := 0; i < len(sets); i++ {
 			if i == minIdx {
 				continue
 			}
-			if _, has := sets[i][s]; !has {
+			if _, has := sets[i][k]; !has {
 				ok = false
 				break
 			}
 		}
 		if ok {
-			out[s] = struct{}{}
+			out[k] = s
 		}
 	}
 	return out
