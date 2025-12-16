@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -127,9 +126,9 @@ type DownloadBatchFunc func(ctx context.Context, storageProfile storageprofile.S
 type RowMapper[T promql.Timestamped] func(queryapi.PushDownRequest, []string, *sql.Rows) (T, error)
 
 type ingestJob struct {
-	profile storageprofile.StorageProfile
-	paths   []string
-	ids     []int64
+	profile   storageprofile.StorageProfile
+	objectIDs []string
+	ids       []int64
 }
 
 // CacheManager coordinates downloads, batch-ingest, queries, and LRU evictions.
@@ -180,6 +179,11 @@ const (
 )
 
 func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider, s3Pool *duckdbx.S3DB, disableTableCache bool, parquetCache *ParquetFileCache) *CacheManager {
+	if parquetCache == nil {
+		slog.Error("parquetCache is required but was nil")
+		return nil
+	}
+
 	var ddb *DDBSink
 	var err error
 
@@ -474,13 +478,12 @@ func EvaluatePushDown[T promql.Timestamped](
 			}
 
 			// Split into cached vs S3 (when table cache is disabled, treat all as S3)
-			var s3URIs []string
-			var s3LocalPaths []string
+			var objectIDs []string
 			var s3IDs []int64
 			var cachedIDs []int64
 
 			for _, seg := range segments {
-				objectId := fmt.Sprintf("db/%s/%s/%d/%s/%s/tbl_%d.parquet",
+				objectID := fmt.Sprintf("db/%s/%s/%d/%s/%s/tbl_%d.parquet",
 					orgId.String(),
 					profile.CollectorName,
 					seg.DateInt,
@@ -498,20 +501,12 @@ func EvaluatePushDown[T promql.Timestamped](
 				if inCache {
 					cachedIDs = append(cachedIDs, seg.SegmentID)
 				} else {
-					bucket := profile.Bucket
-					var prefix string
-					if profile.CloudProvider == "azure" {
-						prefix = "azure://" + bucket + "/"
-					} else {
-						prefix = "s3://" + bucket + "/"
-					}
-					s3URIs = append(s3URIs, prefix+objectId)
-					s3LocalPaths = append(s3LocalPaths, objectId)
+					objectIDs = append(objectIDs, objectID)
 					s3IDs = append(s3IDs, seg.SegmentID)
 				}
 			}
 
-			totalS3Segments += len(s3URIs)
+			totalS3Segments += len(objectIDs)
 			totalCachedSegments += len(cachedIDs)
 
 			// Safe logging (len(w.present) under RLock)
@@ -519,22 +514,37 @@ func EvaluatePushDown[T promql.Timestamped](
 			numPresent := len(w.present)
 			w.mu.RUnlock()
 			slog.Info("Segment Stats",
-				"numS3", len(s3URIs),
+				"numS3", len(objectIDs),
 				"numCached", len(cachedIDs),
 				"numPresent", numPresent)
 
 			// Download files from S3 before querying (new flow: download-then-query)
-			if len(s3LocalPaths) > 0 {
-				if err := w.downloadForQuery(ctx, profile, s3LocalPaths); err != nil {
+			if len(objectIDs) > 0 {
+				if err := w.downloadForQuery(ctx, profile, objectIDs); err != nil {
 					evalSpan.RecordError(err)
 					evalSpan.SetStatus(codes.Error, "failed to download from S3")
 					return nil, fmt.Errorf("download from S3: %w", err)
 				}
 			}
 
+			// Convert object IDs to local paths for streaming (cache has already downloaded them)
+			localPaths := make([]string, len(objectIDs))
+			for i, objID := range objectIDs {
+				localPath, exists, err := w.parquetCache.GetOrPrepare(profile.Region, profile.Bucket, objID)
+				if err != nil {
+					evalSpan.RecordError(err)
+					evalSpan.SetStatus(codes.Error, "failed to get local path")
+					return nil, fmt.Errorf("get local path for %s: %w", objID, err)
+				}
+				if !exists {
+					slog.Warn("Expected file to exist after download", "objectID", objID, "localPath", localPath)
+				}
+				localPaths[i] = localPath
+			}
+
 			// Stream from downloaded local files (not S3 directly).
 			s3Channels, err := streamFromLocalFiles(ctx, w, request,
-				s3LocalPaths,
+				localPaths,
 				userSQL,
 				mapper)
 			if err != nil {
@@ -545,8 +555,8 @@ func EvaluatePushDown[T promql.Timestamped](
 			outs = append(outs, s3Channels...)
 
 			// Enqueue uncached segments for background ingest (skip if cache disabled).
-			if len(s3LocalPaths) > 0 && !w.disableTableCache {
-				w.enqueueIngest(profile, s3LocalPaths, s3IDs)
+			if len(objectIDs) > 0 && !w.disableTableCache {
+				w.enqueueIngest(profile, objectIDs, s3IDs)
 			}
 
 			// Stream cached segments from the cache.
@@ -826,13 +836,13 @@ func (w *CacheManager) downloadForQuery(ctx context.Context, profile storageprof
 }
 
 // enqueueIngest filters out present/in-flight, marks new IDs in-flight, and queues one job.
-func (w *CacheManager) enqueueIngest(storageProfile storageprofile.StorageProfile, paths []string, ids []int64) {
-	if len(paths) == 0 || len(paths) != len(ids) {
+func (w *CacheManager) enqueueIngest(storageProfile storageprofile.StorageProfile, objectIDs []string, ids []int64) {
+	if len(objectIDs) == 0 || len(objectIDs) != len(ids) {
 		return
 	}
 
 	// Filter + mark in-flight under lock
-	var todoPaths []string
+	var todoObjectIDs []string
 	var todoIDs []int64
 	w.mu.Lock()
 	for i, id := range ids {
@@ -843,18 +853,18 @@ func (w *CacheManager) enqueueIngest(storageProfile storageprofile.StorageProfil
 			continue // someone else is already ingesting
 		}
 		w.inflight[id] = &struct{}{}
-		todoPaths = append(todoPaths, paths[i])
+		todoObjectIDs = append(todoObjectIDs, objectIDs[i])
 		todoIDs = append(todoIDs, id)
 		w.lastAccess[id] = time.Now()
 	}
 	w.mu.Unlock()
 
-	if len(todoPaths) == 0 {
+	if len(todoObjectIDs) == 0 {
 		return
 	}
 
 	// Non-blocking enqueue
-	w.ingestQ <- ingestJob{profile: storageProfile, paths: todoPaths, ids: todoIDs}
+	w.ingestQ <- ingestJob{profile: storageProfile, objectIDs: todoObjectIDs, ids: todoIDs}
 }
 
 func (w *CacheManager) ingestLoop(ctx context.Context) {
@@ -867,33 +877,56 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case job := <-w.ingestQ:
-			if len(job.paths) == 0 {
+			if len(job.objectIDs) == 0 {
 				continue
 			}
+
+			region := job.profile.Region
+			bucket := job.profile.Bucket
 
 			// Create a span for the entire cache ingest operation
 			_, ingestSpan := tracer.Start(ctx, "query.worker.cache_ingest_batch")
 			ingestSpan.SetAttributes(
-				attribute.Int("file_count", len(job.paths)),
-				attribute.String("bucket", job.profile.Bucket),
+				attribute.Int("file_count", len(job.objectIDs)),
+				attribute.String("bucket", bucket),
 				attribute.String("dataset", w.dataset),
 			)
 
-			// Filter out paths that already exist locally (downloaded by query path)
-			var pathsToDownload []string
-			for _, p := range job.paths {
-				if _, err := os.Stat(p); os.IsNotExist(err) {
-					pathsToDownload = append(pathsToDownload, p)
+			// Convert object IDs to local paths and filter out ones that need download
+			localPaths := make([]string, len(job.objectIDs))
+			var objectIDsToDownload []string
+			var prepareErr error
+			for i, objID := range job.objectIDs {
+				localPath, exists, err := w.parquetCache.GetOrPrepare(region, bucket, objID)
+				if err != nil {
+					slog.Error("Failed to get local path for ingest", "objectID", objID, "error", err)
+					prepareErr = err
+					break
+				}
+				localPaths[i] = localPath
+				if !exists {
+					objectIDsToDownload = append(objectIDsToDownload, objID)
 				}
 			}
+			if prepareErr != nil {
+				ingestSpan.RecordError(prepareErr)
+				ingestSpan.SetStatus(codes.Error, "failed to prepare local paths")
+				ingestSpan.End()
+				w.mu.Lock()
+				for _, id := range job.ids {
+					delete(w.inflight, id)
+				}
+				w.mu.Unlock()
+				continue
+			}
 
-			if w.downloader != nil && len(pathsToDownload) > 0 {
+			if w.downloader != nil && len(objectIDsToDownload) > 0 {
 				_, downloadSpan := tracer.Start(ctx, "query.worker.cache_download_files")
 				downloadSpan.SetAttributes(
-					attribute.Int("file_count", len(pathsToDownload)),
-					attribute.Int("skipped_existing", len(job.paths)-len(pathsToDownload)),
+					attribute.Int("file_count", len(objectIDsToDownload)),
+					attribute.Int("skipped_existing", len(job.objectIDs)-len(objectIDsToDownload)),
 				)
-				if err := w.downloader(ctx, job.profile, pathsToDownload); err != nil {
+				if err := w.downloader(ctx, job.profile, objectIDsToDownload); err != nil {
 					downloadSpan.RecordError(err)
 					downloadSpan.SetStatus(codes.Error, "download failed")
 					downloadSpan.End()
@@ -911,14 +944,14 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 					continue
 				}
 				downloadSpan.End()
-			} else if len(pathsToDownload) == 0 {
+			} else if len(objectIDsToDownload) == 0 {
 				slog.Info("Skipping download, all files already exist locally",
-					slog.Int("file_count", len(job.paths)))
+					slog.Int("file_count", len(job.objectIDs)))
 			}
 
 			_, parquetSpan := tracer.Start(ctx, "query.worker.cache_ingest_parquet")
-			parquetSpan.SetAttributes(attribute.Int("file_count", len(job.paths)))
-			if err := w.sink.IngestParquetBatch(ctx, job.paths, job.ids); err != nil {
+			parquetSpan.SetAttributes(attribute.Int("file_count", len(localPaths)))
+			if err := w.sink.IngestParquetBatch(ctx, localPaths, job.ids); err != nil {
 				parquetSpan.RecordError(err)
 				parquetSpan.SetStatus(codes.Error, "ingest failed")
 				parquetSpan.End()
@@ -952,12 +985,8 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 
 			// Mark files for delayed deletion instead of immediate removal.
 			// This allows concurrent queries to finish using the files.
-			for _, p := range job.paths {
-				if w.parquetCache != nil {
-					w.parquetCache.MarkForDeletion(p)
-				} else {
-					_ = os.Remove(p) // fallback to immediate delete if no cache
-				}
+			for _, objID := range job.objectIDs {
+				w.parquetCache.MarkForDeletion(region, bucket, objID)
 			}
 
 			ingestSpan.SetAttributes(attribute.Int("segments_cached", len(job.ids)))

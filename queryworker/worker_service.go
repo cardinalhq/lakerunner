@@ -25,7 +25,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -60,13 +59,16 @@ func NewWorkerService(
 	metricsGlobSize int,
 	logsGlobSize int,
 	tracesGlobSize int,
-	maxConcurrency int,
+	maxParallelDownloads int,
 	sp storageprofile.StorageProfileProvider,
 	cloudManagers cloudstorage.ClientProvider,
 	disableTableCache bool,
 ) (*WorkerService, error) {
 	// Create shared parquet file cache for downloaded files
-	parquetCache := NewParquetFileCache(DefaultParquetFileTTL, DefaultCleanupInterval)
+	parquetCache, err := NewParquetFileCache(DefaultParquetFileTTL, DefaultCleanupInterval)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create parquet file cache: %w", err)
+	}
 
 	// Scan for existing files from previous runs
 	if err := parquetCache.ScanExistingFiles(); err != nil {
@@ -78,8 +80,8 @@ func NewWorkerService(
 		slog.Error("Failed to register parquet cache metrics", slog.Any("error", err))
 	}
 
-	downloader := func(ctx context.Context, profile storageprofile.StorageProfile, keys []string) error {
-		if len(keys) == 0 {
+	downloader := func(ctx context.Context, profile storageprofile.StorageProfile, objectIDs []string) error {
+		if len(objectIDs) == 0 {
 			return nil
 		}
 
@@ -89,14 +91,12 @@ func NewWorkerService(
 		}
 
 		g, gctx := errgroup.WithContext(ctx)
-		maxConc := 4 * runtime.GOMAXPROCS(0)
-		if maxConc > maxConcurrency {
-			maxConc = maxConcurrency
-		}
-		g.SetLimit(maxConc)
+		g.SetLimit(maxParallelDownloads)
 
-		for _, key := range keys {
-			key := key // capture loop var
+		region := profile.Region
+		bucket := profile.Bucket
+
+		for _, objectID := range objectIDs {
 			g.Go(func() error {
 				select {
 				case <-gctx.Done():
@@ -104,28 +104,28 @@ func NewWorkerService(
 				default:
 				}
 
-				// keep same relative layout locally
-				localPath := key
-				dir := filepath.Dir(localPath)
+				// Ask the cache where to put this file
+				localPath, exists, err := parquetCache.GetOrPrepare(region, bucket, objectID)
+				if err != nil {
+					return fmt.Errorf("failed to prepare cache path for %s: %w", objectID, err)
+				}
 
-				// Check if file already exists locally (from previous download or query)
-				if parquetCache.HasFile(localPath) {
+				if exists {
 					slog.Debug("File already cached locally, skipping download",
+						slog.String("objectID", objectID),
 						slog.String("path", localPath))
 					return nil
 				}
 
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					return fmt.Errorf("mkdir %q: %w", dir, err)
-				}
+				dir := filepath.Dir(localPath)
 
-				// IMPORTANT: pass the directory, not the file path
-				tmpfn, _, is404, err := storageClient.DownloadObject(gctx, dir, profile.Bucket, key)
+				// Download to temp file in target directory
+				tmpfn, _, is404, err := storageClient.DownloadObject(gctx, dir, bucket, objectID)
 				if err != nil {
 					slog.Error("Failed to download object",
 						slog.String("cloudProvider", profile.CloudProvider),
-						slog.String("bucket", profile.Bucket),
-						slog.String("objectID", key),
+						slog.String("bucket", bucket),
+						slog.String("objectID", objectID),
 						slog.Any("error", err))
 					return err
 				}
@@ -133,8 +133,8 @@ func NewWorkerService(
 					// Non-fatal skip
 					slog.Info("Object not found, skipping",
 						slog.String("cloudProvider", profile.CloudProvider),
-						slog.String("bucket", profile.Bucket),
-						slog.String("objectID", key))
+						slog.String("bucket", bucket),
+						slog.String("objectID", objectID))
 					return nil
 				}
 
@@ -150,8 +150,11 @@ func NewWorkerService(
 				}
 
 				// Track the newly downloaded file
-				if err := parquetCache.TrackFile(localPath); err != nil {
-					slog.Warn("Failed to track downloaded file", slog.String("path", localPath), slog.Any("error", err))
+				if err := parquetCache.TrackFile(region, bucket, objectID); err != nil {
+					slog.Error("Failed to track downloaded file - file exists but won't be managed by cache TTL",
+						slog.String("objectID", objectID),
+						slog.String("path", localPath),
+						slog.Any("error", err))
 				}
 
 				return nil
@@ -200,8 +203,8 @@ func NewWorkerService(
 }
 
 func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}
@@ -264,8 +267,8 @@ func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql
 }
 
 func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}
@@ -297,8 +300,8 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 }
 
 func tagValuesMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}

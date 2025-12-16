@@ -108,6 +108,12 @@ type QueryConfig struct {
 	// without populating or querying the local DuckDB cache.
 	// Default: false
 	DisableTableCache bool `mapstructure:"disable_table_cache"`
+
+	// MaxParallelDownloads is the maximum number of concurrent S3 downloads
+	// allowed per query. Higher values increase throughput but risk exhausting
+	// file descriptors, memory, and triggering S3 rate limits.
+	// Default: 100
+	MaxParallelDownloads int `mapstructure:"max_parallel_downloads"`
 }
 
 // TopicCreationConfig holds configuration for creating Kafka topics
@@ -283,6 +289,7 @@ func Load() (*Config, error) {
 		Query: QueryConfig{
 			MaxSegmentsPerWorkerPerWave: 50,    // Default wave size
 			DisableTableCache:           false, // Use table cache by default
+			MaxParallelDownloads:        100,   // Default max parallel downloads
 		},
 	}
 

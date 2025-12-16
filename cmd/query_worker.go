@@ -61,7 +61,8 @@ func init() {
 				cfg = &config.Config{}
 			}
 			slog.Info("Query worker config loaded",
-				slog.Bool("disableTableCache", cfg.Query.DisableTableCache))
+				slog.Bool("disableTableCache", cfg.Query.DisableTableCache),
+				slog.Int("maxParallelDownloads", cfg.Query.MaxParallelDownloads))
 
 			go diskUsageLoop(ctx)
 
@@ -93,7 +94,7 @@ func init() {
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			worker, err := queryworker.NewWorkerService(5, 5, 5, 12, sp, cloudManagers, cfg.Query.DisableTableCache)
+			worker, err := queryworker.NewWorkerService(5, 5, 5, cfg.Query.MaxParallelDownloads, sp, cloudManagers, cfg.Query.DisableTableCache)
 			if err != nil {
 				return fmt.Errorf("failed to create worker service: %w", err)
 			}
