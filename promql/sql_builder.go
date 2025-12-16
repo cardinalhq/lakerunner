@@ -283,6 +283,86 @@ func buildComplexLogAggSQL(be *BaseExpr, step time.Duration) string {
 	return sql
 }
 
+// CanUseAggFile returns true if a segment's agg_fields support the query's GROUP BY fields.
+// The query can use the agg_ file if GROUP BY fields are a subset of agg_fields.
+// Note: agg_fields contain the original field names (e.g., "resource_customer_domain"),
+// while the agg_ file stores them in "stream_id" column.
+func CanUseAggFile(aggFields []string, groupBy []string) bool {
+	if len(aggFields) == 0 {
+		return false
+	}
+
+	// Build set of normalized agg_fields
+	aggFieldSet := make(map[string]bool)
+	for _, f := range aggFields {
+		aggFieldSet[normalizeFieldName(f)] = true
+	}
+
+	// Check that all GROUP BY fields are in agg_fields
+	for _, g := range groupBy {
+		if !aggFieldSet[normalizeFieldName(g)] {
+			return false
+		}
+	}
+	return true
+}
+
+// mapToAggColumn maps query field names to agg_ file column names.
+// log_level stays as log_level, all other stream fields map to stream_id.
+func mapToAggColumn(fieldName string) string {
+	if fieldName == "log_level" {
+		return "log_level"
+	}
+	// All other fields (resource_customer_domain, resource_service_name, etc.)
+	// are stored in the stream_id column
+	return "stream_id"
+}
+
+// BuildAggFileSQL generates SQL for querying pre-aggregated agg_ files.
+// The agg_ files have 10s buckets that are re-aggregated to the query step.
+func BuildAggFileSQL(be *BaseExpr, step time.Duration) string {
+	stepMs := step.Milliseconds()
+
+	// Re-bucket from 10s buckets to query step size
+	// bucket_ts is already floored to 10s boundaries, re-floor to step
+	rebucketExpr := fmt.Sprintf(
+		"(bucket_ts - (bucket_ts %% %d))",
+		stepMs,
+	)
+
+	cols := []string{rebucketExpr + " AS bucket_ts"}
+
+	// Add GROUP BY columns mapped to agg_ column names
+	for _, g := range be.GroupBy {
+		fieldName := normalizeFieldName(g)
+		aggCol := mapToAggColumn(fieldName)
+		cols = append(cols, fmt.Sprintf("\"%s\"", aggCol))
+	}
+
+	// SUM the pre-aggregated counts
+	cols = append(cols, `SUM("count") AS count`)
+
+	// Build WHERE with time predicate using bucket_ts
+	whereParts := []string{
+		"bucket_ts >= {start}",
+		"bucket_ts < {end}",
+	}
+
+	// Build GROUP BY clause
+	gb := []string{"1"} // Reference bucket_ts by position due to expression
+	for i := range be.GroupBy {
+		gb = append(gb, fmt.Sprintf("%d", i+2)) // Positional reference
+	}
+
+	sql := "SELECT " + strings.Join(cols, ", ") +
+		" FROM {table}" +
+		" WHERE " + strings.Join(whereParts, " AND ") +
+		" GROUP BY " + strings.Join(gb, ", ") +
+		" ORDER BY bucket_ts ASC"
+
+	return sql
+}
+
 func (be *BaseExpr) ToWorkerSQLForTagValues(step time.Duration, tagName string) string {
 	// Build WHERE clause with metric name and matchers
 	where := withTime(whereFor(be))

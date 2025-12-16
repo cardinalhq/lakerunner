@@ -55,7 +55,7 @@ func TestWriteAggParquet_SingleRow(t *testing.T) {
 	rows := readAggParquet(t, filename)
 	require.Len(t, rows, 1)
 
-	assert.Equal(t, int64(1234567890000), rows[0].TimestampBucket)
+	assert.Equal(t, int64(1234567890000), rows[0].BucketTs)
 	assert.Equal(t, "info", rows[0].LogLevel)
 	assert.Equal(t, "example.com", rows[0].StreamId)
 	assert.Equal(t, AggFrequency, rows[0].Frequency)
@@ -84,7 +84,7 @@ func TestWriteAggParquet_MultipleRows(t *testing.T) {
 	resultMap := make(map[LogAggKey]int64)
 	for _, row := range rows {
 		key := LogAggKey{
-			TimestampBucket: row.TimestampBucket,
+			TimestampBucket: row.BucketTs,
 			LogLevel:        row.LogLevel,
 			StreamId:        row.StreamId,
 		}
@@ -117,10 +117,10 @@ func TestWriteAggParquet_SortedByTimestampBucket(t *testing.T) {
 	rows := readAggParquet(t, filename)
 	require.Len(t, rows, 3)
 
-	// Verify rows are sorted by timestamp_bucket
-	assert.Equal(t, int64(1000000000000), rows[0].TimestampBucket)
-	assert.Equal(t, int64(2000000000000), rows[1].TimestampBucket)
-	assert.Equal(t, int64(3000000000000), rows[2].TimestampBucket)
+	// Verify rows are sorted by bucket_ts
+	assert.Equal(t, int64(1000000000000), rows[0].BucketTs)
+	assert.Equal(t, int64(2000000000000), rows[1].BucketTs)
+	assert.Equal(t, int64(3000000000000), rows[2].BucketTs)
 }
 
 func TestWriteAggParquet_EmptyStringValues(t *testing.T) {
@@ -143,7 +143,7 @@ func TestWriteAggParquet_EmptyStringValues(t *testing.T) {
 	resultMap := make(map[LogAggKey]int64)
 	for _, row := range rows {
 		key := LogAggKey{
-			TimestampBucket: row.TimestampBucket,
+			TimestampBucket: row.BucketTs,
 			LogLevel:        row.LogLevel,
 			StreamId:        row.StreamId,
 		}
@@ -184,10 +184,10 @@ func TestWriteAggParquet_LargeDataset(t *testing.T) {
 		assert.Equal(t, AggFrequency, row.Frequency)
 	}
 
-	// Verify sorted by timestamp
+	// Verify sorted by bucket_ts
 	for i := 1; i < len(rows); i++ {
-		assert.LessOrEqual(t, rows[i-1].TimestampBucket, rows[i].TimestampBucket,
-			"Rows should be sorted by timestamp_bucket")
+		assert.LessOrEqual(t, rows[i-1].BucketTs, rows[i].BucketTs,
+			"Rows should be sorted by bucket_ts")
 	}
 }
 

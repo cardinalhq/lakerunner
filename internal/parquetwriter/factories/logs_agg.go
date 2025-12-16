@@ -52,15 +52,15 @@ func init() {
 
 // LogAggRow represents a single row in the aggregation parquet file.
 type LogAggRow struct {
-	TimestampBucket int64  `parquet:"timestamp_bucket"`
-	LogLevel        string `parquet:"log_level"`
-	StreamId        string `parquet:"stream_id"`
-	Frequency       int64  `parquet:"frequency"`
-	Count           int64  `parquet:"count"`
+	BucketTs  int64  `parquet:"bucket_ts"`
+	LogLevel  string `parquet:"log_level"`
+	StreamId  string `parquet:"stream_id"`
+	Frequency int64  `parquet:"frequency"`
+	Count     int64  `parquet:"count"`
 }
 
 // WriteAggParquet writes the aggregation data to a parquet file.
-// The file is sorted by timestamp_bucket.
+// The file is sorted by bucket_ts.
 // Returns the file size in bytes.
 func WriteAggParquet(ctx context.Context, filename string, counts map[LogAggKey]int64) (int64, error) {
 	if len(counts) == 0 {
@@ -71,20 +71,20 @@ func WriteAggParquet(ctx context.Context, filename string, counts map[LogAggKey]
 	rows := make([]LogAggRow, 0, len(counts))
 	for key, count := range counts {
 		rows = append(rows, LogAggRow{
-			TimestampBucket: key.TimestampBucket,
-			LogLevel:        key.LogLevel,
-			StreamId:        key.StreamId,
-			Frequency:       AggFrequency,
-			Count:           count,
+			BucketTs:  key.TimestampBucket,
+			LogLevel:  key.LogLevel,
+			StreamId:  key.StreamId,
+			Frequency: AggFrequency,
+			Count:     count,
 		})
 	}
 
-	// Sort by timestamp_bucket for efficient querying
+	// Sort by bucket_ts for efficient querying
 	slices.SortFunc(rows, func(a, b LogAggRow) int {
-		if a.TimestampBucket < b.TimestampBucket {
+		if a.BucketTs < b.BucketTs {
 			return -1
 		}
-		if a.TimestampBucket > b.TimestampBucket {
+		if a.BucketTs > b.BucketTs {
 			return 1
 		}
 		return 0

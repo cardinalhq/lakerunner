@@ -25,6 +25,7 @@ import (
 var (
 	logQuerySimpleCounter  metric.Int64Counter
 	logQueryComplexCounter metric.Int64Counter
+	logQueryAggCounter     metric.Int64Counter
 )
 
 func init() {
@@ -47,6 +48,14 @@ func init() {
 	if err != nil {
 		log.Fatalf("failed to create query.log.complex counter: %v", err)
 	}
+
+	logQueryAggCounter, err = meter.Int64Counter(
+		"lakerunner.query.log.agg",
+		metric.WithDescription("Number of log segments queried using pre-aggregated agg_ files"),
+	)
+	if err != nil {
+		log.Fatalf("failed to create query.log.agg counter: %v", err)
+	}
 }
 
 func recordLogQuerySimple() {
@@ -55,4 +64,9 @@ func recordLogQuerySimple() {
 
 func recordLogQueryComplex() {
 	logQueryComplexCounter.Add(context.Background(), 1)
+}
+
+// RecordLogQueryAgg records the number of segments queried using agg_ files.
+func RecordLogQueryAgg(segmentCount int) {
+	logQueryAggCounter.Add(context.Background(), int64(segmentCount))
 }

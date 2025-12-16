@@ -126,6 +126,12 @@ func getFloat(v any) float64 {
 		_, _ = fmt.Sscan(x, &y)
 		return y
 	default:
+		// Try Stringer interface for types like DuckDB Decimal
+		if s, ok := v.(fmt.Stringer); ok {
+			var y float64
+			_, _ = fmt.Sscan(s.String(), &y)
+			return y
+		}
 		return math.NaN()
 	}
 }
@@ -633,6 +639,218 @@ func TestBuildSimpleLogAggSQL_NoMatchers(t *testing.T) {
 
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+}
+
+// --- Agg file SQL tests ---
+
+func TestCanUseAggFile(t *testing.T) {
+	tests := []struct {
+		name      string
+		aggFields []string
+		groupBy   []string
+		expected  bool
+	}{
+		{
+			name:      "empty aggFields returns false",
+			aggFields: []string{},
+			groupBy:   []string{"log_level"},
+			expected:  false,
+		},
+		{
+			name:      "nil aggFields returns false",
+			aggFields: nil,
+			groupBy:   []string{"log_level"},
+			expected:  false,
+		},
+		{
+			name:      "empty groupBy with aggFields returns true",
+			aggFields: []string{"log_level", "resource_customer_domain"},
+			groupBy:   []string{},
+			expected:  true,
+		},
+		{
+			name:      "exact match returns true",
+			aggFields: []string{"log_level", "resource_customer_domain"},
+			groupBy:   []string{"log_level", "resource_customer_domain"},
+			expected:  true,
+		},
+		{
+			name:      "subset match returns true",
+			aggFields: []string{"log_level", "resource_customer_domain"},
+			groupBy:   []string{"log_level"},
+			expected:  true,
+		},
+		{
+			name:      "groupBy has field not in aggFields returns false",
+			aggFields: []string{"log_level", "resource_customer_domain"},
+			groupBy:   []string{"log_level", "other_field"},
+			expected:  false,
+		},
+		{
+			name:      "groupBy superset of aggFields returns false",
+			aggFields: []string{"log_level"},
+			groupBy:   []string{"log_level", "resource_customer_domain"},
+			expected:  false,
+		},
+		{
+			name:      "dotted field names normalized",
+			aggFields: []string{"resource.customer.domain"},
+			groupBy:   []string{"resource_customer_domain"},
+			expected:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CanUseAggFile(tt.aggFields, tt.groupBy)
+			if result != tt.expected {
+				t.Fatalf("CanUseAggFile(%v, %v) = %v, want %v",
+					tt.aggFields, tt.groupBy, result, tt.expected)
+			}
+		})
+	}
+}
+
+// createAggTable creates a table that mimics the agg_ parquet file structure
+func createAggTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	mustDropTable(db, "agg_logs")
+	// Note: "count" is a reserved word but works in DuckDB when quoted
+	stmt := `CREATE TABLE agg_logs(
+		bucket_ts BIGINT,
+		log_level TEXT,
+		stream_id TEXT,
+		frequency BIGINT,
+		"count" BIGINT
+	);`
+	mustExec(t, db, stmt)
+}
+
+func replaceTableAgg(sql string) string {
+	return strings.ReplaceAll(sql, "{table}", `(SELECT * FROM agg_logs) AS _t`)
+}
+
+func TestBuildAggFileSQL_ReaggregateToLargerStep(t *testing.T) {
+	db := openDuckDB(t)
+	createAggTable(t, db)
+
+	// Insert 10s bucket data (AggFrequency = 10000ms)
+	// Six 10s buckets: 0, 10000, 20000, 30000, 40000, 50000
+	// We'll aggregate to 60s step
+	mustExec(t, db, `INSERT INTO agg_logs VALUES
+	 (    0, 'INFO',  'example.com', 10000, 10),
+	 (10000, 'INFO',  'example.com', 10000, 20),
+	 (20000, 'INFO',  'example.com', 10000, 30),
+	 (30000, 'INFO',  'example.com', 10000, 40),
+	 (40000, 'INFO',  'example.com', 10000, 50),
+	 (50000, 'INFO',  'example.com', 10000, 60),
+	 (    0, 'ERROR', 'example.com', 10000, 5),
+	 (30000, 'ERROR', 'example.com', 10000, 15)`)
+
+	be := &BaseExpr{
+		GroupBy: []string{"log_level"},
+	}
+
+	sql := BuildAggFileSQL(be, 60*time.Second)
+	if sql == "" {
+		t.Fatal("empty SQL from BuildAggFileSQL")
+	}
+
+	// Verify no CTEs
+	if strings.Contains(sql, "WITH") {
+		t.Fatalf("expected flat SQL, got:\n%s", sql)
+	}
+
+	sql = replaceStartEnd(replaceTableAgg(sql), 0, 60000)
+	rows := queryAll(t, db, sql)
+
+	// Should have 2 rows: INFO and ERROR both in bucket 0 (0-59999 → 0)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	// Verify counts are summed correctly
+	type key struct {
+		level string
+		ts    int64
+	}
+	got := map[key]float64{}
+	for _, r := range rows {
+		got[key{level: asString(r["log_level"]), ts: getInt64(r["bucket_ts"])}] = getFloat(r["count"])
+	}
+
+	// All 10s buckets (0-50000) fall into the 0 bucket with 60s step
+	// INFO: 10+20+30+40+50+60 = 210
+	// ERROR: 5+15 = 20
+	want := map[key]float64{
+		{"INFO", 0}:  210,
+		{"ERROR", 0}: 20,
+	}
+	for k, v := range want {
+		if g, ok := got[k]; !ok {
+			t.Fatalf("missing row level=%s ts=%d", k.level, k.ts)
+		} else if g != v {
+			t.Fatalf("level=%s ts=%d count got=%f want=%f", k.level, k.ts, g, v)
+		}
+	}
+}
+
+func TestBuildAggFileSQL_NoGroupBy(t *testing.T) {
+	db := openDuckDB(t)
+	createAggTable(t, db)
+
+	mustExec(t, db, `INSERT INTO agg_logs VALUES
+	 (    0, 'INFO',  'example.com', 10000, 10),
+	 (    0, 'ERROR', 'example.com', 10000, 5),
+	 (10000, 'INFO',  'example.com', 10000, 20)`)
+
+	be := &BaseExpr{
+		GroupBy: []string{}, // No GROUP BY
+	}
+
+	sql := BuildAggFileSQL(be, 10*time.Second)
+	sql = replaceStartEnd(replaceTableAgg(sql), 0, 20000)
+	rows := queryAll(t, db, sql)
+
+	// Two time buckets, each summed across all levels
+	// bucket 0: 10 + 5 = 15
+	// bucket 10000: 20
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := map[int64]float64{}
+	for _, r := range rows {
+		got[getInt64(r["bucket_ts"])] = getFloat(r["count"])
+	}
+
+	if got[0] != 15 {
+		t.Fatalf("bucket 0 count got=%f want=15", got[0])
+	}
+	if got[10000] != 20 {
+		t.Fatalf("bucket 10000 count got=%f want=20", got[10000])
+	}
+}
+
+func TestMapToAggColumn(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"log_level", "log_level"},
+		{"resource_customer_domain", "stream_id"},
+		{"resource_service_name", "stream_id"},
+		{"other_field", "stream_id"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := mapToAggColumn(tt.input)
+			if result != tt.expected {
+				t.Fatalf("mapToAggColumn(%s) = %s, want %s", tt.input, result, tt.expected)
+			}
+		})
 	}
 }
 
