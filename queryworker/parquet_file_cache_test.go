@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -149,6 +150,110 @@ func TestParquetFileCache_GetOrPrepare(t *testing.T) {
 		// Path structure should be baseDir/region/bucket/objectID
 		expected := filepath.Join(pfc.baseDir, "us-east-1", "my-bucket", "file.parquet")
 		assert.Equal(t, expected, localPath)
+	})
+}
+
+func TestParquetFileCache_ConcurrentGetOrPrepare(t *testing.T) {
+	t.Parallel()
+
+	t.Run("concurrent access to same key", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		region := "us-east-1"
+		bucket := "test-bucket"
+		objectID := filepath.Join("db", "org", "collector", "file.parquet")
+
+		// Prepare path and create file once
+		localPath, _, err := pfc.GetOrPrepare(region, bucket, objectID)
+		require.NoError(t, err)
+		err = os.WriteFile(localPath, []byte("test content"), 0644)
+		require.NoError(t, err)
+		err = pfc.TrackFile(region, bucket, objectID)
+		require.NoError(t, err)
+
+		// Launch many goroutines hitting the same key
+		var wg sync.WaitGroup
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, exists, err := pfc.GetOrPrepare(region, bucket, objectID)
+				assert.NoError(t, err)
+				assert.True(t, exists)
+			}()
+		}
+		wg.Wait()
+
+		// Should still only track one file
+		assert.Equal(t, int64(1), pfc.FileCount())
+		assert.Equal(t, int64(12), pfc.TotalBytes())
+	})
+
+	t.Run("concurrent access to different keys", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		region := "us-east-1"
+		bucket := "test-bucket"
+
+		// Launch many goroutines with different keys
+		var wg sync.WaitGroup
+		for i := 0; i < 50; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				objectID := fmt.Sprintf("db/org/collector/file%d.parquet", idx)
+				localPath, exists, err := pfc.GetOrPrepare(region, bucket, objectID)
+				assert.NoError(t, err)
+				assert.False(t, exists)
+
+				// Create and track the file
+				err = os.WriteFile(localPath, []byte("test"), 0644)
+				assert.NoError(t, err)
+				err = pfc.TrackFile(region, bucket, objectID)
+				assert.NoError(t, err)
+			}(i)
+		}
+		wg.Wait()
+
+		// Should track all 50 files
+		assert.Equal(t, int64(50), pfc.FileCount())
+		assert.Equal(t, int64(50*4), pfc.TotalBytes()) // 4 bytes each
+	})
+
+	t.Run("concurrent GetOrPrepare and TrackFile", func(t *testing.T) {
+		t.Parallel()
+		pfc := newTestCache(t)
+
+		region := "us-east-1"
+		bucket := "test-bucket"
+		objectID := filepath.Join("db", "org", "collector", "concurrent.parquet")
+
+		// Create the file first
+		localPath, _, err := pfc.GetOrPrepare(region, bucket, objectID)
+		require.NoError(t, err)
+		err = os.WriteFile(localPath, []byte("data"), 0644)
+		require.NoError(t, err)
+
+		// Concurrent GetOrPrepare and TrackFile calls
+		var wg sync.WaitGroup
+		for i := 0; i < 50; i++ {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				_, _, _ = pfc.GetOrPrepare(region, bucket, objectID)
+			}()
+			go func() {
+				defer wg.Done()
+				_ = pfc.TrackFile(region, bucket, objectID)
+			}()
+		}
+		wg.Wait()
+
+		// Should still only track one file with correct size
+		assert.Equal(t, int64(1), pfc.FileCount())
+		assert.Equal(t, int64(4), pfc.TotalBytes())
 	})
 }
 
