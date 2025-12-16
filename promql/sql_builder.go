@@ -104,10 +104,12 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	// Fast path: for simple aggregations without parsers/filters, generate flat SQL
 	// that only reads the columns we need. This avoids the SELECT * CTE pipeline.
 	if be.LogLeaf.IsSimpleAggregation() {
+		recordLogQuerySimple()
 		return buildSimpleLogAggSQL(be, step)
 	}
 
 	// Complex path: use CTE pipeline for queries with parsers/filters
+	recordLogQueryComplex()
 	return buildComplexLogAggSQL(be, step)
 }
 
