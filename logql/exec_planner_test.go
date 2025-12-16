@@ -746,3 +746,52 @@ func indexOfLabel(lfs []LabelFilter, label string) (int, bool) {
 	}
 	return -1, false
 }
+
+// --- Tests for IsSimpleAggregation and RequiredColumns ---
+
+func TestLogLeaf_IsSimpleAggregation_True(t *testing.T) {
+	leaf := LogLeaf{
+		ID:       "simple1",
+		Matchers: []LabelMatch{{Label: "resource_service_name", Op: MatchEq, Value: "svc1"}},
+		OutBy:    []string{"log_level"},
+	}
+	if !leaf.IsSimpleAggregation() {
+		t.Fatal("expected IsSimpleAggregation() = true for leaf with no parsers/filters")
+	}
+}
+
+func TestLogLeaf_IsSimpleAggregation_FalseWithParser(t *testing.T) {
+	leaf := LogLeaf{
+		ID:       "complex1",
+		Matchers: []LabelMatch{{Label: "resource_service_name", Op: MatchEq, Value: "svc1"}},
+		OutBy:    []string{"log_level"},
+		Parsers:  []ParserStage{{Type: "json"}},
+	}
+	if leaf.IsSimpleAggregation() {
+		t.Fatal("expected IsSimpleAggregation() = false for leaf with parser")
+	}
+}
+
+func TestLogLeaf_IsSimpleAggregation_FalseWithLineFilter(t *testing.T) {
+	leaf := LogLeaf{
+		ID:          "complex2",
+		Matchers:    []LabelMatch{{Label: "resource_service_name", Op: MatchEq, Value: "svc1"}},
+		OutBy:       []string{"log_level"},
+		LineFilters: []LineFilter{{Op: LineContains, Match: "error"}},
+	}
+	if leaf.IsSimpleAggregation() {
+		t.Fatal("expected IsSimpleAggregation() = false for leaf with line filter")
+	}
+}
+
+func TestLogLeaf_IsSimpleAggregation_FalseWithLabelFilter(t *testing.T) {
+	leaf := LogLeaf{
+		ID:           "complex3",
+		Matchers:     []LabelMatch{{Label: "resource_service_name", Op: MatchEq, Value: "svc1"}},
+		OutBy:        []string{"log_level"},
+		LabelFilters: []LabelFilter{{Label: "level", Op: MatchEq, Value: "ERROR"}},
+	}
+	if leaf.IsSimpleAggregation() {
+		t.Fatal("expected IsSimpleAggregation() = false for leaf with label filter")
+	}
+}

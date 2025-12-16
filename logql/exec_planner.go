@@ -337,6 +337,19 @@ func logLeafID(l LogLeaf) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+// IsSimpleAggregation returns true if this leaf can use an optimized flat SQL
+// query for aggregation (no CTE pipeline needed). This is the case when:
+// - No parsers (json, regexp, logfmt, label_format, unwrap, etc.)
+// - No line filters (which require scanning log_message content)
+// - No label filters (which might depend on parsed labels)
+//
+// For simple aggregations like count_over_time grouped by existing columns,
+// we can generate a single SELECT with GROUP BY that only reads the columns
+// we actually need, rather than SELECT * through a CTE pipeline.
+func (be *LogLeaf) IsSimpleAggregation() bool {
+	return len(be.Parsers) == 0 && len(be.LineFilters) == 0 && len(be.LabelFilters) == 0
+}
+
 func (be *LogLeaf) Label() string {
 	// --- helpers ---
 	quote := func(s string) string {

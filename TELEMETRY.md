@@ -25,6 +25,8 @@ Many metrics include these standardized attributes:
 | `lakerunner.processing.segments.filtered` | Number of segments filtered out during processing pipeline | `signal`, `action`, `reason` |
 | `lakerunner.processing.segments.in` | Number of segments input to processing pipeline | `signal`, `action` |
 | `lakerunner.processing.segments.out` | Number of segments output from processing pipeline | `signal`, `action` |
+| `lakerunner.query.log.complex` | Number of log queries using the complex CTE pipeline | - |
+| `lakerunner.query.log.simple` | Number of log queries using the simple flat SQL path | - |
 | `lakerunner.queryapi.metadata_default_time_range_total` | Count of metadata requests using default 1-hour time range | - |
 | `lakerunner.reader.rows.dropped` | Number of rows dropped by readers due to invalid data | `reader`, `reason`, `metric_type` |
 | `lakerunner.reader.rows.in` | Number of rows read by readers from their input source | `reader` |
@@ -114,6 +116,11 @@ Many metrics include these standardized attributes:
 ### Database Operations
 
 - `lakerunner.duckdb.memory.*` - DuckDB memory usage and configuration
+
+### Query Processing
+
+- `lakerunner.query.log.simple` - Count of log queries using the optimized flat SQL path (no parsers/filters)
+- `lakerunner.query.log.complex` - Count of log queries using the full CTE pipeline (with parsers/filters)
 
 ### Query Cache (Query Worker)
 
