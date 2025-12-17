@@ -157,15 +157,16 @@ func (q *Queries) WorkQueueDepth(ctx context.Context, taskName string) (int64, e
 }
 
 const workQueueDepthAll = `-- name: WorkQueueDepthAll :many
-SELECT task_name, COUNT(*) as depth
+SELECT task_name, priority, COUNT(*) as depth
   FROM work_queue
  WHERE claimed_by = -1
    AND failed = false
- GROUP BY task_name
+ GROUP BY task_name, priority
 `
 
 type WorkQueueDepthAllRow struct {
 	TaskName string `json:"task_name"`
+	Priority int32  `json:"priority"`
 	Depth    int64  `json:"depth"`
 }
 
@@ -178,7 +179,7 @@ func (q *Queries) WorkQueueDepthAll(ctx context.Context) ([]WorkQueueDepthAllRow
 	var items []WorkQueueDepthAllRow
 	for rows.Next() {
 		var i WorkQueueDepthAllRow
-		if err := rows.Scan(&i.TaskName, &i.Depth); err != nil {
+		if err := rows.Scan(&i.TaskName, &i.Priority, &i.Depth); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

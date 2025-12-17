@@ -30,15 +30,15 @@ func TestQueueDepthMonitor_GetQueueDepth(t *testing.T) {
 	monitor, err := NewQueueDepthMonitor(nil, time.Minute)
 	require.NoError(t, err)
 
-	// Set some test data
+	// Set some test data with priorities
 	monitor.mu.Lock()
-	monitor.lastDepths = map[string]int64{
-		config.BoxerTaskIngestLogs:     100,
-		config.BoxerTaskCompactMetrics: 50,
+	monitor.lastDepths = map[depthKey]int64{
+		{TaskName: config.BoxerTaskIngestLogs, Priority: 0}:     100,
+		{TaskName: config.BoxerTaskCompactMetrics, Priority: 0}: 50,
 	}
 	monitor.mu.Unlock()
 
-	// Test getting known depths
+	// Test getting known depths (sums across all priorities)
 	depth, err := monitor.GetQueueDepth(config.BoxerTaskIngestLogs)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(100), depth)
@@ -62,30 +62,34 @@ func TestQueueDepthMonitor_GetAllQueueDepths(t *testing.T) {
 	monitor, err := NewQueueDepthMonitor(nil, time.Minute)
 	require.NoError(t, err)
 
-	// Set some test data
+	// Set some test data with priorities
 	monitor.mu.Lock()
-	monitor.lastDepths = map[string]int64{
-		config.BoxerTaskIngestLogs:     100,
-		config.BoxerTaskCompactMetrics: 50,
+	monitor.lastDepths = map[depthKey]int64{
+		{TaskName: config.BoxerTaskIngestLogs, Priority: 0}:     100,
+		{TaskName: config.BoxerTaskCompactMetrics, Priority: 0}: 50,
+		{TaskName: config.BoxerTaskIngestLogs, Priority: 1000}:  25, // low priority items
 	}
 	monitor.mu.Unlock()
 
 	// Get all depths
 	depths := monitor.GetAllQueueDepths()
 
-	// Should return all 7 task types
-	assert.Len(t, depths, 7)
+	// Should return 3 entries (one per unique task/priority combination)
+	assert.Len(t, depths, 3)
 
-	// Verify we have the expected depths (including 0 for unset tasks)
-	depthMap := make(map[string]int64)
+	// Build a map for easier lookup
+	type key struct {
+		task     string
+		priority int32
+	}
+	depthMap := make(map[key]int64)
 	for _, d := range depths {
-		depthMap[d.TaskName] = d.Depth
+		depthMap[key{d.TaskName, d.Priority}] = d.Depth
 	}
 
-	assert.Equal(t, int64(100), depthMap[config.BoxerTaskIngestLogs])
-	assert.Equal(t, int64(50), depthMap[config.BoxerTaskCompactMetrics])
-	assert.Equal(t, int64(0), depthMap[config.BoxerTaskIngestMetrics])
-	assert.Equal(t, int64(0), depthMap[config.BoxerTaskRollupMetrics])
+	assert.Equal(t, int64(100), depthMap[key{config.BoxerTaskIngestLogs, 0}])
+	assert.Equal(t, int64(50), depthMap[key{config.BoxerTaskCompactMetrics, 0}])
+	assert.Equal(t, int64(25), depthMap[key{config.BoxerTaskIngestLogs, 1000}])
 }
 
 func TestQueueDepthMonitor_IsHealthy(t *testing.T) {
@@ -152,9 +156,10 @@ func (m *MockQueueDepthDB) WorkQueueDepthAll(ctx context.Context) ([]lrdb.WorkQu
 func TestQueueDepthMonitor_UpdateDepths(t *testing.T) {
 	mockDB := &MockQueueDepthDB{
 		depths: []lrdb.WorkQueueDepthAllRow{
-			{TaskName: config.BoxerTaskIngestLogs, Depth: 100},
-			{TaskName: config.BoxerTaskCompactMetrics, Depth: 50},
-			{TaskName: config.BoxerTaskRollupMetrics, Depth: 25},
+			{TaskName: config.BoxerTaskIngestLogs, Priority: 0, Depth: 100},
+			{TaskName: config.BoxerTaskCompactMetrics, Priority: 0, Depth: 50},
+			{TaskName: config.BoxerTaskRollupMetrics, Priority: 0, Depth: 25},
+			{TaskName: config.BoxerTaskIngestLogs, Priority: 1000, Depth: 10}, // low priority
 		},
 	}
 
@@ -166,10 +171,10 @@ func TestQueueDepthMonitor_UpdateDepths(t *testing.T) {
 	err = monitor.updateDepths(ctx)
 	assert.NoError(t, err)
 
-	// Verify depths were cached
+	// Verify depths were cached (GetQueueDepth sums across all priorities)
 	depth, err := monitor.GetQueueDepth(config.BoxerTaskIngestLogs)
 	assert.NoError(t, err)
-	assert.Equal(t, int64(100), depth)
+	assert.Equal(t, int64(110), depth) // 100 + 10
 
 	depth, err = monitor.GetQueueDepth(config.BoxerTaskCompactMetrics)
 	assert.NoError(t, err)

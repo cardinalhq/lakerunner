@@ -72,11 +72,11 @@ SELECT COUNT(*) as depth
    AND failed = false;
 
 -- name: WorkQueueDepthAll :many
-SELECT task_name, COUNT(*) as depth
+SELECT task_name, priority, COUNT(*) as depth
   FROM work_queue
  WHERE claimed_by = -1
    AND failed = false
- GROUP BY task_name;
+ GROUP BY task_name, priority;
 
 -- name: WorkQueueStatus :many
 SELECT
