@@ -32,8 +32,20 @@ type EnqueueDB interface {
 	WorkQueueCleanup(ctx context.Context, heartbeatTimeout time.Duration) error
 }
 
-// Add adds a new work item to the queue.
+// DefaultPriority is the default priority for work items (0 = normal).
+const DefaultPriority = 0
+
+// LowPriority is used for background/backfill work that should not starve normal work.
+const LowPriority = 1000
+
+// Add adds a new work item to the queue with default priority.
 func Add(ctx context.Context, db EnqueueDB, taskName string, organizationID uuid.UUID, instanceNum int16, spec map[string]any) (int64, error) {
+	return AddWithPriority(ctx, db, taskName, organizationID, instanceNum, spec, DefaultPriority)
+}
+
+// AddWithPriority adds a new work item to the queue with the specified priority.
+// Lower priority values are processed first (negative = highest priority, 0 = normal).
+func AddWithPriority(ctx context.Context, db EnqueueDB, taskName string, organizationID uuid.UUID, instanceNum int16, spec map[string]any, priority int32) (int64, error) {
 	specBytes, err := json.Marshal(spec)
 	if err != nil {
 		return 0, fmt.Errorf("failed to marshal spec: %w", err)
@@ -43,6 +55,7 @@ func Add(ctx context.Context, db EnqueueDB, taskName string, organizationID uuid
 		OrganizationID: organizationID,
 		InstanceNum:    instanceNum,
 		Spec:           specBytes,
+		Priority:       priority,
 	})
 	if err != nil {
 		return 0, err
@@ -60,14 +73,21 @@ func Cleanup(ctx context.Context, db EnqueueDB, heartbeatTimeout time.Duration) 
 	return db.WorkQueueCleanup(ctx, heartbeatTimeout)
 }
 
-// AddBundle adds a work item to the queue using a JSON-serialized bundle.
+// AddBundle adds a work item to the queue using a JSON-serialized bundle with default priority.
 // The bundleBytes are stored directly as the spec field to preserve numeric precision.
 func AddBundle(ctx context.Context, db EnqueueDB, taskName string, organizationID uuid.UUID, instanceNum int16, bundleBytes []byte) (int64, error) {
+	return AddBundleWithPriority(ctx, db, taskName, organizationID, instanceNum, bundleBytes, DefaultPriority)
+}
+
+// AddBundleWithPriority adds a work item to the queue using a JSON-serialized bundle with the specified priority.
+// Lower priority values are processed first (negative = highest priority, 0 = normal).
+func AddBundleWithPriority(ctx context.Context, db EnqueueDB, taskName string, organizationID uuid.UUID, instanceNum int16, bundleBytes []byte, priority int32) (int64, error) {
 	wq, err := db.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
 		TaskName:       taskName,
 		OrganizationID: organizationID,
 		InstanceNum:    instanceNum,
 		Spec:           bundleBytes,
+		Priority:       priority,
 	})
 	if err != nil {
 		return 0, err
