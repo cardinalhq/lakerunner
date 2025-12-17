@@ -27,6 +27,12 @@ import (
 	"github.com/cardinalhq/lakerunner/config"
 )
 
+// depthKey represents a unique (task_name, priority) combination
+type depthKey struct {
+	TaskName string
+	Priority int32
+}
+
 // QueueDepthMonitor monitors PostgreSQL work queue depths and emits metrics
 type QueueDepthMonitor struct {
 	db           DB
@@ -34,14 +40,15 @@ type QueueDepthMonitor struct {
 	meter        metric.Meter
 	gauge        metric.Int64ObservableGauge
 	mu           sync.RWMutex
-	lastDepths   map[string]int64
+	lastDepths   map[depthKey]int64
 	lastUpdate   time.Time
 	lastError    error
 }
 
-// QueueDepthByTask represents queue depth for a single task type
+// QueueDepthByTask represents queue depth for a single task type and priority
 type QueueDepthByTask struct {
 	TaskName string
+	Priority int32
 	Depth    int64
 }
 
@@ -53,7 +60,7 @@ func NewQueueDepthMonitor(db DB, pollInterval time.Duration) (*QueueDepthMonitor
 		db:           db,
 		pollInterval: pollInterval,
 		meter:        meter,
-		lastDepths:   make(map[string]int64),
+		lastDepths:   make(map[depthKey]int64),
 	}
 
 	// Create observable gauge that reads from cached values
@@ -71,11 +78,11 @@ func NewQueueDepthMonitor(db DB, pollInterval time.Duration) (*QueueDepthMonitor
 }
 
 // observeQueueDepth is the callback for OpenTelemetry metrics
-func (m *QueueDepthMonitor) observeQueueDepth(ctx context.Context, observer metric.Int64Observer) error {
+func (m *QueueDepthMonitor) observeQueueDepth(_ context.Context, observer metric.Int64Observer) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Report all known task types, even if depth is 0
+	// All known task types - always emit baseline with priority 0
 	allTasks := []string{
 		config.BoxerTaskIngestLogs,
 		config.BoxerTaskIngestMetrics,
@@ -86,11 +93,27 @@ func (m *QueueDepthMonitor) observeQueueDepth(ctx context.Context, observer metr
 		config.BoxerTaskRollupMetrics,
 	}
 
-	for _, taskName := range allTasks {
-		depth := m.lastDepths[taskName] // defaults to 0 if not present
+	// Track which (task, priority) pairs we've emitted
+	emitted := make(map[depthKey]bool)
+
+	// First, emit all cached depths
+	for key, depth := range m.lastDepths {
 		observer.Observe(depth, metric.WithAttributes(
-			attribute.String("task_name", taskName),
+			attribute.String("task_name", key.TaskName),
+			attribute.Int("task_priority", int(key.Priority)),
 		))
+		emitted[key] = true
+	}
+
+	// Then, ensure we emit priority 0 for each task type if not already emitted
+	for _, taskName := range allTasks {
+		key := depthKey{TaskName: taskName, Priority: 0}
+		if !emitted[key] {
+			observer.Observe(0, metric.WithAttributes(
+				attribute.String("task_name", taskName),
+				attribute.Int("task_priority", 0),
+			))
+		}
 	}
 
 	return nil
@@ -133,11 +156,12 @@ func (m *QueueDepthMonitor) updateDepths(ctx context.Context) error {
 	defer m.mu.Unlock()
 
 	// Clear old depths
-	m.lastDepths = make(map[string]int64)
+	m.lastDepths = make(map[depthKey]int64)
 
 	// Update with current depths
 	for _, row := range rows {
-		m.lastDepths[row.TaskName] = row.Depth
+		key := depthKey{TaskName: row.TaskName, Priority: row.Priority}
+		m.lastDepths[key] = row.Depth
 	}
 
 	m.lastUpdate = time.Now()
@@ -146,8 +170,8 @@ func (m *QueueDepthMonitor) updateDepths(ctx context.Context) error {
 	return nil
 }
 
-// GetQueueDepth returns the cached queue depth for a specific task name
-// This is used by KEDA scaler
+// GetQueueDepth returns the cached queue depth for a specific task name (summed across all priorities).
+// This is used by KEDA scaler.
 func (m *QueueDepthMonitor) GetQueueDepth(taskName string) (int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -166,7 +190,14 @@ func (m *QueueDepthMonitor) GetQueueDepth(taskName string) (int64, error) {
 		return 0, fmt.Errorf("unsupported task name: %s", taskName)
 	}
 
-	return m.lastDepths[taskName], nil
+	// Sum depths across all priorities for this task
+	var total int64
+	for key, depth := range m.lastDepths {
+		if key.TaskName == taskName {
+			total += depth
+		}
+	}
+	return total, nil
 }
 
 // GetAllQueueDepths returns all cached queue depths
@@ -174,22 +205,12 @@ func (m *QueueDepthMonitor) GetAllQueueDepths() []QueueDepthByTask {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Return all known task types
-	allTasks := []string{
-		config.BoxerTaskIngestLogs,
-		config.BoxerTaskIngestMetrics,
-		config.BoxerTaskIngestTraces,
-		config.BoxerTaskCompactLogs,
-		config.BoxerTaskCompactMetrics,
-		config.BoxerTaskCompactTraces,
-		config.BoxerTaskRollupMetrics,
-	}
-
-	result := make([]QueueDepthByTask, 0, len(allTasks))
-	for _, taskName := range allTasks {
+	result := make([]QueueDepthByTask, 0, len(m.lastDepths))
+	for key, depth := range m.lastDepths {
 		result = append(result, QueueDepthByTask{
-			TaskName: taskName,
-			Depth:    m.lastDepths[taskName], // defaults to 0 if not present
+			TaskName: key.TaskName,
+			Priority: key.Priority,
+			Depth:    depth,
 		})
 	}
 

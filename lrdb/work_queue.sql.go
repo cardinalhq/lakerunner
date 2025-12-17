@@ -18,14 +18,16 @@ INSERT INTO work_queue (
   task_name,
   organization_id,
   instance_num,
-  spec
+  spec,
+  priority
 ) VALUES (
   $1,
   $2,
   $3,
-  $4
+  $4,
+  $5
 )
-RETURNING id, task_name, organization_id, instance_num, spec, tries, claimed_by, claimed_at, heartbeated_at, failed, failed_reason, created_at
+RETURNING id, task_name, organization_id, instance_num, spec, tries, claimed_by, claimed_at, heartbeated_at, failed, failed_reason, created_at, priority
 `
 
 type WorkQueueAddParams struct {
@@ -33,6 +35,7 @@ type WorkQueueAddParams struct {
 	OrganizationID uuid.UUID       `json:"organization_id"`
 	InstanceNum    int16           `json:"instance_num"`
 	Spec           json.RawMessage `json:"spec"`
+	Priority       int32           `json:"priority"`
 }
 
 func (q *Queries) WorkQueueAdd(ctx context.Context, arg WorkQueueAddParams) (WorkQueue, error) {
@@ -41,6 +44,7 @@ func (q *Queries) WorkQueueAdd(ctx context.Context, arg WorkQueueAddParams) (Wor
 		arg.OrganizationID,
 		arg.InstanceNum,
 		arg.Spec,
+		arg.Priority,
 	)
 	var i WorkQueue
 	err := row.Scan(
@@ -56,6 +60,7 @@ func (q *Queries) WorkQueueAdd(ctx context.Context, arg WorkQueueAddParams) (Wor
 		&i.Failed,
 		&i.FailedReason,
 		&i.CreatedAt,
+		&i.Priority,
 	)
 	return i, err
 }
@@ -67,7 +72,7 @@ WITH next AS (
   WHERE wq.task_name = $2
     AND wq.claimed_by = -1
     AND wq.failed = false
-  ORDER BY wq.id
+  ORDER BY wq.priority, wq.id
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
@@ -77,7 +82,7 @@ SET claimed_by     = $1,
     heartbeated_at = now()
 FROM next
 WHERE w.id = next.id
-RETURNING w.id, w.task_name, w.organization_id, w.instance_num, w.spec, w.tries, w.claimed_by, w.claimed_at, w.heartbeated_at, w.failed, w.failed_reason, w.created_at
+RETURNING w.id, w.task_name, w.organization_id, w.instance_num, w.spec, w.tries, w.claimed_by, w.claimed_at, w.heartbeated_at, w.failed, w.failed_reason, w.created_at, w.priority
 `
 
 type WorkQueueClaimParams struct {
@@ -101,6 +106,7 @@ func (q *Queries) WorkQueueClaim(ctx context.Context, arg WorkQueueClaimParams) 
 		&i.Failed,
 		&i.FailedReason,
 		&i.CreatedAt,
+		&i.Priority,
 	)
 	return i, err
 }
@@ -151,15 +157,16 @@ func (q *Queries) WorkQueueDepth(ctx context.Context, taskName string) (int64, e
 }
 
 const workQueueDepthAll = `-- name: WorkQueueDepthAll :many
-SELECT task_name, COUNT(*) as depth
+SELECT task_name, priority, COUNT(*) as depth
   FROM work_queue
  WHERE claimed_by = -1
    AND failed = false
- GROUP BY task_name
+ GROUP BY task_name, priority
 `
 
 type WorkQueueDepthAllRow struct {
 	TaskName string `json:"task_name"`
+	Priority int32  `json:"priority"`
 	Depth    int64  `json:"depth"`
 }
 
@@ -172,7 +179,7 @@ func (q *Queries) WorkQueueDepthAll(ctx context.Context) ([]WorkQueueDepthAllRow
 	var items []WorkQueueDepthAllRow
 	for rows.Next() {
 		var i WorkQueueDepthAllRow
-		if err := rows.Scan(&i.TaskName, &i.Depth); err != nil {
+		if err := rows.Scan(&i.TaskName, &i.Priority, &i.Depth); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -235,17 +242,19 @@ func (q *Queries) WorkQueueHeartbeat(ctx context.Context, arg WorkQueueHeartbeat
 const workQueueStatus = `-- name: WorkQueueStatus :many
 SELECT
   task_name,
+  priority,
   COUNT(*) FILTER (WHERE claimed_by = -1 AND failed = false) as pending,
   COUNT(*) FILTER (WHERE claimed_by <> -1) as in_progress,
   COUNT(*) FILTER (WHERE failed = true) as failed,
   COUNT(DISTINCT claimed_by) FILTER (WHERE claimed_by <> -1) as workers
 FROM work_queue
-GROUP BY task_name
-ORDER BY task_name
+GROUP BY task_name, priority
+ORDER BY task_name, priority
 `
 
 type WorkQueueStatusRow struct {
 	TaskName   string `json:"task_name"`
+	Priority   int32  `json:"priority"`
 	Pending    int64  `json:"pending"`
 	InProgress int64  `json:"in_progress"`
 	Failed     int64  `json:"failed"`
@@ -263,6 +272,7 @@ func (q *Queries) WorkQueueStatus(ctx context.Context) ([]WorkQueueStatusRow, er
 		var i WorkQueueStatusRow
 		if err := rows.Scan(
 			&i.TaskName,
+			&i.Priority,
 			&i.Pending,
 			&i.InProgress,
 			&i.Failed,

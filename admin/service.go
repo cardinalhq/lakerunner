@@ -271,6 +271,7 @@ func (s *Service) GetWorkQueueStatus(ctx context.Context, _ *adminproto.GetWorkQ
 			InProgress: row.InProgress,
 			Failed:     row.Failed,
 			Workers:    row.Workers,
+			Priority:   row.Priority,
 		})
 	}
 
@@ -367,7 +368,7 @@ func (s *Service) QueueLogRecompact(ctx context.Context, req *adminproto.QueueLo
 			continue
 		}
 
-		_, err = workqueue.AddBundle(ctx, s.lrDB, config.BoxerTaskCompactLogs, seg.OrganizationID, seg.InstanceNum, bundleBytes)
+		_, err = workqueue.AddBundleWithPriority(ctx, s.lrDB, config.BoxerTaskCompactLogs, seg.OrganizationID, seg.InstanceNum, bundleBytes, workqueue.LowPriority)
 		if err != nil {
 			queueErrs = append(queueErrs, fmt.Errorf("segment %d: queue: %w", seg.SegmentID, err))
 			continue

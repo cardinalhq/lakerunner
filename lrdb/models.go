@@ -242,4 +242,5 @@ type WorkQueue struct {
 	Failed         bool            `json:"failed"`
 	FailedReason   *string         `json:"failed_reason"`
 	CreatedAt      time.Time       `json:"created_at"`
+	Priority       int32           `json:"priority"`
 }

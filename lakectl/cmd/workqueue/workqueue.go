@@ -81,12 +81,12 @@ func getStatusCmd() *cobra.Command {
 
 func printStatusTable(tasks []*adminproto.WorkQueueTaskStatus) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "TASK\tPENDING\tIN_PROGRESS\tFAILED\tWORKERS"); err != nil {
+	if _, err := fmt.Fprintln(w, "TASK\tPRIORITY\tPENDING\tIN_PROGRESS\tFAILED\tWORKERS"); err != nil {
 		return err
 	}
 	for _, task := range tasks {
-		if _, err := fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\n",
-			task.TaskName, task.Pending, task.InProgress, task.Failed, task.Workers); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\n",
+			task.TaskName, task.Priority, task.Pending, task.InProgress, task.Failed, task.Workers); err != nil {
 			return err
 		}
 	}

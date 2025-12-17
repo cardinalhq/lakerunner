@@ -3,12 +3,14 @@ INSERT INTO work_queue (
   task_name,
   organization_id,
   instance_num,
-  spec
+  spec,
+  priority
 ) VALUES (
   @task_name,
   @organization_id,
   @instance_num,
-  @spec
+  @spec,
+  @priority
 )
 RETURNING *;
 
@@ -19,7 +21,7 @@ WITH next AS (
   WHERE wq.task_name = @task_name
     AND wq.claimed_by = -1
     AND wq.failed = false
-  ORDER BY wq.id
+  ORDER BY wq.priority, wq.id
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
@@ -70,19 +72,20 @@ SELECT COUNT(*) as depth
    AND failed = false;
 
 -- name: WorkQueueDepthAll :many
-SELECT task_name, COUNT(*) as depth
+SELECT task_name, priority, COUNT(*) as depth
   FROM work_queue
  WHERE claimed_by = -1
    AND failed = false
- GROUP BY task_name;
+ GROUP BY task_name, priority;
 
 -- name: WorkQueueStatus :many
 SELECT
   task_name,
+  priority,
   COUNT(*) FILTER (WHERE claimed_by = -1 AND failed = false) as pending,
   COUNT(*) FILTER (WHERE claimed_by <> -1) as in_progress,
   COUNT(*) FILTER (WHERE failed = true) as failed,
   COUNT(DISTINCT claimed_by) FILTER (WHERE claimed_by <> -1) as workers
 FROM work_queue
-GROUP BY task_name
-ORDER BY task_name;
+GROUP BY task_name, priority
+ORDER BY task_name, priority;

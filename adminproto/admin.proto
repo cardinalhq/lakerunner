@@ -336,6 +336,7 @@ message WorkQueueTaskStatus {
   int64 in_progress = 3;
   int64 failed = 4;
   int64 workers = 5;
+  int32 priority = 6;  // Priority level (lower = higher priority)
 }
 
 // Log Recompaction Messages

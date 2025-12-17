@@ -2683,6 +2683,7 @@ type WorkQueueTaskStatus struct {
 	InProgress    int64                  `protobuf:"varint,3,opt,name=in_progress,json=inProgress,proto3" json:"in_progress,omitempty"`
 	Failed        int64                  `protobuf:"varint,4,opt,name=failed,proto3" json:"failed,omitempty"`
 	Workers       int64                  `protobuf:"varint,5,opt,name=workers,proto3" json:"workers,omitempty"`
+	Priority      int32                  `protobuf:"varint,6,opt,name=priority,proto3" json:"priority,omitempty"` // Priority level (lower = higher priority)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2748,6 +2749,13 @@ func (x *WorkQueueTaskStatus) GetFailed() int64 {
 func (x *WorkQueueTaskStatus) GetWorkers() int64 {
 	if x != nil {
 		return x.Workers
+	}
+	return 0
+}
+
+func (x *WorkQueueTaskStatus) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
 	}
 	return 0
 }
@@ -3140,14 +3148,15 @@ const file_admin_proto_rawDesc = "" +
 	"\x1dDeleteLogStreamConfigResponse\"\x1b\n" +
 	"\x19GetWorkQueueStatusRequest\"S\n" +
 	"\x1aGetWorkQueueStatusResponse\x125\n" +
-	"\x05tasks\x18\x01 \x03(\v2\x1f.adminproto.WorkQueueTaskStatusR\x05tasks\"\x9f\x01\n" +
+	"\x05tasks\x18\x01 \x03(\v2\x1f.adminproto.WorkQueueTaskStatusR\x05tasks\"\xbb\x01\n" +
 	"\x13WorkQueueTaskStatus\x12\x1b\n" +
 	"\ttask_name\x18\x01 \x01(\tR\btaskName\x12\x18\n" +
 	"\apending\x18\x02 \x01(\x03R\apending\x12\x1f\n" +
 	"\vin_progress\x18\x03 \x01(\x03R\n" +
 	"inProgress\x12\x16\n" +
 	"\x06failed\x18\x04 \x01(\x03R\x06failed\x12\x18\n" +
-	"\aworkers\x18\x05 \x01(\x03R\aworkers\"\x8d\x02\n" +
+	"\aworkers\x18\x05 \x01(\x03R\aworkers\x12\x1a\n" +
+	"\bpriority\x18\x06 \x01(\x05R\bpriority\"\x8d\x02\n" +
 	"\x18QueueLogRecompactRequest\x12'\n" +
 	"\x0forganization_id\x18\x01 \x01(\tR\x0eorganizationId\x12#\n" +
 	"\rstart_dateint\x18\x02 \x01(\x05R\fstartDateint\x12\x1f\n" +
