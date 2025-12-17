@@ -82,6 +82,7 @@ func TestAdd(t *testing.T) {
 				assert.Equal(t, "test-task", arg.TaskName)
 				assert.Equal(t, testOrgID, arg.OrganizationID)
 				assert.Equal(t, int16(5), arg.InstanceNum)
+				assert.Equal(t, int32(DefaultPriority), arg.Priority)
 				// Verify JSON content by unmarshaling
 				var decoded map[string]any
 				err := json.Unmarshal(arg.Spec, &decoded)
@@ -286,4 +287,121 @@ func TestAdd_ComplexSpec(t *testing.T) {
 	id, err := Add(context.Background(), db, "test-task", testOrgID, 5, complexSpec)
 	require.NoError(t, err)
 	assert.Equal(t, int64(100), id)
+}
+
+func TestAddWithPriority(t *testing.T) {
+	testOrgID := uuid.New()
+	testSpec := map[string]any{"key": "value"}
+
+	tests := []struct {
+		name        string
+		priority    int32
+		expectedID  int64
+		expectedErr bool
+	}{
+		{
+			name:        "default priority",
+			priority:    DefaultPriority,
+			expectedID:  100,
+			expectedErr: false,
+		},
+		{
+			name:        "low priority",
+			priority:    LowPriority,
+			expectedID:  101,
+			expectedErr: false,
+		},
+		{
+			name:        "high priority (negative)",
+			priority:    -100,
+			expectedID:  102,
+			expectedErr: false,
+		},
+		{
+			name:        "custom priority",
+			priority:    500,
+			expectedID:  103,
+			expectedErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := &mockEnqueueDB{
+				addFunc: func(ctx context.Context, arg lrdb.WorkQueueAddParams) (lrdb.WorkQueue, error) {
+					assert.Equal(t, tt.priority, arg.Priority)
+					return lrdb.WorkQueue{ID: tt.expectedID}, nil
+				},
+			}
+
+			id, err := AddWithPriority(context.Background(), db, "test-task", testOrgID, 5, testSpec, tt.priority)
+			if tt.expectedErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedID, id)
+			}
+		})
+	}
+}
+
+func TestAddBundleWithPriority(t *testing.T) {
+	testOrgID := uuid.New()
+	testBundle := []byte(`{"key": "value"}`)
+
+	tests := []struct {
+		name        string
+		priority    int32
+		expectedID  int64
+		expectedErr bool
+	}{
+		{
+			name:        "default priority via AddBundle",
+			priority:    DefaultPriority,
+			expectedID:  200,
+			expectedErr: false,
+		},
+		{
+			name:        "low priority",
+			priority:    LowPriority,
+			expectedID:  201,
+			expectedErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := &mockEnqueueDB{
+				addFunc: func(ctx context.Context, arg lrdb.WorkQueueAddParams) (lrdb.WorkQueue, error) {
+					assert.Equal(t, tt.priority, arg.Priority)
+					assert.Equal(t, json.RawMessage(testBundle), arg.Spec)
+					return lrdb.WorkQueue{ID: tt.expectedID}, nil
+				},
+			}
+
+			id, err := AddBundleWithPriority(context.Background(), db, "test-task", testOrgID, 5, testBundle, tt.priority)
+			if tt.expectedErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedID, id)
+			}
+		})
+	}
+}
+
+func TestAddBundle_UsesDefaultPriority(t *testing.T) {
+	testOrgID := uuid.New()
+	testBundle := []byte(`{"key": "value"}`)
+
+	db := &mockEnqueueDB{
+		addFunc: func(ctx context.Context, arg lrdb.WorkQueueAddParams) (lrdb.WorkQueue, error) {
+			assert.Equal(t, int32(DefaultPriority), arg.Priority)
+			return lrdb.WorkQueue{ID: 300}, nil
+		},
+	}
+
+	id, err := AddBundle(context.Background(), db, "test-task", testOrgID, 5, testBundle)
+	require.NoError(t, err)
+	assert.Equal(t, int64(300), id)
 }
