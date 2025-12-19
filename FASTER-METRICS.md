@@ -19,7 +19,8 @@
 | ------ | ------ | ------ |
 | Pool FNV hasher in ComputeTID | -88ms (4%), zero allocs | `a615f54b` |
 | Zero-copy row transfer in TranslatingReader | -57ms (3%) | `4cf385e7` |
-| **Total** | 2195ms → 2050ms (**7% faster**) | |
+| String interning + embed byteReader in SpillCodec | -57ms (3%), -11M allocs (28%), -311MB (22%) | `291941e7` |
+| **Total** | 2263ms → 1991ms (**12% faster**), 38.5M → 27.7M allocs | |
 
 ## CPU Profile Hotspots
 
@@ -76,10 +77,10 @@
 
 | Target | Memory | File | Fix |
 | ------ | ------ | ---- | --- |
-| SpillCodec.readString | 191MB | `pipeline/rowcodec/spill_codec.go:189` | Pool byte buffer, use `unsafe.String()` |
-| SpillCodec.readUvarint | 97MB | `pipeline/rowcodec/spill_codec.go:205` | Embed `byteReader` in codec struct |
-| DDSketch.extendRange | 50MB | `vendor/github.com/DataDog/sketches-go` | Pre-size sketch or pool instances |
-| SpillCodec.writeString | 47MB | `pipeline/rowcodec/spill_codec.go:75` | Pool write buffer |
+| ~~SpillCodec.readString~~ | ~~191MB~~ | ~~`pipeline/rowcodec/spillcodec.go`~~ | ✅ Done: string interning |
+| ~~SpillCodec.readUvarint~~ | ~~97MB~~ | ~~`pipeline/rowcodec/spillcodec.go`~~ | ✅ Done: embedded byteReader |
+| DDSketch.extendRange | 163MB | `vendor/github.com/DataDog/sketches-go` | Pre-size sketch or pool instances |
+| SpillCodec.writeString | 148MB | `pipeline/rowcodec/spillcodec.go:675` | Pool write buffer |
 | addNumberDatapointFields | 35MB | `internal/oteltools/pkg/decoder/` | Refactor closure to method |
 | strings.Builder.grow | 34MB | Various | Pool `strings.Builder` instances |
 
