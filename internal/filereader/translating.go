@@ -83,25 +83,22 @@ func (tr *TranslatingReader) Next(ctx context.Context) (*Batch, error) {
 	// Create output batch for successful translations
 	outputBatch := pipeline.GetBatch()
 
-	// Translate each row, dropping failures and transferring successes with zero-copy
+	// Translate each row, dropping failures and transferring successes
+	// All translators MUST modify rows in-place (not replace them)
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
 
 		if translateErr := tr.translator.TranslateRow(ctx, &row); translateErr != nil {
-			// Drop this row and increment counter
 			rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 				attribute.String("reader", "TranslatingReader"),
 				attribute.String("reason", "translation_failed"),
 			))
-			continue // Skip this row, move to next
+			continue
 		}
 
-		// Translation succeeded - transfer row to output batch (zero-copy)
-		outputRow := outputBatch.AddRow()
-		// Copy the translated data to the output row
-		for k, v := range row {
-			outputRow[k] = v
-		}
+		// Zero-copy transfer: TakeRow extracts the row and replaces with fresh one
+		takenRow := batch.TakeRow(i)
+		outputBatch.AppendRow(takenRow)
 	}
 
 	// Return input batch to pool

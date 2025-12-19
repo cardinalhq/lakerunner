@@ -62,31 +62,7 @@
 3. **mmap temp file** - Use memory-mapped I/O instead of read/write syscalls
    - **Impact**: Kernel-managed buffering, fewer syscalls
 
-### P1: Proto Parsing & Loading (37% memory)
-
-**Problem**: `io.ReadAll` loads entire proto into memory, then parsing allocates heavily.
-
-**Solutions**:
-
-1. **Streaming proto parsing** - Parse proto in chunks instead of loading all at once
-   - **File**: `internal/filereader/ingest_proto_metrics.go`
-   - **Impact**: ~37% memory reduction
-
-2. **Reuse proto message buffers** - Pool pmetric.Metrics objects
-   - **Impact**: Reduce proto-related allocations
-
 ### P2: TID Computation (9.3% memory, 14% CPU cumulative)
-
-**Problem**: `ComputeTID()` allocates a new FNV hash and iterates over the row map for every single datapoint.
-
-**Solutions**:
-
-1. **Reuse FNV hash** - Pool FNV hasher instances and reset between uses
-   - **File**: `internal/oteltools/pkg/fingerprinter/tid.go`
-   - **Impact**: Reduce allocations significantly
-
-2. **Batch TID computation** - Compute once per unique label set, cache result
-   - **Impact**: ~10% CPU savings for high-cardinality data
 
 ### P3: GC Pressure (20% CPU cumulative)
 
