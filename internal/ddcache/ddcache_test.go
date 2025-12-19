@@ -270,3 +270,77 @@ func TestCache_LRUOrder(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, &bytes1[0], &bytes2[0], "recently accessed value should still be cached")
 }
+
+func TestCache_PageReclamation(t *testing.T) {
+	// Create a small cache (200 bytes). Each sketch is ~22 bytes.
+	// This means ~9 items fit before eviction starts.
+	maxSize := int64(200)
+	cache := newCache(maxSize)
+
+	// Insert enough values to evict more than maxSize bytes total,
+	// which triggers a rebuild.
+	for i := range 100 {
+		value := float64(i + 1000) // Avoid 0, 1 constants
+		_, err := cache.GetBytesForValue(value)
+		require.NoError(t, err)
+	}
+
+	// After many inserts with evictions, evictedBytes should have been
+	// reset by rebuild. Check that it's less than maxSizeBytes.
+	cache.mu.RLock()
+	evictedBytes := cache.evictedBytes
+	cache.mu.RUnlock()
+
+	assert.Less(t, evictedBytes, maxSize,
+		"evictedBytes should be reset after rebuild (got %d, max %d)", evictedBytes, maxSize)
+
+	// Verify the cache is still functional and maintains size limit
+	assert.LessOrEqual(t, cache.currentSize, maxSize)
+
+	// Verify we can still get values (correctness after rebuild)
+	for i := 95; i < 100; i++ {
+		value := float64(i + 1000)
+		bytes, err := cache.GetBytesForValue(value)
+		require.NoError(t, err)
+		require.NotEmpty(t, bytes)
+
+		// Verify the bytes decode correctly
+		sketch, err := helpers.DecodeSketch(bytes)
+		require.NoError(t, err)
+		assert.Equal(t, float64(1), sketch.GetCount())
+	}
+}
+
+func TestCache_PageReclamationDataIntegrity(t *testing.T) {
+	// Test that data returned before rebuild remains valid after rebuild.
+	// This is critical for correctness.
+	maxSize := int64(200)
+	cache := newCache(maxSize)
+
+	// Get a value and hold onto the bytes
+	bytes1, err := cache.GetBytesForValue(42.0)
+	require.NoError(t, err)
+
+	// Decode to get the expected value
+	sketch1, err := helpers.DecodeSketch(bytes1)
+	require.NoError(t, err)
+	expectedMin, err := sketch1.GetMinValue()
+	require.NoError(t, err)
+
+	// Now insert many values to trigger eviction and rebuild
+	for i := range 100 {
+		value := float64(i + 1000)
+		_, err := cache.GetBytesForValue(value)
+		require.NoError(t, err)
+	}
+
+	// The original bytes1 should still be valid and unchanged
+	// (old pages kept alive by reference, data immutable)
+	sketch2, err := helpers.DecodeSketch(bytes1)
+	require.NoError(t, err)
+	actualMin, err := sketch2.GetMinValue()
+	require.NoError(t, err)
+
+	assert.InDelta(t, expectedMin, actualMin, 0.01,
+		"data held before rebuild should remain valid")
+}

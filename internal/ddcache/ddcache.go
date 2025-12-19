@@ -37,6 +37,7 @@ var (
 	cacheMisses    metric.Int64Counter
 	cacheCalls     metric.Int64Counter
 	cacheEvictions metric.Int64Counter
+	cacheRebuilds  metric.Int64Counter
 )
 
 func init() {
@@ -75,6 +76,14 @@ func init() {
 	if err != nil {
 		log.Fatalf("failed to create ddcache.evictions counter: %v", err)
 	}
+
+	cacheRebuilds, err = meter.Int64Counter(
+		"lakerunner.ddcache.rebuilds",
+		metric.WithDescription("Number of DDCache rebuilds to reclaim page memory"),
+	)
+	if err != nil {
+		log.Fatalf("failed to create ddcache.rebuilds counter: %v", err)
+	}
 }
 
 // Cache provides efficient encoding of single-value DDSketches with LRU caching.
@@ -92,6 +101,10 @@ type Cache struct {
 
 	// LRU cache using open-addressed hash map with intrusive list
 	cache *oamap
+
+	// Track bytes evicted since last rebuild.
+	// When this exceeds maxSizeBytes, we rebuild to reclaim page memory.
+	evictedBytes int64
 }
 
 // Get returns the global Cache singleton.
@@ -248,6 +261,9 @@ func (c *Cache) GetBytesForValue(value float64) ([]byte, error) {
 		c.evictLRU(ctx)
 	}
 
+	// Reclaim page memory if we've evicted enough
+	c.maybeRebuild(ctx)
+
 	// Add new entry
 	c.cache.Put(value, bytes)
 	c.currentSize += entrySize
@@ -264,8 +280,22 @@ func (c *Cache) evictLRU(ctx context.Context) {
 	if !ok {
 		return
 	}
-	c.currentSize -= int64(len(value))
+	evictedSize := int64(len(value))
+	c.currentSize -= evictedSize
+	c.evictedBytes += evictedSize
 	cacheEvictions.Add(ctx, 1)
+}
+
+// maybeRebuild triggers a rebuild if enough bytes have been evicted.
+// This reclaims page memory that accumulates from evicted entries.
+// Caller must hold write lock.
+func (c *Cache) maybeRebuild(ctx context.Context) {
+	if c.evictedBytes < c.maxSizeBytes {
+		return
+	}
+	c.cache.rebuild(c.cache.Cap())
+	c.evictedBytes = 0
+	cacheRebuilds.Add(ctx, 1)
 }
 
 // BytesSize returns the current memory used by cached bytes (excluding constants).
