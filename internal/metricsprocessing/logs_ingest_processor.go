@@ -272,7 +272,7 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	readerSpan.End()
 
 	ctx, processSpan := boxerTracer.Start(ctx, "logs.ingest.process_rows")
-	dateintBins, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile)
+	dateintBins, totalInputRecords, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to process rows")
@@ -381,7 +381,7 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		totalOutputSize += params.FileSize
 	}
 
-	reportTelemetry(ctx, "logs", "ingestion", int64(len(msgs)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "logs", "ingestion", int64(len(msgs)), int64(len(segmentParams)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Log ingestion completed successfully",
 		slog.Int("inputFiles", len(msgs)),
@@ -729,7 +729,7 @@ func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers
 }
 
 // processRowsWithDateintBinning groups logs by dateint only (no aggregation, no time window)
-func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*DateintBin, error) {
+func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*DateintBin, int64, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Get RPF estimate for this org/instance - use logs estimator logic
@@ -754,7 +754,7 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 		streamField: streamField,
 	}
 
-	var totalRowsProcessed int64
+	var totalRowsRead, totalRowsProcessed int64
 
 	// Process all rows from the reader
 	for {
@@ -763,10 +763,11 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 			if batch != nil {
 				pipeline.ReturnBatch(batch)
 			}
-			return nil, fmt.Errorf("failed to read from unified pipeline: %w", readErr)
+			return nil, 0, fmt.Errorf("failed to read from unified pipeline: %w", readErr)
 		}
 
 		if batch != nil {
+			totalRowsRead += int64(batch.Len())
 			// Process each row in the batch
 			for i := 0; i < batch.Len(); i++ {
 				row := batch.Get(i)
@@ -829,6 +830,7 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	}
 
 	ll.Info("Log binning completed",
+		slog.Int64("rowsRead", totalRowsRead),
 		slog.Int64("rowsProcessed", totalRowsProcessed),
 		slog.Int("dateintBinsCreated", len(binManager.bins)))
 
@@ -836,7 +838,7 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	for binDateint, bin := range binManager.bins {
 		results, err := bin.Writer.Close(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to close writer for bin %d: %w", binDateint, err)
+			return nil, 0, fmt.Errorf("failed to close writer for bin %d: %w", binDateint, err)
 		}
 
 		if len(results) > 0 {
@@ -844,7 +846,7 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 		}
 	}
 
-	return binManager.bins, nil
+	return binManager.bins, totalRowsRead, nil
 }
 
 // getOrCreateBin gets or creates a dateint bin for the given dateint

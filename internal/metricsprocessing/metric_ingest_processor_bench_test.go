@@ -87,7 +87,7 @@ func BenchmarkProcessMetricsWithTimeBinning(b *testing.B) {
 		processor.store = mockStore
 
 		// Benchmark the time binning process
-		_, err = processor.processRowsWithTimeBinning(ctx, unifiedReader, tmpDir, storageProfile)
+		_, _, err = processor.processRowsWithTimeBinning(ctx, unifiedReader, tmpDir, storageProfile)
 		require.NoError(b, err)
 	}
 }

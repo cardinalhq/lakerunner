@@ -384,7 +384,7 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 	// Process rows
 	ctx, processSpan := boxerTracer.Start(ctx, "traces.ingest.process_rows")
 
-	dateintBins, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile)
+	dateintBins, totalInputRecords, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to process rows")
@@ -505,7 +505,7 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 	}
 
 	// Report telemetry - ingestion transforms files into segments
-	reportTelemetry(ctx, "traces", "ingestion", int64(len(msgs)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "traces", "ingestion", int64(len(msgs)), int64(len(segmentParams)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Trace ingestion completed successfully",
 		slog.Int("inputFiles", len(msgs)),
@@ -618,7 +618,7 @@ func (p *TraceIngestProcessor) createUnifiedTraceReader(ctx context.Context, rea
 }
 
 // processRowsWithDateintBinning groups traces by dateint only (no aggregation, no time window)
-func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*TraceDateintBin, error) {
+func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*TraceDateintBin, int64, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Get schema from reader (GetSchema returns a copy)
@@ -638,7 +638,7 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 		schema:      schema,
 	}
 
-	var totalRowsProcessed int64
+	var totalRowsRead, totalRowsProcessed int64
 
 	// Process all rows from the reader
 	for {
@@ -647,10 +647,11 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 			if batch != nil {
 				pipeline.ReturnBatch(batch)
 			}
-			return nil, fmt.Errorf("failed to read from unified pipeline: %w", readErr)
+			return nil, 0, fmt.Errorf("failed to read from unified pipeline: %w", readErr)
 		}
 
 		if batch != nil {
+			totalRowsRead += int64(batch.Len())
 			// Process each row in the batch
 			for i := 0; i < batch.Len(); i++ {
 				row := batch.Get(i)
@@ -707,6 +708,7 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 	}
 
 	ll.Info("Trace slot binning completed",
+		slog.Int64("rowsRead", totalRowsRead),
 		slog.Int64("rowsProcessed", totalRowsProcessed),
 		slog.Int("slotBinsCreated", len(binManager.bins)))
 
@@ -714,7 +716,7 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 	for slot, bin := range binManager.bins {
 		results, err := bin.Writer.Close(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to close writer for slot %d: %w", slot, err)
+			return nil, 0, fmt.Errorf("failed to close writer for slot %d: %w", slot, err)
 		}
 
 		if len(results) > 0 {
@@ -723,7 +725,7 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 		}
 	}
 
-	return binManager.bins, nil
+	return binManager.bins, totalRowsRead, nil
 }
 
 // getOrCreateBin gets or creates a dateint bin for the given dateint
