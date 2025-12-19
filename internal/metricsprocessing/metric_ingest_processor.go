@@ -264,7 +264,7 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 	readerSpan.End()
 
 	ctx, processSpan := boxerTracer.Start(ctx, "metrics.ingest.process_rows")
-	timeBins, err := p.processRowsWithTimeBinning(ctx, finalReader, tmpDir, srcProfile)
+	timeBins, totalInputRecords, err := p.processRowsWithTimeBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to process rows")
@@ -432,7 +432,7 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 		totalOutputSize += params.FileSize
 	}
 
-	reportTelemetry(ctx, "metrics", "ingestion", int64(len(msgs)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "metrics", "ingestion", int64(len(msgs)), int64(len(segmentParams)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Metric ingestion completed successfully",
 		slog.Int("inputFiles", len(msgs)),
@@ -554,7 +554,7 @@ func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers
 }
 
 // processRowsWithTimeBinning groups 10s aggregated data into 60s-aligned files
-func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int64]*TimeBin, error) {
+func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int64]*TimeBin, int64, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Get schema from reader (GetSchema returns a copy)
@@ -581,7 +581,7 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 		schema:      schema,
 	}
 
-	var totalRowsProcessed int64
+	var totalRowsRead, totalRowsProcessed int64
 
 	// Process all rows from the reader
 	for {
@@ -590,10 +590,11 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 			if batch != nil {
 				pipeline.ReturnBatch(batch)
 			}
-			return nil, fmt.Errorf("failed to read from unified pipeline: %w", readErr)
+			return nil, 0, fmt.Errorf("failed to read from unified pipeline: %w", readErr)
 		}
 
 		if batch != nil {
+			totalRowsRead += int64(batch.Len())
 			// Process each row in the batch
 			for i := 0; i < batch.Len(); i++ {
 				row := batch.Get(i)
@@ -651,6 +652,7 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 	}
 
 	ll.Info("File grouping completed",
+		slog.Int64("rowsRead", totalRowsRead),
 		slog.Int64("rowsProcessed", totalRowsProcessed),
 		slog.Int("fileGroupsCreated", len(binManager.bins)))
 
@@ -658,7 +660,7 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 	for binStartTs, bin := range binManager.bins {
 		results, err := bin.Writer.Close(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to close writer for bin %d: %w", binStartTs, err)
+			return nil, 0, fmt.Errorf("failed to close writer for bin %d: %w", binStartTs, err)
 		}
 
 		if len(results) > 0 {
@@ -666,7 +668,7 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 		}
 	}
 
-	return binManager.bins, nil
+	return binManager.bins, totalRowsRead, nil
 }
 
 // getOrCreateBin gets or creates a time bin for the given start timestamp
