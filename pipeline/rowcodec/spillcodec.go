@@ -20,11 +20,21 @@ import (
 	"io"
 	"math"
 	"sync"
+	"unique"
 	"unsafe"
 
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
+
+// stringBufPool provides reusable byte buffers for string reading.
+// Buffers are grown as needed and returned to the pool after use.
+var stringBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 256)
+		return &buf
+	},
+}
 
 // SpillCodec provides a compact, low-allocation binary encoding intended for
 // process-local spill files used by DiskSortingReader. The format is not stable
@@ -38,6 +48,8 @@ type SpillCodec struct {
 	// Scratch buffers reused across calls to avoid per-row allocations.
 	varintBuf [binary.MaxVarintLen64]byte
 	scalarBuf [9]byte
+	// Embedded byteReader to avoid allocation in readUvarint.
+	br byteReader
 }
 
 // Spill type tags. Only the explicitly listed primitive types are supported.
@@ -307,9 +319,9 @@ func (c *SpillCodec) DecodeRowFrom(r io.Reader, dst pipeline.Row) error {
 		delete(dst, k)
 	}
 
-	// Read field count.
-	br := byteReader{r: r}
-	fieldCount, err := binary.ReadUvarint(&br)
+	// Read field count using embedded byteReader.
+	c.br.r = r
+	fieldCount, err := binary.ReadUvarint(&c.br)
 	if err != nil {
 		return fmt.Errorf("read field count: %w", err)
 	}
@@ -326,7 +338,7 @@ func (c *SpillCodec) DecodeRowFrom(r io.Reader, dst pipeline.Row) error {
 			return fmt.Errorf("unknown key id %d", keyID)
 		}
 
-		tag, err := br.ReadByte()
+		tag, err := c.br.ReadByte()
 		if err != nil {
 			return fmt.Errorf("read type tag: %w", err)
 		}
@@ -868,11 +880,28 @@ func (c *SpillCodec) readString(r io.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	buf := make([]byte, length)
+
+	// Get pooled buffer, grow if needed.
+	bufPtr := stringBufPool.Get().(*[]byte)
+	buf := *bufPtr
+	if cap(buf) < int(length) {
+		buf = make([]byte, length)
+	} else {
+		buf = buf[:length]
+	}
+
 	if _, err := io.ReadFull(r, buf); err != nil {
+		*bufPtr = buf
+		stringBufPool.Put(bufPtr)
 		return "", err
 	}
-	return string(buf), nil
+
+	// Intern the string to deduplicate repeated values (metric names, label keys, etc.)
+	s := unique.Make(string(buf)).Value()
+
+	*bufPtr = buf
+	stringBufPool.Put(bufPtr)
+	return s, nil
 }
 
 func (c *SpillCodec) readStringSlice(r io.Reader) ([]string, error) {
@@ -907,8 +936,8 @@ func (c *SpillCodec) readBoolSlice(r io.Reader) ([]bool, error) {
 }
 
 func (c *SpillCodec) readUvarint(r io.Reader) (uint64, error) {
-	br := byteReader{r: r}
-	return binary.ReadUvarint(&br)
+	c.br.r = r
+	return binary.ReadUvarint(&c.br)
 }
 
 // byteReader wraps an io.Reader to satisfy io.ByteReader without allocations.

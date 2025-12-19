@@ -13,6 +13,14 @@
 **Input**: 100,000 metric datapoints (100K unique TIDs)
 **Output**: 100,000 aggregated rows (no reduction - all unique)
 
+## Completed Optimizations
+
+| Change | Impact | Commit |
+| ------ | ------ | ------ |
+| Pool FNV hasher in ComputeTID | -88ms (4%), zero allocs | `a615f54b` |
+| Zero-copy row transfer in TranslatingReader | -57ms (3%) | `4cf385e7` |
+| **Total** | 2195ms → 2050ms (**7% faster**) | |
+
 ## CPU Profile Hotspots
 
 | Function | CPU % | Cumulative % | Issue |
@@ -62,57 +70,68 @@
 3. **mmap temp file** - Use memory-mapped I/O instead of read/write syscalls
    - **Impact**: Kernel-managed buffering, fewer syscalls
 
-### P2: TID Computation (9.3% memory, 14% CPU cumulative)
+### P3: Specific Pooling Opportunities
 
-### P3: GC Pressure (20% CPU cumulative)
+**Problem**: 38.5M allocations cause ~20% CPU overhead from GC.
 
-**Problem**: 38.5M allocations cause significant GC overhead.
+| Target | Memory | File | Fix |
+| ------ | ------ | ---- | --- |
+| SpillCodec.readString | 191MB | `pipeline/rowcodec/spill_codec.go:189` | Pool byte buffer, use `unsafe.String()` |
+| SpillCodec.readUvarint | 97MB | `pipeline/rowcodec/spill_codec.go:205` | Embed `byteReader` in codec struct |
+| DDSketch.extendRange | 50MB | `vendor/github.com/DataDog/sketches-go` | Pre-size sketch or pool instances |
+| SpillCodec.writeString | 47MB | `pipeline/rowcodec/spill_codec.go:75` | Pool write buffer |
+| addNumberDatapointFields | 35MB | `internal/oteltools/pkg/decoder/` | Refactor closure to method |
+| strings.Builder.grow | 34MB | Various | Pool `strings.Builder` instances |
 
-**Solutions**:
+#### SpillCodec Buffer Pooling
 
-1. **Object pooling** - Pool Row maps, DDSketch instances, byte buffers
-   - Already have batch pooling, extend to more objects
-   - **Impact**: Reduce GC time by 50%+
+```go
+// Current: allocates new buffer per string read
+func (c *SpillCodec) readString() (string, error) {
+    buf := make([]byte, length)  // ALLOCATION
+    // ...
+    return string(buf), nil       // ANOTHER ALLOCATION
+}
 
-2. **Arena allocation** - Batch allocate strings from arena
-   - Reduces individual allocations
+// Fix: pool buffer, use unsafe.String
+var bufPool = sync.Pool{New: func() any { return make([]byte, 0, 256) }}
 
-### P4: SpillCodec Allocations (19% memory)
+func (c *SpillCodec) readString() (string, error) {
+    buf := bufPool.Get().([]byte)[:0]
+    buf = append(buf, ...)
+    s := unsafe.String(unsafe.SliceData(buf), len(buf))
+    // Note: must copy if string escapes, or use string interning
+}
+```
 
-**Problem**: Every string/varint value is newly allocated on read-back from disk sort.
+#### byteReader Embedding
 
-**Solutions**:
+```go
+// Current: creates new byteReader per varint
+func (c *SpillCodec) readUvarint() (uint64, error) {
+    br := byteReader{r: c.r}  // ALLOCATION (escapes)
+    return binary.ReadUvarint(&br)
+}
 
-1. **String interning** - Intern common strings (metric names, label keys)
-   - **File**: `pipeline/rowcodec/spill_codec.go`
-   - **Impact**: ~30% memory reduction for repeated strings
+// Fix: embed in struct
+type SpillCodec struct {
+    r        io.Reader
+    br       byteReader  // reused
+}
 
-2. **Reuse read buffers** - Pool byte slices for varint/string reading
-   - **Impact**: Reduce allocations
-
-### P5: Translation Row Copying (30% wall time)
-
-**Problem**: `TranslatingReader.Next()` copies every row to output batch.
-
-**Solutions**:
-
-1. **In-place translation** - Modify rows in place instead of copying
-   - **File**: `internal/filereader/translating.go:87-105`
-   - Current: Creates new row, copies all keys
-   - Better: Take ownership of input row, modify in place
-
-2. **Zero-copy batch transfer** - Use `TakeRow()` pattern
-   - Already used in AggregatingMetricsReader
+func (c *SpillCodec) readUvarint() (uint64, error) {
+    c.br.r = c.r
+    return binary.ReadUvarint(&c.br)
+}
 
 ---
 
 ## Implementation Order
 
-1. **Memory-based sorting threshold** - Biggest single impact (~38% time reduction)
-2. **Pool FNV hashers for TID** - Simple change, ~10% CPU reduction
-3. **In-place translation** - Moderate complexity, ~15% time reduction
-4. **String interning in SpillCodec** - Moderate complexity, ~19% memory reduction
-5. **Object pooling for GC reduction** - Broad impact, ~20% CPU reduction
+1. **Memory-based sorting threshold** (P0) - Biggest single impact (~38% time reduction)
+2. **SpillCodec buffer pooling** (P3) - Pool readString/writeString buffers
+3. **byteReader embedding** (P3) - Eliminate readUvarint allocations
+4. **DDSketch pre-sizing** (P3) - Reduce extendRange allocations
 
 ## Benchmark Commands
 
