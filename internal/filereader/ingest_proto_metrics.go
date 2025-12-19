@@ -30,6 +30,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
+	"github.com/cardinalhq/lakerunner/internal/ddcache"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricmath"
 	"github.com/cardinalhq/lakerunner/pipeline"
@@ -485,17 +486,10 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context,
 		return true, nil
 	}
 
-	sketch, err := helpers.GetSketch()
+	sketchBytes, err := ddcache.Get().GetBytesForValue(value)
 	if err != nil {
-		return false, fmt.Errorf("failed to get sketch for %s: %w", metricType, err)
+		return false, fmt.Errorf("failed to encode sketch for %s: %w", metricType, err)
 	}
-	if err := sketch.Add(value); err != nil {
-		helpers.PutSketch(sketch)
-		return false, fmt.Errorf("failed to add value to sketch: %w", err)
-	}
-
-	// Encode the sketch and return to pool
-	sketchBytes := helpers.EncodeAndReturnSketch(sketch)
 
 	ret[wkk.RowKeySketch] = sketchBytes
 	ret[wkk.RowKeyRollupAvg] = value

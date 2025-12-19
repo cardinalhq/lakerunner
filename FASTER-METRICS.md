@@ -1,6 +1,16 @@
 # Metric Ingestion Performance Optimization Plan
 
-## Baseline Measurements (Apple M2 Pro, 100K unique metrics, ~53MB uncompressed)
+## Current Measurements (Apple M2 Pro, 100K unique metrics, ~53MB uncompressed)
+
+| Stage | Time (ms) | Delta (ms) | % of Total | Allocs | Memory |
+| ------- | ----------- | ------------ | ------------ | -------- | -------- |
+| 1. GzipRead | 27 | 27 | 1.4% | 232 | 315MB |
+| 2. ProtoReader | 550 | 523 | 27.9% | 14.9M | 752MB |
+| 3. +Translation | 1,039 | 489 | 26.2% | 15.3M | 763MB |
+| 4. +DiskSort | 1,865 | 826 | 44.2% | 23.6M | 924MB |
+| 5. +Aggregation | 1,971 | 106 | 5.7% | 26.7M | 1,036MB |
+
+## Original Baseline (for reference)
 
 | Stage | Time (ms) | Delta (ms) | % of Total | Allocs | Memory |
 | ------- | ----------- | ------------ | ------------ | -------- | -------- |
@@ -20,7 +30,8 @@
 | Pool FNV hasher in ComputeTID | -88ms (4%), zero allocs | `a615f54b` |
 | Zero-copy row transfer in TranslatingReader | -57ms (3%) | `4cf385e7` |
 | String interning + embed byteReader in SpillCodec | -57ms (3%), -11M allocs (28%), -311MB (22%) | `291941e7` |
-| **Total** | 2263ms → 1991ms (**12% faster**), 38.5M → 27.7M allocs | |
+| DDCache page-based storage + open-addressed map | -25% memory overhead per cached sketch | `pending` |
+| **Total** | 2263ms → 1971ms (**13% faster**), 38.5M → 26.7M allocs (**31% fewer**), 1387MB → 1036MB (**25% less**) | |
 
 ## CPU Profile Hotspots
 
