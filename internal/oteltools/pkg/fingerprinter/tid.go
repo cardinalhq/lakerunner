@@ -15,9 +15,12 @@
 package fingerprinter
 
 import (
+	"bytes"
+	"hash"
 	"hash/fnv"
-	"sort"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
@@ -28,11 +31,29 @@ var (
 	tidKeyCardinalhqMetricType = wkk.NewRowKey("chq_metric_type")
 )
 
+// tidState holds reusable state for TID computation
+type tidState struct {
+	hasher hash.Hash64
+	keys   []wkk.RowKey
+	buf    bytes.Buffer
+}
+
+var tidStatePool = sync.Pool{
+	New: func() any {
+		return &tidState{
+			hasher: fnv.New64a(),
+			keys:   make([]wkk.RowKey, 0, 32),
+		}
+	},
+}
+
 // ComputeTID computes the TID (Time-series ID) using wkk.RowKey keys
 // It includes metric_name, chq_metric_type, resource_*, and attr_* fields
 func ComputeTID(tags map[wkk.RowKey]any) int64 {
-	// Collect key strings directly
-	keys := make([]string, 0, len(tags))
+	state := tidStatePool.Get().(*tidState)
+	state.hasher.Reset()
+	state.keys = state.keys[:0]
+	state.buf.Reset()
 
 	for k, v := range tags {
 		// Skip nil and empty values
@@ -42,8 +63,7 @@ func ComputeTID(tags map[wkk.RowKey]any) int64 {
 
 		// Fast path for common keys using equality comparison
 		if k == tidKeyMetricName || k == tidKeyCardinalhqMetricType {
-			kStr := wkk.RowKeyValue(k)
-			keys = append(keys, kStr)
+			state.keys = append(state.keys, k)
 			continue
 		}
 
@@ -52,20 +72,28 @@ func ComputeTID(tags map[wkk.RowKey]any) int64 {
 
 		// Check prefixes
 		if strings.HasPrefix(kStr, "resource_") || strings.HasPrefix(kStr, "attr_") || strings.HasPrefix(kStr, "metric_") {
-			keys = append(keys, kStr)
+			state.keys = append(state.keys, k)
 		}
 	}
 
-	sort.Strings(keys)
-	h := fnv.New64a()
+	// Sort by string value for deterministic hashing
+	slices.SortFunc(state.keys, func(a, b wkk.RowKey) int {
+		return strings.Compare(wkk.RowKeyValue(a), wkk.RowKeyValue(b))
+	})
 
-	// Build hash - need to look up values again
-	for _, kStr := range keys {
-		k := wkk.NewRowKey(kStr)
+	// Build hash input in buffer to avoid per-write allocations
+	for _, k := range state.keys {
 		if v, ok := tags[k].(string); ok {
-			_, _ = h.Write([]byte(kStr + "=" + v + "|"))
+			kStr := wkk.RowKeyValue(k)
+			state.buf.WriteString(kStr)
+			state.buf.WriteByte('=')
+			state.buf.WriteString(v)
+			state.buf.WriteByte('|')
 		}
 	}
 
-	return int64(h.Sum64())
+	state.hasher.Write(state.buf.Bytes())
+	result := int64(state.hasher.Sum64())
+	tidStatePool.Put(state)
+	return result
 }
