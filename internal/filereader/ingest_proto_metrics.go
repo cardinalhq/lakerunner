@@ -294,12 +294,14 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pi
 
 // SummaryToDDSketch approximates a DDSketch from an OTel Summary data point.
 // Returns nil and no error if the summary has no quantile values.
+// The caller is responsible for returning the sketch to the pool via helpers.PutSketch
+// or helpers.EncodeAndReturnSketch.
 func summaryToDDSketch(dp pmetric.SummaryDataPoint) (*ddsketch.DDSketch, error) {
 	const maxSamples = 2048
 
-	s, err := ddsketch.NewDefaultDDSketch(0.01)
+	s, err := helpers.GetSketch()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create sketch for summary: %w", err)
+		return nil, fmt.Errorf("failed to get sketch for summary: %w", err)
 	}
 
 	// Pull quantiles
@@ -483,17 +485,17 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context,
 		return true, nil
 	}
 
-	const alpha = 0.01
-	sketch, err := ddsketch.NewDefaultDDSketch(alpha)
+	sketch, err := helpers.GetSketch()
 	if err != nil {
-		return false, fmt.Errorf("failed to create sketch for %s: %w", metricType, err)
+		return false, fmt.Errorf("failed to get sketch for %s: %w", metricType, err)
 	}
 	if err := sketch.Add(value); err != nil {
+		helpers.PutSketch(sketch)
 		return false, fmt.Errorf("failed to add value to sketch: %w", err)
 	}
 
-	// Encode the sketch
-	sketchBytes := helpers.EncodeSketch(sketch)
+	// Encode the sketch and return to pool
+	sketchBytes := helpers.EncodeAndReturnSketch(sketch)
 
 	ret[wkk.RowKeySketch] = sketchBytes
 	ret[wkk.RowKeyRollupAvg] = value
@@ -555,14 +557,15 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 	}
 
 	const alpha = 0.01
-	sketch, err := ddsketch.NewDefaultDDSketch(alpha)
+	sketch, err := helpers.GetSketch()
 	if err != nil {
-		return false, fmt.Errorf("failed to create sketch for histogram: %w", err)
+		return false, fmt.Errorf("failed to get sketch for histogram: %w", err)
 	}
 
 	m := dp.ExplicitBounds().Len()
 	n := dp.BucketCounts().Len()
 	if n == 0 {
+		helpers.PutSketch(sketch)
 		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("metric_type", "histogram"),
@@ -593,6 +596,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 				rep = dp.Sum() / float64(totalCount)
 			}
 			if err := sketch.AddWithCount(rep, float64(totalCount)); err != nil {
+				helpers.PutSketch(sketch)
 				return false, fmt.Errorf("failed to add single bucket to sketch: %w", err)
 			}
 		}
@@ -623,6 +627,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 					alpha,
 					nil, // per-bin sums unknown for OTel explicit hist
 				); err != nil {
+					helpers.PutSketch(sketch)
 					return false, fmt.Errorf("failed to import finite histogram buckets: %w", err)
 				}
 			}
@@ -653,6 +658,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 					rep = rep - step
 				}
 				if err := sketch.AddWithCount(rep, float64(underflow)); err != nil {
+					helpers.PutSketch(sketch)
 					return false, fmt.Errorf("failed to add underflow to sketch: %w", err)
 				}
 			}
@@ -668,6 +674,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 					rep = rep + step
 				}
 				if err := sketch.AddWithCount(rep, float64(overflow)); err != nil {
+					helpers.PutSketch(sketch)
 					return false, fmt.Errorf("failed to add overflow to sketch: %w", err)
 				}
 			}
@@ -676,17 +683,21 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 
 	maxvalue, err := sketch.GetMaxValue()
 	if err != nil {
+		helpers.PutSketch(sketch)
 		return false, fmt.Errorf("failed to get max value from non-empty sketch: %w", err)
 	}
 	minvalue, err := sketch.GetMinValue()
 	if err != nil {
+		helpers.PutSketch(sketch)
 		return false, fmt.Errorf("failed to get min value from non-empty sketch: %w", err)
 	}
 	quantiles, err := sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
 	if err != nil {
+		helpers.PutSketch(sketch)
 		return false, fmt.Errorf("failed to get quantiles from non-empty sketch: %w", err)
 	}
 	if len(quantiles) < 6 {
+		helpers.PutSketch(sketch)
 		return false, fmt.Errorf("expected 6 quantiles, got %d", len(quantiles))
 	}
 
@@ -706,7 +717,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 	ret[wkk.RowKeyRollupP95] = quantiles[4]
 	ret[wkk.RowKeyRollupP99] = quantiles[5]
 
-	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
+	ret[wkk.RowKeySketch] = helpers.EncodeAndReturnSketch(sketch)
 	return false, nil
 }
 
@@ -781,9 +792,9 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 		return true, nil
 	}
 
-	sketch, err := ddsketch.NewDefaultDDSketch(0.01)
+	sketch, err := helpers.GetSketch()
 	if err != nil {
-		return false, fmt.Errorf("failed to create sketch for exponential histogram: %w", err)
+		return false, fmt.Errorf("failed to get sketch for exponential histogram: %w", err)
 	}
 
 	for i, count := range counts {
@@ -796,17 +807,21 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 
 	maxvalue, err := sketch.GetMaxValue()
 	if err != nil {
+		helpers.PutSketch(sketch)
 		return false, fmt.Errorf("failed to get max value from non-empty sketch: %w", err)
 	}
 	minvalue, err := sketch.GetMinValue()
 	if err != nil {
+		helpers.PutSketch(sketch)
 		return false, fmt.Errorf("failed to get min value from non-empty sketch: %w", err)
 	}
 	quantiles, err := sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
 	if err != nil {
+		helpers.PutSketch(sketch)
 		return false, fmt.Errorf("failed to get quantiles from non-empty sketch: %w", err)
 	}
 	if len(quantiles) < 6 {
+		helpers.PutSketch(sketch)
 		return false, fmt.Errorf("expected 6 quantiles, got %d", len(quantiles))
 	}
 
@@ -826,7 +841,7 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 	ret[wkk.RowKeyRollupP95] = quantiles[4]
 	ret[wkk.RowKeyRollupP99] = quantiles[5]
 
-	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
+	ret[wkk.RowKeySketch] = helpers.EncodeAndReturnSketch(sketch)
 	return false, nil
 }
 
@@ -930,8 +945,8 @@ func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context
 		}
 	}
 
-	// Encode and store the sketch
-	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
+	// Encode and store the sketch, returning it to the pool
+	ret[wkk.RowKeySketch] = helpers.EncodeAndReturnSketch(sketch)
 	return false, nil
 }
 
