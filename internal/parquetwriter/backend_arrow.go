@@ -493,6 +493,12 @@ func (b *ArrowBackend) appendValue(col *ArrowColumnBuilder, value any) error {
 		} else {
 			return fmt.Errorf("type mismatch: expected string, got %T", value)
 		}
+	case *array.BinaryBuilder:
+		if v, ok := value.([]byte); ok {
+			builder.Append(v)
+		} else {
+			return fmt.Errorf("type mismatch: expected []byte, got %T", value)
+		}
 	case *array.TimestampBuilder:
 		switch v := value.(type) {
 		case int64:
