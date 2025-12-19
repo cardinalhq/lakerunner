@@ -74,6 +74,11 @@ type SortingIngestProtoMetricsReader struct {
 	sortedDatapoints []sortableDatapoint
 	currentIndex     int
 	sorted           bool
+
+	// Fallback timestamp for datapoints missing timestamps.
+	// Captured once at reader creation to ensure consistency between
+	// sort key computation and row building.
+	fallbackTimestamp time.Time
 }
 
 // sortableDatapoint holds the sort key and indices into the OTEL structure.
@@ -134,6 +139,7 @@ func NewSortingIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics, opt
 		resourceAttrCache: NewPrefixedRowKeyCache("resource"),
 		scopeAttrCache:    NewPrefixedRowKeyCache("scope"),
 		attrCache:         NewPrefixedRowKeyCache("attr"),
+		fallbackTimestamp: time.Now(),
 	}, nil
 }
 
@@ -306,7 +312,7 @@ func (r *SortingIngestProtoMetricsReader) getDatapointTimestamp(metric pmetric.M
 	if startTs != 0 {
 		return startTs.AsTime().UnixMilli()
 	}
-	return time.Now().UnixMilli()
+	return r.fallbackTimestamp.UnixMilli()
 }
 
 // buildRowFromIndices builds a full row from the OTEL structure using stored indices.
@@ -525,9 +531,10 @@ func (r *SortingIngestProtoMetricsReader) setTimestamp(ctx context.Context, row 
 			attribute.String("reason", "start_timestamp"),
 		))
 	} else {
-		currentTime := time.Now()
-		row[wkk.RowKeyCTimestamp] = currentTime.UnixMilli()
-		row[wkk.RowKeyCTsns] = currentTime.UnixNano()
+		// Use the fallback timestamp captured at reader creation to ensure
+		// consistency with the sort key computed during collectAndSort.
+		row[wkk.RowKeyCTimestamp] = r.fallbackTimestamp.UnixMilli()
+		row[wkk.RowKeyCTsns] = r.fallbackTimestamp.UnixNano()
 		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("signal_type", "metrics"),
 			attribute.String("reason", "current_fallback"),
