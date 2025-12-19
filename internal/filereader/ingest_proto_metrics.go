@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"math"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/DataDog/sketches-go/ddsketch"
@@ -244,7 +243,7 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row pi
 	row[wkk.NewRowKey("chq_scope_url")] = sm.Scope().Version()
 	row[wkk.NewRowKey("chq_scope_name")] = sm.Scope().Name()
 
-	metricName := strings.ReplaceAll(metric.Name(), ".", "_")
+	metricName := wkk.NormalizeName(metric.Name())
 
 	// Skip metrics with empty names - these are malformed OTEL data
 	// Check BEFORE setting the field to avoid mutating the row

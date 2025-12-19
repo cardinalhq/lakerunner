@@ -20,57 +20,37 @@ import (
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
+// prefixAttributeRowKey creates a RowKey for an OTEL attribute with the given prefix.
+// Uses wkk.NormalizeName for consistent OTEL-to-underscore conversion.
 func prefixAttributeRowKey(name, prefix string) wkk.RowKey {
 	if name == "" {
 		return wkk.NewRowKey("")
 	}
 
-	// Fast path: check if there are any dots to replace
-	hasDots := strings.Contains(name, ".")
-
+	normalized := wkk.NormalizeName(name)
 	if name[0] == '_' {
-		// Underscore-prefixed: just replace dots if present
-		if !hasDots {
-			return wkk.NewRowKey(name)
-		}
-		return wkk.NewRowKey(strings.ReplaceAll(name, ".", "_"))
+		// Underscore-prefixed: no prefix added
+		return wkk.NewRowKey(normalized)
 	}
 
 	// Normal attribute: add prefix
-	if !hasDots {
-		// No dots: simple concatenation
-		var b strings.Builder
-		b.Grow(len(prefix) + 1 + len(name))
-		b.WriteString(prefix)
-		b.WriteByte('_')
-		b.WriteString(name)
-		return wkk.NewRowKey(b.String())
-	}
-
-	// Has dots: replace and add prefix
 	var b strings.Builder
-	b.Grow(len(prefix) + 1 + len(name)) // Estimate capacity
+	b.Grow(len(prefix) + 1 + len(normalized))
 	b.WriteString(prefix)
 	b.WriteByte('_')
-	for i := 0; i < len(name); i++ {
-		if name[i] == '.' {
-			b.WriteByte('_')
-		} else {
-			b.WriteByte(name[i])
-		}
-	}
+	b.WriteString(normalized)
 	return wkk.NewRowKey(b.String())
 }
 
-// prefixAttribute is kept for compatibility with tests
+// prefixAttribute creates a prefixed attribute name string.
+// Uses wkk.NormalizeName for consistent OTEL-to-underscore conversion.
 func prefixAttribute(name, prefix string) string {
 	if name == "" {
 		return ""
 	}
+	normalized := wkk.NormalizeName(name)
 	if name[0] == '_' {
-		// Convert dots to underscores even for underscore-prefixed fields
-		return strings.ReplaceAll(name, ".", "_")
+		return normalized
 	}
-	// Use underscore separator for PromQL/LogQL compatibility
-	return prefix + "_" + strings.ReplaceAll(name, ".", "_")
+	return prefix + "_" + normalized
 }

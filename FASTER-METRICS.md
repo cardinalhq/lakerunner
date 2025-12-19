@@ -2,6 +2,17 @@
 
 ## Current Measurements (Apple M2 Pro, 100K unique metrics, ~53MB uncompressed)
 
+### With Lazy In-Memory Sorting (New)
+
+| Stage | Time (ms) | Delta (ms) | % of Total | Allocs | Memory |
+| ------- | ----------- | ------------ | ------------ | -------- | -------- |
+| 1-4. SortingReader (lazy) | 1,284 | 1,284 | 91.3% | 17.3M | 798MB |
+| 5. +Aggregation | 1,407 | 123 | 8.7% | 20.4M | 919MB |
+
+*Lazy loading: stores only indices (~56 bytes/datapoint) during sort, builds rows on demand.*
+
+### With Disk Sorting (Previous)
+
 | Stage | Time (ms) | Delta (ms) | % of Total | Allocs | Memory |
 | ------- | ----------- | ------------ | ------------ | -------- | -------- |
 | 1. GzipRead | 27 | 27 | 1.4% | 232 | 315MB |
@@ -30,8 +41,9 @@
 | Pool FNV hasher in ComputeTID | -88ms (4%), zero allocs | `a615f54b` |
 | Zero-copy row transfer in TranslatingReader | -57ms (3%) | `4cf385e7` |
 | String interning + embed byteReader in SpillCodec | -57ms (3%), -11M allocs (28%), -311MB (22%) | `291941e7` |
-| DDCache page-based storage + open-addressed map | -25% memory overhead per cached sketch | `pending` |
-| **Total** | 2263ms → 1971ms (**13% faster**), 38.5M → 26.7M allocs (**31% fewer**), 1387MB → 1036MB (**25% less**) | |
+| DDCache page-based storage + open-addressed map | -25% memory overhead per cached sketch | `d3c33b01` |
+| Lazy in-memory sorting (replaces DiskSortingReader) | -566ms (29%), -6.3M allocs (24%), -113MB (11% less) | `pending` |
+| **Total** | 2263ms → 1407ms (**38% faster**), 38.5M → 20.4M allocs (**47% fewer**), 1387MB → 919MB (**34% less**) | |
 
 ## CPU Profile Hotspots
 
@@ -65,22 +77,17 @@
 
 ## Optimization Opportunities (Prioritized)
 
-### P0: Disk Sorting I/O (29% CPU, 38% wall time)
+### ~~P0: Disk Sorting I/O (29% CPU, 38% wall time)~~ ✅ DONE
 
 **Problem**: Every row is written to disk, sorted, then read back. For 100K rows, this is 200K disk operations.
 
-**Solutions**:
-
-1. **Memory-based sorting for small inputs** - If input fits in memory threshold (e.g., <50MB), sort in memory instead of disk.
-   - **File**: `internal/filereader/disk_sorting_reader.go`
-   - **Impact**: Eliminate ~850ms (38% of pipeline time)
-
-2. **Buffered disk writes** - Increase buffer size from 64KB to 1MB+
-   - Current: `bufio.NewWriterSize(tempFile, 64*1024)`
-   - **Impact**: Reduce syscall count by 16x
-
-3. **mmap temp file** - Use memory-mapped I/O instead of read/write syscalls
-   - **Impact**: Kernel-managed buffering, fewer syscalls
+**Solution**: `SortingIngestProtoMetricsReader` with lazy row building:
+- Eliminates disk I/O entirely
+- Saves ~566ms (29% of total time)
+- Stores only indices (~56 bytes/datapoint) during sort, not full rows
+- Actually uses **11% less memory** than disk sort (no row materialization during sort phase)
+- `ComputeTIDFromOTEL()` computes TID directly from OTEL structures
+- File: `internal/filereader/ingest_proto_metrics_sorting.go`
 
 ### P3: Specific Pooling Opportunities
 
@@ -140,9 +147,9 @@ func (c *SpillCodec) readUvarint() (uint64, error) {
 
 ## Implementation Order
 
-1. **Memory-based sorting threshold** (P0) - Biggest single impact (~38% time reduction)
+1. ~~**Memory-based sorting threshold** (P0)~~ ✅ Done - In-memory sorting saves ~550ms
 2. **SpillCodec buffer pooling** (P3) - Pool readString/writeString buffers
-3. **byteReader embedding** (P3) - Eliminate readUvarint allocations
+3. ~~**byteReader embedding** (P3)~~ ✅ Done - Embedded in SpillCodec
 4. **DDSketch pre-sizing** (P3) - Reduce extendRange allocations
 
 ## Benchmark Commands
@@ -165,9 +172,9 @@ go test -v -run=TestMetricFileCardinality ./internal/metricsprocessing/
 
 ## Success Metrics
 
-| Metric | Current | Target | Notes |
-| -------- | --------- | -------- | ------- |
-| Single file time | 2,263ms | <800ms | 3x improvement |
-| Memory per file | 1,387MB | <500MB | 3x reduction |
-| Allocations | 38.5M | <12M | 3x reduction |
-| Throughput | 44K rows/s | 125K rows/s | 3x improvement |
+| Metric | Original | Current | Target | Progress |
+| -------- | --------- | --------- | -------- | ------- |
+| Single file time | 2,263ms | **1,407ms** | <800ms | 38% faster |
+| Allocations | 38.5M | **20.4M** | <12M | 47% fewer |
+| Peak memory | 1,387MB | **919MB** | <500MB | 34% less |
+| Throughput | 44K rows/s | **71K rows/s** | 125K rows/s | 61% faster |

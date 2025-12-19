@@ -603,3 +603,100 @@ func BenchmarkMetricIngest_BatchSizes(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkMetricIngest_FullPipeline_MemorySort benchmarks the full pipeline using in-memory sorting.
+func BenchmarkMetricIngest_FullPipeline_MemorySort(b *testing.B) {
+	testFile := getSampleMetricFile(b)
+	orgID := uuid.MustParse("12340000-0000-4000-8000-000000000001")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		ctx := context.Background()
+
+		// Combined proto reader + translation + in-memory sorting
+		reader, err := createSortingMetricProtoReader(testFile, orgID.String(), "test-bucket", "test-object")
+		require.NoError(b, err)
+
+		// Aggregation (10s window as in production)
+		aggregatingReader, err := filereader.NewAggregatingMetricsReader(reader, 10000, 1000)
+		require.NoError(b, err)
+
+		rowCount := int64(0)
+		for {
+			batch, readErr := aggregatingReader.Next(ctx)
+			if readErr != nil {
+				if batch != nil {
+					pipeline.ReturnBatch(batch)
+				}
+				break
+			}
+			rowCount += int64(batch.Len())
+			pipeline.ReturnBatch(batch)
+		}
+
+		b.ReportMetric(float64(rowCount), "rows/op")
+		_ = aggregatingReader.Close()
+	}
+}
+
+// BenchmarkMetricIngest_SortingReader_Comparison compares disk-based sorting vs in-memory sorting.
+func BenchmarkMetricIngest_SortingReader_Comparison(b *testing.B) {
+	testFile := getSampleMetricFile(b)
+	orgID := uuid.MustParse("12340000-0000-4000-8000-000000000001")
+
+	b.Run("DiskSort", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			ctx := context.Background()
+
+			reader, _ := createMetricProtoReader(testFile, filereader.ReaderOptions{
+				OrgID: orgID.String(),
+			})
+			translator := &MetricTranslator{OrgID: orgID.String(), Bucket: "test-bucket", ObjectID: "test-object"}
+			translatingReader, _ := filereader.NewTranslatingReader(reader, translator, 1000)
+			keyProvider := filereader.GetCurrentMetricSortKeyProvider()
+			sortedReader, _ := filereader.NewDiskSortingReader(translatingReader, keyProvider, 1000)
+
+			var rows int64
+			for {
+				batch, err := sortedReader.Next(ctx)
+				if err != nil {
+					if batch != nil {
+						pipeline.ReturnBatch(batch)
+					}
+					break
+				}
+				rows += int64(batch.Len())
+				pipeline.ReturnBatch(batch)
+			}
+			_ = sortedReader.Close()
+			b.ReportMetric(float64(rows), "rows/op")
+		}
+	})
+
+	b.Run("MemorySort", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			ctx := context.Background()
+
+			reader, _ := createSortingMetricProtoReader(testFile, orgID.String(), "test-bucket", "test-object")
+
+			var rows int64
+			for {
+				batch, err := reader.Next(ctx)
+				if err != nil {
+					if batch != nil {
+						pipeline.ReturnBatch(batch)
+					}
+					break
+				}
+				rows += int64(batch.Len())
+				pipeline.ReturnBatch(batch)
+			}
+			_ = reader.Close()
+			b.ReportMetric(float64(rows), "rows/op")
+		}
+	})
+}

@@ -15,9 +15,20 @@
 package wkk
 
 import (
+	"strings"
 	"unique"
 	"unsafe"
 )
+
+// NormalizeName converts OTEL-style names (with dots) to our underscore format.
+// Example: "service.name" -> "service_name"
+// This is the canonical normalization function - all OTEL-to-row conversions must use this.
+func NormalizeName(name string) string {
+	if !strings.Contains(name, ".") {
+		return name
+	}
+	return strings.ReplaceAll(name, ".", "_")
+}
 
 type rowkey string
 
