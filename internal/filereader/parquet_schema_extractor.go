@@ -17,7 +17,6 @@ package filereader
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/parquet/file"
@@ -120,7 +119,7 @@ func discoverFieldsFromArrowType(field arrow.Field, dottedPath, underscoredPath 
 
 	default:
 		// Leaf field - use the dataType passed in (from parquet metadata)
-		finalUnderscored := strings.ReplaceAll(underscoredPath, ".", "_")
+		finalUnderscored := wkk.NormalizeName(underscoredPath)
 		newKey := wkk.NewRowKey(finalUnderscored)
 		origKey := wkk.NewRowKey(dottedPath)
 		schema.AddColumn(newKey, origKey, dataType, hasNonNull)

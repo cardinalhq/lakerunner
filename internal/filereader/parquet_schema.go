@@ -15,8 +15,6 @@
 package filereader
 
 import (
-	"strings"
-
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/file"
@@ -66,7 +64,7 @@ func walkParquetSchema(schema *ReaderSchema, node parquetgo.Node, prefix string)
 	}
 
 	// Convert dots to underscores (same as reader does)
-	columnName := strings.ReplaceAll(prefix, ".", "_")
+	columnName := wkk.NormalizeName(prefix)
 	key := wkk.NewRowKeyFromBytes([]byte(columnName))
 
 	// Map parquet type to our DataType
@@ -194,7 +192,7 @@ func buildParquetTypeMap(pf *file.Reader) map[string]DataType {
 		// top-level columns and nested columns with the same leaf name.
 		// e.g., "error" vs "pushconfig_status.Response.error" become
 		// "error" vs "pushconfig_status_Response_error"
-		colKey := strings.ReplaceAll(col.Path(), ".", "_")
+		colKey := wkk.NormalizeName(col.Path())
 
 		// Map parquet physical type to our DataType
 		physicalType := col.PhysicalType()
