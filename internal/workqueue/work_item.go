@@ -17,6 +17,7 @@ package workqueue
 import (
 	"encoding/json"
 	"errors"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -30,8 +31,9 @@ type WorkItem struct {
 	spec           json.RawMessage
 	tries          int32
 
-	closed bool
-	mgr    *Manager
+	closed   bool
+	mgr      *Manager
+	doneOnce sync.Once // ensures outstandingWork.Done() is called exactly once
 }
 
 // Workable defines operations available on a work item.
@@ -47,6 +49,13 @@ type Workable interface {
 }
 
 var _ Workable = (*WorkItem)(nil)
+
+// markDone releases the outstanding work counter. Safe to call multiple times.
+func (w *WorkItem) markDone() {
+	w.doneOnce.Do(func() {
+		w.mgr.outstandingWork.Done()
+	})
+}
 
 // Complete marks the work item as done and removes it from the queue.
 func (w *WorkItem) Complete() error {
@@ -67,6 +76,8 @@ func (w *WorkItem) Complete() error {
 	select {
 	case w.mgr.completeWork <- req:
 	case <-w.mgr.done:
+		// Manager shut down before we could send the request.
+		w.markDone()
 		return errors.New("work queue manager is shut down")
 	}
 
@@ -74,6 +85,9 @@ func (w *WorkItem) Complete() error {
 	case err := <-req.resp:
 		return err
 	case <-w.mgr.done:
+		// Request was sent but manager shut down before responding.
+		// markDone() is safe to call even if manager already called it.
+		w.markDone()
 		return errors.New("work queue manager is shut down")
 	}
 }
@@ -99,6 +113,8 @@ func (w *WorkItem) Fail(reason *string) error {
 	select {
 	case w.mgr.failWork <- req:
 	case <-w.mgr.done:
+		// Manager shut down before we could send the request.
+		w.markDone()
 		return errors.New("work queue manager is shut down")
 	}
 
@@ -106,6 +122,9 @@ func (w *WorkItem) Fail(reason *string) error {
 	case err := <-req.resp:
 		return err
 	case <-w.mgr.done:
+		// Request was sent but manager shut down before responding.
+		// markDone() is safe to call even if manager already called it.
+		w.markDone()
 		return errors.New("work queue manager is shut down")
 	}
 }
