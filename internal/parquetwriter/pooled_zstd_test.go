@@ -17,6 +17,7 @@ package parquetwriter
 import (
 	"bytes"
 	"io"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -52,7 +53,7 @@ func TestPooledZstdCodec_EncodeLevelRoundtrip(t *testing.T) {
 	}
 
 	for _, level := range levels {
-		t.Run("level_"+string(rune('0'+level)), func(t *testing.T) {
+		t.Run("level_"+strconv.Itoa(level), func(t *testing.T) {
 			compressed := codec.EncodeLevel(nil, testData, level)
 			assert.NotEmpty(t, compressed)
 
@@ -126,7 +127,7 @@ func TestPooledZstdCodec_ConcurrentAccess(t *testing.T) {
 	errChan := make(chan error, 100)
 
 	// Run concurrent encode/decode operations
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -224,7 +225,7 @@ func TestPooledZstdCodec_WriterReturnsToPool(t *testing.T) {
 	testData := []byte("test data")
 
 	// Create and close multiple writers - they should be returned to pool
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		var buf bytes.Buffer
 		writer, err := codec.NewWriterLevel(&buf, 3)
 		require.NoError(t, err)
@@ -251,8 +252,7 @@ func BenchmarkPooledZstdCodec_Encode(b *testing.B) {
 		data[i] = byte(i % 256)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = codec.Encode(nil, data)
 	}
 }
@@ -264,8 +264,7 @@ func BenchmarkPooledZstdCodec_EncodeLevel(b *testing.B) {
 		data[i] = byte(i % 256)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = codec.EncodeLevel(nil, data, 3)
 	}
 }
@@ -277,8 +276,7 @@ func BenchmarkPooledZstdCodec_StreamingWrite(b *testing.B) {
 		data[i] = byte(i % 256)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var buf bytes.Buffer
 		w := codec.NewWriter(&buf)
 		_, _ = w.Write(data)
