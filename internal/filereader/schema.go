@@ -260,13 +260,11 @@ func promoteType(a, b DataType) DataType {
 //
 // These errors indicate data quality issues and should cause the row to be rejected.
 func normalizeRow(ctx context.Context, row pipeline.Row, schema *ReaderSchema) error {
-	// Track keys to delete (can't delete while iterating)
-	var keysToDelete []wkk.RowKey
-
+	// Go 1.21+ allows deletion during map iteration
 	for key, value := range row {
 		if value == nil {
-			// Mark null values for deletion
-			keysToDelete = append(keysToDelete, key)
+			// Delete null values directly during iteration
+			delete(row, key)
 			continue
 		}
 
@@ -282,6 +280,11 @@ func normalizeRow(ctx context.Context, row pipeline.Row, schema *ReaderSchema) e
 				Column: columnName,
 				Reason: "column not in schema",
 			}
+		}
+
+		// Skip conversion if value already has the correct type (avoids boxing allocation)
+		if valueMatchesType(value, col.DataType) {
+			continue
 		}
 
 		// Convert value to match schema type
@@ -304,12 +307,33 @@ func normalizeRow(ctx context.Context, row pipeline.Row, schema *ReaderSchema) e
 		row[key] = converted
 	}
 
-	// Remove null keys and schema violations
-	for _, key := range keysToDelete {
-		delete(row, key)
-	}
-
 	return nil
+}
+
+// valueMatchesType checks if the value already has the correct type for the schema,
+// avoiding unnecessary conversion and boxing allocations.
+func valueMatchesType(value any, targetType DataType) bool {
+	switch targetType {
+	case DataTypeString:
+		_, ok := value.(string)
+		return ok
+	case DataTypeInt64:
+		_, ok := value.(int64)
+		return ok
+	case DataTypeFloat64:
+		_, ok := value.(float64)
+		return ok
+	case DataTypeBool:
+		_, ok := value.(bool)
+		return ok
+	case DataTypeBytes:
+		_, ok := value.([]byte)
+		return ok
+	case DataTypeAny:
+		return true // Any type is acceptable
+	default:
+		return false
+	}
 }
 
 // convertValue converts a value to the target data type.
