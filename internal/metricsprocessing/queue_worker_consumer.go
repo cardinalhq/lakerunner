@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -33,45 +35,75 @@ type BundleProcessor interface {
 
 // QueueWorkerConsumer is a consumer that pulls work from the PostgreSQL work queue
 type QueueWorkerConsumer struct {
-	manager   *workqueue.Manager
-	processor BundleProcessor
-	taskName  string
+	manager     *workqueue.Manager
+	processor   BundleProcessor
+	taskName    string
+	concurrency int
 }
 
-// NewQueueWorkerConsumer creates a new queue-based worker consumer
+// NewQueueWorkerConsumer creates a new queue-based worker consumer.
+// Concurrency defaults to runtime.NumCPU() if not specified or if 0 is passed.
 func NewQueueWorkerConsumer(
 	manager *workqueue.Manager,
 	processor BundleProcessor,
 	taskName string,
+	concurrency int,
 ) *QueueWorkerConsumer {
+	if concurrency <= 0 {
+		concurrency = runtime.NumCPU()
+	}
 	return &QueueWorkerConsumer{
-		manager:   manager,
-		processor: processor,
-		taskName:  taskName,
+		manager:     manager,
+		processor:   processor,
+		taskName:    taskName,
+		concurrency: concurrency,
 	}
 }
 
-// Run starts the consumer, processing work items from the queue
+// Run starts the consumer, processing work items from the queue.
+// It spawns c.concurrency worker goroutines that each independently
+// request and process work items.
 func (c *QueueWorkerConsumer) Run(ctx context.Context) error {
 	ll := logctx.FromContext(ctx)
-	ll.Info("Starting queue worker consumer", slog.String("taskName", c.taskName))
+	ll.Info("Starting queue worker consumer",
+		slog.String("taskName", c.taskName),
+		slog.Int("concurrency", c.concurrency))
 
 	// Start the manager's heartbeat and work claiming loop
 	go c.manager.Run(ctx)
 
-	// Main work processing loop
+	// Spawn worker goroutines
+	var wg sync.WaitGroup
+	for i := range c.concurrency {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			c.runWorker(ctx, workerID)
+		}(i)
+	}
+
+	// Wait for all workers to complete
+	wg.Wait()
+
+	ll.Info("All workers stopped, waiting for shutdown")
+	return c.waitForShutdown()
+}
+
+// runWorker is the main loop for a single worker goroutine
+func (c *QueueWorkerConsumer) runWorker(ctx context.Context, workerID int) {
+	ll := logctx.FromContext(ctx).With(slog.Int("workerID", workerID))
+
 	for {
 		select {
 		case <-ctx.Done():
-			ll.Info("Context cancelled, shutting down queue worker")
-			return c.waitForShutdown()
+			ll.Info("Context cancelled, worker stopping")
+			return
 
 		default:
 			workItem, err := c.manager.RequestWork(ctx)
 			if err != nil {
 				if ctx.Err() != nil {
-					// Context cancelled, exit gracefully
-					return c.waitForShutdown()
+					return
 				}
 				ll.Error("Failed to request work", slog.Any("error", err))
 				continue
@@ -87,7 +119,6 @@ func (c *QueueWorkerConsumer) Run(ctx context.Context) error {
 				ll.Error("Failed to process work item",
 					slog.Int64("workID", workItem.ID()),
 					slog.Any("error", err))
-				// Work item will be failed by processWorkItem
 			}
 		}
 	}

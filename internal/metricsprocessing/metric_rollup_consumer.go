@@ -64,7 +64,7 @@ func NewMetricRollupConsumer(
 		workqueue.WithMaxRetries(5),
 	)
 
-	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskRollupMetrics)
+	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskRollupMetrics, cfg.Scaling.GetWorkerConcurrency())
 
 	return &MetricRollupConsumer{
 		QueueWorkerConsumer: queueConsumer,

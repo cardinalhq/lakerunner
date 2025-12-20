@@ -139,10 +139,44 @@ With 2TB allocations over 30s, GC is doing significant work despite GOGC=50.
 | Date | Change | CPU Impact | Memory Impact | Notes |
 |------|--------|------------|---------------|-------|
 | 2025-12-19 | Baseline | - | - | Initial measurement |
+| 2025-12-19 | Pooled zstd codec | GC: 17.92%→10.66% | 2TB→50GB (40x) | `pooled_zstd.go` |
+
+---
+
+## Optimization #1: Pooled Zstd Codec (2025-12-19)
+
+**File:** `internal/parquetwriter/pooled_zstd.go`
+
+**Problem:** Arrow-go's default zstd codec creates a new encoder for every `EncodeLevel` and `NewWriterLevel` call, allocating ~1GB in history buffers each time.
+
+**Solution:** Custom codec that pools encoders by compression level using `sync.Pool`. Encoders are returned to pool on `Close()`.
+
+### Results
+
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| Total Allocations | ~2TB | ~50GB | **40x reduction** |
+| `zstd.ensureHist` | 827 GB | 3.8 GB | **99.5% reduction** |
+| `zstd.encoderOptions.encoder` | 300 GB | 324 MB | **99.9% reduction** |
+| CPU utilization | 84.31% | 75.92% | Less work |
+| GC scanobject | 17.92% | 10.66% | **41% reduction** |
+| memclrNoHeapPointers | 8.31% | 3.41% | **59% reduction** |
+
+### New Top Allocators (after pooling)
+
+| Function | Allocated | % |
+|----------|-----------|---|
+| `arrow.GoAllocator.Allocate` | 10.9 GB | 21.53% |
+| `ParquetRawReader.Next` | 10.1 GB | 19.98% |
+| `pqarrow.writeDenseArrow` | 5.0 GB | 9.90% |
+| `zstd.ensureHist` | 3.8 GB | 7.55% |
+| `normalizeRow` | 2.7 GB | 5.42% |
 
 ---
 
 ## Profile Files
 
-- CPU: `/Users/mgraff/pprof/pprof.lakerunner.samples.cpu.009.pb.gz`
-- Heap: `/Users/mgraff/pprof/pprof.lakerunner.alloc_objects.alloc_space.inuse_objects.inuse_space.029.pb.gz`
+- CPU (baseline): `/Users/mgraff/pprof/pprof.lakerunner.samples.cpu.009.pb.gz`
+- CPU (pooled zstd): `/Users/mgraff/pprof/pprof.lakerunner.samples.cpu.010.pb.gz`
+- Heap (baseline): `/Users/mgraff/pprof/pprof.lakerunner.alloc_objects.alloc_space.inuse_objects.inuse_space.029.pb.gz`
+- Heap (pooled zstd): `/Users/mgraff/pprof/pprof.lakerunner.alloc_objects.alloc_space.inuse_objects.inuse_space.030.pb.gz`

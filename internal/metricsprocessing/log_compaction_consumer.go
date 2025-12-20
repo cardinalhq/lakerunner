@@ -51,7 +51,7 @@ func NewLogCompactionConsumer(
 		workqueue.WithMaxRetries(5),
 	)
 
-	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskCompactLogs)
+	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskCompactLogs, cfg.Scaling.GetWorkerConcurrency())
 
 	return &LogCompactionConsumer{
 		QueueWorkerConsumer: queueConsumer,

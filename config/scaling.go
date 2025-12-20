@@ -16,11 +16,16 @@ package config
 
 import (
 	"fmt"
+	"runtime"
 )
 
 type ScalingConfig struct {
 	// Default target queue size for services not explicitly configured
 	DefaultTarget int `mapstructure:"default_target" yaml:"default_target"`
+
+	// WorkerConcurrency is the number of concurrent work items each worker pod processes.
+	// Defaults to runtime.NumCPU() if not set or <= 0.
+	WorkerConcurrency int `mapstructure:"worker_concurrency" yaml:"worker_concurrency"`
 
 	// Service-specific scaling configurations for workers
 	WorkerIngestLogs     ServiceScaling `mapstructure:"worker_ingest_logs" yaml:"worker_ingest_logs"`
@@ -121,4 +126,13 @@ func (s *ScalingConfig) GetTargetQueueSize(serviceType string) (int, error) {
 		return 0, fmt.Errorf("invalid target queue size for service %s: %d", serviceType, scaling.TargetQueueSize)
 	}
 	return scaling.TargetQueueSize, nil
+}
+
+// GetWorkerConcurrency returns the effective worker concurrency.
+// Returns runtime.NumCPU() if WorkerConcurrency is not set or <= 0.
+func (s *ScalingConfig) GetWorkerConcurrency() int {
+	if s.WorkerConcurrency <= 0 {
+		return runtime.NumCPU()
+	}
+	return s.WorkerConcurrency
 }

@@ -40,6 +40,8 @@ type pooledZstdCodec struct {
 	defaultEncoderOnce sync.Once
 }
 
+var _ compress.Codec = (*pooledZstdCodec)(nil)
+
 // Global instance registered via init()
 var pooledCodec = &pooledZstdCodec{}
 

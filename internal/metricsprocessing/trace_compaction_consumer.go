@@ -51,7 +51,7 @@ func NewTraceCompactionConsumer(
 		workqueue.WithMaxRetries(5),
 	)
 
-	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskCompactTraces)
+	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskCompactTraces, cfg.Scaling.GetWorkerConcurrency())
 
 	return &TraceCompactionConsumer{
 		QueueWorkerConsumer: queueConsumer,
