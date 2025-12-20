@@ -126,10 +126,11 @@ func (c *QueueWorkerConsumer) runWorker(ctx context.Context, workerID int) {
 
 // processWorkItem processes a single work item
 func (c *QueueWorkerConsumer) processWorkItem(ctx context.Context, workItem workqueue.Workable) error {
-	ll := logctx.FromContext(ctx)
+	// Create a logger with workID attached for tracing through the entire processing
+	ll := logctx.FromContext(ctx).With(slog.Int64("workID", workItem.ID()))
+	ctx = logctx.WithLogger(ctx, ll)
 
 	ll.Info("Processing work item",
-		slog.Int64("workID", workItem.ID()),
 		slog.String("taskName", workItem.TaskName()),
 		slog.String("organizationID", workItem.OrganizationID().String()),
 		slog.Int("instanceNum", int(workItem.InstanceNum())),
@@ -138,29 +139,23 @@ func (c *QueueWorkerConsumer) processWorkItem(ctx context.Context, workItem work
 	// Process the bundle using the processor
 	if err := c.processor.ProcessBundleFromQueue(ctx, workItem); err != nil {
 		ll.Error("Failed to process bundle",
-			slog.Int64("workID", workItem.ID()),
 			slog.Any("error", err))
 
 		// Mark work item as failed
 		reason := fmt.Sprintf("Failed to process bundle: %v", err)
 		if failErr := workItem.Fail(&reason); failErr != nil {
-			ll.Error("Failed to mark work item as failed",
-				slog.Int64("workID", workItem.ID()),
-				slog.Any("error", failErr))
+			ll.Error("Failed to mark work item as failed", slog.Any("error", failErr))
 		}
 		return err
 	}
 
 	// Mark work item as completed
 	if err := workItem.Complete(); err != nil {
-		ll.Error("Failed to complete work item",
-			slog.Int64("workID", workItem.ID()),
-			slog.Any("error", err))
+		ll.Error("Failed to complete work item", slog.Any("error", err))
 		return err
 	}
 
-	ll.Info("Successfully processed work item",
-		slog.Int64("workID", workItem.ID()))
+	ll.Info("Successfully processed work item")
 
 	return nil
 }

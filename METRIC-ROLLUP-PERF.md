@@ -144,6 +144,7 @@ With 2TB allocations over 30s, GC is doing significant work despite GOGC=50.
 | ------ | -------- | ------------ | --------------- | ------- |
 | 2025-12-19 | Baseline | - | - | Initial measurement |
 | 2025-12-19 | Pooled zstd codec | GC: 17.92%→10.66% | 2TB→50GB (40x) | `pooled_zstd.go` |
+| 2025-12-20 | Worker concurrency=NumCPU | 75.92%→173.70% | - | 2.3x throughput |
 
 ---
 
@@ -178,9 +179,36 @@ With 2TB allocations over 30s, GC is doing significant work despite GOGC=50.
 
 ---
 
+## Optimization #2: Worker Concurrency (2025-12-20)
+
+**Files:** `config/scaling.go`, `queue_worker_consumer.go`
+
+**Problem:** QueueWorkerConsumer processed work items sequentially in a single goroutine, limiting CPU utilization to ~75% of one core.
+
+**Solution:** Spawn N worker goroutines (default: `runtime.NumCPU()`). Each worker independently requests and processes work items from the queue.
+
+### Results
+
+| Metric | Before | After | Improvement |
+| -------- | -------- | ------- | ------------- |
+| CPU utilization | 75.92% | 173.70% | **2.3x throughput** |
+| Effective cores | 0.76 | 1.74 | Using both cores |
+
+### Configuration
+
+```yaml
+scaling:
+  worker_concurrency: 2    # compaction/rollup (default: NumCPU)
+  ingest_concurrency: 1    # ingest workers (default: 1)
+```
+
+---
+
 ## Profile Files
 
 - CPU (baseline): `/Users/mgraff/pprof/pprof.lakerunner.samples.cpu.009.pb.gz`
 - CPU (pooled zstd): `/Users/mgraff/pprof/pprof.lakerunner.samples.cpu.010.pb.gz`
+- CPU (concurrency): `/tmp/cpu_after_concurrency.pb.gz`
 - Heap (baseline): `/Users/mgraff/pprof/pprof.lakerunner.alloc_objects.alloc_space.inuse_objects.inuse_space.029.pb.gz`
 - Heap (pooled zstd): `/Users/mgraff/pprof/pprof.lakerunner.alloc_objects.alloc_space.inuse_objects.inuse_space.030.pb.gz`
+- Heap (concurrency): `/tmp/heap_after_concurrency.pb.gz`
