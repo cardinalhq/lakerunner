@@ -2,7 +2,8 @@
 
 ## Baseline Profile (2025-12-19)
 
-**Environment:**
+### Environment
+
 - RAM: 2GB
 - GOMEMLIMIT: 1538MB
 - GOGC: 50
@@ -16,7 +17,7 @@
 ### Top Flat CPU Consumers
 
 | Function | Flat | Flat % | Cum | Cum % |
-|----------|------|--------|-----|-------|
+| ---------- | ------ | -------- | ----- | ------- |
 | `runtime.memclrNoHeapPointers` | 2.11s | 8.31% | 2.11s | 8.31% |
 | `runtime.scanobject` | 1.73s | 6.81% | 4.55s | 17.92% |
 | `maps.ctrlGroup.matchH2` | 1.31s | 5.16% | 1.31s | 5.16% |
@@ -33,7 +34,7 @@
 ### Key Cumulative Hotspots
 
 | Function | Cum | Cum % | Location |
-|----------|-----|-------|----------|
+| ---------- | ----- | ------- | ---------- |
 | `processMetricsWithAggregation` | 20.74s | 81.69% | metricsprocessing |
 | `writeFromReader` | 19.68s | 77.51% | metricsprocessing |
 | `AggregatingMetricsReader.Next` | 13.34s | 52.54% | filereader |
@@ -55,12 +56,12 @@
 
 ## Allocation Profile Baseline
 
-**Total allocations during profile: ~2TB**
+Total allocations during profile: ~2TB
 
 ### Top Allocators (alloc_space)
 
 | Function | Allocated | % | Notes |
-|----------|-----------|---|-------|
+| ---------- | ----------- | --- | ------- |
 | `zstd.(*fastBase).ensureHist` | 827 GB | 40.56% | Zstd history buffers |
 | `zstd.encoderOptions.encoder` | 300 GB | 14.69% | Zstd encoder creation |
 | `ParquetRawReader.Next` | 240 GB | 11.76% | Parquet reading |
@@ -78,7 +79,7 @@
 ### Heap Profile (inuse_space at snapshot)
 
 | Function | In Use | % |
-|----------|--------|---|
+| ---------- | -------- | --- |
 | `parquet-go.bufferPool.newBuffer` | 65 MB | 41.40% |
 | `arrow.GoAllocator.Allocate` | 47 MB | 30.09% |
 | `fingerprinter/wordlist.init` | 11 MB | 7.17% |
@@ -94,6 +95,7 @@
 Zstd encoders allocate massive history buffers (~1GB each). Every parquet file write creates a new encoder.
 
 **Location:** `backend_arrow.go:362-367`
+
 ```go
 writerProps := parquet.NewWriterProperties(
     parquet.WithCompression(compress.Codecs.Zstd),
@@ -104,11 +106,13 @@ writerProps := parquet.NewWriterProperties(
 ### Problem #2: Map Operations (~20% of CPU)
 
 Rows are `map[RowKey]any`, causing heavy overhead:
+
 - Map iteration in `normalizeRow`
 - `columnPresence` map created every `WriteBatch` call
 - Map access/assignment throughout pipeline
 
 **Locations:**
+
 - `schema.go:262-313` (normalizeRow)
 - `backend_arrow.go:219-221` (columnPresence allocation)
 
@@ -137,7 +141,7 @@ With 2TB allocations over 30s, GC is doing significant work despite GOGC=50.
 ## Progress Log
 
 | Date | Change | CPU Impact | Memory Impact | Notes |
-|------|--------|------------|---------------|-------|
+| ------ | -------- | ------------ | --------------- | ------- |
 | 2025-12-19 | Baseline | - | - | Initial measurement |
 | 2025-12-19 | Pooled zstd codec | GC: 17.92%→10.66% | 2TB→50GB (40x) | `pooled_zstd.go` |
 
@@ -154,7 +158,7 @@ With 2TB allocations over 30s, GC is doing significant work despite GOGC=50.
 ### Results
 
 | Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
+| -------- | -------- | ------- | ------------- |
 | Total Allocations | ~2TB | ~50GB | **40x reduction** |
 | `zstd.ensureHist` | 827 GB | 3.8 GB | **99.5% reduction** |
 | `zstd.encoderOptions.encoder` | 300 GB | 324 MB | **99.9% reduction** |
@@ -165,7 +169,7 @@ With 2TB allocations over 30s, GC is doing significant work despite GOGC=50.
 ### New Top Allocators (after pooling)
 
 | Function | Allocated | % |
-|----------|-----------|---|
+| ---------- | ----------- | --- |
 | `arrow.GoAllocator.Allocate` | 10.9 GB | 21.53% |
 | `ParquetRawReader.Next` | 10.1 GB | 19.98% |
 | `pqarrow.writeDenseArrow` | 5.0 GB | 9.90% |

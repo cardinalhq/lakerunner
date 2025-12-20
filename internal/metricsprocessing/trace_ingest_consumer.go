@@ -57,7 +57,7 @@ func NewTraceIngestConsumer(
 		workqueue.WithMaxRetries(5),
 	)
 
-	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskIngestTraces, cfg.Scaling.GetWorkerConcurrency())
+	queueConsumer := NewQueueWorkerConsumer(manager, processor, config.BoxerTaskIngestTraces, cfg.Scaling.GetIngestConcurrency())
 
 	return &TraceIngestConsumer{
 		QueueWorkerConsumer: queueConsumer,

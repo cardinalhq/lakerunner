@@ -27,6 +27,10 @@ type ScalingConfig struct {
 	// Defaults to runtime.NumCPU() if not set or <= 0.
 	WorkerConcurrency int `mapstructure:"worker_concurrency" yaml:"worker_concurrency"`
 
+	// IngestConcurrency is the concurrency for ingest workers specifically.
+	// Defaults to 1 if not set or <= 0.
+	IngestConcurrency int `mapstructure:"ingest_concurrency" yaml:"ingest_concurrency"`
+
 	// Service-specific scaling configurations for workers
 	WorkerIngestLogs     ServiceScaling `mapstructure:"worker_ingest_logs" yaml:"worker_ingest_logs"`
 	WorkerIngestMetrics  ServiceScaling `mapstructure:"worker_ingest_metrics" yaml:"worker_ingest_metrics"`
@@ -135,4 +139,13 @@ func (s *ScalingConfig) GetWorkerConcurrency() int {
 		return runtime.NumCPU()
 	}
 	return s.WorkerConcurrency
+}
+
+// GetIngestConcurrency returns the effective ingest worker concurrency.
+// Returns 1 if IngestConcurrency is not set or <= 0.
+func (s *ScalingConfig) GetIngestConcurrency() int {
+	if s.IngestConcurrency <= 0 {
+		return 1
+	}
+	return s.IngestConcurrency
 }
