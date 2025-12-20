@@ -101,7 +101,7 @@ type WriterConfig struct {
 	ChunkSize int64
 
 	// BackendType specifies which Parquet writing backend to use.
-	// If empty, defaults to BackendArrow.
+	// If empty, defaults to BackendGoParquet.
 	BackendType BackendType
 }
 
@@ -136,10 +136,10 @@ func (c *WriterConfig) GetChunkSize() int64 {
 	return DefaultChunkSize
 }
 
-// GetBackendType returns the effective backend type, using arrow as default.
+// GetBackendType returns the effective backend type, using go-parquet as default.
 func (c *WriterConfig) GetBackendType() BackendType {
 	if c.BackendType == "" {
-		return BackendArrow
+		return BackendGoParquet
 	}
 	return c.BackendType
 }

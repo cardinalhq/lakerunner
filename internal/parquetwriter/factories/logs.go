@@ -30,7 +30,7 @@ import (
 // Logs are sorted by [service_identifier, fingerprint, timestamp] and grouped
 // by [service_identifier, fingerprint] to keep related log entries together.
 // The schema must be provided from the reader and cannot be nil.
-// If backendType is empty, defaults to arrow backend.
+// If backendType is empty, defaults to go-parquet backend.
 // If streamField is empty, defaults to priority: resource_customer_domain > resource_service_name.
 func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64, backendType parquetwriter.BackendType, streamField string) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
