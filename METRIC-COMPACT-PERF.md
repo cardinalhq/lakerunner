@@ -151,9 +151,11 @@ Top allocation sources:
 - **Fixed**: Skip conversion when value already matches target type (avoids interface{} boxing)
 - **Fixed**: Delete nulls during iteration instead of collecting keys first
 
-### 2. MergesortReader.Next (13.44GB flat, 28% CPU cum)
-- Row copying during merge operations
-- Consider zero-copy row passing or buffer reuse
+### 2. MergesortReader.Next (13.44GB flat, 28% CPU cum) - OPTIMIZED
+- ~~Row copying during merge operations~~
+- **Fixed**: Cache `needsNormalize` flag instead of checking per-row
+- **Fixed**: Add `ColumnCount()` to avoid allocating slice just to check length
+- **Fixed**: Use `maps.Copy()` for row copying
 
 ### 3. Arrow Write Buffers (65GB + 32GB)
 - Heavy allocation in write path
@@ -179,6 +181,7 @@ Top allocation sources:
 |------|--------|------------|--------------|-------|
 | 2025-12-20 | Baseline | - | 275GB/30s | Initial capture |
 | 2025-12-20 | normalizeRow optimization | 42% faster | 100% fewer allocs | Skip type check when types match |
+| 2025-12-20 | MergesortReader optimization | 11% faster | 32% fewer allocs, 75% less memory | Cache schema check, use maps.Copy |
 
 ### normalizeRow Benchmark Results
 
@@ -201,6 +204,27 @@ BatchSim (1000):  443 µs/op      0 B/op     0 allocs/op  (-42%, -100% allocs)
 **Changes made:**
 1. Added `valueMatchesType()` to check if value already has correct type before converting
 2. Removed `keysToDelete` slice - delete nulls directly during map iteration (Go 1.21+)
+
+### MergesortReader Benchmark Results
+
+**Before:**
+```
+SingleReader (1000 rows):  690 µs    85 KB    3111 allocs
+TwoReaders (1000 rows):    693 µs    87 KB    3134 allocs
+FiveReaders (1000 rows):   706 µs    88 KB    3177 allocs
+```
+
+**After:**
+```
+SingleReader (1000 rows):  614 µs    21 KB    2112 allocs  (-11%, -75% mem, -32% allocs)
+TwoReaders (1000 rows):    620 µs    22 KB    2133 allocs  (-10%, -75% mem, -32% allocs)
+FiveReaders (1000 rows):   632 µs    24 KB    2179 allocs  (-10%, -72% mem, -31% allocs)
+```
+
+**Changes made:**
+1. Added `ColumnCount()` method to avoid allocating slice just to check if schema has columns
+2. Cache `needsNormalize` flag at construction time instead of checking per-row
+3. Use `maps.Copy()` instead of manual loop for row copying
 
 ---
 

@@ -178,6 +178,11 @@ func (s *ReaderSchema) Columns() []*ColumnSchema {
 	return result
 }
 
+// ColumnCount returns the number of columns in the schema without allocating.
+func (s *ReaderSchema) ColumnCount() int {
+	return len(s.columns)
+}
+
 // Copy returns a deep copy of the schema.
 // This is important because callers may mutate the returned schema.
 func (s *ReaderSchema) Copy() *ReaderSchema {

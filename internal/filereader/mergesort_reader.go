@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -104,13 +105,14 @@ func (ar *activeReader) cleanup() {
 // It assumes each individual reader returns rows in sorted order according to the
 // provided SortKeyProvider.
 type MergesortReader struct {
-	readers       []Reader        // Original readers
-	activeReaders []*activeReader // Readers with data available
-	keyProvider   SortKeyProvider
-	closed        bool
-	rowCount      int64
-	batchSize     int
-	schema        *ReaderSchema // Merged schema from all readers
+	readers        []Reader        // Original readers
+	activeReaders  []*activeReader // Readers with data available
+	keyProvider    SortKeyProvider
+	closed         bool
+	rowCount       int64
+	batchSize      int
+	schema         *ReaderSchema // Merged schema from all readers
+	needsNormalize bool          // Cached: whether rows need schema normalization
 }
 
 var _ Reader = (*MergesortReader)(nil)
@@ -141,6 +143,9 @@ func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortK
 
 	// Merge schemas from all readers AFTER priming, when dynamic columns have been discovered
 	or.schema = mergeSchemas(readers)
+
+	// Cache whether normalization is needed (avoid checking per-row)
+	or.needsNormalize = or.schema != nil && or.schema.ColumnCount() > 0
 
 	return or, nil
 }
@@ -204,14 +209,12 @@ func (or *MergesortReader) Next(ctx context.Context) (*Batch, error) {
 
 		// Copy the row to the batch
 		row := batch.AddRow()
-		for k, v := range selectedReader.currentRow {
-			row[k] = v
-		}
+		maps.Copy(row, selectedReader.currentRow)
 
 		// Apply schema normalization to ensure type consistency across readers
 		// Different readers may have different types for the same column (e.g., int64 vs float64)
 		// The merged schema contains the promoted types, so normalize to match
-		if or.schema != nil && len(or.schema.Columns()) > 0 {
+		if or.needsNormalize {
 			if err := normalizeRow(ctx, row, or.schema); err != nil {
 				pipeline.ReturnBatch(batch)
 				return nil, fmt.Errorf("schema normalization failed: %w", err)
