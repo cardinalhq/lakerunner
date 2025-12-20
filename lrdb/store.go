@@ -106,7 +106,7 @@ func (store *Store) execTx(ctx context.Context, fn func(*Store) error) (err erro
 
 		if rbErr := tx.Rollback(rbCtx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
 			if err != nil {
-				err = fmt.Errorf("%w; rollback: %v", err, rbErr)
+				err = errors.Join(err, fmt.Errorf("rollback failed: %w", rbErr))
 			} else {
 				err = fmt.Errorf("rollback failed: %w", rbErr)
 			}
