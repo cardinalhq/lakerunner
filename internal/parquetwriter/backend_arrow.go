@@ -362,7 +362,7 @@ func (b *ArrowBackend) finalizeSchema() error {
 	writerProps := parquet.NewWriterProperties(
 		parquet.WithCompression(compress.Codecs.Zstd),
 		parquet.WithDictionaryDefault(false),
-		parquet.WithDataPageVersion(parquet.DataPageV1),
+		parquet.WithDataPageVersion(parquet.DataPageV2),
 		parquet.WithRootRepetition(parquet.Repetitions.Undefined),
 	)
 

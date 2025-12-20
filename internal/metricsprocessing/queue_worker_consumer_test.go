@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -106,12 +107,23 @@ func TestNewQueueWorkerConsumer(t *testing.T) {
 	mgr := workqueue.NewManager(db, 123, "test-task")
 	processor := &mockBundleProcessor{}
 
-	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task")
+	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task", 0)
 
 	assert.NotNil(t, consumer)
 	assert.Equal(t, mgr, consumer.manager)
 	assert.Equal(t, processor, consumer.processor)
 	assert.Equal(t, "test-task", consumer.taskName)
+	assert.Equal(t, runtime.NumCPU(), consumer.concurrency)
+}
+
+func TestNewQueueWorkerConsumer_CustomConcurrency(t *testing.T) {
+	db := &mockWorkQueueDB{}
+	mgr := workqueue.NewManager(db, 123, "test-task")
+	processor := &mockBundleProcessor{}
+
+	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task", 5)
+
+	assert.Equal(t, 5, consumer.concurrency)
 }
 
 func TestQueueWorkerConsumer_Close(t *testing.T) {
@@ -119,7 +131,7 @@ func TestQueueWorkerConsumer_Close(t *testing.T) {
 	mgr := workqueue.NewManager(db, 123, "test-task")
 	processor := &mockBundleProcessor{}
 
-	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task")
+	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task", 1)
 
 	err := consumer.Close()
 	assert.NoError(t, err)
@@ -134,7 +146,7 @@ func TestQueueWorkerConsumer_Run_ContextCancellation(t *testing.T) {
 	mgr := workqueue.NewManager(db, 123, "test-task")
 	processor := &mockBundleProcessor{}
 
-	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task")
+	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task", 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -192,7 +204,7 @@ func TestQueueWorkerConsumer_Run_ProcessesWorkItem(t *testing.T) {
 		},
 	}
 
-	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task")
+	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task", 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -258,7 +270,7 @@ func TestQueueWorkerConsumer_Run_FailsWorkItemOnProcessError(t *testing.T) {
 		},
 	}
 
-	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task")
+	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task", 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -304,7 +316,7 @@ func TestQueueWorkerConsumer_Run_NoWorkAvailable(t *testing.T) {
 	mgr := workqueue.NewManager(db, 123, "test-task")
 	processor := &mockBundleProcessor{}
 
-	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task")
+	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task", 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -340,7 +352,7 @@ func TestQueueWorkerConsumer_waitForShutdown_UsesFreshContext(t *testing.T) {
 	mgr := workqueue.NewManager(db, 123, "test-task")
 	processor := &mockBundleProcessor{}
 
-	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task")
+	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task", 1)
 
 	// Start the manager
 	ctx := context.Background()
@@ -387,7 +399,7 @@ func TestQueueWorkerConsumer_Run_MultipleWorkItems(t *testing.T) {
 		},
 	}
 
-	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task")
+	consumer := NewQueueWorkerConsumer(mgr, processor, "test-task", 2)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -397,9 +409,11 @@ func TestQueueWorkerConsumer_Run_MultipleWorkItems(t *testing.T) {
 		done <- consumer.Run(ctx)
 	}()
 
-	// Wait for all work to be processed
+	// Wait for all work to be completed (not just processed)
 	require.Eventually(t, func() bool {
-		return atomic.LoadInt32(&processedCount) >= 3
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		return len(db.completedWorkIDs) >= 3
 	}, 2*time.Second, 10*time.Millisecond)
 
 	// Cancel and wait for shutdown

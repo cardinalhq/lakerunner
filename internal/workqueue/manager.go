@@ -64,7 +64,7 @@ type workCompleteRequest struct {
 }
 
 func (m *Manager) completeWorkItem(ctx context.Context, w *WorkItem) error {
-	defer m.outstandingWork.Done()
+	defer w.markDone()
 
 	m.acquiredIDs = slices.DeleteFunc(m.acquiredIDs, func(id int64) bool {
 		return id == w.id
@@ -84,7 +84,7 @@ type workFailRequest struct {
 }
 
 func (m *Manager) failWorkItem(ctx context.Context, w *WorkItem, reason *string) error {
-	defer m.outstandingWork.Done()
+	defer w.markDone()
 
 	m.acquiredIDs = slices.DeleteFunc(m.acquiredIDs, func(id int64) bool {
 		return id == w.id
@@ -182,12 +182,18 @@ func (m *Manager) getWorkItem(ctx context.Context) (*WorkItem, error) {
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// No work available - sleep to avoid hammering the database
-			time.Sleep(1 * time.Second)
+			select {
+			case <-time.After(1 * time.Second):
+			case <-ctx.Done():
+			}
 			return nil, nil
 		}
 		if strings.Contains(err.Error(), "23P01") {
 			// Serialization failure - sleep to avoid hammering the database
-			time.Sleep(1 * time.Second)
+			select {
+			case <-time.After(1 * time.Second):
+			case <-ctx.Done():
+			}
 			return nil, nil
 		}
 		return nil, err
