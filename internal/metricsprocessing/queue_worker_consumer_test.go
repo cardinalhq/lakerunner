@@ -409,9 +409,11 @@ func TestQueueWorkerConsumer_Run_MultipleWorkItems(t *testing.T) {
 		done <- consumer.Run(ctx)
 	}()
 
-	// Wait for all work to be processed
+	// Wait for all work to be completed (not just processed)
 	require.Eventually(t, func() bool {
-		return atomic.LoadInt32(&processedCount) >= 3
+		db.mu.Lock()
+		defer db.mu.Unlock()
+		return len(db.completedWorkIDs) >= 3
 	}, 2*time.Second, 10*time.Millisecond)
 
 	// Cancel and wait for shutdown
