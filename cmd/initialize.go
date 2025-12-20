@@ -86,7 +86,10 @@ func runInitialize(configFile string, apiKeysFile string, replace bool) error {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
-		if err := tx.Rollback(ctx); err != nil {
+		// Use context.Background() for rollback to ensure it completes
+		// even if the original context was cancelled. Rollback after
+		// successful commit is a no-op in pgx.
+		if err := tx.Rollback(context.Background()); err != nil {
 			slog.Warn("Failed to rollback transaction", slog.Any("error", err))
 		}
 	}()

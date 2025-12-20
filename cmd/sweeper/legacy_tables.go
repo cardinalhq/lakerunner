@@ -78,7 +78,9 @@ func runLegacyTablesSync(ctx context.Context, cdbPool *pgxpool.Pool) (err error)
 	}
 	defer func() {
 		if !closed {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
+			// Use context.Background() for rollback to ensure it completes
+			// even if the original context was cancelled
+			if rbErr := tx.Rollback(context.Background()); rbErr != nil {
 				ll.Warn("Failed to rollback transaction", slog.Any("error", rbErr))
 			}
 		}

@@ -16,9 +16,12 @@ package lrdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -86,15 +89,26 @@ func (store *Store) Close() {
 }
 
 func (store *Store) execTx(ctx context.Context, fn func(*Store) error) (err error) {
-	closed := false
 	tx, err := store.connPool.Begin(ctx)
 	if err != nil {
 		return err
 	}
+
+	committed := false
 	defer func() {
-		if !closed {
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				err = fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
+		if committed {
+			return
+		}
+		// Use a timeout to prevent infinite hangs during cleanup.
+		// Never use the caller ctx for cleanup as it may be cancelled.
+		rbCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if rbErr := tx.Rollback(rbCtx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
+			if err != nil {
+				err = fmt.Errorf("%w; rollback: %v", err, rbErr)
+			} else {
+				err = fmt.Errorf("rollback failed: %w", rbErr)
 			}
 		}
 	}()
@@ -106,12 +120,16 @@ func (store *Store) execTx(ctx context.Context, fn func(*Store) error) (err erro
 	}
 
 	if err = fn(txStore); err != nil {
-		return
+		return err
 	}
 
-	err = tx.Commit(ctx)
-	if err == nil {
-		closed = true
+	// Use a timeout for commit to prevent hanging if DB is unresponsive.
+	commitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err = tx.Commit(commitCtx); err != nil {
+		return err
 	}
-	return
+	committed = true
+	return nil
 }
