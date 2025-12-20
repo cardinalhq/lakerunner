@@ -16,18 +16,38 @@ package wkk
 
 import (
 	"strings"
+	"sync"
 	"unique"
 	"unsafe"
 )
 
+// normalizeCache caches name -> normalized mappings to avoid repeated string
+// allocations for the same OTEL attribute names.
+//
+// TODO: This cache grows without bound. In practice, the number of unique
+// attribute names is small and bounded by the OTEL schema, but we should
+// consider adding an LRU eviction policy or size limit if this becomes
+// a memory issue.
+var normalizeCache sync.Map // string -> string
+
 // NormalizeName converts OTEL-style names (with dots) to our underscore format.
 // Example: "service.name" -> "service_name"
 // This is the canonical normalization function - all OTEL-to-row conversions must use this.
+// Results are cached to avoid repeated allocations for common attribute names.
 func NormalizeName(name string) string {
 	if !strings.Contains(name, ".") {
 		return name
 	}
-	return strings.ReplaceAll(name, ".", "_")
+
+	// Fast path: check cache
+	if cached, ok := normalizeCache.Load(name); ok {
+		return cached.(string)
+	}
+
+	// Slow path: compute and cache
+	normalized := strings.ReplaceAll(name, ".", "_")
+	normalizeCache.Store(name, normalized)
+	return normalized
 }
 
 type rowkey string
