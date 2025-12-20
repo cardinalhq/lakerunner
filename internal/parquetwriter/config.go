@@ -136,10 +136,10 @@ func (c *WriterConfig) GetChunkSize() int64 {
 	return DefaultChunkSize
 }
 
-// GetBackendType returns the effective backend type, using go-parquet as default.
+// GetBackendType returns the effective backend type, using Arrow as default.
 func (c *WriterConfig) GetBackendType() BackendType {
 	if c.BackendType == "" {
-		return BackendGoParquet
+		return BackendArrow
 	}
 	return c.BackendType
 }

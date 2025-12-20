@@ -498,35 +498,13 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 		"objectID", objectID,
 		"bucket", bucket)
 
-	var reader filereader.Reader
-	var err error
-
-	reader, err = createMetricProtoReader(tmpFilename, filereader.ReaderOptions{
-		OrgID: orgID,
-	})
+	// Use the sorting reader that combines proto parsing, translation, and in-memory sorting
+	reader, err := createSortingMetricProtoReader(tmpFilename, orgID, bucket, objectID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create proto reader: %w", err)
+		return nil, fmt.Errorf("failed to create sorting proto reader: %w", err)
 	}
 
-	translator := &MetricTranslator{
-		OrgID:    orgID,
-		Bucket:   bucket,
-		ObjectID: objectID,
-	}
-	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
-	if err != nil {
-		_ = reader.Close()
-		return nil, fmt.Errorf("failed to create translating reader: %w", err)
-	}
-
-	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
-	sortedReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
-	if err != nil {
-		_ = reader.Close()
-		return nil, fmt.Errorf("failed to create sorting reader: %w", err)
-	}
-
-	return sortedReader, nil
+	return reader, nil
 }
 
 // createUnifiedReader creates a unified reader from multiple readers

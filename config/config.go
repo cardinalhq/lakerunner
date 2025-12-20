@@ -24,6 +24,8 @@ import (
 
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
+
+	"github.com/cardinalhq/lakerunner/internal/ddcache"
 )
 
 // Config aggregates configuration for the application.
@@ -50,6 +52,11 @@ type Config struct {
 
 type MetricsConfig struct {
 	Ingestion IngestionConfig `mapstructure:"ingestion"`
+	DDCache   DDCacheConfig   `mapstructure:"ddcache"`
+}
+
+type DDCacheConfig struct {
+	MaxSizeBytes int64 `mapstructure:"max_size_bytes"`
 }
 
 type LogsConfig struct {
@@ -226,6 +233,9 @@ func Load() (*Config, error) {
 		Metrics: MetricsConfig{
 			Ingestion: IngestionConfig{
 				SingleInstanceMode: false,
+			},
+			DDCache: DDCacheConfig{
+				MaxSizeBytes: ddcache.DefaultMaxSizeBytes,
 			},
 		},
 		DuckDB:  DefaultDuckDBConfig(),

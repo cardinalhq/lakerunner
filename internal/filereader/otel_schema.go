@@ -146,6 +146,10 @@ func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
 	schema.AddColumn(wkk.RowKeyCTsns, wkk.RowKeyCTsns, DataTypeInt64, true)
 	schema.AddColumn(wkk.RowKeyCMetricType, wkk.RowKeyCMetricType, DataTypeString, true)
 
+	// Translation fields (added by applyTranslation)
+	schema.AddColumn(wkk.RowKeyCCustomerID, wkk.RowKeyCCustomerID, DataTypeString, true)
+	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, DataTypeString, true)
+
 	// Scope fields (added by buildMetricRow)
 	schema.AddColumn(wkk.NewRowKey("chq_scope_url"), wkk.NewRowKey("chq_scope_url"), DataTypeString, true)
 	schema.AddColumn(wkk.NewRowKey("chq_scope_name"), wkk.NewRowKey("chq_scope_name"), DataTypeString, true)

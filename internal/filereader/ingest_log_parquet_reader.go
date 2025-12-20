@@ -179,7 +179,7 @@ func flattenValueIntoRow(row pipeline.Row, dottedPath, underscoredPath string, c
 		// Leaf value - convert and store
 		val := convertArrowValue(col, i)
 		if val != nil {
-			finalUnderscored := strings.ReplaceAll(underscoredPath, ".", "_")
+			finalUnderscored := wkk.NormalizeName(underscoredPath)
 			rowKey := wkk.NewRowKeyFromBytes([]byte(finalUnderscored))
 
 			// Promote value to match schema type if needed

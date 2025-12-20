@@ -17,11 +17,14 @@ package parquetwriter
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/apache/arrow-go/v18/parquet/file"
 	pqmetadata "github.com/apache/arrow-go/v18/parquet/metadata"
+	goparquet "github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -417,4 +420,315 @@ func TestArrowBackendStatisticsEnabled(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, stats, "Statistics should be present by default")
 	require.True(t, stats.HasMinMax(), "Min/max should be set by default")
+}
+
+// TestArrowBackendBinaryDataReadByGoParquet writes binary data with Arrow and
+// reads it back with go-parquet to verify cross-library compatibility.
+func TestArrowBackendBinaryDataReadByGoParquet(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a schema with binary data column (like chq_sketch)
+	schema := filereader.NewReaderSchema()
+	schema.AddColumn(wkk.NewRowKey("id"), wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("name"), wkk.NewRowKey("name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("sketch"), wkk.NewRowKey("sketch"), filereader.DataTypeBytes, true)
+
+	config := BackendConfig{
+		Type:      BackendArrow,
+		TmpDir:    tmpDir,
+		ChunkSize: 100,
+		Schema:    schema,
+	}
+
+	backend, err := NewArrowBackend(config)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Write test data with binary column
+	batch := pipeline.GetBatch()
+	batch.AppendRow(pipeline.Row{
+		wkk.NewRowKey("id"):     int64(1),
+		wkk.NewRowKey("name"):   "test1",
+		wkk.NewRowKey("sketch"): []byte{0x01, 0x02, 0x03, 0x04},
+	})
+	batch.AppendRow(pipeline.Row{
+		wkk.NewRowKey("id"):     int64(2),
+		wkk.NewRowKey("name"):   "test2",
+		wkk.NewRowKey("sketch"): []byte{0x05, 0x06, 0x07, 0x08, 0x09},
+	})
+	batch.AppendRow(pipeline.Row{
+		wkk.NewRowKey("id"):   int64(3),
+		wkk.NewRowKey("name"): "test3",
+		// No sketch - should be null
+	})
+
+	err = backend.WriteBatch(ctx, batch)
+	require.NoError(t, err)
+	pipeline.ReturnBatch(batch)
+
+	// Close backend and write to file
+	tmpFile, err := os.CreateTemp(tmpDir, "arrow-binary-*.parquet")
+	require.NoError(t, err)
+	filePath := tmpFile.Name()
+
+	_, err = backend.Close(ctx, tmpFile)
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	// Now read it back with go-parquet
+	goParquetFile, err := os.Open(filePath)
+	require.NoError(t, err)
+	defer func() { _ = goParquetFile.Close() }()
+
+	stat, err := goParquetFile.Stat()
+	require.NoError(t, err)
+
+	// Use go-parquet to read the file
+	pf, err := goparquet.OpenFile(goParquetFile, stat.Size())
+	require.NoError(t, err, "go-parquet should be able to read Arrow-written file")
+
+	// Read rows using RowGroups
+	for _, rg := range pf.RowGroups() {
+		rows := rg.Rows()
+		defer func() { _ = rows.Close() }()
+
+		row := make(goparquet.Row, 3) // 3 columns
+		for {
+			n, err := rows.ReadRows([]goparquet.Row{row})
+			if n == 0 || err != nil {
+				break
+			}
+			t.Logf("Read row: %v", row)
+		}
+	}
+}
+
+// TestArrowBackendLargeDataReadByGoParquet writes enough data to create multiple pages
+// and verifies go-parquet can read all pages correctly.
+func TestArrowBackendLargeDataReadByGoParquet(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a schema with various column types including binary
+	schema := filereader.NewReaderSchema()
+	schema.AddColumn(wkk.NewRowKey("id"), wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("timestamp"), wkk.NewRowKey("timestamp"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("name"), wkk.NewRowKey("name"), filereader.DataTypeString, true)
+	schema.AddColumn(wkk.NewRowKey("value"), wkk.NewRowKey("value"), filereader.DataTypeFloat64, true)
+	schema.AddColumn(wkk.NewRowKey("sketch"), wkk.NewRowKey("sketch"), filereader.DataTypeBytes, true)
+	schema.AddColumn(wkk.NewRowKey("resource_service"), wkk.NewRowKey("resource_service"), filereader.DataTypeString, true)
+
+	// Use small chunk size to force multiple flushes
+	config := BackendConfig{
+		Type:      BackendArrow,
+		TmpDir:    tmpDir,
+		ChunkSize: 100, // Small chunks to force multiple pages
+		Schema:    schema,
+	}
+
+	backend, err := NewArrowBackend(config)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Write many rows to create multiple pages
+	numRows := 1000
+	for batchStart := 0; batchStart < numRows; batchStart += 50 {
+		batch := pipeline.GetBatch()
+		for i := batchStart; i < batchStart+50 && i < numRows; i++ {
+			row := pipeline.Row{
+				wkk.NewRowKey("id"):        int64(i),
+				wkk.NewRowKey("timestamp"): int64(1000000 + i),
+				wkk.NewRowKey("name"):      fmt.Sprintf("metric_%d", i),
+				wkk.NewRowKey("value"):     float64(i) * 1.5,
+			}
+			// Add binary data for some rows
+			if i%3 == 0 {
+				row[wkk.NewRowKey("sketch")] = []byte{byte(i % 256), byte((i + 1) % 256), byte((i + 2) % 256)}
+			}
+			// Add resource_service for some rows
+			if i%2 == 0 {
+				row[wkk.NewRowKey("resource_service")] = fmt.Sprintf("service_%d", i%10)
+			}
+			batch.AppendRow(row)
+		}
+		err = backend.WriteBatch(ctx, batch)
+		require.NoError(t, err)
+		pipeline.ReturnBatch(batch)
+	}
+
+	// Close backend and write to file
+	tmpFile, err := os.CreateTemp(tmpDir, "arrow-large-*.parquet")
+	require.NoError(t, err)
+	filePath := tmpFile.Name()
+
+	metadata, err := backend.Close(ctx, tmpFile)
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	t.Logf("Wrote %d rows to %s", metadata.RowCount, filePath)
+
+	// Now read it back with go-parquet
+	goParquetFile, err := os.Open(filePath)
+	require.NoError(t, err)
+	defer func() { _ = goParquetFile.Close() }()
+
+	stat, err := goParquetFile.Stat()
+	require.NoError(t, err)
+
+	// Use go-parquet to read the file
+	pf, err := goparquet.OpenFile(goParquetFile, stat.Size())
+	require.NoError(t, err, "go-parquet should be able to read Arrow-written file")
+
+	t.Logf("File has %d row groups, %d rows total", len(pf.RowGroups()), pf.NumRows())
+	t.Logf("Schema: %s", pf.Schema())
+
+	// Count all rows
+	totalRows := int64(0)
+	for rgIdx, rg := range pf.RowGroups() {
+		t.Logf("RowGroup %d: %d rows", rgIdx, rg.NumRows())
+		rows := rg.Rows()
+
+		row := make(goparquet.Row, 6) // 6 columns
+		rowsInGroup := 0
+		for {
+			n, err := rows.ReadRows([]goparquet.Row{row})
+			if n == 0 {
+				if err != nil {
+					t.Logf("  Error reading row: %v", err)
+				}
+				break
+			}
+			if err != nil {
+				t.Logf("  Read error at row %d: %v", rowsInGroup, err)
+			}
+			rowsInGroup++
+			totalRows++
+		}
+		t.Logf("  Read %d rows from group %d", rowsInGroup, rgIdx)
+		_ = rows.Close()
+	}
+
+	require.Equal(t, int64(numRows), totalRows, "should read all rows")
+	t.Logf("Successfully read %d rows", totalRows)
+}
+
+// TestArrowBackendSingleBatchReadByGoParquet writes exactly one batch
+// to isolate whether the issue is multi-batch or single-batch.
+func TestArrowBackendSingleBatchReadByGoParquet(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	schema := filereader.NewReaderSchema()
+	schema.AddColumn(wkk.NewRowKey("id"), wkk.NewRowKey("id"), filereader.DataTypeInt64, true)
+	schema.AddColumn(wkk.NewRowKey("name"), wkk.NewRowKey("name"), filereader.DataTypeString, true)
+
+	// Chunk size larger than our data - should be one batch
+	config := BackendConfig{
+		Type:      BackendArrow,
+		TmpDir:    tmpDir,
+		ChunkSize: 1000,
+		Schema:    schema,
+	}
+
+	backend, err := NewArrowBackend(config)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Write exactly 50 rows - should be one batch, one row group
+	batch := pipeline.GetBatch()
+	for i := 0; i < 50; i++ {
+		batch.AppendRow(pipeline.Row{
+			wkk.NewRowKey("id"):   int64(i),
+			wkk.NewRowKey("name"): fmt.Sprintf("name_%d", i),
+		})
+	}
+	err = backend.WriteBatch(ctx, batch)
+	require.NoError(t, err)
+	pipeline.ReturnBatch(batch)
+
+	// Close
+	tmpFile, err := os.CreateTemp(tmpDir, "single-batch-*.parquet")
+	require.NoError(t, err)
+	filePath := tmpFile.Name()
+
+	metadata, err := backend.Close(ctx, tmpFile)
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
+
+	t.Logf("Wrote %d rows", metadata.RowCount)
+
+	// First verify with Arrow's own reader and inspect metadata
+	arrowPF, err := file.OpenParquetFile(filePath, false)
+	require.NoError(t, err)
+	t.Logf("Arrow reader: %d row groups, %d rows", arrowPF.NumRowGroups(), arrowPF.NumRows())
+
+	// Inspect the metadata
+	fileMeta := arrowPF.MetaData()
+	t.Logf("Arrow metadata: version=%v, created_by=%s", fileMeta.Version(), fileMeta.GetCreatedBy())
+
+	for rgIdx := 0; rgIdx < arrowPF.NumRowGroups(); rgIdx++ {
+		rgMeta := fileMeta.RowGroup(rgIdx)
+		t.Logf("Arrow RG %d: %d rows, %d cols", rgIdx, rgMeta.NumRows(), rgMeta.NumColumns())
+		for colIdx := 0; colIdx < rgMeta.NumColumns(); colIdx++ {
+			ccMeta, err := rgMeta.ColumnChunk(colIdx)
+			require.NoError(t, err)
+			t.Logf("  Col %d: encoding=%v, num_values=%d, dict_page_offset=%d, data_page_offset=%d",
+				colIdx, ccMeta.Encodings(), ccMeta.NumValues(),
+				ccMeta.DictionaryPageOffset(), ccMeta.DataPageOffset())
+		}
+	}
+	_ = arrowPF.Close()
+
+	// Read with go-parquet
+	goParquetFile, err := os.Open(filePath)
+	require.NoError(t, err)
+	defer func() { _ = goParquetFile.Close() }()
+
+	stat, err := goParquetFile.Stat()
+	require.NoError(t, err)
+
+	pf, err := goparquet.OpenFile(goParquetFile, stat.Size())
+	require.NoError(t, err)
+
+	t.Logf("File has %d row groups, %d rows", len(pf.RowGroups()), pf.NumRows())
+
+	// Inspect column chunks
+	pfSchema := pf.Schema()
+	for rgIdx, rg := range pf.RowGroups() {
+		t.Logf("Row group %d:", rgIdx)
+		for ccIdx, cc := range rg.ColumnChunks() {
+			colIdx := cc.Column()
+			colPath := pfSchema.Columns()[colIdx]
+			t.Logf("  Column %d: name=%s, type=%v",
+				ccIdx, strings.Join(colPath, "."), cc.Type())
+		}
+	}
+
+	totalRows := int64(0)
+	for rgIdx, rg := range pf.RowGroups() {
+		rows := rg.Rows()
+		row := make(goparquet.Row, 2)
+		for {
+			n, err := rows.ReadRows([]goparquet.Row{row})
+			if n == 0 {
+				if err != nil {
+					t.Logf("Error in row group %d: %v", rgIdx, err)
+				}
+				break
+			}
+			totalRows++
+		}
+		_ = rows.Close()
+	}
+
+	// Save the file for debugging if test fails
+	if totalRows != 50 {
+		debugFile := "/tmp/arrow-debug.parquet"
+		data, _ := os.ReadFile(filePath)
+		_ = os.WriteFile(debugFile, data, 0644)
+		t.Logf("Debug file saved at: %s", debugFile)
+	}
+
+	require.Equal(t, int64(50), totalRows)
 }

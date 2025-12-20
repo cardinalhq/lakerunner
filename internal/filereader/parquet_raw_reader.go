@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/parquet-go/parquet-go"
 	"go.opentelemetry.io/otel/attribute"
@@ -116,7 +115,7 @@ func (r *ParquetRawReader) Next(ctx context.Context) (*Batch, error) {
 		row := r.readBuf[i]
 		batchRow := batch.AddRow()
 		for k, v := range row {
-			fieldName := strings.ReplaceAll(k, ".", "_")
+			fieldName := wkk.NormalizeName(k)
 			batchRow[wkk.NewRowKeyFromBytes([]byte(fieldName))] = v
 		}
 		// Apply schema normalization

@@ -20,7 +20,6 @@ import (
 	"io"
 	"time"
 
-	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -205,28 +204,28 @@ func (r *IngestProtoTracesReader) getTraceRow(ctx context.Context, row pipeline.
 // Values are extracted with their native types based on OTEL value type.
 func (r *IngestProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span, row pipeline.Row) {
 	// Add resource attributes with prefix (preserve native types)
-	rs.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range rs.Resource().Attributes().All() {
 		key := r.resourceAttrCache.Get(name)
 		value := otelValueToGoValue(v)
 		row[key] = value
-		return true
-	})
+	}
 
 	// Add scope attributes with prefix (preserve native types)
-	ss.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range ss.Scope().Attributes().All() {
 		key := r.scopeAttrCache.Get(name)
 		value := otelValueToGoValue(v)
 		row[key] = value
-		return true
-	})
+	}
 
 	// Add span attributes with prefix (preserve native types)
-	span.Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range span.Attributes().All() {
 		key := r.attrCache.Get(name)
 		value := otelValueToGoValue(v)
 		row[key] = value
-		return true
-	})
+	}
 
 	// Basic span fields - raw data only
 	row[wkk.RowKeySpanTraceID] = span.TraceID().String()

@@ -62,7 +62,7 @@ const (
 	BackendArrow BackendType = "arrow"
 
 	// DefaultBackend is the default backend type used when not specified
-	DefaultBackend = BackendGoParquet
+	DefaultBackend = BackendArrow
 )
 
 // BackendFactory creates a ParquetBackend based on configuration.

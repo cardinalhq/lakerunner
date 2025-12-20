@@ -67,25 +67,28 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) 
 		return fmt.Errorf("row cannot be nil")
 	}
 
-	// First, normalize all field names to lowercase with deduplication
-	// Sort keys to ensure deterministic processing order
-	keys := make([]wkk.RowKey, 0, len(*row))
-	for key := range *row {
-		keys = append(keys, key)
+	// Collect original keys and values, then normalize field names
+	type keyVal struct {
+		key   wkk.RowKey
+		value any
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return wkk.RowKeyValue(keys[i]) < wkk.RowKeyValue(keys[j])
+	originals := make([]keyVal, 0, len(*row))
+	for k, v := range *row {
+		originals = append(originals, keyVal{k, v})
+	}
+	// Sort for deterministic processing
+	sort.Slice(originals, func(i, j int) bool {
+		return wkk.RowKeyValue(originals[i].key) < wkk.RowKeyValue(originals[j].key)
 	})
 
-	normalizedRow := make(pipeline.Row)
-	usedNames := make(map[string]int) // Track how many times each lowercased name has been used
+	// Clear and rebuild in place with normalized names
+	clear(*row)
+	usedNames := make(map[string]int)
 
-	for _, key := range keys {
-		value := (*row)[key]
-		originalName := wkk.RowKeyValue(key)
+	for _, kv := range originals {
+		originalName := wkk.RowKeyValue(kv.key)
 		normalizedName := strings.ToLower(originalName)
 
-		// Handle duplicates by adding numbered suffixes
 		finalName := normalizedName
 		if count, exists := usedNames[normalizedName]; exists {
 			count++
@@ -95,28 +98,23 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) 
 			usedNames[normalizedName] = 1
 		}
 
-		normalizedKey := wkk.NewRowKey(finalName)
-		normalizedRow[normalizedKey] = value
+		(*row)[wkk.NewRowKey(finalName)] = kv.value
 	}
-	*row = normalizedRow
 
 	// Special handling for "data" field as message
 	dataKey := wkk.NewRowKey("data")
 	logMessageKey := wkk.NewRowKey("log_message")
 	if dataVal, exists := (*row)[dataKey]; exists {
-		// Set as message
 		if msg, isString := dataVal.(string); isString && msg != "" {
 			(*row)[logMessageKey] = msg
 		}
-		// Remove from row to avoid duplication
 		delete(*row, dataKey)
 	}
 
-	// Look for timestamp fields and try to detect the right one
+	// Look for timestamp fields
 	timestampFound := false
 	var timestamp int64
 
-	// Check common timestamp field names (all lowercase now)
 	timestampFields := []string{
 		"timestamp", "time", "datetime", "date",
 		"publish_time", "event_timestamp", "created_at", "updated_at",
@@ -129,14 +127,12 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) 
 			if ts := t.parseTimestamp(val); ts > 0 {
 				timestamp = ts
 				timestampFound = true
-				// Remove the original timestamp field to avoid duplication
 				delete(*row, key)
 				break
 			}
 		}
 	}
 
-	// If no timestamp found, use current time
 	if !timestampFound {
 		timestamp = time.Now().UnixMilli()
 		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
@@ -147,61 +143,48 @@ func (t *CSVLogTranslator) TranslateRow(ctx context.Context, row *pipeline.Row) 
 
 	(*row)[wkk.RowKeyCTimestamp] = timestamp
 
-	// Map remaining fields to log.* namespace with sanitized names
-	// Sort keys to ensure deterministic processing order for sanitization too
-	remainingKeys := make([]wkk.RowKey, 0)
+	// Collect keys to rename to log_* namespace
+	keysToRename := make([]wkk.RowKey, 0)
 	for key := range *row {
-		// Skip already processed fields
 		if key == wkk.RowKeyCTimestamp || key == logMessageKey {
 			continue
 		}
-		remainingKeys = append(remainingKeys, key)
+		keysToRename = append(keysToRename, key)
 	}
-	sort.Slice(remainingKeys, func(i, j int) bool {
-		return wkk.RowKeyValue(remainingKeys[i]) < wkk.RowKeyValue(remainingKeys[j])
+	sort.Slice(keysToRename, func(i, j int) bool {
+		return wkk.RowKeyValue(keysToRename[i]) < wkk.RowKeyValue(keysToRename[j])
 	})
 
-	newFields := make(map[wkk.RowKey]any)
-	// Add already processed fields
-	newFields[wkk.RowKeyCTimestamp] = (*row)[wkk.RowKeyCTimestamp]
-	if msgVal, exists := (*row)[logMessageKey]; exists {
-		newFields[logMessageKey] = msgVal
-	}
-
-	usedSanitizedNames := make(map[string]int) // Track sanitized name usage
-
-	for _, key := range remainingKeys {
+	// Rename fields to log_* namespace
+	usedSanitizedNames := make(map[string]int)
+	for _, key := range keysToRename {
 		value := (*row)[key]
+		delete(*row, key)
+
 		originalName := wkk.RowKeyValue(key)
-
-		// Sanitize the field name
 		sanitized := t.sanitizeFieldName(originalName)
-		if sanitized != "" && sanitized != "data" { // Skip empty names and "data" field
-			// Handle duplicates in sanitized names by adding numbered suffixes
-			finalSanitized := sanitized
-			if count, exists := usedSanitizedNames[sanitized]; exists {
-				count++
-				usedSanitizedNames[sanitized] = count
-				finalSanitized = fmt.Sprintf("%s_%d", sanitized, count)
-			} else {
-				usedSanitizedNames[sanitized] = 1
-			}
-
-			newKey := wkk.NewRowKey("log_" + finalSanitized)
-			newFields[newKey] = value
+		if sanitized == "" || sanitized == "data" {
+			continue
 		}
+
+		finalSanitized := sanitized
+		if count, exists := usedSanitizedNames[sanitized]; exists {
+			count++
+			usedSanitizedNames[sanitized] = count
+			finalSanitized = fmt.Sprintf("%s_%d", sanitized, count)
+		} else {
+			usedSanitizedNames[sanitized] = 1
+		}
+
+		(*row)[wkk.NewRowKey("log_"+finalSanitized)] = value
 	}
 
-	// Replace row content with new fields
-	*row = newFields
-
-	// Add resource fields (standard for all log readers) - using underscore format
+	// Add resource fields
 	(*row)[wkk.RowKeyResourceBucketName] = t.bucket
 	(*row)[wkk.RowKeyResourceFileName] = "./" + t.objectID
 	(*row)[wkk.RowKeyResourceFileType] = helpers.GetFileType(t.objectID)
 	(*row)[wkk.NewRowKey("resource_service_name")] = "csv-import"
 
-	// Add organization ID if available
 	if t.orgID != "" {
 		(*row)[wkk.NewRowKey("chq_organization_id")] = t.orgID
 	}

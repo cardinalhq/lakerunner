@@ -104,7 +104,7 @@ func TestIngestProtoMetricsReader_SchemaExtraction_BasicTypes(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoMetricsReader(reader, ReaderOptions{OrgID: "1", BatchSize: 1000})
+	protoReader, err := NewSortingIngestProtoMetricsReader(reader, SortingReaderOptions{OrgID: "1", BatchSize: 1000})
 	require.NoError(t, err)
 	defer func() { _ = protoReader.Close() }()
 
@@ -197,7 +197,7 @@ func TestIngestProtoMetricsReader_SchemaExtraction_TypePromotion(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoMetricsReader(reader, ReaderOptions{OrgID: "1", BatchSize: 1000})
+	protoReader, err := NewSortingIngestProtoMetricsReader(reader, SortingReaderOptions{OrgID: "1", BatchSize: 1000})
 	require.NoError(t, err)
 	defer func() { _ = protoReader.Close() }()
 
@@ -282,7 +282,7 @@ func TestIngestProtoMetricsReader_SchemaExtraction_MultiResource(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoMetricsReader(reader, ReaderOptions{OrgID: "1", BatchSize: 1000})
+	protoReader, err := NewSortingIngestProtoMetricsReader(reader, SortingReaderOptions{OrgID: "1", BatchSize: 1000})
 	require.NoError(t, err)
 	defer func() { _ = protoReader.Close() }()
 
@@ -370,7 +370,7 @@ func TestIngestProtoMetricsReader_SchemaExtraction_MultipleMetricTypes(t *testin
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoMetricsReader(reader, ReaderOptions{OrgID: "1", BatchSize: 1000})
+	protoReader, err := NewSortingIngestProtoMetricsReader(reader, SortingReaderOptions{OrgID: "1", BatchSize: 1000})
 	require.NoError(t, err)
 	defer func() { _ = protoReader.Close() }()
 
@@ -390,7 +390,7 @@ func TestIngestProtoMetricsReader_RealFile_BoolField(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = file.Close() }()
 
-	protoReader, err := NewIngestProtoMetricsReader(file, ReaderOptions{OrgID: "test-org", BatchSize: 1000})
+	protoReader, err := NewSortingIngestProtoMetricsReader(file, SortingReaderOptions{OrgID: "test-org", BatchSize: 1000})
 	require.NoError(t, err)
 	defer func() { _ = protoReader.Close() }()
 
@@ -468,4 +468,8 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func floatPtr(f float64) *float64 {
+	return &f
 }

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"go.opentelemetry.io/otel/attribute"
@@ -335,16 +336,17 @@ func convertValue(value any, targetType DataType) (any, error) {
 }
 
 // convertToString converts any value to string.
+// Uses strconv functions instead of fmt.Sprintf for better performance.
 func convertToString(value any) string {
 	switch v := value.(type) {
 	case string:
 		return v
 	case int64:
-		return fmt.Sprintf("%d", v)
+		return strconv.FormatInt(v, 10)
 	case int:
-		return fmt.Sprintf("%d", v)
+		return strconv.Itoa(v)
 	case float64:
-		return fmt.Sprintf("%g", v)
+		return strconv.FormatFloat(v, 'g', -1, 64)
 	case bool:
 		if v {
 			return "true"
@@ -386,9 +388,7 @@ func convertToInt64(value any) (int64, error) {
 	case float32:
 		return int64(v), nil
 	case string:
-		var i int64
-		_, err := fmt.Sscanf(v, "%d", &i)
-		return i, err
+		return strconv.ParseInt(v, 10, 64)
 	case arrow.Timestamp:
 		// Arrow timestamps need unit normalization to milliseconds
 		return normalizeTimestampValue(int64(v)), nil
@@ -451,9 +451,7 @@ func convertToFloat64(value any) (float64, error) {
 	case uint8:
 		return float64(v), nil
 	case string:
-		var f float64
-		_, err := fmt.Sscanf(v, "%f", &f)
-		return f, err
+		return strconv.ParseFloat(v, 64)
 	case arrow.Timestamp:
 		// Arrow timestamps need unit normalization to milliseconds
 		return float64(normalizeTimestampValue(int64(v))), nil

@@ -356,9 +356,14 @@ func (b *ArrowBackend) finalizeSchema() error {
 	b.tmpFilePath = tmpFile.Name()
 
 	// Configure Parquet writer properties
+	// - Disable dictionary encoding - Arrow's dictionary pages aren't read correctly by parquet-go
+	// - Use undefined root repetition - Arrow defaults to REPEATED which causes parquet-go to
+	//   incorrectly interpret the schema with extra repetition/definition levels
 	writerProps := parquet.NewWriterProperties(
 		parquet.WithCompression(compress.Codecs.Zstd),
-		parquet.WithDictionaryDefault(true),
+		parquet.WithDictionaryDefault(false),
+		parquet.WithDataPageVersion(parquet.DataPageV1),
+		parquet.WithRootRepetition(parquet.Repetitions.Undefined),
 	)
 
 	arrowProps := pqarrow.NewArrowWriterProperties(
@@ -492,6 +497,12 @@ func (b *ArrowBackend) appendValue(col *ArrowColumnBuilder, value any) error {
 			builder.Append(v)
 		} else {
 			return fmt.Errorf("type mismatch: expected string, got %T", value)
+		}
+	case *array.BinaryBuilder:
+		if v, ok := value.([]byte); ok {
+			builder.Append(v)
+		} else {
+			return fmt.Errorf("type mismatch: expected []byte, got %T", value)
 		}
 	case *array.TimestampBuilder:
 		switch v := value.(type) {
