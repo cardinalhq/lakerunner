@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -86,7 +87,11 @@ func runInitialize(configFile string, apiKeysFile string, replace bool) error {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
-		if err := tx.Rollback(ctx); err != nil {
+		// Use a timeout to prevent infinite hangs during cleanup.
+		// Rollback after successful commit is a no-op in pgx.
+		rbCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := tx.Rollback(rbCtx); err != nil {
 			slog.Warn("Failed to rollback transaction", slog.Any("error", err))
 		}
 	}()
@@ -98,8 +103,10 @@ func runInitialize(configFile string, apiKeysFile string, replace bool) error {
 		return err
 	}
 
-	// Commit transaction
-	if err := tx.Commit(ctx); err != nil {
+	// Use a timeout for commit to prevent hanging if DB is unresponsive.
+	commitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := tx.Commit(commitCtx); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
