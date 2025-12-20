@@ -167,28 +167,28 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context, row pipeline.Row)
 // Values are extracted with their native types based on OTEL value type.
 func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord, row pipeline.Row) {
 	// Process resource attributes - use cached RowKeys
-	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range rl.Resource().Attributes().All() {
 		key := r.resourceAttrCache.Get(name)
 		value := otelValueToGoValue(v)
 		row[key] = value
-		return true
-	})
+	}
 
 	// Process scope attributes - use cached RowKeys
-	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range sl.Scope().Attributes().All() {
 		key := r.scopeAttrCache.Get(name)
 		value := otelValueToGoValue(v)
 		row[key] = value
-		return true
-	})
+	}
 
 	// Process log attributes - use cached RowKeys
-	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range logRecord.Attributes().All() {
 		key := r.logAttrCache.Get(name)
 		value := otelValueToGoValue(v)
 		row[key] = value
-		return true
-	})
+	}
 
 	message := logRecord.Body().AsString()
 	row[wkk.RowKeyCMessage] = message

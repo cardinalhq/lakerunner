@@ -346,18 +346,18 @@ func (r *SortingIngestProtoMetricsReader) buildAndTranslateRow(
 	sortingTID int64,
 ) (bool, error) {
 	// Add resource attributes
-	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range rm.Resource().Attributes().All() {
 		key := r.resourceAttrCache.Get(name)
 		row[key] = v.AsString()
-		return true
-	})
+	}
 
 	// Add scope attributes
-	sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range sm.Scope().Attributes().All() {
 		key := r.scopeAttrCache.Get(name)
 		row[key] = v.AsString()
-		return true
-	})
+	}
 
 	row[wkk.NewRowKey("chq_scope_url")] = sm.Scope().Version()
 	row[wkk.NewRowKey("chq_scope_name")] = sm.Scope().Name()
@@ -473,11 +473,11 @@ func getDatapointCount(metric pmetric.Metric) int {
 
 // addNumberDatapointFields adds fields from a NumberDataPoint.
 func (r *SortingIngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context, row pipeline.Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
-	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range dp.Attributes().All() {
 		key := r.attrCache.Get(name)
 		row[key] = v.AsString()
-		return true
-	})
+	}
 
 	r.setTimestamp(ctx, row, dp.Timestamp(), dp.StartTimestamp())
 
@@ -560,10 +560,10 @@ func (r *SortingIngestProtoMetricsReader) addHistogramDatapointFields(ctx contex
 		return true, nil
 	}
 
-	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range dp.Attributes().All() {
 		row[prefixAttributeRowKey(name, "attr")] = v.AsString()
-		return true
-	})
+	}
 
 	r.setTimestamp(ctx, row, dp.Timestamp(), dp.StartTimestamp())
 
@@ -679,11 +679,11 @@ func (r *SortingIngestProtoMetricsReader) addHistogramDatapointFields(ctx contex
 
 // addExponentialHistogramDatapointFields adds fields from an ExponentialHistogramDataPoint.
 func (r *SortingIngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx context.Context, row pipeline.Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
-	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range dp.Attributes().All() {
 		key := r.attrCache.Get(name)
 		row[key] = v.AsString()
-		return true
-	})
+	}
 
 	r.setTimestamp(ctx, row, dp.Timestamp(), dp.StartTimestamp())
 
@@ -744,11 +744,11 @@ func (r *SortingIngestProtoMetricsReader) addExponentialHistogramDatapointFields
 
 // addSummaryDatapointFields adds fields from a SummaryDataPoint.
 func (r *SortingIngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context, row pipeline.Row, dp pmetric.SummaryDataPoint) (bool, error) {
-	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range dp.Attributes().All() {
 		key := r.attrCache.Get(name)
 		row[key] = v.AsString()
-		return true
-	})
+	}
 
 	r.setTimestamp(ctx, row, dp.Timestamp(), dp.StartTimestamp())
 

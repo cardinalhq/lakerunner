@@ -108,7 +108,12 @@ func createMetricProtoBinaryReader(filename string, opts filereader.ReaderOption
 		return nil, fmt.Errorf("failed to open protobuf file: %w", err)
 	}
 
-	reader, err := filereader.NewIngestProtoMetricsReader(file, opts)
+	reader, err := filereader.NewSortingIngestProtoMetricsReader(file, filereader.SortingReaderOptions{
+		OrgID:     opts.OrgID,
+		Bucket:    opts.Bucket,
+		ObjectID:  opts.ObjectID,
+		BatchSize: opts.BatchSize,
+	})
 	if err != nil {
 		_ = file.Close()
 		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
@@ -130,7 +135,12 @@ func createMetricProtoBinaryGzReader(filename string, opts filereader.ReaderOpti
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 
-	reader, err := filereader.NewIngestProtoMetricsReader(gzipReader, opts)
+	reader, err := filereader.NewSortingIngestProtoMetricsReader(gzipReader, filereader.SortingReaderOptions{
+		OrgID:     opts.OrgID,
+		Bucket:    opts.Bucket,
+		ObjectID:  opts.ObjectID,
+		BatchSize: opts.BatchSize,
+	})
 	if err != nil {
 		_ = gzipReader.Close()
 		_ = file.Close()

@@ -64,73 +64,6 @@ var tidStatePool = sync.Pool{
 	},
 }
 
-// DebugTIDKeys returns the sorted key-value pairs that would be used for TID computation.
-// This is for debugging only.
-func DebugTIDKeys(tags map[wkk.RowKey]any) []string {
-	var kvs []string
-	for k, v := range tags {
-		if v == nil || v == "" {
-			continue
-		}
-		if k == tidKeyMetricName || k == tidKeyCardinalhqMetricType {
-			if s, ok := v.(string); ok {
-				kvs = append(kvs, wkk.RowKeyValue(k)+"="+s)
-			}
-			continue
-		}
-		kStr := wkk.RowKeyValue(k)
-		if strings.HasPrefix(kStr, "resource_") || strings.HasPrefix(kStr, "attr_") || strings.HasPrefix(kStr, "metric_") {
-			if s, ok := v.(string); ok {
-				kvs = append(kvs, kStr+"="+s)
-			}
-		}
-	}
-	slices.Sort(kvs)
-	return kvs
-}
-
-// DebugTIDKeysFromOTEL returns the sorted key-value pairs that ComputeTIDFromOTEL would use.
-// This is for debugging only.
-func DebugTIDKeysFromOTEL(
-	resourceAttrs pcommon.Map,
-	dpAttrs pcommon.Map,
-	metricName string,
-	metricType pmetric.MetricType,
-) []string {
-	var kvs []string
-
-	resourceAttrs.Range(func(name string, v pcommon.Value) bool {
-		normalizedName := wkk.NormalizeName(name)
-		if KeepResourceKeys[normalizedName] {
-			kvs = append(kvs, "resource_"+normalizedName+"="+v.AsString())
-		}
-		return true
-	})
-
-	dpAttrs.Range(func(name string, v pcommon.Value) bool {
-		// Skip underscore-prefixed attributes (internal/special attributes)
-		if len(name) > 0 && name[0] == '_' {
-			return true
-		}
-		val := v.AsString()
-		if val != "" {
-			normalizedName := wkk.NormalizeName(name)
-			kvs = append(kvs, "attr_"+normalizedName+"="+val)
-		}
-		return true
-	})
-
-	normalizedMetricName := wkk.NormalizeName(metricName)
-	if normalizedMetricName != "" {
-		kvs = append(kvs, "metric_name="+normalizedMetricName)
-	}
-
-	kvs = append(kvs, "chq_metric_type="+metricTypeToString(metricType))
-
-	slices.Sort(kvs)
-	return kvs
-}
-
 // ComputeTID computes the TID (Time-series ID) using wkk.RowKey keys
 // It includes metric_name, chq_metric_type, resource_*, and attr_* fields
 func ComputeTID(tags map[wkk.RowKey]any) int64 {
@@ -234,7 +167,8 @@ func ComputeTIDFromOTEL(
 
 	// Add filtered resource attributes (prefixed with "resource_")
 	// Uses wkk.NormalizeName to convert OTEL dots to underscores.
-	resourceAttrs.Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range resourceAttrs.All() {
 		normalizedName := wkk.NormalizeName(name)
 		if KeepResourceKeys[normalizedName] {
 			kvsWrapper.kvs = append(kvsWrapper.kvs, tidKV{
@@ -242,17 +176,17 @@ func ComputeTIDFromOTEL(
 				value: v.AsString(),
 			})
 		}
-		return true
-	})
+	}
 
 	// Add datapoint attributes (prefixed with "attr_")
 	// Uses wkk.NormalizeName to convert OTEL dots to underscores.
 	// Underscore-prefixed attributes are SKIPPED - they don't get the "attr_" prefix
 	// in row building, and ComputeTID only looks for "attr_" prefixed keys.
-	dpAttrs.Range(func(name string, v pcommon.Value) bool {
+	// Use .All() rather than .Range() to avoid a closure allocation
+	for name, v := range dpAttrs.All() {
 		// Skip underscore-prefixed attributes (internal/special attributes)
 		if len(name) > 0 && name[0] == '_' {
-			return true
+			continue
 		}
 		val := v.AsString()
 		if val != "" {
@@ -262,8 +196,7 @@ func ComputeTIDFromOTEL(
 				value: val,
 			})
 		}
-		return true
-	})
+	}
 
 	// Add metric name (normalized via wkk.NormalizeName)
 	normalizedMetricName := wkk.NormalizeName(metricName)

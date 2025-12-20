@@ -332,7 +332,12 @@ func createProtoReaderWithOptions(reader io.Reader, opts ReaderOptions) (Reader,
 		}
 		return protoReader, nil
 	case SignalTypeMetrics:
-		return NewIngestProtoMetricsReader(reader, opts)
+		return NewSortingIngestProtoMetricsReader(reader, SortingReaderOptions{
+			OrgID:     opts.OrgID,
+			Bucket:    opts.Bucket,
+			ObjectID:  opts.ObjectID,
+			BatchSize: opts.BatchSize,
+		})
 	case SignalTypeTraces:
 		return NewIngestProtoTracesReader(reader, opts)
 	default:
