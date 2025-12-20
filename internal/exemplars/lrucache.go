@@ -91,11 +91,17 @@ func (l *LRUCache) cleanupExpiredEntries() {
 	l.Lock()
 	now := time.Now()
 
+	// Track evicted entries that are also pending publication.
+	// Their rows must be returned to pool AFTER the callback uses them.
+	var evictedPending []*Entry
+
 	// Mark entries due for publish this sweep.
+	pendingSet := make(map[uint64]struct{})
 	for e := l.list.Back(); e != nil; e = e.Prev() {
 		entry := e.Value.(*Entry)
 		if entry.shouldPublish(l.expiry) {
 			l.pending = append(l.pending, entry)
+			pendingSet[entry.key] = struct{}{}
 			entry.lastPublishTime = now
 		}
 	}
@@ -107,7 +113,12 @@ func (l *LRUCache) cleanupExpiredEntries() {
 			prev := e.Prev()
 			l.list.Remove(e)
 			delete(l.cache, entry.key)
-			pipeline.ReturnPooledRow(entry.value)
+			// Defer pool return if pending publication to avoid race
+			if _, isPending := pendingSet[entry.key]; isPending {
+				evictedPending = append(evictedPending, entry)
+			} else {
+				pipeline.ReturnPooledRow(entry.value)
+			}
 			e = prev
 		} else {
 			e = e.Prev()
@@ -124,6 +135,11 @@ func (l *LRUCache) cleanupExpiredEntries() {
 		toPublish := reservoirSample(candidates, l.maxPublishPerSweep, l.rng)
 		slog.Debug("Publishing exemplar batch", "candidates", n, "published", len(toPublish))
 		l.publishCallBack(toPublish)
+	}
+
+	// Return evicted rows to pool after callback completes.
+	for _, entry := range evictedPending {
+		pipeline.ReturnPooledRow(entry.value)
 	}
 }
 
