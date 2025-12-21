@@ -36,5 +36,7 @@ header:
     - '**/*db/copyfrom.go'
     - 'internal/externalscaler/externalscaler.proto'
     - '**/*.pb.go'
+    - '**/.gitkeep'
+    - 'docker/duckdb-extensions/**/*.duckdb_extension.gz'
 
   comment: on-failure

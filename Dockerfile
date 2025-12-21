@@ -15,6 +15,7 @@
 # Build arguments
 ARG TARGETARCH
 
+# ========= Extensions Stage (copy pre-downloaded extensions) =========
 FROM debian:bookworm-slim AS extensions
 
 ARG TARGETARCH
@@ -30,6 +31,10 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* && 
         fi; \
     done
 
+# Decompress DuckDB extensions
+COPY docker/duckdb-extensions/linux_${TARGETARCH}/*.duckdb_extension.gz /tmp/extensions/
+RUN mkdir -p /app/extensions && for i in /tmp/extensions/*.gz; do gunzip < "$i" > /app/extensions/"$(basename "$i" .gz)"; done
+
 # ========= Runtime Image =========
 FROM gcr.io/distroless/cc-debian12:nonroot
 
@@ -39,8 +44,14 @@ ARG TARGETARCH
 COPY --chmod=755 lakerunner /app/bin/lakerunner
 COPY --chmod=755 lakectl /app/bin/lakectl
 
+# Copy decompressed DuckDB extensions from staging layer
+COPY --from=extensions /app/extensions/ /app/extensions/
+
 # Copy curl binary and its runtime dependencies
 COPY --from=extensions /usr/bin/curl /usr/bin/curl
 COPY --from=extensions /runtime-deps/ /
+
+# Set environment variable for DDSketch extension path
+ENV LAKERUNNER_DDSKETCH_EXTENSION=/app/extensions/ddsketch.duckdb_extension
 
 CMD ["/app/bin/lakerunner"]
