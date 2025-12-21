@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"runtime"
 	"time"
@@ -416,6 +417,9 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 	var totalOutputSize, totalOutputRecords int64
 	var segmentIDs []int64
 
+	// Merge label name maps from input segments
+	mergedLabelMap := mergeMetricLabelNameMaps(inputSegments)
+
 	// Generate unique batch IDs for all results to avoid collisions
 	batchSegmentIDs := idgen.GenerateBatchIDs(len(results))
 
@@ -456,6 +460,7 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 			CreatedBy:    lrdb.CreatedByRollup,
 			MetricNames:  stats.MetricNames,
 			MetricTypes:  stats.MetricTypes,
+			LabelNameMap: mergedLabelMap,
 		}
 
 		segments = append(segments, segment)
@@ -494,6 +499,7 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 			Fingerprints: seg.Fingerprints,
 			MetricNames:  seg.MetricNames,
 			MetricTypes:  seg.MetricTypes,
+			LabelNameMap: seg.LabelNameMap,
 		}
 	}
 
@@ -695,4 +701,34 @@ func (r *MetricRollupProcessor) getNextRollupFrequency(sourceFrequencyMs int32) 
 	default:
 		return 0 // No further rollup
 	}
+}
+
+// mergeMetricLabelNameMaps merges label name maps from multiple input metric segments.
+// Returns nil if no segments have label maps, otherwise returns a merged JSONB map.
+func mergeMetricLabelNameMaps(inputSegments []lrdb.MetricSeg) []byte {
+	merged := make(map[string]string)
+
+	for _, seg := range inputSegments {
+		if len(seg.LabelNameMap) == 0 {
+			continue
+		}
+
+		var segMap map[string]string
+		if err := json.Unmarshal(seg.LabelNameMap, &segMap); err != nil {
+			continue
+		}
+
+		maps.Copy(merged, segMap)
+	}
+
+	if len(merged) == 0 {
+		return nil
+	}
+
+	result, err := json.Marshal(merged)
+	if err != nil {
+		return nil
+	}
+
+	return result
 }
