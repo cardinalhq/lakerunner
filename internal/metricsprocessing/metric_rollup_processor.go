@@ -31,6 +31,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -61,18 +62,20 @@ type MetricRollupProcessor struct {
 	cmgr            cloudstorage.ClientProvider
 	kafkaProducer   fly.Producer
 	config          *config.Config
+	duckDB          *duckdbx.DB
 }
 
 // newMetricRollupProcessor creates a new metric rollup processor instance
 func newMetricRollupProcessor(
 	cfg *config.Config,
-	store MetricRollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricRollupProcessor {
+	store MetricRollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer, duckDB *duckdbx.DB) *MetricRollupProcessor {
 	return &MetricRollupProcessor{
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
 		config:          cfg,
 		kafkaProducer:   kafkaProducer,
+		duckDB:          duckDB,
 	}
 }
 
@@ -273,7 +276,7 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		attribute.Int("target_frequency_ms", int(key.TargetFrequencyMs)),
 	))
 
-	results, err := processMetricsWithAggregation(ctx, params)
+	results, err := processMetricsWithDuckDB(ctx, r.duckDB, params)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to process metrics with aggregation")
