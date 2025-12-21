@@ -26,11 +26,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marcboeker/go-duckdb/v2"
+	"github.com/duckdb/duckdb-go/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
+
+// DDSketchExtensionEnvVar is the environment variable for the DDSketch extension path.
+const DDSketchExtensionEnvVar = "LAKERUNNER_DDSKETCH_EXTENSION"
 
 // DB manages a pool of DuckDB connections to a single shared on-disk database.
 // All connections open the same file and thus share the same in-process database instance.
@@ -601,4 +604,29 @@ func (d *DB) pollMemoryMetrics(ctx context.Context) {
 		case <-time.After(d.metricsPeriod):
 		}
 	}
+}
+
+// LoadDDSketchExtension loads the DDSketch extension on the given connection.
+// The extension path is read from the LAKERUNNER_DDSKETCH_EXTENSION environment variable.
+// Returns an error if the extension is not configured or cannot be loaded.
+func LoadDDSketchExtension(ctx context.Context, conn *sql.Conn) error {
+	extensionPath := os.Getenv(DDSketchExtensionEnvVar)
+	if extensionPath == "" {
+		return fmt.Errorf("DDSketch extension path not configured: set %s environment variable", DDSketchExtensionEnvVar)
+	}
+	return LoadDDSketchExtensionFromPath(ctx, conn, extensionPath)
+}
+
+// LoadDDSketchExtensionFromPath loads the DDSketch extension from a specific file path.
+func LoadDDSketchExtensionFromPath(ctx context.Context, conn *sql.Conn, extensionPath string) error {
+	if _, err := os.Stat(extensionPath); os.IsNotExist(err) {
+		return fmt.Errorf("DDSketch extension not found at %s", extensionPath)
+	}
+
+	loadQuery := fmt.Sprintf("LOAD '%s'", escapeSingle(extensionPath))
+	if _, err := conn.ExecContext(ctx, loadQuery); err != nil {
+		return fmt.Errorf("load ddsketch extension: %w", err)
+	}
+
+	return nil
 }
