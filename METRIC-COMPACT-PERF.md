@@ -182,6 +182,7 @@ Top allocation sources:
 | 2025-12-20 | Baseline | - | 275GB/30s | Initial capture |
 | 2025-12-20 | normalizeRow optimization | 42% faster | 100% fewer allocs | Skip type check when types match |
 | 2025-12-20 | MergesortReader optimization | 11% faster | 32% fewer allocs, 75% less memory | Cache schema check, use maps.Copy |
+| **2025-12-20** | **Post-optimization pprof** | **75%→34% samples** | **275GB→42GB (-85%)** | **normalizeRow/MergesortReader eliminated from hot path** |
 
 ### normalizeRow Benchmark Results
 
