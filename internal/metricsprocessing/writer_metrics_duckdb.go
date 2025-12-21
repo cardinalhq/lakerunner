@@ -57,6 +57,14 @@ var rollupColumns = []string{
 	"chq_rollup_p99",
 }
 
+// quoteIdent quotes a column name for DuckDB SQL.
+// DuckDB uses double quotes for identifiers with special characters.
+func quoteIdent(name string) string {
+	// Escape any double quotes in the name by doubling them
+	escaped := strings.ReplaceAll(name, `"`, `""`)
+	return `"` + escaped + `"`
+}
+
 // processMetricsWithDuckDB performs metric aggregation using DuckDB SQL:
 // 1. Read parquet files from local disk
 // 2. Truncate timestamps to aggregation period
@@ -222,32 +230,33 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 	var groupByClauses []string
 
 	for _, col := range schema {
+		qcol := quoteIdent(col)
 		if col == sketchColumn {
 			// Merge sketches
-			selectClauses = append(selectClauses, fmt.Sprintf("ddsketch_agg(%s) AS %s", col, col))
+			selectClauses = append(selectClauses, fmt.Sprintf("ddsketch_agg(%s) AS %s", qcol, qcol))
 		} else if col == "chq_timestamp" {
 			// Truncate timestamp to aggregation period
 			selectClauses = append(selectClauses, fmt.Sprintf(
-				"(chq_timestamp / %d) * %d AS chq_timestamp",
-				frequencyMs, frequencyMs))
-			groupByClauses = append(groupByClauses, fmt.Sprintf("(chq_timestamp / %d) * %d", frequencyMs, frequencyMs))
+				"(%s / %d) * %d AS %s",
+				qcol, frequencyMs, frequencyMs, qcol))
+			groupByClauses = append(groupByClauses, fmt.Sprintf("(%s / %d) * %d", qcol, frequencyMs, frequencyMs))
 		} else if col == "chq_tsns" {
 			// Truncate nanosecond timestamp to aggregation period
 			freqNs := int64(frequencyMs) * 1_000_000
 			selectClauses = append(selectClauses, fmt.Sprintf(
-				"(chq_tsns / %d) * %d AS chq_tsns",
-				freqNs, freqNs))
-			groupByClauses = append(groupByClauses, fmt.Sprintf("(chq_tsns / %d) * %d", freqNs, freqNs))
+				"(%s / %d) * %d AS %s",
+				qcol, freqNs, freqNs, qcol))
+			groupByClauses = append(groupByClauses, fmt.Sprintf("(%s / %d) * %d", qcol, freqNs, freqNs))
 		} else if groupCols[col] {
 			// Group by column - pass through
-			selectClauses = append(selectClauses, col)
-			groupByClauses = append(groupByClauses, col)
+			selectClauses = append(selectClauses, qcol)
+			groupByClauses = append(groupByClauses, qcol)
 		} else if rollupCols[col] {
 			// Skip rollup columns - we'll compute them from the merged sketch
 			continue
 		} else {
 			// Metadata column - use first value
-			selectClauses = append(selectClauses, fmt.Sprintf("first(%s) AS %s", col, col))
+			selectClauses = append(selectClauses, fmt.Sprintf("first(%s) AS %s", qcol, qcol))
 		}
 	}
 
@@ -279,7 +288,7 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 		COPY (
 			SELECT *, %s
 			FROM (%s) AS merged
-			ORDER BY metric_name, chq_tid, chq_timestamp
+			ORDER BY "metric_name", "chq_tid", "chq_timestamp"
 		) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)`,
 		strings.Join(rollupExtraction, ", "),
 		innerQuery,
