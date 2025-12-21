@@ -256,9 +256,10 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 	}
 
 	// Build outer query with rollup column extraction
+	// Use union_by_name=true to handle schema differences between files
 	innerQuery := fmt.Sprintf(`
 		SELECT %s
-		FROM read_parquet([%s])
+		FROM read_parquet([%s], union_by_name=true)
 		GROUP BY %s`,
 		strings.Join(selectClauses, ", "),
 		fileList,
