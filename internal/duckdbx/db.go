@@ -340,7 +340,10 @@ func (p *connectionPool) newConn(ctx context.Context) (*pooledConn, error) {
 		return nil, err
 	}
 
-	connector, err := duckdb.NewConnector(p.parent.dbPath, nil)
+	// Pass allow_unsigned_extensions in DSN to enable loading custom extensions like DDSketch
+	dsn := p.parent.dbPath + "?allow_unsigned_extensions=true"
+
+	connector, err := duckdb.NewConnector(dsn, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create connector: %w", err)
 	}
@@ -618,14 +621,10 @@ func LoadDDSketchExtension(ctx context.Context, conn *sql.Conn) error {
 }
 
 // LoadDDSketchExtensionFromPath loads the DDSketch extension from a specific file path.
+// Note: The connection must have allow_unsigned_extensions enabled (done automatically by duckdbx.DB).
 func LoadDDSketchExtensionFromPath(ctx context.Context, conn *sql.Conn, extensionPath string) error {
 	if _, err := os.Stat(extensionPath); os.IsNotExist(err) {
 		return fmt.Errorf("DDSketch extension not found at %s", extensionPath)
-	}
-
-	// Enable unsigned extensions (DDSketch is a custom extension without official DuckDB signature)
-	if _, err := conn.ExecContext(ctx, "SET allow_unsigned_extensions = true"); err != nil {
-		return fmt.Errorf("enable unsigned extensions: %w", err)
 	}
 
 	loadQuery := fmt.Sprintf("LOAD '%s'", escapeSingle(extensionPath))
