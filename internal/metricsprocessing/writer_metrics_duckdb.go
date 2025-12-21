@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/lib/pq"
 
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
@@ -55,14 +56,6 @@ var rollupColumns = []string{
 	"chq_rollup_p90",
 	"chq_rollup_p95",
 	"chq_rollup_p99",
-}
-
-// quoteIdent quotes a column name for DuckDB SQL.
-// DuckDB uses double quotes for identifiers with special characters.
-func quoteIdent(name string) string {
-	// Escape any double quotes in the name by doubling them
-	escaped := strings.ReplaceAll(name, `"`, `""`)
-	return `"` + escaped + `"`
 }
 
 // processMetricsWithDuckDB performs metric aggregation using DuckDB SQL:
@@ -230,7 +223,7 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 	var groupByClauses []string
 
 	for _, col := range schema {
-		qcol := quoteIdent(col)
+		qcol := pq.QuoteIdentifier(col)
 		if col == sketchColumn {
 			// Merge sketches
 			selectClauses = append(selectClauses, fmt.Sprintf("ddsketch_agg(%s) AS %s", qcol, qcol))
@@ -308,9 +301,9 @@ func getOutputFileStatsConn(ctx context.Context, conn *sql.Conn, filePath string
 	}
 	recordCount = count
 
-	// Get timestamp range
+	// Get timestamp range (cast to BIGINT to ensure proper type handling)
 	err = conn.QueryRowContext(ctx, fmt.Sprintf(
-		"SELECT MIN(chq_timestamp), MAX(chq_timestamp) FROM read_parquet('%s')", filePath)).
+		"SELECT CAST(MIN(chq_timestamp) AS BIGINT), CAST(MAX(chq_timestamp) AS BIGINT) FROM read_parquet('%s')", filePath)).
 		Scan(&firstTS, &lastTS)
 	if err != nil {
 		return 0, 0, 0, nil, nil, nil, fmt.Errorf("get timestamp range: %w", err)
