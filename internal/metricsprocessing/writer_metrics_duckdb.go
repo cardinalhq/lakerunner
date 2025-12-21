@@ -28,7 +28,6 @@ import (
 	"github.com/lib/pq"
 
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
-	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
@@ -113,11 +112,14 @@ func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params me
 		return nil, fmt.Errorf("stat output file: %w", err)
 	}
 
-	// Get record count and metadata from output file
-	recordCount, firstTS, lastTS, fingerprints, metricNames, metricTypes, err := getOutputFileStatsConn(ctx, conn, outputFile)
+	// Get record count from output file (the only thing we need to query)
+	recordCount, err := getRecordCount(ctx, conn, outputFile)
 	if err != nil {
-		return nil, fmt.Errorf("get output file stats: %w", err)
+		return nil, fmt.Errorf("get record count: %w", err)
 	}
+
+	// Compute metadata from input segments (no need to query output file)
+	firstTS, lastTS, fingerprints, metricNames, metricTypes := computeStatsFromSegments(params.ActiveSegments)
 
 	result := parquetwriter.Result{
 		FileName:    outputFile,
@@ -291,66 +293,59 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 	return err
 }
 
-// getOutputFileStatsConn reads statistics from the output parquet file.
-func getOutputFileStatsConn(ctx context.Context, conn *sql.Conn, filePath string) (recordCount, firstTS, lastTS int64, fingerprints []int64, metricNames []string, metricTypes []int16, err error) {
-	// Get record count
+// getRecordCount queries the record count from a parquet file.
+func getRecordCount(ctx context.Context, conn *sql.Conn, filePath string) (int64, error) {
 	var count int64
-	err = conn.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s')", filePath)).Scan(&count)
+	err := conn.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s')", filePath)).Scan(&count)
 	if err != nil {
-		return 0, 0, 0, nil, nil, nil, fmt.Errorf("count records: %w", err)
+		return 0, fmt.Errorf("count records: %w", err)
 	}
-	recordCount = count
+	return count, nil
+}
 
-	// Get timestamp range (cast to BIGINT to ensure proper type handling)
-	err = conn.QueryRowContext(ctx, fmt.Sprintf(
-		"SELECT CAST(MIN(chq_timestamp) AS BIGINT), CAST(MAX(chq_timestamp) AS BIGINT) FROM read_parquet('%s')", filePath)).
-		Scan(&firstTS, &lastTS)
-	if err != nil {
-		return 0, 0, 0, nil, nil, nil, fmt.Errorf("get timestamp range: %w", err)
-	}
+// computeStatsFromSegments computes merged metadata from input segments.
+func computeStatsFromSegments(segments []lrdb.MetricSeg) (firstTS, lastTS int64, fingerprints []int64, metricNames []string, metricTypes []int16) {
+	firstTS = int64(^uint64(0) >> 1) // max int64
+	lastTS = int64(0)
 
-	// Get distinct metric names and types
+	fingerprintSet := mapset.NewSet[int64]()
 	metricNameSet := mapset.NewSet[string]()
 	metricTypeMap := make(map[string]int16)
 
-	rows, err := conn.QueryContext(ctx, fmt.Sprintf(
-		"SELECT DISTINCT metric_name, chq_metric_type FROM read_parquet('%s') WHERE metric_name IS NOT NULL", filePath))
-	if err != nil {
-		return 0, 0, 0, nil, nil, nil, fmt.Errorf("get metric names and types: %w", err)
-	}
-	for rows.Next() {
-		var name string
-		var mtype sql.NullString
-		if err := rows.Scan(&name, &mtype); err == nil {
+	for _, seg := range segments {
+		// Merge timestamp range
+		if seg.TsRange.Lower.Int64 < firstTS {
+			firstTS = seg.TsRange.Lower.Int64
+		}
+		if seg.TsRange.Upper.Int64 > lastTS {
+			lastTS = seg.TsRange.Upper.Int64
+		}
+
+		// Merge fingerprints
+		for _, fp := range seg.Fingerprints {
+			fingerprintSet.Add(fp)
+		}
+
+		// Merge metric names and types
+		for i, name := range seg.MetricNames {
 			metricNameSet.Add(name)
-			if _, exists := metricTypeMap[name]; !exists {
-				if mtype.Valid {
-					metricTypeMap[name] = lrdb.MetricTypeFromString(mtype.String)
-				} else {
-					metricTypeMap[name] = lrdb.MetricTypeUnknown
-				}
+			if _, exists := metricTypeMap[name]; !exists && i < len(seg.MetricTypes) {
+				metricTypeMap[name] = seg.MetricTypes[i]
 			}
 		}
 	}
-	_ = rows.Close()
 
-	// Build sorted metric names slice
+	// Build sorted slices
+	fingerprints = fingerprintSet.ToSlice()
+	slices.Sort(fingerprints)
+
 	metricNames = metricNameSet.ToSlice()
 	slices.Sort(metricNames)
 
-	// Build parallel metric types array
 	metricTypes = make([]int16, len(metricNames))
 	for i, name := range metricNames {
 		metricTypes[i] = metricTypeMap[name]
 	}
 
-	// Compute fingerprints from metric names
-	tagValuesByName := map[string]mapset.Set[string]{
-		"metric_name": metricNameSet,
-	}
-	fingerprintSet := fingerprint.ToFingerprints(tagValuesByName)
-	fingerprints = fingerprintSet.ToSlice()
-	slices.Sort(fingerprints)
-
-	return recordCount, firstTS, lastTS, fingerprints, metricNames, metricTypes, nil
+	return firstTS, lastTS, fingerprints, metricNames, metricTypes
 }

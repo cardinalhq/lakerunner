@@ -15,9 +15,11 @@
 package duckdbx
 
 import (
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -611,13 +613,98 @@ func (d *DB) pollMemoryMetrics(ctx context.Context) {
 
 // LoadDDSketchExtension loads the DDSketch extension on the given connection.
 // The extension path is read from the LAKERUNNER_DDSKETCH_EXTENSION environment variable.
-// Returns an error if the extension is not configured or cannot be loaded.
+// If not set, it searches for the extension in standard locations.
 func LoadDDSketchExtension(ctx context.Context, conn *sql.Conn) error {
 	extensionPath := os.Getenv(DDSketchExtensionEnvVar)
 	if extensionPath == "" {
-		return fmt.Errorf("DDSketch extension path not configured: set %s environment variable", DDSketchExtensionEnvVar)
+		extensionPath = findDDSketchExtension()
+	}
+	if extensionPath == "" {
+		return fmt.Errorf("DDSketch extension not found: set %s environment variable or place extension in docker/duckdb-extensions/", DDSketchExtensionEnvVar)
 	}
 	return LoadDDSketchExtensionFromPath(ctx, conn, extensionPath)
+}
+
+// findDDSketchExtension searches for the DDSketch extension in standard locations.
+// If only a .gz version exists, it will be decompressed to a temp file.
+func findDDSketchExtension() string {
+	// Determine platform directory name (DuckDB uses "osx" not "darwin")
+	goos := runtime.GOOS
+	if goos == "darwin" {
+		goos = "osx"
+	}
+	platform := goos + "_" + runtime.GOARCH
+	extName := "ddsketch.duckdb_extension"
+
+	// Search paths (relative to current directory and parent directories)
+	basePaths := []string{
+		filepath.Join("docker", "duckdb-extensions", platform),
+		filepath.Join("..", "docker", "duckdb-extensions", platform),
+		filepath.Join("..", "..", "docker", "duckdb-extensions", platform),
+	}
+
+	for _, basePath := range basePaths {
+		// Try uncompressed first
+		uncompressed := filepath.Join(basePath, extName)
+		if _, err := os.Stat(uncompressed); err == nil {
+			if absPath, err := filepath.Abs(uncompressed); err == nil {
+				return absPath
+			}
+			return uncompressed
+		}
+
+		// Try gzipped and decompress
+		gzipped := filepath.Join(basePath, extName+".gz")
+		if _, err := os.Stat(gzipped); err == nil {
+			if decompressed, err := decompressExtension(gzipped); err == nil {
+				return decompressed
+			}
+		}
+	}
+
+	return ""
+}
+
+// decompressExtension decompresses a gzipped extension to a temp file.
+// The extension filename must be exactly "ddsketch.duckdb_extension" for DuckDB to load it.
+func decompressExtension(gzPath string) (string, error) {
+	gzFile, err := os.Open(gzPath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = gzFile.Close() }()
+
+	gzReader, err := gzip.NewReader(gzFile)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = gzReader.Close() }()
+
+	// Create temp directory and use exact extension name (DuckDB requires this)
+	tmpDir, err := os.MkdirTemp("", "duckdb-ext-")
+	if err != nil {
+		return "", err
+	}
+
+	extPath := filepath.Join(tmpDir, "ddsketch.duckdb_extension")
+	tmpFile, err := os.Create(extPath)
+	if err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return "", err
+	}
+
+	if _, err := io.Copy(tmpFile, gzReader); err != nil {
+		_ = tmpFile.Close()
+		_ = os.RemoveAll(tmpDir)
+		return "", err
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return "", err
+	}
+
+	return extPath, nil
 }
 
 // LoadDDSketchExtensionFromPath loads the DDSketch extension from a specific file path.

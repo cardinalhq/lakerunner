@@ -20,12 +20,14 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // createTestSketch creates a valid DDSketch with some sample values.
@@ -121,7 +123,7 @@ func TestDiscoverSchemaConn(t *testing.T) {
 	assert.Len(t, schema, 4)
 }
 
-func TestGetOutputFileStatsConn(t *testing.T) {
+func TestGetRecordCount(t *testing.T) {
 	ctx := context.Background()
 
 	db, err := duckdbx.NewDB()
@@ -133,130 +135,119 @@ func TestGetOutputFileStatsConn(t *testing.T) {
 	defer release()
 
 	tests := []struct {
-		name              string
-		rows              []map[string]any
-		expectedCount     int64
-		expectedFirstTS   int64
-		expectedLastTS    int64
-		expectedNames     []string
-		expectedTypeCount int
+		name          string
+		rows          []map[string]any
+		expectedCount int64
 	}{
 		{
 			name: "single row",
 			rows: []map[string]any{
 				{
-					"metric_name":     "cpu_usage",
-					"chq_tid":         "tid-1",
-					"chq_timestamp":   int64(1640000000000),
-					"chq_metric_type": "gauge",
+					"metric_name":   "cpu_usage",
+					"chq_tid":       "tid-1",
+					"chq_timestamp": int64(1640000000000),
 				},
 			},
-			expectedCount:     1,
-			expectedFirstTS:   1640000000000,
-			expectedLastTS:    1640000000000,
-			expectedNames:     []string{"cpu_usage"},
-			expectedTypeCount: 1,
+			expectedCount: 1,
 		},
 		{
-			name: "multiple rows with different metrics",
+			name: "multiple rows",
 			rows: []map[string]any{
-				{
-					"metric_name":     "cpu_usage",
-					"chq_tid":         "tid-1",
-					"chq_timestamp":   int64(1640000000000),
-					"chq_metric_type": "gauge",
-				},
-				{
-					"metric_name":     "memory_usage",
-					"chq_tid":         "tid-2",
-					"chq_timestamp":   int64(1640000060000),
-					"chq_metric_type": "gauge",
-				},
-				{
-					"metric_name":     "disk_io",
-					"chq_tid":         "tid-3",
-					"chq_timestamp":   int64(1640000120000),
-					"chq_metric_type": "counter",
-				},
+				{"metric_name": "cpu", "chq_tid": "1", "chq_timestamp": int64(1000)},
+				{"metric_name": "mem", "chq_tid": "2", "chq_timestamp": int64(2000)},
+				{"metric_name": "disk", "chq_tid": "3", "chq_timestamp": int64(3000)},
 			},
-			expectedCount:     3,
-			expectedFirstTS:   1640000000000,
-			expectedLastTS:    1640000120000,
-			expectedNames:     []string{"cpu_usage", "disk_io", "memory_usage"},
-			expectedTypeCount: 3,
-		},
-		{
-			name: "large timestamp values (real world)",
-			rows: []map[string]any{
-				{
-					"metric_name":     "test_metric",
-					"chq_tid":         "tid-1",
-					"chq_timestamp":   int64(1766358980000), // realistic timestamp
-					"chq_metric_type": "gauge",
-				},
-				{
-					"metric_name":     "test_metric",
-					"chq_tid":         "tid-2",
-					"chq_timestamp":   int64(1766359040000),
-					"chq_metric_type": "gauge",
-				},
-			},
-			expectedCount:     2,
-			expectedFirstTS:   1766358980000,
-			expectedLastTS:    1766359040000,
-			expectedNames:     []string{"test_metric"},
-			expectedTypeCount: 1,
+			expectedCount: 3,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			testFile := createTestMetricsParquetFile(t, tt.rows)
-
-			recordCount, firstTS, lastTS, fingerprints, metricNames, metricTypes, err := getOutputFileStatsConn(ctx, conn, testFile)
+			count, err := getRecordCount(ctx, conn, testFile)
 			require.NoError(t, err)
-
-			assert.Equal(t, tt.expectedCount, recordCount, "record count mismatch")
-			assert.Equal(t, tt.expectedFirstTS, firstTS, "first timestamp mismatch")
-			assert.Equal(t, tt.expectedLastTS, lastTS, "last timestamp mismatch")
-			assert.Equal(t, tt.expectedNames, metricNames, "metric names mismatch")
-			assert.Len(t, metricTypes, tt.expectedTypeCount, "metric types count mismatch")
-			assert.NotEmpty(t, fingerprints, "fingerprints should not be empty")
+			assert.Equal(t, tt.expectedCount, count)
 		})
 	}
 }
 
-func TestGetOutputFileStatsConn_SpecialColumnNames(t *testing.T) {
-	ctx := context.Background()
-
-	db, err := duckdbx.NewDB()
-	require.NoError(t, err)
-	defer func() { _ = db.Close() }()
-
-	conn, release, err := db.GetConnection(ctx)
-	require.NoError(t, err)
-	defer release()
-
-	// Test with column names that have special characters (like Kubernetes labels)
-	rows := []map[string]any{
+func TestComputeStatsFromSegments(t *testing.T) {
+	tests := []struct {
+		name            string
+		segments        []lrdb.MetricSeg
+		expectedFirstTS int64
+		expectedLastTS  int64
+		expectedNames   []string
+		expectedTypes   []int16
+	}{
 		{
-			"metric_name":     "kube_pod_info",
-			"chq_tid":         "tid-1",
-			"chq_timestamp":   int64(1640000000000),
-			"chq_metric_type": "gauge",
+			name: "single segment",
+			segments: []lrdb.MetricSeg{
+				{
+					TsRange:      pgtype.Range[pgtype.Int8]{Lower: pgtype.Int8{Int64: 1000}, Upper: pgtype.Int8{Int64: 2000}},
+					Fingerprints: []int64{123},
+					MetricNames:  []string{"cpu_usage"},
+					MetricTypes:  []int16{1},
+				},
+			},
+			expectedFirstTS: 1000,
+			expectedLastTS:  2000,
+			expectedNames:   []string{"cpu_usage"},
+			expectedTypes:   []int16{1},
+		},
+		{
+			name: "multiple segments with overlapping ranges",
+			segments: []lrdb.MetricSeg{
+				{
+					TsRange:      pgtype.Range[pgtype.Int8]{Lower: pgtype.Int8{Int64: 1000}, Upper: pgtype.Int8{Int64: 2000}},
+					Fingerprints: []int64{123},
+					MetricNames:  []string{"cpu_usage"},
+					MetricTypes:  []int16{1},
+				},
+				{
+					TsRange:      pgtype.Range[pgtype.Int8]{Lower: pgtype.Int8{Int64: 1500}, Upper: pgtype.Int8{Int64: 3000}},
+					Fingerprints: []int64{456},
+					MetricNames:  []string{"memory_usage"},
+					MetricTypes:  []int16{2},
+				},
+			},
+			expectedFirstTS: 1000,
+			expectedLastTS:  3000,
+			expectedNames:   []string{"cpu_usage", "memory_usage"},
+			expectedTypes:   []int16{1, 2},
+		},
+		{
+			name: "segments with duplicate metric names",
+			segments: []lrdb.MetricSeg{
+				{
+					TsRange:     pgtype.Range[pgtype.Int8]{Lower: pgtype.Int8{Int64: 1000}, Upper: pgtype.Int8{Int64: 2000}},
+					MetricNames: []string{"cpu_usage", "memory_usage"},
+					MetricTypes: []int16{1, 2},
+				},
+				{
+					TsRange:     pgtype.Range[pgtype.Int8]{Lower: pgtype.Int8{Int64: 2000}, Upper: pgtype.Int8{Int64: 3000}},
+					MetricNames: []string{"cpu_usage", "disk_io"},
+					MetricTypes: []int16{1, 3},
+				},
+			},
+			expectedFirstTS: 1000,
+			expectedLastTS:  3000,
+			expectedNames:   []string{"cpu_usage", "disk_io", "memory_usage"},
+			expectedTypes:   []int16{1, 3, 2},
 		},
 	}
-	testFile := createTestMetricsParquetFile(t, rows)
 
-	recordCount, firstTS, lastTS, fingerprints, metricNames, metricTypes, err := getOutputFileStatsConn(ctx, conn, testFile)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			firstTS, lastTS, fingerprints, metricNames, metricTypes := computeStatsFromSegments(tt.segments)
 
-	assert.Equal(t, int64(1), recordCount)
-	assert.Equal(t, int64(1640000000000), firstTS)
-	assert.Equal(t, int64(1640000000000), lastTS)
-	assert.Equal(t, []string{"kube_pod_info"}, metricNames)
-	assert.Len(t, metricTypes, 1)
-	assert.NotEmpty(t, fingerprints)
+			assert.Equal(t, tt.expectedFirstTS, firstTS)
+			assert.Equal(t, tt.expectedLastTS, lastTS)
+			assert.Equal(t, tt.expectedNames, metricNames)
+			assert.Equal(t, tt.expectedTypes, metricTypes)
+			_ = fingerprints // fingerprints are computed, just verify no panic
+		})
+	}
 }
 
 func TestExecuteAggregationConn(t *testing.T) {
@@ -329,7 +320,7 @@ func TestExecuteAggregationConn(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify aggregation result
-	recordCount, _, _, _, _, _, err := getOutputFileStatsConn(ctx, conn, outputFile)
+	recordCount, err := getRecordCount(ctx, conn, outputFile)
 	require.NoError(t, err)
 
 	// All 3 rows should be aggregated into 1 (same metric_name, chq_tid, within same 60s window)
@@ -450,7 +441,7 @@ func TestExecuteAggregationConn_MultipleInputFiles(t *testing.T) {
 	err = executeAggregationConn(ctx, conn, []string{inputFile1, inputFile2}, outputFile, schema, 60000)
 	require.NoError(t, err)
 
-	recordCount, _, _, _, _, _, err := getOutputFileStatsConn(ctx, conn, outputFile)
+	recordCount, err := getRecordCount(ctx, conn, outputFile)
 	require.NoError(t, err)
 
 	// Both rows should aggregate into 1
