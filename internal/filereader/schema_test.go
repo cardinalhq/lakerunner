@@ -317,6 +317,55 @@ func TestReaderSchema_HasNonNull(t *testing.T) {
 	assert.True(t, columns[0].HasNonNull, "HasNonNull should not flip back to false")
 }
 
+// TestValueMatchesType tests the type matching helper function.
+func TestValueMatchesType(t *testing.T) {
+	tests := []struct {
+		name       string
+		value      any
+		targetType DataType
+		expected   bool
+	}{
+		// String matches
+		{"string matches string", "hello", DataTypeString, true},
+		{"int64 does not match string", int64(42), DataTypeString, false},
+		{"float64 does not match string", 3.14, DataTypeString, false},
+
+		// Int64 matches
+		{"int64 matches int64", int64(42), DataTypeInt64, true},
+		{"int does not match int64", 42, DataTypeInt64, false},
+		{"string does not match int64", "42", DataTypeInt64, false},
+
+		// Float64 matches
+		{"float64 matches float64", 3.14, DataTypeFloat64, true},
+		{"int64 does not match float64", int64(42), DataTypeFloat64, false},
+		{"float32 does not match float64", float32(3.14), DataTypeFloat64, false},
+
+		// Bool matches
+		{"bool matches bool", true, DataTypeBool, true},
+		{"string does not match bool", "true", DataTypeBool, false},
+		{"int64 does not match bool", int64(1), DataTypeBool, false},
+
+		// Bytes matches
+		{"bytes matches bytes", []byte("test"), DataTypeBytes, true},
+		{"string does not match bytes", "test", DataTypeBytes, false},
+
+		// Any matches everything
+		{"string matches any", "hello", DataTypeAny, true},
+		{"int64 matches any", int64(42), DataTypeAny, true},
+		{"nil matches any", nil, DataTypeAny, true},
+
+		// Unknown type
+		{"string does not match unknown", "hello", DataTypeUnknown, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := valueMatchesType(tt.value, tt.targetType)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 // TestNormalizeTimestampValue tests timestamp normalization heuristics.
 func TestNormalizeTimestampValue(t *testing.T) {
 	tests := []struct {
