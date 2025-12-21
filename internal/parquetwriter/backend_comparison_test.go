@@ -21,7 +21,7 @@ import (
 	"os"
 	"testing"
 
-	_ "github.com/marcboeker/go-duckdb/v2"
+	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -47,7 +47,6 @@ func TestBackendOutputComparison(t *testing.T) {
 	schema.AddColumn(wkk.NewRowKey("resource_service"), wkk.NewRowKey("resource_service"), filereader.DataTypeString, true)
 	schema.AddColumn(wkk.NewRowKey("attr_user_id"), wkk.NewRowKey("attr_user_id"), filereader.DataTypeString, true)
 	schema.AddColumn(wkk.NewRowKey("attr_count"), wkk.NewRowKey("attr_count"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
 
 	// Create test data batch
 	batch := pipeline.GetBatch()
@@ -164,13 +163,8 @@ func TestBackendOutputComparison(t *testing.T) {
 			"Row %d: column counts should match (go-parquet: %d, arrow: %d)",
 			i, len(goRow), len(arrowRow))
 
-		// Compare each column value (excluding chq_id which is random)
+		// Compare each column value
 		for colName, goValue := range goRow {
-			if colName == "chq_id" {
-				// Skip chq_id comparison since it's randomly generated
-				continue
-			}
-
 			arrowValue, ok := arrowRow[colName]
 			require.True(t, ok, "Row %d: column %s missing in arrow output", i, colName)
 
@@ -231,7 +225,6 @@ func TestBackendOutputComparison_LargeDataset(t *testing.T) {
 	schema.AddColumn(wkk.NewRowKey("value"), wkk.NewRowKey("value"), filereader.DataTypeFloat64, true)
 	schema.AddColumn(wkk.NewRowKey("resource_service"), wkk.NewRowKey("resource_service"), filereader.DataTypeString, true)
 	schema.AddColumn(wkk.NewRowKey("attr_count"), wkk.NewRowKey("attr_count"), filereader.DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
 
 	// Create 1000 rows
 	batch := pipeline.GetBatch()
@@ -308,10 +301,6 @@ func TestBackendOutputComparison_LargeDataset(t *testing.T) {
 		arrowRow := arrowRows[i]
 
 		for colName, goValue := range goRow {
-			if colName == "chq_id" {
-				continue
-			}
-
 			arrowValue := arrowRow[colName]
 			require.Equal(t, goValue, arrowValue,
 				"Row %d, Column %s: values should match", i, colName)
@@ -333,7 +322,6 @@ func TestBackendOutputComparison_StringConversion(t *testing.T) {
 	schema.AddColumn(wkk.NewRowKey("attr_float"), wkk.NewRowKey("attr_float"), filereader.DataTypeString, true)   // float -> string
 	schema.AddColumn(wkk.NewRowKey("attr_bool"), wkk.NewRowKey("attr_bool"), filereader.DataTypeString, true)     // bool -> string
 	schema.AddColumn(wkk.NewRowKey("resource_id"), wkk.NewRowKey("resource_id"), filereader.DataTypeString, true) // int -> string
-	schema.AddColumn(wkk.NewRowKey("chq_id"), wkk.NewRowKey("chq_id"), filereader.DataTypeString, true)
 
 	batch := pipeline.GetBatch()
 	defer pipeline.ReturnBatch(batch)
