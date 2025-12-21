@@ -623,6 +623,11 @@ func LoadDDSketchExtensionFromPath(ctx context.Context, conn *sql.Conn, extensio
 		return fmt.Errorf("DDSketch extension not found at %s", extensionPath)
 	}
 
+	// Enable unsigned extensions (DDSketch is a custom extension without official DuckDB signature)
+	if _, err := conn.ExecContext(ctx, "SET allow_unsigned_extensions = true"); err != nil {
+		return fmt.Errorf("enable unsigned extensions: %w", err)
+	}
+
 	loadQuery := fmt.Sprintf("LOAD '%s'", escapeSingle(extensionPath))
 	if _, err := conn.ExecContext(ctx, loadQuery); err != nil {
 		return fmt.Errorf("load ddsketch extension: %w", err)
