@@ -35,6 +35,7 @@ type LRUCache struct {
 	stopCleanup        chan struct{}
 	publishCallBack    func(toPublish []*Entry)
 	pending            []*Entry
+	evictedPending     []*Entry // evicted entries awaiting publication; rows returned after callback
 	maxPublishPerSweep int
 	rng                *rand.Rand
 }
@@ -125,9 +126,12 @@ func (l *LRUCache) cleanupExpiredEntries() {
 		}
 	}
 
-	// Take a copy of pending for sampling, then reset the shared slice.
+	// Take a copy of pending slices for processing, then reset them.
 	candidates := l.pending
 	l.pending = make([]*Entry, 0, 16)
+	// Include entries evicted by Put/PutIfAbsent that are pending publication.
+	evictedPending = append(evictedPending, l.evictedPending...)
+	l.evictedPending = nil
 	l.Unlock()
 
 	// Randomly pick up to N exemplars to publish.
@@ -207,13 +211,16 @@ func (l *LRUCache) PutIfAbsent(key uint64, row pipeline.Row) bool {
 		back := l.list.Back()
 		if back != nil {
 			entry := back.Value.(*Entry)
+			l.list.Remove(back)
+			delete(l.cache, entry.key)
 			if entry.shouldPublish(l.expiry) {
 				l.pending = append(l.pending, entry)
 				entry.lastPublishTime = now
+				// Defer pool return until after callback
+				l.evictedPending = append(l.evictedPending, entry)
+			} else {
+				pipeline.ReturnPooledRow(entry.value)
 			}
-			l.list.Remove(back)
-			delete(l.cache, entry.key)
-			pipeline.ReturnPooledRow(entry.value)
 		}
 	}
 
@@ -247,13 +254,16 @@ func (l *LRUCache) Put(key uint64, row pipeline.Row) {
 		back := l.list.Back()
 		if back != nil {
 			entry := back.Value.(*Entry)
+			l.list.Remove(back)
+			delete(l.cache, entry.key)
 			if entry.shouldPublish(l.expiry) {
 				l.pending = append(l.pending, entry)
 				entry.lastPublishTime = now
+				// Defer pool return until after callback
+				l.evictedPending = append(l.evictedPending, entry)
+			} else {
+				pipeline.ReturnPooledRow(entry.value)
 			}
-			l.list.Remove(back)
-			delete(l.cache, entry.key)
-			pipeline.ReturnPooledRow(entry.value)
 		}
 	}
 
@@ -277,10 +287,17 @@ func (l *LRUCache) FlushPending() {
 	l.Lock()
 	candidates := l.pending
 	l.pending = make([]*Entry, 0, 16)
+	evictedPending := l.evictedPending
+	l.evictedPending = nil
 	l.Unlock()
 
 	if len(candidates) > 0 {
 		toPublish := reservoirSample(candidates, l.maxPublishPerSweep, l.rng)
 		l.publishCallBack(toPublish)
+	}
+
+	// Return evicted rows to pool after callback completes.
+	for _, entry := range evictedPending {
+		pipeline.ReturnPooledRow(entry.value)
 	}
 }

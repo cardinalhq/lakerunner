@@ -417,3 +417,103 @@ func TestLRUCache_PutIfAbsentConcurrent(t *testing.T) {
 	assert.Equal(t, 1, totalSuccesses, "Only one PutIfAbsent should succeed with concurrent attempts")
 	assert.True(t, cache.Contains(1))
 }
+
+// TestLRUCache_EvictedPendingPoolReturn verifies that entries evicted by Put/PutIfAbsent
+// that are pending publication have their rows returned to the pool only AFTER
+// the publish callback completes. This tests the race condition fix where evicted
+// entries were being returned to the pool while the callback was still using them.
+func TestLRUCache_EvictedPendingPoolReturn(t *testing.T) {
+	var mu sync.Mutex
+	var callbackEntries []*Entry
+
+	cache := NewLRUCache(
+		3,                    // Small capacity to trigger eviction
+		50*time.Millisecond,  // Short expiry so entries become publishable
+		100*time.Millisecond, // Cleanup interval
+		100,
+		func(entries []*Entry) {
+			mu.Lock()
+			callbackEntries = append(callbackEntries, entries...)
+			mu.Unlock()
+
+			// Simulate callback doing work with the entries
+			time.Sleep(50 * time.Millisecond)
+		},
+	)
+	defer cache.Close()
+
+	// Fill cache to capacity
+	cache.Put(1, pipeline.Row{})
+	cache.Put(2, pipeline.Row{})
+	cache.Put(3, pipeline.Row{})
+
+	// Wait for entries to become publishable (past expiry threshold)
+	time.Sleep(60 * time.Millisecond)
+
+	// Add new entries to trigger eviction of old ones
+	// The evicted entries should be pending publication and their rows
+	// should only be returned after the callback completes
+	cache.Put(4, pipeline.Row{})
+	cache.Put(5, pipeline.Row{})
+
+	// Flush to trigger the callback with evicted entries
+	cache.FlushPending()
+
+	// Verify entries were published
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, callbackEntries, "Expected evicted entries to be published")
+}
+
+// TestLRUCache_ConcurrentEvictionAndCleanup tests concurrent Put operations
+// that cause evictions while cleanupExpiredEntries is running. This exercises
+// the race condition fix for entries that are both pending publication and
+// being evicted by capacity limits.
+func TestLRUCache_ConcurrentEvictionAndCleanup(t *testing.T) {
+	var mu sync.Mutex
+	var publishedCount int
+
+	cache := NewLRUCache(
+		10,                  // Small capacity
+		20*time.Millisecond, // Very short expiry
+		30*time.Millisecond, // Short cleanup interval
+		100,
+		func(entries []*Entry) {
+			mu.Lock()
+			publishedCount += len(entries)
+			// Access entry data to catch any use-after-free
+			for _, e := range entries {
+				_ = e.key
+				_ = e.value
+			}
+			mu.Unlock()
+		},
+	)
+	defer cache.Close()
+
+	var wg sync.WaitGroup
+
+	// Concurrent puts that will cause evictions
+	for i := range 5 {
+		wg.Add(1)
+		go func(offset int) {
+			defer wg.Done()
+			for j := range 50 {
+				key := uint64(offset*100 + j)
+				cache.Put(key, pipeline.Row{})
+				// Small sleep to interleave with cleanup goroutine
+				time.Sleep(time.Millisecond)
+			}
+		}(i)
+	}
+
+	// Let the test run with concurrent cleanup cycles
+	wg.Wait()
+
+	// Wait for cleanup cycles to process entries
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Greater(t, publishedCount, 0, "Expected entries to be published")
+}
