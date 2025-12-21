@@ -20,6 +20,7 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/pipeline"
@@ -33,17 +34,20 @@ type LRUCache struct {
 	expiry             time.Duration
 	reportInterval     time.Duration
 	stopCleanup        chan struct{}
+	cleanupWG          sync.WaitGroup
 	publishCallBack    func(toPublish []*Entry)
 	pending            []*Entry
+	evictedPending     []*Entry // evicted entries awaiting publication; rows returned after callback
 	maxPublishPerSweep int
 	rng                *rand.Rand
 }
 
 type Entry struct {
-	key             uint64
-	value           pipeline.Row
-	timestamp       time.Time
-	lastPublishTime time.Time
+	key              uint64
+	value            pipeline.Row
+	timestamp        time.Time
+	lastPublishTime  time.Time
+	awaitingCallback atomic.Bool // true while entry is in-flight to callback
 }
 
 func NewLRUCache(
@@ -69,7 +73,7 @@ func NewLRUCache(
 		maxPublishPerSweep: maxPublishPerSweep,
 		rng:                rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
-	go lru.startCleanup()
+	lru.cleanupWG.Go(lru.startCleanup)
 	return lru
 }
 
@@ -91,12 +95,17 @@ func (l *LRUCache) cleanupExpiredEntries() {
 	l.Lock()
 	now := time.Now()
 
+	// Track evicted entries that are also pending publication.
+	// Their rows must be returned to pool AFTER the callback uses them.
+	var evictedPending []*Entry
+
 	// Mark entries due for publish this sweep.
 	for e := l.list.Back(); e != nil; e = e.Prev() {
 		entry := e.Value.(*Entry)
-		if entry.shouldPublish(l.expiry) {
+		if entry.shouldPublish(l.expiry) && !entry.awaitingCallback.Load() {
 			l.pending = append(l.pending, entry)
 			entry.lastPublishTime = now
+			entry.awaitingCallback.Store(true)
 		}
 	}
 
@@ -107,16 +116,24 @@ func (l *LRUCache) cleanupExpiredEntries() {
 			prev := e.Prev()
 			l.list.Remove(e)
 			delete(l.cache, entry.key)
-			pipeline.ReturnPooledRow(entry.value)
+			// Defer pool return if pending publication to avoid race
+			if entry.awaitingCallback.Load() {
+				evictedPending = append(evictedPending, entry)
+			} else {
+				pipeline.ReturnPooledRow(entry.value)
+			}
 			e = prev
 		} else {
 			e = e.Prev()
 		}
 	}
 
-	// Take a copy of pending for sampling, then reset the shared slice.
+	// Take a copy of pending slices for processing, then reset them.
 	candidates := l.pending
 	l.pending = make([]*Entry, 0, 16)
+	// Include entries evicted by Put/PutIfAbsent that are pending publication.
+	evictedPending = append(evictedPending, l.evictedPending...)
+	l.evictedPending = nil
 	l.Unlock()
 
 	// Randomly pick up to N exemplars to publish.
@@ -124,6 +141,16 @@ func (l *LRUCache) cleanupExpiredEntries() {
 		toPublish := reservoirSample(candidates, l.maxPublishPerSweep, l.rng)
 		slog.Debug("Publishing exemplar batch", "candidates", n, "published", len(toPublish))
 		l.publishCallBack(toPublish)
+	}
+
+	// Clear awaitingCallback for all candidates now that callback is done.
+	for _, entry := range candidates {
+		entry.awaitingCallback.Store(false)
+	}
+
+	// Return evicted rows to pool after callback completes.
+	for _, entry := range evictedPending {
+		pipeline.ReturnPooledRow(entry.value)
 	}
 }
 
@@ -191,13 +218,20 @@ func (l *LRUCache) PutIfAbsent(key uint64, row pipeline.Row) bool {
 		back := l.list.Back()
 		if back != nil {
 			entry := back.Value.(*Entry)
-			if entry.shouldPublish(l.expiry) {
-				l.pending = append(l.pending, entry)
-				entry.lastPublishTime = now
-			}
 			l.list.Remove(back)
 			delete(l.cache, entry.key)
-			pipeline.ReturnPooledRow(entry.value)
+			if entry.awaitingCallback.Load() {
+				// Entry is in-flight to callback; defer pool return
+				l.evictedPending = append(l.evictedPending, entry)
+			} else if entry.shouldPublish(l.expiry) {
+				l.pending = append(l.pending, entry)
+				entry.lastPublishTime = now
+				entry.awaitingCallback.Store(true)
+				// Defer pool return until after callback
+				l.evictedPending = append(l.evictedPending, entry)
+			} else {
+				pipeline.ReturnPooledRow(entry.value)
+			}
 		}
 	}
 
@@ -207,6 +241,7 @@ func (l *LRUCache) PutIfAbsent(key uint64, row pipeline.Row) bool {
 		timestamp:       now,
 		lastPublishTime: now,
 	}
+	newEntry.awaitingCallback.Store(true)
 	elem := l.list.PushFront(newEntry)
 	l.cache[key] = elem
 	l.pending = append(l.pending, newEntry)
@@ -231,13 +266,20 @@ func (l *LRUCache) Put(key uint64, row pipeline.Row) {
 		back := l.list.Back()
 		if back != nil {
 			entry := back.Value.(*Entry)
-			if entry.shouldPublish(l.expiry) {
-				l.pending = append(l.pending, entry)
-				entry.lastPublishTime = now
-			}
 			l.list.Remove(back)
 			delete(l.cache, entry.key)
-			pipeline.ReturnPooledRow(entry.value)
+			if entry.awaitingCallback.Load() {
+				// Entry is in-flight to callback; defer pool return
+				l.evictedPending = append(l.evictedPending, entry)
+			} else if entry.shouldPublish(l.expiry) {
+				l.pending = append(l.pending, entry)
+				entry.lastPublishTime = now
+				entry.awaitingCallback.Store(true)
+				// Defer pool return until after callback
+				l.evictedPending = append(l.evictedPending, entry)
+			} else {
+				pipeline.ReturnPooledRow(entry.value)
+			}
 		}
 	}
 
@@ -247,6 +289,7 @@ func (l *LRUCache) Put(key uint64, row pipeline.Row) {
 		timestamp:       now,
 		lastPublishTime: now,
 	}
+	newEntry.awaitingCallback.Store(true)
 	elem := l.list.PushFront(newEntry)
 	l.cache[key] = elem
 	l.pending = append(l.pending, newEntry)
@@ -254,6 +297,8 @@ func (l *LRUCache) Put(key uint64, row pipeline.Row) {
 
 func (l *LRUCache) Close() {
 	close(l.stopCleanup)
+	l.cleanupWG.Wait()
+	l.FlushPending()
 }
 
 // FlushPending forces all pending exemplars to be published via the callback
@@ -261,10 +306,22 @@ func (l *LRUCache) FlushPending() {
 	l.Lock()
 	candidates := l.pending
 	l.pending = make([]*Entry, 0, 16)
+	evictedPending := l.evictedPending
+	l.evictedPending = nil
 	l.Unlock()
 
 	if len(candidates) > 0 {
 		toPublish := reservoirSample(candidates, l.maxPublishPerSweep, l.rng)
 		l.publishCallBack(toPublish)
+	}
+
+	// Clear awaitingCallback for all candidates now that callback is done.
+	for _, entry := range candidates {
+		entry.awaitingCallback.Store(false)
+	}
+
+	// Return evicted rows to pool after callback completes.
+	for _, entry := range evictedPending {
+		pipeline.ReturnPooledRow(entry.value)
 	}
 }
