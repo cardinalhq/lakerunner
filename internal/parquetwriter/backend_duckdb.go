@@ -383,16 +383,8 @@ func (b *DuckDBBackend) Close(ctx context.Context, writer io.Writer) (*BackendMe
 	tmpFilePath := tmpFile.Name()
 	_ = tmpFile.Close()
 
-	// Build column list for COPY (ensures consistent column ordering)
-	quotedColumns := make([]string, len(b.columnNames))
-	for i, name := range b.columnNames {
-		quotedColumns[i] = fmt.Sprintf("\"%s\"", name)
-	}
-	columnList := strings.Join(quotedColumns, ", ")
-
-	// Export to Parquet with ZSTD compression
-	copySQL := fmt.Sprintf("COPY (SELECT %s FROM %s) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)",
-		columnList, b.tableName, tmpFilePath)
+	copySQL := fmt.Sprintf("COPY (SELECT * FROM %s) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)",
+		b.tableName, tmpFilePath)
 
 	if _, err := b.conn.ExecContext(ctx, copySQL); err != nil {
 		_ = os.Remove(tmpFilePath)
