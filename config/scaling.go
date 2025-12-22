@@ -16,7 +16,6 @@ package config
 
 import (
 	"fmt"
-	"runtime"
 )
 
 type ScalingConfig struct {
