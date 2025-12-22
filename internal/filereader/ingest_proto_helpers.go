@@ -17,12 +17,13 @@ package filereader
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"sort"
 
 	"github.com/DataDog/sketches-go/ddsketch"
+	"go.opentelemetry.io/collector/featuregate"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	"go.opentelemetry.io/collector/pdata/xpdata/pref"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
@@ -31,8 +32,12 @@ func init() {
 	// Enable proto pooling for pmetric unmarshalling.
 	// This reduces GC pressure by reusing metric structures.
 	// Requires calling pref.UnrefMetrics() when done with the data.
-	_ = pref.EnableRefCounting.IsEnabled() // ensure gate is registered
-	_ = pref.UseProtoPooling.IsEnabled()   // ensure gate is registered
+	if err := featuregate.GlobalRegistry().Set("pdata.enableRefCounting", true); err != nil {
+		slog.Info("Warning: failed to enable pdata.enableRefCounting feature gate, memory usage may be higher", "error", err)
+	}
+	if err := featuregate.GlobalRegistry().Set("pdata.useProtoPooling", true); err != nil {
+		slog.Info("Warning: failed to enable pdata.useProtoPooling feature gate, memory usage may be higher", "error", err)
+	}
 }
 
 func parseProtoToOtelMetrics(reader io.Reader) (*pmetric.Metrics, error) {
