@@ -38,6 +38,9 @@ func NewMetricsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPer
 		Schema:      schema,
 		BackendType: parquetwriter.BackendDuckDB,
 
+		// Sort by metric_name, chq_tid, chq_timestamp for efficient querying
+		SortColumns: []string{"metric_name", "chq_tid", "chq_timestamp"},
+
 		// Group by [metric name, TID] - don't split groups with same name+TID
 		GroupKeyFunc:  metricsGroupKeyFunc(),
 		NoSplitGroups: true,

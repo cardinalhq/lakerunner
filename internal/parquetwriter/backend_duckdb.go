@@ -58,6 +58,7 @@ type DuckDBBackend struct {
 	// Configuration
 	conversionPrefixes []string
 	tableName          string
+	sortColumns        []string // Columns to sort by when exporting to Parquet
 
 	// State tracking
 	closed  bool
@@ -170,6 +171,7 @@ func NewDuckDBBackend(config BackendConfig) (*DuckDBBackend, error) {
 		columnKeyMap:       columnKeyMap,
 		conversionPrefixes: conversionPrefixes,
 		tableName:          tableName,
+		sortColumns:        config.SortColumns,
 	}, nil
 }
 
@@ -383,8 +385,21 @@ func (b *DuckDBBackend) Close(ctx context.Context, writer io.Writer) (*BackendMe
 	tmpFilePath := tmpFile.Name()
 	_ = tmpFile.Close()
 
-	copySQL := fmt.Sprintf("COPY (SELECT * FROM %s) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)",
-		b.tableName, tmpFilePath)
+	// Build the COPY statement with optional ORDER BY
+	var copySQL string
+	if len(b.sortColumns) > 0 {
+		// Quote column names and build ORDER BY clause
+		quotedSortCols := make([]string, len(b.sortColumns))
+		for i, col := range b.sortColumns {
+			quotedSortCols[i] = fmt.Sprintf("\"%s\"", col)
+		}
+		orderBy := strings.Join(quotedSortCols, ", ")
+		copySQL = fmt.Sprintf("COPY (SELECT * FROM %s ORDER BY %s) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)",
+			b.tableName, orderBy, tmpFilePath)
+	} else {
+		copySQL = fmt.Sprintf("COPY (SELECT * FROM %s) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)",
+			b.tableName, tmpFilePath)
+	}
 
 	if _, err := b.conn.ExecContext(ctx, copySQL); err != nil {
 		_ = os.Remove(tmpFilePath)

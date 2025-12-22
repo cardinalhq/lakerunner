@@ -251,6 +251,7 @@ func (s *FileSplitter) startNewParquetWriter() error {
 		Schema:                   s.config.Schema,
 		ChunkSize:                s.config.GetChunkSize(),
 		StringConversionPrefixes: s.config.GetStringConversionPrefixes(),
+		SortColumns:              s.config.SortColumns,
 	}
 
 	// Create the appropriate backend

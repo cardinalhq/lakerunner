@@ -90,4 +90,9 @@ type BackendConfig struct {
 	// Schema is the required upfront schema from the reader.
 	// Must not be nil. All-null columns (HasNonNull=false) are filtered out automatically.
 	Schema *filereader.ReaderSchema
+
+	// SortColumns specifies column names to sort by when writing Parquet.
+	// Order matters - first column is primary sort key, etc.
+	// If empty, no sorting is applied. Only supported by DuckDB backend.
+	SortColumns []string
 }

@@ -103,6 +103,11 @@ type WriterConfig struct {
 	// BackendType specifies which Parquet writing backend to use.
 	// If empty, defaults to BackendGoParquet.
 	BackendType BackendType
+
+	// SortColumns specifies column names to sort by when writing Parquet.
+	// Order matters - first column is primary sort key, etc.
+	// If empty, no sorting is applied. Only supported by DuckDB backend.
+	SortColumns []string
 }
 
 // Validate checks that the configuration is valid and returns an error if not.
