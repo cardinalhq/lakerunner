@@ -135,17 +135,19 @@ func (s *ScalingConfig) GetTargetQueueSize(serviceType string) (int, error) {
 // GetWorkerConcurrency returns the effective worker concurrency.
 // Returns runtime.NumCPU() if WorkerConcurrency is not set or <= 0.
 func (s *ScalingConfig) GetWorkerConcurrency() int {
-	if s.WorkerConcurrency <= 0 {
-		return runtime.NumCPU()
-	}
-	return s.WorkerConcurrency
+	return 1
+	// if s.WorkerConcurrency <= 0 {
+	// 	return runtime.NumCPU()
+	// }
+	// return s.WorkerConcurrency
 }
 
 // GetIngestConcurrency returns the effective ingest worker concurrency.
 // Returns 1 if IngestConcurrency is not set or <= 0.
 func (s *ScalingConfig) GetIngestConcurrency() int {
-	if s.IngestConcurrency <= 0 {
-		return 1
-	}
-	return s.IngestConcurrency
+	return 1
+	// if s.IngestConcurrency <= 0 {
+	// 	return 1
+	// }
+	// return s.IngestConcurrency
 }
