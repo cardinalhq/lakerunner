@@ -286,15 +286,16 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 		strings.Join(groupByClauses, ", "))
 
 	// Extract rollup columns from the chq_stats struct returned by ddsketch_stats_agg
-	// The struct contains: (sketch BLOB, p25, p50, p75, p90, p95, p99 DOUBLE)
-	// We also need count/sum/avg/min/max which require the sketch
+	// The struct contains all stats computed in a single pass:
+	// (sketch BLOB, count BIGINT, sum DOUBLE, avg DOUBLE, min DOUBLE, max DOUBLE,
+	//  p25 DOUBLE, p50 DOUBLE, p75 DOUBLE, p90 DOUBLE, p95 DOUBLE, p99 DOUBLE)
 	rollupExtraction := []string{
 		"chq_stats.sketch AS chq_sketch",
-		"ddsketch_count(chq_stats.sketch) AS chq_rollup_count",
-		"ddsketch_sum(chq_stats.sketch) AS chq_rollup_sum",
-		"ddsketch_avg(chq_stats.sketch) AS chq_rollup_avg",
-		"ddsketch_min(chq_stats.sketch) AS chq_rollup_min",
-		"ddsketch_max(chq_stats.sketch) AS chq_rollup_max",
+		"chq_stats.count AS chq_rollup_count",
+		"chq_stats.sum AS chq_rollup_sum",
+		"chq_stats.avg AS chq_rollup_avg",
+		"chq_stats.min AS chq_rollup_min",
+		"chq_stats.max AS chq_rollup_max",
 		"chq_stats.p25 AS chq_rollup_p25",
 		"chq_stats.p50 AS chq_rollup_p50",
 		"chq_stats.p75 AS chq_rollup_p75",
