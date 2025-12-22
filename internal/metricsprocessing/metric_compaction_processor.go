@@ -77,7 +77,7 @@ func (p *MetricCompactionProcessor) ShouldEmitImmediately(msg *messages.MetricCo
 }
 
 // Helper methods from original processor
-func (p *MetricCompactionProcessor) performCompaction(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.CompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.MetricSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
+func (p *MetricCompactionProcessor) performCompaction(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.CompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.MetricSeg, recordCountEstimate int64) (*metricProcessingResult, error) {
 	params := metricProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
@@ -88,12 +88,7 @@ func (p *MetricCompactionProcessor) performCompaction(ctx context.Context, tmpDi
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	results, err := processMetricsWithDuckDB(ctx, p.duckDB, params)
-	if err != nil {
-		return nil, err
-	}
-
-	return results, nil
+	return processMetricsWithDuckDB(ctx, p.duckDB, params)
 }
 
 func (p *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
@@ -417,7 +412,7 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		attribute.Int("active_segments", len(activeSegments)),
 	))
 
-	results, err := p.performCompaction(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
+	processedResult, err := p.performCompaction(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to perform compaction")
@@ -431,14 +426,23 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 			slog.Any("error", err))
 		return nil
 	}
-	processSpan.SetAttributes(attribute.Int("output_files", len(results)))
+
+	// Use only successfully downloaded segments for database updates
+	processedSegments := processedResult.ProcessedSegments
+	results := processedResult.Results
+
+	processSpan.SetAttributes(
+		attribute.Int("output_files", len(results)),
+		attribute.Int("processed_segments", len(processedSegments)),
+		attribute.Int("skipped_segments", len(activeSegments)-len(processedSegments)),
+	)
 	processSpan.End()
 
 	ctx, uploadSpan := boxerTracer.Start(ctx, "metrics.compact.upload_segments", trace.WithAttributes(
 		attribute.Int("result_count", len(results)),
 	))
 
-	newSegments, err := p.uploadAndCreateSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
+	newSegments, err := p.uploadAndCreateSegments(ctx, storageClient, storageProfile, results, key, processedSegments)
 	if err != nil {
 		uploadSpan.RecordError(err)
 		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
@@ -456,11 +460,11 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 	uploadSpan.End()
 
 	ctx, dbSpan := boxerTracer.Start(ctx, "metrics.compact.update_db", trace.WithAttributes(
-		attribute.Int("old_segment_count", len(activeSegments)),
+		attribute.Int("old_segment_count", len(processedSegments)),
 		attribute.Int("new_segment_count", len(newSegments)),
 	))
 
-	if err := p.atomicDatabaseUpdate(ctx, activeSegments, newSegments, key); err != nil {
+	if err := p.atomicDatabaseUpdate(ctx, processedSegments, newSegments, key); err != nil {
 		dbSpan.RecordError(err)
 		dbSpan.SetStatus(codes.Error, "failed to update database")
 		dbSpan.End()
@@ -469,7 +473,7 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 			slog.Int("dateint", int(key.DateInt)),
 			slog.Int("frequencyMs", int(key.FrequencyMs)),
 			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("activeSegments", len(activeSegments)),
+			slog.Int("processedSegments", len(processedSegments)),
 			slog.Int("newSegments", len(newSegments)),
 			slog.Any("error", err))
 		return nil
@@ -484,6 +488,7 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 
 	ll.Info("Compaction completed successfully",
 		slog.Int("inputSegments", len(activeSegments)),
+		slog.Int("processedSegments", len(processedSegments)),
 		slog.Int("outputFiles", len(results)),
 		slog.Int64("outputRecords", totalRecords),
 		slog.Int64("outputFileSize", totalSize))

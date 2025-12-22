@@ -52,6 +52,12 @@ type metricProcessingParams struct {
 	MaxRecords     int64
 }
 
+// metricProcessingResult contains the output from DuckDB processing
+type metricProcessingResult struct {
+	Results           []parquetwriter.Result
+	ProcessedSegments []lrdb.MetricSeg // Only segments that were successfully downloaded and processed
+}
+
 // groupByColumns are the columns used to group metrics for aggregation.
 // Metrics with the same (metric_name, chq_tid, truncated_timestamp) are merged.
 var groupByColumns = []string{"metric_name", "chq_tid", "chq_timestamp"}
@@ -81,33 +87,38 @@ var rollupColumns = []string{
 // 4. Merge DDSketches using ddsketch_agg
 // 5. Extract statistics from merged sketch
 // 6. Write result to parquet
-func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params metricProcessingParams) ([]parquetwriter.Result, error) {
+//
+// Returns both the results and the list of segments that were successfully processed.
+// Segments that failed to download are skipped and not included in ProcessedSegments.
+func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params metricProcessingParams) (*metricProcessingResult, error) {
 	span := trace.SpanFromContext(ctx)
 	ll := logctx.FromContext(ctx)
 
 	// Download parquet files to local temp directory
-	localFiles, err := downloadSegmentFiles(ctx, params)
+	downloaded, err := downloadSegmentFiles(ctx, params)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("download segment files: %w", err)
 	}
-	defer cleanupLocalFiles(localFiles)
+	defer cleanupLocalFiles(downloaded.localFiles)
 
-	if len(localFiles) == 0 {
+	if len(downloaded.localFiles) == 0 {
 		err := fmt.Errorf("no parquet files to process")
 		span.RecordError(err)
 		return nil, err
 	}
 
 	span.SetAttributes(
-		attribute.Int("duckdb.input_file_count", len(localFiles)),
+		attribute.Int("duckdb.input_file_count", len(downloaded.localFiles)),
 		attribute.Int("duckdb.frequency_ms", int(params.FrequencyMs)),
 		attribute.Int("duckdb.segment_count", len(params.ActiveSegments)),
+		attribute.Int("duckdb.processed_segment_count", len(downloaded.downloadedSegments)),
 	)
 
 	ll.Info("Processing metrics with DuckDB",
-		slog.Int("fileCount", len(localFiles)),
-		slog.Int("frequencyMs", int(params.FrequencyMs)))
+		slog.Int("fileCount", len(downloaded.localFiles)),
+		slog.Int("frequencyMs", int(params.FrequencyMs)),
+		slog.Int("skippedSegments", len(params.ActiveSegments)-len(downloaded.downloadedSegments)))
 
 	// Get a connection from the pool
 	conn, release, err := duckDB.GetConnection(ctx)
@@ -124,7 +135,7 @@ func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params me
 	}
 
 	// Discover schema from input files
-	schema, err := discoverSchemaConn(ctx, conn, localFiles[0])
+	schema, err := discoverSchemaConn(ctx, conn, downloaded.localFiles[0])
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("discover schema: %w", err)
@@ -133,7 +144,7 @@ func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params me
 
 	// Generate and execute aggregation SQL
 	outputFile := filepath.Join(params.TmpDir, "rollup_output.parquet")
-	if err := executeAggregationConn(ctx, conn, localFiles, outputFile, schema, params.FrequencyMs); err != nil {
+	if err := executeAggregationConn(ctx, conn, downloaded.localFiles, outputFile, schema, params.FrequencyMs); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "aggregation query failed")
 		return nil, fmt.Errorf("execute aggregation: %w", err)
@@ -153,8 +164,8 @@ func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params me
 		return nil, fmt.Errorf("get record count: %w", err)
 	}
 
-	// Compute metadata from input segments (no need to query output file)
-	firstTS, lastTS, fingerprints, metricNames, metricTypes := computeStatsFromSegments(params.ActiveSegments)
+	// Compute metadata only from successfully downloaded segments
+	firstTS, lastTS, fingerprints, metricNames, metricTypes := computeStatsFromSegments(downloaded.downloadedSegments)
 
 	result := parquetwriter.Result{
 		FileName:    outputFile,
@@ -178,18 +189,28 @@ func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params me
 		slog.Int64("recordCount", recordCount),
 		slog.Int64("fileSize", fileInfo.Size()))
 
-	return []parquetwriter.Result{result}, nil
+	return &metricProcessingResult{
+		Results:           []parquetwriter.Result{result},
+		ProcessedSegments: downloaded.downloadedSegments,
+	}, nil
+}
+
+// downloadResult holds the result of downloading segment files.
+type downloadResult struct {
+	localFiles         []string
+	downloadedSegments []lrdb.MetricSeg
 }
 
 // downloadSegmentFiles downloads parquet files from cloud storage to local temp directory.
-func downloadSegmentFiles(ctx context.Context, params metricProcessingParams) ([]string, error) {
+// Returns both local file paths and the segments that were successfully downloaded.
+func downloadSegmentFiles(ctx context.Context, params metricProcessingParams) (downloadResult, error) {
 	ctx, span := boxerTracer.Start(ctx, "duckdb.download_segments", trace.WithAttributes(
 		attribute.Int("segment_count", len(params.ActiveSegments)),
 	))
 	defer span.End()
 
 	ll := logctx.FromContext(ctx)
-	var localFiles []string
+	var result downloadResult
 
 	for _, segment := range params.ActiveSegments {
 		objectPath := helpers.MakeDBObjectID(
@@ -203,17 +224,21 @@ func downloadSegmentFiles(ctx context.Context, params metricProcessingParams) ([
 
 		localPath, _, _, err := params.StorageClient.DownloadObject(ctx, params.TmpDir, params.StorageProfile.Bucket, objectPath)
 		if err != nil {
-			ll.Warn("Failed to download segment file",
+			ll.Warn("Failed to download segment file, skipping segment",
 				slog.Int64("segmentID", segment.SegmentID),
 				slog.Any("error", err))
 			continue
 		}
 
-		localFiles = append(localFiles, localPath)
+		result.localFiles = append(result.localFiles, localPath)
+		result.downloadedSegments = append(result.downloadedSegments, segment)
 	}
 
-	span.SetAttributes(attribute.Int("downloaded_count", len(localFiles)))
-	return localFiles, nil
+	span.SetAttributes(
+		attribute.Int("downloaded_count", len(result.localFiles)),
+		attribute.Int("skipped_count", len(params.ActiveSegments)-len(result.localFiles)),
+	)
+	return result, nil
 }
 
 // cleanupLocalFiles removes temporary local files.

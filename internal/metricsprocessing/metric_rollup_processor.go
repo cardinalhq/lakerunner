@@ -274,7 +274,7 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		attribute.Int("target_frequency_ms", int(key.TargetFrequencyMs)),
 	))
 
-	results, err := processMetricsWithDuckDB(ctx, r.duckDB, params)
+	processedResult, err := processMetricsWithDuckDB(ctx, r.duckDB, params)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to process metrics with aggregation")
@@ -289,15 +289,22 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			slog.Any("error", err))
 		return nil
 	}
-	processSpan.SetAttributes(attribute.Int("result_count", len(results)))
+	processSpan.SetAttributes(
+		attribute.Int("result_count", len(processedResult.Results)),
+		attribute.Int("processed_segments", len(processedResult.ProcessedSegments)),
+		attribute.Int("skipped_segments", len(segments)-len(processedResult.ProcessedSegments)),
+	)
 	processSpan.End()
+
+	// Use only successfully processed segments for upload and database update
+	processedSegments := processedResult.ProcessedSegments
 
 	// Upload segments
 	ctx, uploadSpan := boxerTracer.Start(ctx, "metrics.rollup.upload_segments", trace.WithAttributes(
-		attribute.Int("result_count", len(results)),
+		attribute.Int("result_count", len(processedResult.Results)),
 	))
 
-	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, results, key, segments)
+	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, processedResult.Results, key, processedSegments)
 	if err != nil {
 		uploadSpan.RecordError(err)
 		uploadSpan.SetStatus(codes.Error, "failed to upload rollup segments")
@@ -308,20 +315,20 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			slog.Int("sourceFrequencyMs", int(key.SourceFrequencyMs)),
 			slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)),
 			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("resultsCount", len(results)),
+			slog.Int("resultsCount", len(processedResult.Results)),
 			slog.Any("error", err))
 		return nil
 	}
 	uploadSpan.SetAttributes(attribute.Int("new_segments", len(newSegments)))
 	uploadSpan.End()
 
-	// Update database
+	// Update database - only mark processed segments as rolled up
 	ctx, dbSpan := boxerTracer.Start(ctx, "metrics.rollup.update_db", trace.WithAttributes(
-		attribute.Int("old_segments", len(segments)),
+		attribute.Int("old_segments", len(processedSegments)),
 		attribute.Int("new_segments", len(newSegments)),
 	))
 
-	if err := r.atomicDatabaseUpdate(ctx, segments, newSegments, key); err != nil {
+	if err := r.atomicDatabaseUpdate(ctx, processedSegments, newSegments, key); err != nil {
 		dbSpan.RecordError(err)
 		dbSpan.SetStatus(codes.Error, "failed to perform atomic database update")
 		dbSpan.End()
@@ -331,7 +338,7 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			slog.Int("sourceFrequencyMs", int(key.SourceFrequencyMs)),
 			slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)),
 			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("segments", len(segments)),
+			slog.Int("segments", len(processedSegments)),
 			slog.Int("newSegments", len(newSegments)),
 			slog.Any("error", err))
 		return nil
@@ -339,7 +346,7 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 	dbSpan.End()
 
 	var totalRecords, totalSize int64
-	for _, result := range results {
+	for _, result := range processedResult.Results {
 		totalRecords += result.RecordCount
 		totalSize += result.FileSize
 	}
@@ -360,7 +367,8 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 
 	ll.Info("Rollup completed successfully",
 		slog.Int("inputSegments", len(segments)),
-		slog.Int("outputFiles", len(results)),
+		slog.Int("processedSegments", len(processedSegments)),
+		slog.Int("outputFiles", len(processedResult.Results)),
 		slog.Int64("outputRecords", totalRecords),
 		slog.Int64("outputFileSize", totalSize))
 
