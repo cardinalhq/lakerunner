@@ -80,9 +80,14 @@ func (p *Processor) ProcessTracesFromRow(ctx context.Context, organizationID uui
 
 	key := computeLogsTracesKey(clusterName, namespaceName, serviceName, fingerprint)
 
+	// Check if key exists before copying to avoid allocation when not needed
+	if tenant.traceCache.Contains(key) {
+		return nil
+	}
+
 	exemplarRow := pipeline.CopyRow(row)
 	if !tenant.traceCache.PutIfAbsent(key, exemplarRow) {
-		// Key already existed, return the copied row to the pool
+		// Race: key was added between Contains and PutIfAbsent
 		pipeline.ReturnPooledRow(exemplarRow)
 	}
 	return nil
