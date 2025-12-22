@@ -260,6 +260,8 @@ func (s *FileSplitter) startNewParquetWriter() error {
 		backend, err = NewArrowBackend(backendConfig)
 	case BackendGoParquet:
 		backend, err = NewGoParquetBackend(backendConfig)
+	case BackendDuckDB:
+		backend, err = NewDuckDBBackend(backendConfig)
 	default:
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpFile.Name())

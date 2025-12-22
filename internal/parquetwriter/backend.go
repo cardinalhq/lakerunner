@@ -61,6 +61,9 @@ const (
 	// BackendArrow uses Apache Arrow columnar format with streaming writes
 	BackendArrow BackendType = "arrow"
 
+	// BackendDuckDB uses DuckDB's Appender for efficient bulk loading and COPY TO for Parquet export
+	BackendDuckDB BackendType = "duckdb"
+
 	// DefaultBackend is the default backend type used when not specified
 	DefaultBackend = BackendArrow
 )
