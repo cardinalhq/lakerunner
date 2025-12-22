@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"runtime"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/otel/attribute"
@@ -93,8 +92,6 @@ func (p *TraceCompactionProcessor) ProcessBundleFromQueue(ctx context.Context, w
 
 // ProcessBundle processes a bundle of trace compaction messages directly
 func (p *TraceCompactionProcessor) ProcessBundle(ctx context.Context, key messages.TraceCompactionKey, msgs []*messages.TraceCompactionMessage, partition int32, offset int64) error {
-	defer runtime.GC() // TODO find a way to not need this
-
 	ll := logctx.FromContext(ctx)
 
 	ll.Info("Starting trace compaction bundle processing",

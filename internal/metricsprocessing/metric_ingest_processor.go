@@ -21,7 +21,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
@@ -136,8 +135,6 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 	ll := logctx.FromContext(ctx).With(
 		slog.String("organizationID", key.OrganizationID.String()),
 		slog.Int("instanceNum", int(key.InstanceNum)))
-
-	defer runtime.GC() // TODO find a way to not need this
 
 	ll.Info("Starting metric ingestion",
 		slog.Int("messageCount", len(msgs)))

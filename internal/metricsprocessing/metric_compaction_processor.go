@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"runtime"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/otel/attribute"
@@ -297,8 +296,6 @@ func (p *MetricCompactionProcessor) ProcessBundleFromQueue(ctx context.Context, 
 // ProcessBundle processes a compaction bundle directly (simplified interface)
 func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messages.CompactionKey, msgs []*messages.MetricCompactionMessage, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx)
-
-	defer runtime.GC() // TODO find a way to not need this
 
 	if len(msgs) == 0 {
 		return nil

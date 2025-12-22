@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -310,22 +311,18 @@ func buildDSN(dbPath string, settings *DuckDBSettings, threads int) string {
 	// Start with required settings
 	params := []string{"allow_unsigned_extensions=true"}
 
-	// Memory limit (in MB)
 	if settings.MemoryLimitMB > 0 {
 		params = append(params, fmt.Sprintf("memory_limit=%dMB", settings.MemoryLimitMB))
 	}
 
-	// Thread count
 	params = append(params, fmt.Sprintf("threads=%d", threads))
 
-	// Temp directory
 	if settings.TempDirectory != "" {
-		params = append(params, "temp_directory="+settings.TempDirectory)
+		params = append(params, "temp_directory="+url.QueryEscape(settings.TempDirectory))
 	}
 
-	// Max temp directory size
 	if settings.MaxTempDirectorySize != "" {
-		params = append(params, "max_temp_directory_size="+settings.MaxTempDirectorySize)
+		params = append(params, "max_temp_directory_size="+url.QueryEscape(settings.MaxTempDirectorySize))
 	}
 
 	return dbPath + "?" + strings.Join(params, "&")

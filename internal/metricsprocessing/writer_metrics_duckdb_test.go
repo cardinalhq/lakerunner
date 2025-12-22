@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -481,7 +482,9 @@ func TestColumnQuotingWithSpecialChars(t *testing.T) {
 
 	// Verify that the SQL we generate uses proper quoting
 	// by running a simple query with quoted identifiers
-	query := fmt.Sprintf(`SELECT "metric_name", "chq_tid", "chq_timestamp" FROM read_parquet('%s')`, testFile)
+	// Note: escape single quotes in file path to prevent SQL injection
+	escapedFile := strings.ReplaceAll(testFile, "'", "''")
+	query := fmt.Sprintf(`SELECT "metric_name", "chq_tid", "chq_timestamp" FROM read_parquet('%s')`, escapedFile)
 	rows2, err := conn.QueryContext(ctx, query)
 	require.NoError(t, err)
 	defer func() { _ = rows2.Close() }()

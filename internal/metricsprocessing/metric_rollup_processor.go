@@ -21,7 +21,6 @@ import (
 	"log/slog"
 	"maps"
 	"os"
-	"runtime"
 	"time"
 
 	"github.com/google/uuid"
@@ -151,8 +150,6 @@ func (r *MetricRollupProcessor) validateBundleConsistency(bundle *messages.Metri
 // ProcessBundle processes a MetricRollupBundle directly (simplified interface)
 func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messages.MetricRollupBundle, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx)
-
-	defer runtime.GC() // TODO find a way to not need this
 
 	if err := r.validateBundleConsistency(bundle); err != nil {
 		ll.Error("Bundle validation failed for metric rollup, skipping bundle",
@@ -399,7 +396,6 @@ func (r *MetricRollupProcessor) ProcessBundleFromQueue(ctx context.Context, work
 		slog.Int("instanceNum", int(firstMsg.InstanceNum)),
 		slog.Int("messageCount", len(bundle.Messages)))
 
-	// ProcessBundle no longer needs partition/offset since we don't track Kafka offsets
 	return r.ProcessBundle(ctx, &bundle, 0, 0)
 }
 
@@ -609,7 +605,7 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 		}
 
 		rollupMessage := fly.Message{
-			Key:   []byte(fmt.Sprintf("%s-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, nextTargetFrequency, segment.InstanceNum)),
+			Key:   fmt.Appendf(nil, "%s-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, nextTargetFrequency, segment.InstanceNum),
 			Value: msgBytes,
 		}
 
@@ -715,6 +711,9 @@ func mergeMetricLabelNameMaps(inputSegments []lrdb.MetricSeg) []byte {
 
 		var segMap map[string]string
 		if err := json.Unmarshal(seg.LabelNameMap, &segMap); err != nil {
+			slog.Warn("Failed to unmarshal label name map",
+				slog.Int64("segmentID", seg.SegmentID),
+				slog.Any("error", err))
 			continue
 		}
 
@@ -727,6 +726,7 @@ func mergeMetricLabelNameMaps(inputSegments []lrdb.MetricSeg) []byte {
 
 	result, err := json.Marshal(merged)
 	if err != nil {
+		slog.Warn("Failed to marshal merged label name map", slog.Any("error", err))
 		return nil
 	}
 

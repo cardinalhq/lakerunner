@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"runtime"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
@@ -47,8 +46,6 @@ func newLogCompactionBoxerProcessor(cfg *config.Config, store BoxerStore) *LogCo
 
 // Process implements the processor interface for log compaction boxing
 func (p *LogCompactionBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.LogCompactionKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
-	defer runtime.GC() // TODO find a way to not need this
-
 	ll := logctx.FromContext(ctx)
 
 	ll.Info("Processing log compaction boxer group",

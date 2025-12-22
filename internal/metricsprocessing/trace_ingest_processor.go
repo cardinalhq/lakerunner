@@ -21,7 +21,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -251,8 +250,6 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 	ll := logctx.FromContext(ctx).With(
 		slog.String("organizationID", key.OrganizationID.String()),
 		slog.Int("instanceNum", int(key.InstanceNum)))
-
-	defer runtime.GC() // TODO find a way to not need this
 
 	ll.Info("Starting trace ingestion",
 		slog.Int("messageCount", len(msgs)))

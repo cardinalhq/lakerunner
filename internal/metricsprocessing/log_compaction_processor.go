@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"runtime"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/otel/attribute"
@@ -100,8 +99,6 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 // When force=true, segments are reprocessed even if already marked as compacted.
 func (p *LogCompactionProcessor) processBundleInternal(ctx context.Context, key messages.LogCompactionKey, msgs []*messages.LogCompactionMessage, force bool) error {
 	ll := logctx.FromContext(ctx)
-
-	defer runtime.GC() // TODO find a way to not need this
 
 	if len(msgs) == 0 {
 		return nil

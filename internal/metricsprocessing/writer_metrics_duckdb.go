@@ -191,9 +191,14 @@ func cleanupLocalFiles(files []string) {
 	}
 }
 
+// escapeSingleQuote escapes single quotes for safe inclusion in SQL string literals.
+func escapeSingleQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
 // discoverSchemaConn reads the schema from a parquet file and returns column names.
 func discoverSchemaConn(ctx context.Context, conn *sql.Conn, filePath string) ([]string, error) {
-	query := fmt.Sprintf("DESCRIBE SELECT * FROM read_parquet('%s')", filePath)
+	query := fmt.Sprintf("DESCRIBE SELECT * FROM read_parquet('%s')", escapeSingleQuote(filePath))
 	rows, err := conn.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("describe parquet: %w", err)
@@ -216,10 +221,10 @@ func discoverSchemaConn(ctx context.Context, conn *sql.Conn, filePath string) ([
 
 // executeAggregationConn runs the DuckDB aggregation query.
 func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []string, outputFile string, schema []string, frequencyMs int32) error {
-	// Build file list for read_parquet
+	// Build file list for read_parquet (escape single quotes to prevent SQL injection)
 	quotedFiles := make([]string, len(inputFiles))
 	for i, f := range inputFiles {
-		quotedFiles[i] = fmt.Sprintf("'%s'", f)
+		quotedFiles[i] = fmt.Sprintf("'%s'", escapeSingleQuote(f))
 	}
 	fileList := strings.Join(quotedFiles, ", ")
 
@@ -302,7 +307,7 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 		) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)`,
 		strings.Join(rollupExtraction, ", "),
 		innerQuery,
-		outputFile)
+		escapeSingleQuote(outputFile))
 
 	_, err := conn.ExecContext(ctx, fullQuery)
 	return err
@@ -311,7 +316,7 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 // getRecordCount queries the record count from a parquet file.
 func getRecordCount(ctx context.Context, conn *sql.Conn, filePath string) (int64, error) {
 	var count int64
-	err := conn.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s')", filePath)).Scan(&count)
+	err := conn.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s')", escapeSingleQuote(filePath))).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("count records: %w", err)
 	}
