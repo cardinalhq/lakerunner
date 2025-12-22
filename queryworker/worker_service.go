@@ -62,6 +62,7 @@ func NewWorkerService(
 	maxParallelDownloads int,
 	sp storageprofile.StorageProfileProvider,
 	cloudManagers cloudstorage.ClientProvider,
+	duckdbSettings duckdbx.DuckDBSettings,
 ) (*WorkerService, error) {
 	// Create shared parquet file cache for downloaded files
 	parquetCache, err := NewParquetFileCache(DefaultCleanupInterval)
@@ -174,6 +175,7 @@ func NewWorkerService(
 	pool, err := duckdbx.NewDB(
 		duckdbx.WithMetrics(10*time.Second),
 		duckdbx.WithConnectionMaxAge(30*time.Minute),
+		duckdbx.WithDuckDBSettings(duckdbSettings),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create shared DB pool: %w", err)

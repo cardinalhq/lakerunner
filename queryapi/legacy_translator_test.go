@@ -152,6 +152,18 @@ func TestNormalizeLabelName(t *testing.T) {
 		{"_cardinalhq.message", "log_message"}, // Backward compatibility: maps to log_message
 		{"log.level", "log_level"},
 		{"no_dots_here", "no_dots_here"},
+		// Kubernetes labels with slashes
+		{"app.kubernetes.io/component", "app_kubernetes_io_component"},
+		{"app.kubernetes.io/name", "app_kubernetes_io_name"},
+		// Uppercase becomes lowercase
+		{"Resource.Service.Name", "resource_service_name"},
+		{"HTTP_STATUS", "http_status"},
+		// Dashes become underscores
+		{"my-label-name", "my_label_name"},
+		// Colons become underscores
+		{"namespace:pod", "namespace_pod"},
+		// Mixed special characters
+		{"a/b:c-d.e", "a_b_c_d_e"},
 	}
 
 	for _, tt := range tests {

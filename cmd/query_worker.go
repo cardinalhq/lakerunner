@@ -27,6 +27,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryworker"
 
@@ -93,7 +94,14 @@ func init() {
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			worker, err := queryworker.NewWorkerService(5, 5, 5, cfg.Query.MaxParallelDownloads, sp, cloudManagers)
+			duckdbSettings := duckdbx.DuckDBSettings{
+				MemoryLimitMB:        cfg.DuckDB.GetMemoryLimit(),
+				TempDirectory:        cfg.DuckDB.GetTempDirectory(),
+				MaxTempDirectorySize: cfg.DuckDB.GetMaxTempDirectorySize(),
+				PoolSize:             cfg.DuckDB.GetPoolSize(),
+				Threads:              cfg.DuckDB.GetThreads(),
+			}
+			worker, err := queryworker.NewWorkerService(5, 5, 5, cfg.Query.MaxParallelDownloads, sp, cloudManagers, duckdbSettings)
 			if err != nil {
 				return fmt.Errorf("failed to create worker service: %w", err)
 			}

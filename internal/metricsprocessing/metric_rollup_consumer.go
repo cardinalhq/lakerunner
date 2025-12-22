@@ -55,8 +55,17 @@ func NewMetricRollupConsumer(
 		return nil, err
 	}
 
-	// Create DuckDB instance for aggregation
-	duckDB, err := duckdbx.NewDB(duckdbx.WithMetrics(30 * time.Second))
+	// Create DuckDB instance for aggregation with config settings
+	duckDB, err := duckdbx.NewDB(
+		duckdbx.WithMetrics(30*time.Second),
+		duckdbx.WithDuckDBSettings(duckdbx.DuckDBSettings{
+			MemoryLimitMB:        cfg.DuckDB.GetMemoryLimit(),
+			TempDirectory:        cfg.DuckDB.GetTempDirectory(),
+			MaxTempDirectorySize: cfg.DuckDB.GetMaxTempDirectorySize(),
+			PoolSize:             cfg.DuckDB.GetPoolSize(),
+			Threads:              cfg.DuckDB.GetThreads(),
+		}),
+	)
 	if err != nil {
 		return nil, err
 	}

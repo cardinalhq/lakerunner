@@ -51,25 +51,6 @@ func reportTelemetry(ctx context.Context, signal, action string, segmentsIn, seg
 	processingBytesOut.Add(ctx, bytesOut, metric.WithAttributeSet(attrset))
 }
 
-func recordMetricSegmentDownload404(
-	ctx context.Context,
-	bucket string,
-	organizationID uuid.UUID,
-	instanceNum int16,
-	createdBy lrdb.CreatedBy,
-	frequencyMs int32,
-) {
-	recordSegmentDownload404(
-		ctx,
-		"metrics",
-		bucket,
-		organizationID,
-		instanceNum,
-		createdBy,
-		attribute.Int("frequency_ms", int(frequencyMs)),
-	)
-}
-
 func recordLogSegmentDownload404(
 	ctx context.Context,
 	bucket string,

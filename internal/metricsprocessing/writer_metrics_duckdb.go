@@ -25,15 +25,29 @@ import (
 	"strings"
 
 	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
+
+// metricProcessingParams contains the parameters needed for metric processing
+type metricProcessingParams struct {
+	TmpDir         string
+	StorageClient  cloudstorage.Client
+	OrganizationID uuid.UUID
+	StorageProfile storageprofile.StorageProfile
+	ActiveSegments []lrdb.MetricSeg
+	FrequencyMs    int32
+	MaxRecords     int64
+}
 
 // groupByColumns are the columns used to group metrics for aggregation.
 // Metrics with the same (metric_name, chq_tid, truncated_timestamp) are merged.
