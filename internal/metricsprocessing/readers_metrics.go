@@ -36,6 +36,72 @@ func createSortingMetricProtoReader(filename string, orgID, bucket, objectID str
 	}
 }
 
+// createMetricProtoReaderNoSort creates a non-sorting protocol buffer reader for metrics files.
+// Sorting is deferred to the Parquet writer (DuckDB backend) for better efficiency.
+func createMetricProtoReaderNoSort(filename string, orgID, bucket, objectID string) (filereader.Reader, error) {
+	switch {
+	case strings.HasSuffix(filename, ".binpb.gz"):
+		return createMetricProtoBinaryGzReaderNoSort(filename, orgID, bucket, objectID)
+	case strings.HasSuffix(filename, ".binpb"):
+		return createMetricProtoBinaryReaderNoSort(filename, orgID, bucket, objectID)
+	default:
+		return nil, fmt.Errorf("unsupported metrics file type: %s (only .binpb and .binpb.gz are supported)", filename)
+	}
+}
+
+// createMetricProtoBinaryReaderNoSort creates a non-sorting metrics proto reader for a protobuf file
+func createMetricProtoBinaryReaderNoSort(filename, orgID, bucket, objectID string) (filereader.Reader, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open protobuf file: %w", err)
+	}
+
+	opts := filereader.IngestReaderOptions{
+		OrgID:     orgID,
+		Bucket:    bucket,
+		ObjectID:  objectID,
+		BatchSize: 1000,
+	}
+
+	reader, err := filereader.NewIngestProtoMetricsReader(file, opts)
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
+	}
+
+	return reader, nil
+}
+
+// createMetricProtoBinaryGzReaderNoSort creates a non-sorting metrics proto reader for a gzipped protobuf file
+func createMetricProtoBinaryGzReaderNoSort(filename, orgID, bucket, objectID string) (filereader.Reader, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open protobuf.gz file: %w", err)
+	}
+
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+
+	opts := filereader.IngestReaderOptions{
+		OrgID:     orgID,
+		Bucket:    bucket,
+		ObjectID:  objectID,
+		BatchSize: 1000,
+	}
+
+	reader, err := filereader.NewIngestProtoMetricsReader(gzipReader, opts)
+	if err != nil {
+		_ = gzipReader.Close()
+		_ = file.Close()
+		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
+	}
+
+	return reader, nil
+}
+
 // createSortingMetricProtoBinaryReader creates a sorting metrics proto reader for a protobuf file
 func createSortingMetricProtoBinaryReader(filename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	file, err := os.Open(filename)

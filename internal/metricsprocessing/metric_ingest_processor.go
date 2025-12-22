@@ -477,7 +477,8 @@ func (p *MetricIngestProcessor) ShouldEmitImmediately(msg *messages.ObjStoreNoti
 	return false
 }
 
-// createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
+// createReaderStack creates a reader stack: Translation(OTELMetricProto(file))
+// Sorting is deferred to the DuckDB Parquet writer for better efficiency.
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Determine file type from extension for logging
 	var fileType string
@@ -495,26 +496,27 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 		"objectID", objectID,
 		"bucket", bucket)
 
-	// Use the sorting reader that combines proto parsing, translation, and in-memory sorting
-	reader, err := createSortingMetricProtoReader(tmpFilename, orgID, bucket, objectID)
+	// Use the non-sorting reader - sorting is done by DuckDB during Parquet export
+	reader, err := createMetricProtoReaderNoSort(tmpFilename, orgID, bucket, objectID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create sorting proto reader: %w", err)
+		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
 	}
 
 	return reader, nil
 }
 
-// createUnifiedReader creates a unified reader from multiple readers
-func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
+// createUnifiedReader creates a unified reader from multiple readers.
+// Uses SequentialReader (no sorting) since DuckDB handles sorting during Parquet export.
+func (p *MetricIngestProcessor) createUnifiedReader(_ context.Context, readers []filereader.Reader) (filereader.Reader, error) {
 	var finalReader filereader.Reader
 
 	if len(readers) == 1 {
 		finalReader = readers[0]
 	} else {
-		keyProvider := filereader.GetCurrentMetricSortKeyProvider()
-		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
+		// Use SequentialReader - no sorting needed as DuckDB handles it
+		multiReader, err := filereader.NewSequentialReader(readers, 1000)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
+			return nil, fmt.Errorf("failed to create sequential reader: %w", err)
 		}
 		finalReader = multiReader
 	}
