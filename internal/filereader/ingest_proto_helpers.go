@@ -15,11 +15,13 @@
 package filereader
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
 	"sort"
+	"sync"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"go.opentelemetry.io/collector/featuregate"
@@ -27,6 +29,13 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
+
+// protoReadPool provides reusable buffers for reading protobuf data.
+var protoReadPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
 
 func init() {
 	// Enable proto pooling for pmetric unmarshalling.
@@ -43,12 +52,16 @@ func init() {
 func parseProtoToOtelMetrics(reader io.Reader) (*pmetric.Metrics, error) {
 	unmarshaler := &pmetric.ProtoUnmarshaler{}
 
-	data, err := io.ReadAll(reader)
-	if err != nil {
+	// Use pooled buffer to reduce allocations (was ~12% of total allocs)
+	buf := protoReadPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer protoReadPool.Put(buf)
+
+	if _, err := buf.ReadFrom(reader); err != nil {
 		return nil, fmt.Errorf("failed to read data: %w", err)
 	}
 
-	metrics, err := unmarshaler.UnmarshalMetrics(data)
+	metrics, err := unmarshaler.UnmarshalMetrics(buf.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal protobuf metrics: %w", err)
 	}

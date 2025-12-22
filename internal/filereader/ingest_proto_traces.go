@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -313,12 +314,16 @@ func (r *IngestProtoTracesReader) GetSchema() *ReaderSchema {
 func parseProtoToOtelTraces(reader io.Reader) (*ptrace.Traces, error) {
 	unmarshaler := &ptrace.ProtoUnmarshaler{}
 
-	data, err := io.ReadAll(reader)
-	if err != nil {
+	// Use pooled buffer to reduce allocations
+	buf := protoReadPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer protoReadPool.Put(buf)
+
+	if _, err := buf.ReadFrom(reader); err != nil {
 		return nil, fmt.Errorf("failed to read data: %w", err)
 	}
 
-	traces, err := unmarshaler.UnmarshalTraces(data)
+	traces, err := unmarshaler.UnmarshalTraces(buf.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal protobuf traces: %w", err)
 	}
