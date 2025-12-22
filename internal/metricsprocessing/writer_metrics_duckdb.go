@@ -27,6 +27,9 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
@@ -79,18 +82,28 @@ var rollupColumns = []string{
 // 5. Extract statistics from merged sketch
 // 6. Write result to parquet
 func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params metricProcessingParams) ([]parquetwriter.Result, error) {
+	span := trace.SpanFromContext(ctx)
 	ll := logctx.FromContext(ctx)
 
 	// Download parquet files to local temp directory
 	localFiles, err := downloadSegmentFiles(ctx, params)
 	if err != nil {
+		span.RecordError(err)
 		return nil, fmt.Errorf("download segment files: %w", err)
 	}
 	defer cleanupLocalFiles(localFiles)
 
 	if len(localFiles) == 0 {
-		return nil, fmt.Errorf("no parquet files to process")
+		err := fmt.Errorf("no parquet files to process")
+		span.RecordError(err)
+		return nil, err
 	}
+
+	span.SetAttributes(
+		attribute.Int("duckdb.input_file_count", len(localFiles)),
+		attribute.Int("duckdb.frequency_ms", int(params.FrequencyMs)),
+		attribute.Int("duckdb.segment_count", len(params.ActiveSegments)),
+	)
 
 	ll.Info("Processing metrics with DuckDB",
 		slog.Int("fileCount", len(localFiles)),
@@ -99,36 +112,44 @@ func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params me
 	// Get a connection from the pool
 	conn, release, err := duckDB.GetConnection(ctx)
 	if err != nil {
+		span.RecordError(err)
 		return nil, fmt.Errorf("get duckdb connection: %w", err)
 	}
 	defer release()
 
 	// Load DDSketch extension on this connection
 	if err := duckdbx.LoadDDSketchExtension(ctx, conn); err != nil {
+		span.RecordError(err)
 		return nil, fmt.Errorf("load ddsketch extension: %w", err)
 	}
 
 	// Discover schema from input files
 	schema, err := discoverSchemaConn(ctx, conn, localFiles[0])
 	if err != nil {
+		span.RecordError(err)
 		return nil, fmt.Errorf("discover schema: %w", err)
 	}
+	span.SetAttributes(attribute.Int("duckdb.schema_column_count", len(schema)))
 
 	// Generate and execute aggregation SQL
 	outputFile := filepath.Join(params.TmpDir, "rollup_output.parquet")
 	if err := executeAggregationConn(ctx, conn, localFiles, outputFile, schema, params.FrequencyMs); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "aggregation query failed")
 		return nil, fmt.Errorf("execute aggregation: %w", err)
 	}
 
 	// Get output file stats
 	fileInfo, err := os.Stat(outputFile)
 	if err != nil {
+		span.RecordError(err)
 		return nil, fmt.Errorf("stat output file: %w", err)
 	}
 
 	// Get record count from output file (the only thing we need to query)
 	recordCount, err := getRecordCount(ctx, conn, outputFile)
 	if err != nil {
+		span.RecordError(err)
 		return nil, fmt.Errorf("get record count: %w", err)
 	}
 
@@ -148,6 +169,11 @@ func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params me
 		},
 	}
 
+	span.SetAttributes(
+		attribute.Int64("duckdb.output_record_count", recordCount),
+		attribute.Int64("duckdb.output_file_size", fileInfo.Size()),
+	)
+
 	ll.Info("DuckDB aggregation completed",
 		slog.Int64("recordCount", recordCount),
 		slog.Int64("fileSize", fileInfo.Size()))
@@ -157,6 +183,11 @@ func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params me
 
 // downloadSegmentFiles downloads parquet files from cloud storage to local temp directory.
 func downloadSegmentFiles(ctx context.Context, params metricProcessingParams) ([]string, error) {
+	ctx, span := boxerTracer.Start(ctx, "duckdb.download_segments", trace.WithAttributes(
+		attribute.Int("segment_count", len(params.ActiveSegments)),
+	))
+	defer span.End()
+
 	ll := logctx.FromContext(ctx)
 	var localFiles []string
 
@@ -181,6 +212,7 @@ func downloadSegmentFiles(ctx context.Context, params metricProcessingParams) ([
 		localFiles = append(localFiles, localPath)
 	}
 
+	span.SetAttributes(attribute.Int("downloaded_count", len(localFiles)))
 	return localFiles, nil
 }
 
@@ -198,9 +230,14 @@ func escapeSingleQuote(s string) string {
 
 // discoverSchemaConn reads the schema from a parquet file and returns column names.
 func discoverSchemaConn(ctx context.Context, conn *sql.Conn, filePath string) ([]string, error) {
+	ctx, span := boxerTracer.Start(ctx, "duckdb.discover_schema")
+	defer span.End()
+
 	query := fmt.Sprintf("DESCRIBE SELECT * FROM read_parquet('%s')", escapeSingleQuote(filePath))
 	rows, err := conn.QueryContext(ctx, query)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "describe query failed")
 		return nil, fmt.Errorf("describe parquet: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
@@ -209,6 +246,7 @@ func discoverSchemaConn(ctx context.Context, conn *sql.Conn, filePath string) ([
 	for rows.Next() {
 		var name, typ, null, key, def, extra any
 		if err := rows.Scan(&name, &typ, &null, &key, &def, &extra); err != nil {
+			span.RecordError(err)
 			return nil, fmt.Errorf("scan column: %w", err)
 		}
 		if nameStr, ok := name.(string); ok {
@@ -216,11 +254,18 @@ func discoverSchemaConn(ctx context.Context, conn *sql.Conn, filePath string) ([
 		}
 	}
 
+	span.SetAttributes(attribute.Int("column_count", len(columns)))
 	return columns, rows.Err()
 }
 
 // executeAggregationConn runs the DuckDB aggregation query.
 func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []string, outputFile string, schema []string, frequencyMs int32) error {
+	ctx, span := boxerTracer.Start(ctx, "duckdb.execute_aggregation", trace.WithAttributes(
+		attribute.Int("input_file_count", len(inputFiles)),
+		attribute.Int("frequency_ms", int(frequencyMs)),
+	))
+	defer span.End()
+
 	// Build file list for read_parquet (escape single quotes to prevent SQL injection)
 	quotedFiles := make([]string, len(inputFiles))
 	for i, f := range inputFiles {
@@ -315,16 +360,26 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 		escapeSingleQuote(outputFile))
 
 	_, err := conn.ExecContext(ctx, fullQuery)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "aggregation query failed")
+	}
 	return err
 }
 
 // getRecordCount queries the record count from a parquet file.
 func getRecordCount(ctx context.Context, conn *sql.Conn, filePath string) (int64, error) {
+	ctx, span := boxerTracer.Start(ctx, "duckdb.get_record_count")
+	defer span.End()
+
 	var count int64
 	err := conn.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s')", escapeSingleQuote(filePath))).Scan(&count)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "count query failed")
 		return 0, fmt.Errorf("count records: %w", err)
 	}
+	span.SetAttributes(attribute.Int64("record_count", count))
 	return count, nil
 }
 
