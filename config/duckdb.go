@@ -66,11 +66,11 @@ func (c *DuckDBConfig) GetMaxTempDirectorySize() string {
 	// Default to 90% of temp directory's volume
 	tempDir := c.GetTempDirectory()
 	if usage, err := helpers.DiskUsage(tempDir); err == nil {
-		// Calculate 90% of total volume size
-		maxSize := uint64(float64(usage.TotalBytes) * 0.9)
-		// DuckDB expects size in format like "100GB" or number of bytes
-		// Return as bytes string
-		return fmt.Sprintf("%d", maxSize)
+		// Calculate 90% of total volume size in GB (DuckDB DSN needs formatted value)
+		maxSizeGB := uint64(float64(usage.TotalBytes) * 0.9 / (1024 * 1024 * 1024))
+		if maxSizeGB > 0 {
+			return fmt.Sprintf("%dGB", maxSizeGB)
+		}
 	}
 	return "" // No limit if we can't determine volume size
 }
