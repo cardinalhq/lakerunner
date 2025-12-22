@@ -839,11 +839,3 @@ func (r *SortingIngestProtoMetricsReader) TotalRowsReturned() int64 {
 func (r *SortingIngestProtoMetricsReader) GetSchema() *ReaderSchema {
 	return r.schema
 }
-
-// GetOTELMetrics returns the underlying OTEL metrics for exemplar processing.
-func (r *SortingIngestProtoMetricsReader) GetOTELMetrics() (any, error) {
-	if r.otelMetrics == nil {
-		return nil, fmt.Errorf("OTEL metrics not available")
-	}
-	return r.otelMetrics, nil
-}
