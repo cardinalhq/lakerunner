@@ -32,6 +32,7 @@ var prefixedKeyCache sync.Map // "prefix:name" -> wkk.RowKey
 
 // prefixAttributeRowKey creates a RowKey for an OTEL attribute with the given prefix.
 // Uses wkk.NormalizeName for consistent OTEL-to-underscore conversion.
+// Lowercases the name to avoid case-sensitivity issues in DuckDB.
 // Results are cached to avoid repeated allocations for common attribute names.
 func prefixAttributeRowKey(name, prefix string) wkk.RowKey {
 	if name == "" {
@@ -45,7 +46,8 @@ func prefixAttributeRowKey(name, prefix string) wkk.RowKey {
 	}
 
 	// Slow path: compute and cache
-	normalized := wkk.NormalizeName(name)
+	// Lowercase first to avoid case-sensitivity issues in DuckDB
+	normalized := strings.ToLower(wkk.NormalizeName(name))
 	var result wkk.RowKey
 	if name[0] == '_' {
 		// Underscore-prefixed: no prefix added
@@ -66,11 +68,12 @@ func prefixAttributeRowKey(name, prefix string) wkk.RowKey {
 
 // prefixAttribute creates a prefixed attribute name string.
 // Uses wkk.NormalizeName for consistent OTEL-to-underscore conversion.
+// Lowercases the name to avoid case-sensitivity issues in DuckDB.
 func prefixAttribute(name, prefix string) string {
 	if name == "" {
 		return ""
 	}
-	normalized := wkk.NormalizeName(name)
+	normalized := strings.ToLower(wkk.NormalizeName(name))
 	if name[0] == '_' {
 		return normalized
 	}
