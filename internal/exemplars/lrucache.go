@@ -196,6 +196,27 @@ func (l *LRUCache) Contains(key uint64) bool {
 	return time.Since(entry.timestamp) <= l.expiry
 }
 
+// ComputeIfAbsent adds a new entry only if the key doesn't exist.
+// The producer function is only called if the key is absent, avoiding
+// unnecessary allocations when the key already exists.
+// Returns true if a new entry was added, false if it already existed.
+func (l *LRUCache) ComputeIfAbsent(key uint64, producer func() pipeline.Row) bool {
+	l.Lock()
+	defer l.Unlock()
+
+	// Check if key already exists and is not expired
+	if elem, found := l.cache[key]; found {
+		entry := elem.Value.(*Entry)
+		if time.Since(entry.timestamp) <= l.expiry {
+			return false
+		}
+	}
+
+	// Key is absent or expired, call producer to get the value
+	row := producer()
+	return l.putLocked(key, row)
+}
+
 // PutIfAbsent adds a new entry only if the key doesn't exist.
 // Returns true if the entry was added, false if it already existed.
 func (l *LRUCache) PutIfAbsent(key uint64, row pipeline.Row) bool {
@@ -212,6 +233,11 @@ func (l *LRUCache) PutIfAbsent(key uint64, row pipeline.Row) bool {
 		}
 	}
 
+	return l.putLocked(key, row)
+}
+
+// putLocked inserts a row into the cache. Must be called with lock held.
+func (l *LRUCache) putLocked(key uint64, row pipeline.Row) bool {
 	now := time.Now()
 
 	if l.list.Len() >= l.capacity {

@@ -19,8 +19,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
-	"runtime"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +31,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -61,18 +62,20 @@ type MetricRollupProcessor struct {
 	cmgr            cloudstorage.ClientProvider
 	kafkaProducer   fly.Producer
 	config          *config.Config
+	duckDB          *duckdbx.DB
 }
 
 // newMetricRollupProcessor creates a new metric rollup processor instance
 func newMetricRollupProcessor(
 	cfg *config.Config,
-	store MetricRollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricRollupProcessor {
+	store MetricRollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer, duckDB *duckdbx.DB) *MetricRollupProcessor {
 	return &MetricRollupProcessor{
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
 		config:          cfg,
 		kafkaProducer:   kafkaProducer,
+		duckDB:          duckDB,
 	}
 }
 
@@ -147,8 +150,6 @@ func (r *MetricRollupProcessor) validateBundleConsistency(bundle *messages.Metri
 // ProcessBundle processes a MetricRollupBundle directly (simplified interface)
 func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messages.MetricRollupBundle, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx)
-
-	defer runtime.GC() // TODO find a way to not need this
 
 	if err := r.validateBundleConsistency(bundle); err != nil {
 		ll.Error("Bundle validation failed for metric rollup, skipping bundle",
@@ -273,7 +274,7 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		attribute.Int("target_frequency_ms", int(key.TargetFrequencyMs)),
 	))
 
-	results, err := processMetricsWithAggregation(ctx, params)
+	processedResult, err := processMetricsWithDuckDB(ctx, r.duckDB, params)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to process metrics with aggregation")
@@ -288,15 +289,22 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			slog.Any("error", err))
 		return nil
 	}
-	processSpan.SetAttributes(attribute.Int("result_count", len(results)))
+	processSpan.SetAttributes(
+		attribute.Int("result_count", len(processedResult.Results)),
+		attribute.Int("processed_segments", len(processedResult.ProcessedSegments)),
+		attribute.Int("skipped_segments", len(segments)-len(processedResult.ProcessedSegments)),
+	)
 	processSpan.End()
+
+	// Use only successfully processed segments for upload and database update
+	processedSegments := processedResult.ProcessedSegments
 
 	// Upload segments
 	ctx, uploadSpan := boxerTracer.Start(ctx, "metrics.rollup.upload_segments", trace.WithAttributes(
-		attribute.Int("result_count", len(results)),
+		attribute.Int("result_count", len(processedResult.Results)),
 	))
 
-	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, results, key, segments)
+	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, processedResult.Results, key, processedSegments)
 	if err != nil {
 		uploadSpan.RecordError(err)
 		uploadSpan.SetStatus(codes.Error, "failed to upload rollup segments")
@@ -307,20 +315,20 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			slog.Int("sourceFrequencyMs", int(key.SourceFrequencyMs)),
 			slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)),
 			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("resultsCount", len(results)),
+			slog.Int("resultsCount", len(processedResult.Results)),
 			slog.Any("error", err))
 		return nil
 	}
 	uploadSpan.SetAttributes(attribute.Int("new_segments", len(newSegments)))
 	uploadSpan.End()
 
-	// Update database
+	// Update database - only mark processed segments as rolled up
 	ctx, dbSpan := boxerTracer.Start(ctx, "metrics.rollup.update_db", trace.WithAttributes(
-		attribute.Int("old_segments", len(segments)),
+		attribute.Int("old_segments", len(processedSegments)),
 		attribute.Int("new_segments", len(newSegments)),
 	))
 
-	if err := r.atomicDatabaseUpdate(ctx, segments, newSegments, key); err != nil {
+	if err := r.atomicDatabaseUpdate(ctx, processedSegments, newSegments, key); err != nil {
 		dbSpan.RecordError(err)
 		dbSpan.SetStatus(codes.Error, "failed to perform atomic database update")
 		dbSpan.End()
@@ -330,7 +338,7 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 			slog.Int("sourceFrequencyMs", int(key.SourceFrequencyMs)),
 			slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)),
 			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("segments", len(segments)),
+			slog.Int("segments", len(processedSegments)),
 			slog.Int("newSegments", len(newSegments)),
 			slog.Any("error", err))
 		return nil
@@ -338,7 +346,7 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 	dbSpan.End()
 
 	var totalRecords, totalSize int64
-	for _, result := range results {
+	for _, result := range processedResult.Results {
 		totalRecords += result.RecordCount
 		totalSize += result.FileSize
 	}
@@ -359,7 +367,8 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 
 	ll.Info("Rollup completed successfully",
 		slog.Int("inputSegments", len(segments)),
-		slog.Int("outputFiles", len(results)),
+		slog.Int("processedSegments", len(processedSegments)),
+		slog.Int("outputFiles", len(processedResult.Results)),
 		slog.Int64("outputRecords", totalRecords),
 		slog.Int64("outputFileSize", totalSize))
 
@@ -395,7 +404,6 @@ func (r *MetricRollupProcessor) ProcessBundleFromQueue(ctx context.Context, work
 		slog.Int("instanceNum", int(firstMsg.InstanceNum)),
 		slog.Int("messageCount", len(bundle.Messages)))
 
-	// ProcessBundle no longer needs partition/offset since we don't track Kafka offsets
 	return r.ProcessBundle(ctx, &bundle, 0, 0)
 }
 
@@ -412,6 +420,9 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 	var segments []lrdb.MetricSeg
 	var totalOutputSize, totalOutputRecords int64
 	var segmentIDs []int64
+
+	// Merge label name maps from input segments
+	mergedLabelMap := mergeMetricLabelNameMaps(inputSegments)
 
 	// Generate unique batch IDs for all results to avoid collisions
 	batchSegmentIDs := idgen.GenerateBatchIDs(len(results))
@@ -453,6 +464,7 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 			CreatedBy:    lrdb.CreatedByRollup,
 			MetricNames:  stats.MetricNames,
 			MetricTypes:  stats.MetricTypes,
+			LabelNameMap: mergedLabelMap,
 		}
 
 		segments = append(segments, segment)
@@ -491,6 +503,7 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 			Fingerprints: seg.Fingerprints,
 			MetricNames:  seg.MetricNames,
 			MetricTypes:  seg.MetricTypes,
+			LabelNameMap: seg.LabelNameMap,
 		}
 	}
 
@@ -600,7 +613,7 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 		}
 
 		rollupMessage := fly.Message{
-			Key:   []byte(fmt.Sprintf("%s-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, nextTargetFrequency, segment.InstanceNum)),
+			Key:   fmt.Appendf(nil, "%s-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, nextTargetFrequency, segment.InstanceNum),
 			Value: msgBytes,
 		}
 
@@ -692,4 +705,38 @@ func (r *MetricRollupProcessor) getNextRollupFrequency(sourceFrequencyMs int32) 
 	default:
 		return 0 // No further rollup
 	}
+}
+
+// mergeMetricLabelNameMaps merges label name maps from multiple input metric segments.
+// Returns nil if no segments have label maps, otherwise returns a merged JSONB map.
+func mergeMetricLabelNameMaps(inputSegments []lrdb.MetricSeg) []byte {
+	merged := make(map[string]string)
+
+	for _, seg := range inputSegments {
+		if len(seg.LabelNameMap) == 0 {
+			continue
+		}
+
+		var segMap map[string]string
+		if err := json.Unmarshal(seg.LabelNameMap, &segMap); err != nil {
+			slog.Warn("Failed to unmarshal label name map",
+				slog.Int64("segmentID", seg.SegmentID),
+				slog.Any("error", err))
+			continue
+		}
+
+		maps.Copy(merged, segMap)
+	}
+
+	if len(merged) == 0 {
+		return nil
+	}
+
+	result, err := json.Marshal(merged)
+	if err != nil {
+		slog.Warn("Failed to marshal merged label name map", slog.Any("error", err))
+		return nil
+	}
+
+	return result
 }

@@ -15,12 +15,14 @@
 package filereader
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/collector/pdata/xpdata/pref"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
@@ -289,8 +291,12 @@ func (r *IngestProtoTracesReader) Close() error {
 	}
 	r.closed = true
 
-	// Release references to parsed data
-	r.traces = nil
+	// Return traces to the pool if pooling is enabled.
+	// This must be called before clearing the reference.
+	if r.traces != nil {
+		pref.UnrefTraces(*r.traces)
+		r.traces = nil
+	}
 
 	return nil
 }
@@ -308,12 +314,16 @@ func (r *IngestProtoTracesReader) GetSchema() *ReaderSchema {
 func parseProtoToOtelTraces(reader io.Reader) (*ptrace.Traces, error) {
 	unmarshaler := &ptrace.ProtoUnmarshaler{}
 
-	data, err := io.ReadAll(reader)
-	if err != nil {
+	// Use pooled buffer to reduce allocations
+	buf := protoReadPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer protoReadPool.Put(buf)
+
+	if _, err := buf.ReadFrom(reader); err != nil {
 		return nil, fmt.Errorf("failed to read data: %w", err)
 	}
 
-	traces, err := unmarshaler.UnmarshalTraces(data)
+	traces, err := unmarshaler.UnmarshalTraces(buf.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal protobuf traces: %w", err)
 	}

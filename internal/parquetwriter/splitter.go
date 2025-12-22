@@ -21,7 +21,6 @@ import (
 	"strconv"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/pipeline"
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
@@ -218,9 +217,6 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 				}
 			}
 		}
-
-		// Add chq_id to the row
-		row[wkk.RowKeyCID] = idgen.NextBase32ID()
 
 		// Update stats and group tracking (both use Row directly now)
 		if s.currentStats != nil {

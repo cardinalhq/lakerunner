@@ -21,7 +21,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
@@ -136,8 +135,6 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 	ll := logctx.FromContext(ctx).With(
 		slog.String("organizationID", key.OrganizationID.String()),
 		slog.Int("instanceNum", int(key.InstanceNum)))
-
-	defer runtime.GC() // TODO find a way to not need this
 
 	ll.Info("Starting metric ingestion",
 		slog.Int("messageCount", len(msgs)))
@@ -538,12 +535,11 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 	// Get schema from reader (GetSchema returns a copy)
 	schema := reader.GetSchema()
 
-	// Add columns that will be injected by MetricTranslator and FileSplitter
+	// Add columns that will be injected by MetricTranslator
 	// These columns are added to every row but aren't in the OTEL schema
 	schema.AddColumn(wkk.RowKeyCCustomerID, wkk.RowKeyCCustomerID, filereader.DataTypeString, true)
 	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
 	schema.AddColumn(wkk.RowKeyCTID, wkk.RowKeyCTID, filereader.DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true) // Added by FileSplitter
 
 	// Get RPF estimate for this org/instance
 	rpfEstimate := p.store.GetMetricEstimate(ctx, storageProfile.OrganizationID, 10000) // 10 second blocks

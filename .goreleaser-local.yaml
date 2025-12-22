@@ -67,6 +67,8 @@ dockers:
     ids:
       - lakerunner
       - lakectl
+    extra_files:
+      - docker/duckdb-extensions
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Tag }}-amd64"
     build_flag_templates:
@@ -86,6 +88,8 @@ dockers:
     ids:
       - lakerunner
       - lakectl
+    extra_files:
+      - docker/duckdb-extensions
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Tag }}-arm64"
     build_flag_templates:

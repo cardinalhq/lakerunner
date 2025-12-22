@@ -17,7 +17,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"strconv"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
@@ -67,41 +66,23 @@ func (c *DuckDBConfig) GetMaxTempDirectorySize() string {
 	// Default to 90% of temp directory's volume
 	tempDir := c.GetTempDirectory()
 	if usage, err := helpers.DiskUsage(tempDir); err == nil {
-		// Calculate 90% of total volume size
-		maxSize := uint64(float64(usage.TotalBytes) * 0.9)
-		// DuckDB expects size in format like "100GB" or number of bytes
-		// Return as bytes string
-		return fmt.Sprintf("%d", maxSize)
+		// Calculate 90% of total volume size in GB (DuckDB DSN needs formatted value)
+		maxSizeGB := uint64(float64(usage.TotalBytes) * 0.9 / (1024 * 1024 * 1024))
+		if maxSizeGB > 0 {
+			return fmt.Sprintf("%dGB", maxSizeGB)
+		}
 	}
 	return "" // No limit if we can't determine volume size
 }
 
-// GetMemoryLimit returns the memory limit in MB
+// GetMemoryLimit returns the memory limit in MB (0 = unlimited)
 func (c *DuckDBConfig) GetMemoryLimit() int64 {
-	if c.MemoryLimit > 0 {
-		return c.MemoryLimit
-	}
-	// Check environment variable for override
-	if memStr := os.Getenv("DUCKDB_MEMORY_LIMIT"); memStr != "" {
-		if mem, err := strconv.ParseInt(memStr, 10, 64); err == nil && mem > 0 {
-			return mem
-		}
-	}
-	return 0 // No limit
+	return c.MemoryLimit
 }
 
-// GetPoolSize returns the connection pool size
+// GetPoolSize returns the connection pool size (0 = use default)
 func (c *DuckDBConfig) GetPoolSize() int {
-	if c.PoolSize > 0 {
-		return c.PoolSize
-	}
-	// Check environment variable for override
-	if poolStr := os.Getenv("DUCKDB_POOL_SIZE"); poolStr != "" {
-		if pool, err := strconv.Atoi(poolStr); err == nil && pool > 0 {
-			return pool
-		}
-	}
-	return 0 // Use default calculation
+	return c.PoolSize
 }
 
 // GetConnTTLSeconds returns the connection TTL in seconds
@@ -109,25 +90,15 @@ func (c *DuckDBConfig) GetConnTTLSeconds() int {
 	if c.ConnTTLSeconds > 0 {
 		return c.ConnTTLSeconds
 	}
-	// Check environment variable for override
-	if ttlStr := os.Getenv("DUCKDB_CONN_TTL_SECONDS"); ttlStr != "" {
-		if ttl, err := strconv.Atoi(ttlStr); err == nil && ttl > 0 {
-			return ttl
-		}
-	}
 	return 240 // Default 4 minutes
 }
 
-// GetThreadsPerConn returns the threads per connection setting
+// GetThreadsPerConn returns the threads per connection setting (0 = use default)
 func (c *DuckDBConfig) GetThreadsPerConn() int {
-	if c.ThreadsPerConn > 0 {
-		return c.ThreadsPerConn
-	}
-	// Check environment variable for override
-	if threadsStr := os.Getenv("DUCKDB_THREADS_PER_CONN"); threadsStr != "" {
-		if threads, err := strconv.Atoi(threadsStr); err == nil && threads > 0 {
-			return threads
-		}
-	}
-	return 0 // Use default calculation
+	return c.ThreadsPerConn
+}
+
+// GetThreads returns the total threads setting (0 = use default)
+func (c *DuckDBConfig) GetThreads() int {
+	return c.ThreadsPerConn
 }

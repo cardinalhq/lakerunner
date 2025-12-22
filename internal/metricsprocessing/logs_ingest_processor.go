@@ -509,7 +509,7 @@ func ProcessLogFiles(
 	// Get schema from reader (includes all transformed columns)
 	schema := finalReader.GetSchema()
 
-	// Add chq_id column (injected by FileSplitter when writing rows)
+	// Add chq_id column for unique row identification
 	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true)
 
 	// Create dateint bin manager
@@ -572,6 +572,10 @@ func ProcessLogFiles(
 				if takenRow == nil {
 					continue
 				}
+
+				// Add unique row ID for logs
+				takenRow[wkk.RowKeyCID] = idgen.NextBase32ID()
+
 				singleRowBatch := pipeline.GetBatch()
 				singleRowBatch.AppendRow(takenRow)
 
@@ -742,7 +746,7 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	// Get schema from reader (GetSchema returns a copy and includes all transformed columns)
 	schema := reader.GetSchema()
 
-	// Add chq_id column (injected by FileSplitter when writing rows)
+	// Add chq_id column for unique row identification
 	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true)
 
 	binManager := &DateintBinManager{
@@ -808,6 +812,10 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 				if takenRow == nil {
 					continue
 				}
+
+				// Add unique row ID for logs
+				takenRow[wkk.RowKeyCID] = idgen.NextBase32ID()
+
 				singleRowBatch := pipeline.GetBatch()
 				singleRowBatch.AppendRow(takenRow)
 

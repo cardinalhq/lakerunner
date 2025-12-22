@@ -27,6 +27,7 @@ import (
 	"github.com/DataDog/sketches-go/ddsketch"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/pdata/xpdata/pref"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
@@ -816,16 +817,22 @@ func (r *SortingIngestProtoMetricsReader) finalizeSketchFields(row pipeline.Row,
 	return false, nil
 }
 
-// Close closes the reader.
+// Close closes the reader and returns pooled metrics to the pool.
 func (r *SortingIngestProtoMetricsReader) Close() error {
 	if r.closed {
 		return nil
 	}
 	r.closed = true
 
-	// Release sorted datapoints (no pooled resources to return)
+	// Release sorted datapoints
 	r.sortedDatapoints = nil
-	r.otelMetrics = nil
+
+	// Return metrics to the pool if pooling is enabled.
+	// This must be called before clearing the reference.
+	if r.otelMetrics != nil {
+		pref.UnrefMetrics(*r.otelMetrics)
+		r.otelMetrics = nil
+	}
 
 	return nil
 }
@@ -838,12 +845,4 @@ func (r *SortingIngestProtoMetricsReader) TotalRowsReturned() int64 {
 // GetSchema returns the schema.
 func (r *SortingIngestProtoMetricsReader) GetSchema() *ReaderSchema {
 	return r.schema
-}
-
-// GetOTELMetrics returns the underlying OTEL metrics for exemplar processing.
-func (r *SortingIngestProtoMetricsReader) GetOTELMetrics() (any, error) {
-	if r.otelMetrics == nil {
-		return nil, fmt.Errorf("OTEL metrics not available")
-	}
-	return r.otelMetrics, nil
 }

@@ -15,22 +15,28 @@
 package duckdbx
 
 import (
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/marcboeker/go-duckdb/v2"
+	"github.com/duckdb/duckdb-go/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
+
+// DDSketchExtensionEnvVar is the environment variable for the DDSketch extension path.
+const DDSketchExtensionEnvVar = "LAKERUNNER_DDSKETCH_EXTENSION"
 
 // DB manages a pool of DuckDB connections to a single shared on-disk database.
 // All connections open the same file and thus share the same in-process database instance.
@@ -38,16 +44,9 @@ type DB struct {
 	dbPath         string // single on-disk database file for all connections
 	cleanupOnClose bool   // whether to remove the database directory on Close
 
-	// config (applied once to the shared database instance)
-	memoryLimitMB int64
-	tempDir       string
-	maxTempSize   string
-	poolSize      int
-	threads       int // total threads for the shared database instance
-
-	// one-time setup
-	setupOnce sync.Once
-	setupErr  error
+	// config (used to build DSN)
+	poolSize int
+	dsn      string // full DSN with all settings
 
 	// Single global pool (per DB instance)
 	pool *connectionPool
@@ -65,17 +64,21 @@ type connectionPool struct {
 	parent *DB
 	size   int
 
-	mu  sync.Mutex
-	cur int
-
-	ch chan *pooledConn
+	// Single shared sql.DB from one connector
+	db        *sql.DB
+	dbOnce    sync.Once
+	dbErr     error
+	connector *duckdb.Connector
 }
 
-type pooledConn struct {
-	db       *sql.DB
-	conn     *sql.Conn
-	bornAt   time.Time
-	deadline time.Time
+// DuckDBSettings holds DuckDB-specific settings for DSN construction.
+// This mirrors config.DuckDBConfig to avoid circular imports.
+type DuckDBSettings struct {
+	MemoryLimitMB        int64  // Memory limit in MB (0 = unlimited)
+	TempDirectory        string // Directory for temporary files
+	MaxTempDirectorySize string // Max size for temp directory (e.g., "10GB" or bytes as string)
+	PoolSize             int    // Connection pool size (0 = use default)
+	Threads              int    // Total threads (0 = use default)
 }
 
 // dbConfig holds configuration options for DB
@@ -84,6 +87,7 @@ type dbConfig struct {
 	metricsPeriod time.Duration
 	metricsCtx    context.Context
 	connMaxAge    time.Duration
+	duckdb        *DuckDBSettings
 }
 
 // DBOption is a functional option for configuring DB
@@ -129,6 +133,13 @@ func WithConnectionMaxAge(d time.Duration) DBOption {
 	}
 }
 
+// WithDuckDBSettings sets DuckDB-specific configuration for DSN construction.
+func WithDuckDBSettings(settings DuckDBSettings) DBOption {
+	return func(cfg *dbConfig) {
+		cfg.duckdb = &settings
+	}
+}
+
 // NewDB creates a new DB instance with a shared database.
 // Database location behavior:
 //   - No options provided: creates a temporary file database (persistent across connections)
@@ -155,28 +166,37 @@ func NewDB(opts ...DBOption) (*DB, error) {
 		cleanupOnClose = true
 	}
 
-	memoryMB := envInt64("DUCKDB_MEMORY_LIMIT", 0)
+	// Get settings from config or use defaults
+	settings := cfg.duckdb
+	if settings == nil {
+		settings = &DuckDBSettings{}
+	}
 
-	// Default pool: half the cores, capped at 8, min 2.
-	poolDefault := min(8, max(2, runtime.GOMAXPROCS(0)/2))
-	poolSize := envIntClamp("DUCKDB_POOL_SIZE", poolDefault, 1, 512)
+	// Pool size: from settings, or default (half cores, capped at 8, min 2)
+	poolSize := settings.PoolSize
+	if poolSize <= 0 {
+		poolSize = min(8, max(2, runtime.GOMAXPROCS(0)/2))
+	}
 
-	total := runtime.GOMAXPROCS(0)
-	// All connections share the same database, so threads setting applies to the shared instance
-	threads := envIntClamp("DUCKDB_THREADS", total, 1, 256)
+	// Threads: from settings, or default to GOMAXPROCS
+	threads := settings.Threads
+	if threads <= 0 {
+		threads = runtime.GOMAXPROCS(0)
+	}
 
-	// connection TTL (default 25m; override by env or option)
-	connMaxAge := envDuration("DUCKDB_POOL_CONN_MAX_AGE", 25*time.Minute)
+	// connection TTL (default 25m; override by option)
+	connMaxAge := 25 * time.Minute
 	if cfg.connMaxAge > 0 {
 		connMaxAge = cfg.connMaxAge
 	}
 
+	// Build DSN with all configuration parameters
+	dsn := buildDSN(dbPath, settings, threads)
+
 	slog.Info("duckdbx: single shared database",
 		"type", "file",
 		"dbPath", dbPath,
-		"memoryLimitMB", memoryMB,
-		"tempDir", os.Getenv("DUCKDB_TEMP_DIRECTORY"),
-		"maxTempSize", os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
+		"dsn", dsn,
 		"poolSize", poolSize,
 		"threads", threads,
 		"connMaxAge", connMaxAge,
@@ -185,11 +205,8 @@ func NewDB(opts ...DBOption) (*DB, error) {
 	d := &DB{
 		dbPath:         dbPath,
 		cleanupOnClose: cleanupOnClose,
-		memoryLimitMB:  memoryMB,
-		tempDir:        os.Getenv("DUCKDB_TEMP_DIRECTORY"),
-		maxTempSize:    os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
 		poolSize:       poolSize,
-		threads:        threads,
+		dsn:            dsn,
 		metricsPeriod:  cfg.metricsPeriod,
 		connMaxAge:     connMaxAge,
 	}
@@ -197,7 +214,6 @@ func NewDB(opts ...DBOption) (*DB, error) {
 	d.pool = &connectionPool{
 		parent: d,
 		size:   poolSize,
-		ch:     make(chan *pooledConn, poolSize),
 	}
 
 	// Start metrics polling if enabled
@@ -244,190 +260,93 @@ func (d *DB) GetConnection(ctx context.Context) (*sql.Conn, func(), error) {
 
 // ---------- connectionPool implementation ----------
 
+func (p *connectionPool) ensureDB(ctx context.Context) error {
+	p.dbOnce.Do(func() {
+		connector, err := duckdb.NewConnector(p.parent.dsn, nil)
+		if err != nil {
+			p.dbErr = fmt.Errorf("create connector: %w", err)
+			return
+		}
+		p.connector = connector
+
+		db := sql.OpenDB(connector)
+		// Allow multiple connections from this single sql.DB
+		db.SetMaxOpenConns(p.size)
+		db.SetMaxIdleConns(p.size)
+		p.db = db
+
+		// Apply any settings that can't be set via DSN
+		if err := p.parent.applyPostConnectSettings(ctx, db); err != nil {
+			p.dbErr = err
+			return
+		}
+	})
+	return p.dbErr
+}
+
 func (p *connectionPool) acquire(ctx context.Context) (*sql.Conn, func(), error) {
-	// Ensure database is set up before any connection is used
-	if err := p.parent.ensureSetup(ctx); err != nil {
+	if err := p.ensureDB(ctx); err != nil {
 		return nil, nil, err
 	}
 
-	// Fast-path: try to take one without blocking
-	select {
-	case pc := <-p.ch:
-		if p.isConnExpired(pc) {
-			p.destroy(pc)
-			// fall through to creation path below
-		} else {
-			return pc.conn, func() { p.release(pc) }, nil
-		}
-	default:
-	}
-
-	// Try to create a new one if capacity allows
-	return p.createConn(ctx)
-}
-
-func (p *connectionPool) createConn(ctx context.Context) (*sql.Conn, func(), error) {
-	p.mu.Lock()
-	canCreate := p.cur < p.size
-	if canCreate {
-		p.cur++
-	}
-	p.mu.Unlock()
-
-	if canCreate {
-		pc, err := p.newConn(ctx)
-		if err != nil {
-			p.mu.Lock()
-			p.cur--
-			p.mu.Unlock()
-			return nil, nil, err
-		}
-		return pc.conn, func() { p.release(pc) }, nil
-	}
-
-	// Otherwise, wait for an available connection
-	select {
-	case <-ctx.Done():
-		return nil, nil, ctx.Err()
-	case pc := <-p.ch:
-		if p.isConnExpired(pc) {
-			p.destroy(pc)
-			// After destroying, capacity likely exists -> try create again
-			return p.createConn(ctx)
-		}
-		return pc.conn, func() { p.release(pc) }, nil
-	}
-}
-
-func (p *connectionPool) release(pc *pooledConn) {
-	// Drop expired connections instead of pooling them
-	if p.isConnExpired(pc) {
-		p.destroy(pc)
-		return
-	}
-
-	select {
-	case p.ch <- pc:
-		// returned to pool
-	default:
-		// pool is full (shouldn't happen), close this connection
-		p.destroy(pc)
-	}
-}
-
-func (p *connectionPool) destroy(pc *pooledConn) {
-	_ = pc.conn.Close()
-	_ = pc.db.Close()
-	p.mu.Lock()
-	p.cur--
-	p.mu.Unlock()
-}
-
-func (p *connectionPool) isConnExpired(pc *pooledConn) bool {
-	if p.parent.connMaxAge <= 0 {
-		return false
-	}
-	return time.Now().After(pc.deadline)
-}
-
-// newConn creates a new pooled connection with standard configuration.
-func (p *connectionPool) newConn(ctx context.Context) (*pooledConn, error) {
-	// Ensure database-wide settings are applied (once)
-	if err := p.parent.ensureSetup(ctx); err != nil {
-		return nil, err
-	}
-
-	connector, err := duckdb.NewConnector(p.parent.dbPath, nil)
+	conn, err := p.db.Conn(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("create connector: %w", err)
+		return nil, nil, err
 	}
 
-	db := sql.OpenDB(connector)
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-
-	now := time.Now()
-	pc := &pooledConn{
-		conn:     conn,
-		db:       db,
-		bornAt:   now,
-		deadline: now.Add(p.parent.connMaxAge),
-	}
-	return pc, nil
+	return conn, func() { _ = conn.Close() }, nil
 }
 
 func (p *connectionPool) closeAll() {
-	for {
-		select {
-		case pc := <-p.ch:
-			_ = pc.conn.Close()
-			_ = pc.db.Close()
-		default:
-			return
-		}
+	if p.db != nil {
+		_ = p.db.Close()
 	}
 }
 
 // ---------- DB setup ----------
 
-// ensureSetup runs once to configure the shared database instance
-func (d *DB) ensureSetup(ctx context.Context) error {
-	d.setupOnce.Do(func() {
-		db, err := sql.Open("duckdb", d.dbPath)
-		if err != nil {
-			d.setupErr = fmt.Errorf("open db for setup: %w", err)
-			return
-		}
-		defer func() { _ = db.Close() }()
+// buildDSN constructs a DuckDB DSN with the provided settings.
+// See https://duckdb.org/docs/api/go.html for supported parameters.
+func buildDSN(dbPath string, settings *DuckDBSettings, threads int) string {
+	// Start with required settings
+	params := []string{"allow_unsigned_extensions=true"}
 
-		conn, err := db.Conn(ctx)
-		if err != nil {
-			d.setupErr = fmt.Errorf("get conn for setup: %w", err)
-			return
-		}
-		defer func() { _ = conn.Close() }()
+	if settings.MemoryLimitMB > 0 {
+		params = append(params, fmt.Sprintf("memory_limit=%dMB", settings.MemoryLimitMB))
+	}
 
-		// Set home_directory
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET home_directory='%s';", escapeSingle(filepath.Dir(d.dbPath)))); err != nil {
-			slog.Warn("Failed to set home_directory", "error", err)
-		}
+	params = append(params, fmt.Sprintf("threads=%d", threads))
 
-		if d.memoryLimitMB > 0 {
-			slog.Info("Setting memory limit for shared DuckDB instance", "memoryLimitMB", d.memoryLimitMB)
-			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", d.memoryLimitMB)); err != nil {
-				d.setupErr = fmt.Errorf("set memory_limit: %w", err)
-				return
-			}
-		}
-		if d.tempDir != "" {
-			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET temp_directory = '%s';", escapeSingle(d.tempDir))); err != nil {
-				d.setupErr = fmt.Errorf("set temp_directory: %w", err)
-				return
-			}
-		}
-		if d.maxTempSize != "" {
-			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET max_temp_directory_size = '%s';", escapeSingle(d.maxTempSize))); err != nil {
-				d.setupErr = fmt.Errorf("set max_temp_directory_size: %w", err)
-				return
-			}
-		}
+	if settings.TempDirectory != "" {
+		params = append(params, "temp_directory="+url.QueryEscape(settings.TempDirectory))
+	}
 
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA threads=%d;", d.threads)); err != nil {
-			d.setupErr = fmt.Errorf("set threads: %w", err)
-			return
-		}
-		if _, err := conn.ExecContext(ctx, "PRAGMA enable_object_cache;"); err != nil {
-			d.setupErr = fmt.Errorf("enable_object_cache: %w", err)
-			return
-		}
-	})
-	return d.setupErr
+	if settings.MaxTempDirectorySize != "" {
+		params = append(params, "max_temp_directory_size="+url.QueryEscape(settings.MaxTempDirectorySize))
+	}
+
+	return dbPath + "?" + strings.Join(params, "&")
+}
+
+// applyPostConnectSettings applies settings that cannot be set via DSN.
+func (d *DB) applyPostConnectSettings(ctx context.Context, db *sql.DB) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("get conn for setup: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Set home_directory (required for extension loading)
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET home_directory='%s';", escapeSingle(filepath.Dir(d.dbPath)))); err != nil {
+		slog.Warn("Failed to set home_directory", "error", err)
+	}
+
+	// Enable object cache for better performance
+	if _, err := conn.ExecContext(ctx, "PRAGMA enable_object_cache;"); err != nil {
+		return fmt.Errorf("enable_object_cache: %w", err)
+	}
+
+	return nil
 }
 
 // ---------- helpers & metrics ----------
@@ -442,37 +361,6 @@ func escapeSingle(s string) string {
 		}
 	}
 	return string(result)
-}
-
-func envInt64(name string, def int64) int64 {
-	if v := os.Getenv(name); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-			return n
-		}
-	}
-	return def
-}
-func envIntClamp(name string, def, minv, maxv int) int {
-	if v := os.Getenv(name); v != "" {
-		if iv, err := strconv.Atoi(v); err == nil {
-			if iv < minv {
-				return minv
-			}
-			if iv > maxv {
-				return maxv
-			}
-			return iv
-		}
-	}
-	return def
-}
-func envDuration(name string, def time.Duration) time.Duration {
-	if v := os.Getenv(name); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return def
 }
 
 // pollMemoryMetrics periodically polls DuckDB memory statistics and records them as OpenTelemetry metrics
@@ -601,4 +489,115 @@ func (d *DB) pollMemoryMetrics(ctx context.Context) {
 		case <-time.After(d.metricsPeriod):
 		}
 	}
+}
+
+// LoadDDSketchExtension loads the DDSketch extension on the given connection.
+// The extension path is read from the LAKERUNNER_DDSKETCH_EXTENSION environment variable.
+// If not set, it searches for the extension in standard locations.
+func LoadDDSketchExtension(ctx context.Context, conn *sql.Conn) error {
+	extensionPath := os.Getenv(DDSketchExtensionEnvVar)
+	if extensionPath == "" {
+		extensionPath = findDDSketchExtension()
+	}
+	if extensionPath == "" {
+		return fmt.Errorf("DDSketch extension not found: set %s environment variable or place extension in docker/duckdb-extensions/", DDSketchExtensionEnvVar)
+	}
+	return LoadDDSketchExtensionFromPath(ctx, conn, extensionPath)
+}
+
+// findDDSketchExtension searches for the DDSketch extension in standard locations.
+// If only a .gz version exists, it will be decompressed to a temp file.
+func findDDSketchExtension() string {
+	// Determine platform directory name (DuckDB uses "osx" not "darwin")
+	goos := runtime.GOOS
+	if goos == "darwin" {
+		goos = "osx"
+	}
+	platform := goos + "_" + runtime.GOARCH
+	extName := "ddsketch.duckdb_extension"
+
+	// Search paths (relative to current directory and parent directories)
+	basePaths := []string{
+		filepath.Join("docker", "duckdb-extensions", platform),
+		filepath.Join("..", "docker", "duckdb-extensions", platform),
+		filepath.Join("..", "..", "docker", "duckdb-extensions", platform),
+	}
+
+	for _, basePath := range basePaths {
+		// Try uncompressed first
+		uncompressed := filepath.Join(basePath, extName)
+		if _, err := os.Stat(uncompressed); err == nil {
+			if absPath, err := filepath.Abs(uncompressed); err == nil {
+				return absPath
+			}
+			return uncompressed
+		}
+
+		// Try gzipped and decompress
+		gzipped := filepath.Join(basePath, extName+".gz")
+		if _, err := os.Stat(gzipped); err == nil {
+			if decompressed, err := decompressExtension(gzipped); err == nil {
+				return decompressed
+			}
+		}
+	}
+
+	return ""
+}
+
+// decompressExtension decompresses a gzipped extension to a temp file.
+// The extension filename must be exactly "ddsketch.duckdb_extension" for DuckDB to load it.
+func decompressExtension(gzPath string) (string, error) {
+	gzFile, err := os.Open(gzPath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = gzFile.Close() }()
+
+	gzReader, err := gzip.NewReader(gzFile)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = gzReader.Close() }()
+
+	// Create temp directory and use exact extension name (DuckDB requires this)
+	tmpDir, err := os.MkdirTemp("", "duckdb-ext-")
+	if err != nil {
+		return "", err
+	}
+
+	extPath := filepath.Join(tmpDir, "ddsketch.duckdb_extension")
+	tmpFile, err := os.Create(extPath)
+	if err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return "", err
+	}
+
+	if _, err := io.Copy(tmpFile, gzReader); err != nil {
+		_ = tmpFile.Close()
+		_ = os.RemoveAll(tmpDir)
+		return "", err
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return "", err
+	}
+
+	return extPath, nil
+}
+
+// LoadDDSketchExtensionFromPath loads the DDSketch extension from a specific file path.
+// Note: The connection must have allow_unsigned_extensions enabled (done automatically by duckdbx.DB).
+func LoadDDSketchExtensionFromPath(ctx context.Context, conn *sql.Conn, extensionPath string) error {
+	if _, err := os.Stat(extensionPath); os.IsNotExist(err) {
+		return fmt.Errorf("DDSketch extension not found at %s", extensionPath)
+	}
+
+	loadQuery := fmt.Sprintf("LOAD '%s'", escapeSingle(extensionPath))
+	if _, err := conn.ExecContext(ctx, loadQuery); err != nil {
+		return fmt.Errorf("load ddsketch extension: %w", err)
+	}
+
+	return nil
 }

@@ -70,11 +70,9 @@ func (p *Processor) ProcessMetricsFromRow(ctx context.Context, organizationID uu
 
 	key := computeMetricsKey(clusterName, namespaceName, serviceName, metricName, metricType)
 
-	exemplarRow := pipeline.CopyRow(row)
-	if !tenant.metricCache.PutIfAbsent(key, exemplarRow) {
-		// Key already existed, return the copied row to the pool
-		pipeline.ReturnPooledRow(exemplarRow)
-	}
+	tenant.metricCache.ComputeIfAbsent(key, func() pipeline.Row {
+		return pipeline.CopyRow(row)
+	})
 	return nil
 }
 

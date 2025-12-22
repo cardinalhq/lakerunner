@@ -418,6 +418,69 @@ func TestLRUCache_PutIfAbsentConcurrent(t *testing.T) {
 	assert.True(t, cache.Contains(1))
 }
 
+func TestLRUCache_ComputeIfAbsent(t *testing.T) {
+	cache := NewLRUCache(
+		10,
+		time.Hour,
+		time.Hour,
+		100,
+		func([]*Entry) {},
+	)
+	defer cache.Close()
+
+	callCount := 0
+	producer := func() pipeline.Row {
+		callCount++
+		return pipeline.Row{}
+	}
+
+	// First call should invoke producer
+	added := cache.ComputeIfAbsent(1, producer)
+	assert.True(t, added, "First ComputeIfAbsent should succeed")
+	assert.Equal(t, 1, callCount, "Producer should be called once")
+	assert.True(t, cache.Contains(1))
+
+	// Second call with same key should NOT invoke producer
+	added = cache.ComputeIfAbsent(1, producer)
+	assert.False(t, added, "Second ComputeIfAbsent with same key should fail")
+	assert.Equal(t, 1, callCount, "Producer should NOT be called again")
+
+	// Different key should invoke producer
+	added = cache.ComputeIfAbsent(2, producer)
+	assert.True(t, added, "ComputeIfAbsent with different key should succeed")
+	assert.Equal(t, 2, callCount, "Producer should be called for new key")
+	assert.True(t, cache.Contains(2))
+}
+
+func TestLRUCache_ComputeIfAbsentExpired(t *testing.T) {
+	cache := NewLRUCache(
+		10,
+		50*time.Millisecond,
+		time.Hour,
+		100,
+		func([]*Entry) {},
+	)
+	defer cache.Close()
+
+	callCount := 0
+	producer := func() pipeline.Row {
+		callCount++
+		return pipeline.Row{}
+	}
+
+	added := cache.ComputeIfAbsent(1, producer)
+	assert.True(t, added)
+	assert.Equal(t, 1, callCount)
+
+	// Wait for expiry
+	time.Sleep(100 * time.Millisecond)
+
+	// After expiry, ComputeIfAbsent should invoke producer again
+	added = cache.ComputeIfAbsent(1, producer)
+	assert.True(t, added, "ComputeIfAbsent should succeed after entry expires")
+	assert.Equal(t, 2, callCount, "Producer should be called after expiry")
+}
+
 // TestLRUCache_EvictedPendingPoolReturn verifies that entries evicted by Put/PutIfAbsent
 // that are pending publication have their rows returned to the pool only AFTER
 // the publish callback completes. This tests the race condition fix where evicted

@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/marcboeker/go-duckdb/v2"
+	_ "github.com/duckdb/duckdb-go/v2"
 )
 
 func replaceWorkerPlaceholders(sql string, start, end int64) string {

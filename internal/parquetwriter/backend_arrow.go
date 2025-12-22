@@ -355,20 +355,19 @@ func (b *ArrowBackend) finalizeSchema() error {
 	b.tmpFile = tmpFile
 	b.tmpFilePath = tmpFile.Name()
 
-	// Configure Parquet writer properties
-	// - Disable dictionary encoding - Arrow's dictionary pages aren't read correctly by parquet-go
-	// - Use undefined root repetition - Arrow defaults to REPEATED which causes parquet-go to
-	//   incorrectly interpret the schema with extra repetition/definition levels
+	// Configure Parquet writer properties:
+	// - Disable dictionary encoding: Arrow's dictionary pages aren't read correctly by parquet-go
+	// - Data Page V1: Required for DuckDB compatibility (V2 causes TProtocolException errors)
+	// - Required root repetition: Needed for parquet-go compatibility (REPEATED causes
+	//   incorrect interpretation of definition levels)
 	writerProps := parquet.NewWriterProperties(
 		parquet.WithCompression(compress.Codecs.Zstd),
 		parquet.WithDictionaryDefault(false),
-		parquet.WithDataPageVersion(parquet.DataPageV2),
-		parquet.WithRootRepetition(parquet.Repetitions.Undefined),
+		parquet.WithDataPageVersion(parquet.DataPageV1),
+		parquet.WithRootRepetition(parquet.Repetitions.Required),
 	)
 
-	arrowProps := pqarrow.NewArrowWriterProperties(
-		pqarrow.WithStoreSchema(),
-	)
+	arrowProps := pqarrow.DefaultWriterProps()
 
 	// Create Parquet file writer
 	parquetWriter, err := pqarrow.NewFileWriter(b.schema, tmpFile, writerProps, arrowProps)

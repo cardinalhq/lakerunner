@@ -15,26 +15,53 @@
 package filereader
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"sort"
+	"sync"
 
 	"github.com/DataDog/sketches-go/ddsketch"
+	"go.opentelemetry.io/collector/featuregate"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
+// protoReadPool provides reusable buffers for reading protobuf data.
+var protoReadPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
+
+func init() {
+	// Enable proto pooling for pmetric unmarshalling.
+	// This reduces GC pressure by reusing metric structures.
+	// Requires calling pref.UnrefMetrics() when done with the data.
+	if err := featuregate.GlobalRegistry().Set("pdata.enableRefCounting", true); err != nil {
+		slog.Info("Warning: failed to enable pdata.enableRefCounting feature gate, memory usage may be higher", "error", err)
+	}
+	if err := featuregate.GlobalRegistry().Set("pdata.useProtoPooling", true); err != nil {
+		slog.Info("Warning: failed to enable pdata.useProtoPooling feature gate, memory usage may be higher", "error", err)
+	}
+}
+
 func parseProtoToOtelMetrics(reader io.Reader) (*pmetric.Metrics, error) {
 	unmarshaler := &pmetric.ProtoUnmarshaler{}
 
-	data, err := io.ReadAll(reader)
-	if err != nil {
+	// Use pooled buffer to reduce allocations (was ~12% of total allocs)
+	buf := protoReadPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer protoReadPool.Put(buf)
+
+	if _, err := buf.ReadFrom(reader); err != nil {
 		return nil, fmt.Errorf("failed to read data: %w", err)
 	}
 
-	metrics, err := unmarshaler.UnmarshalMetrics(data)
+	metrics, err := unmarshaler.UnmarshalMetrics(buf.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal protobuf metrics: %w", err)
 	}

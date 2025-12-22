@@ -16,7 +16,6 @@ package config
 
 import (
 	"fmt"
-	"runtime"
 )
 
 type ScalingConfig struct {
@@ -133,10 +132,10 @@ func (s *ScalingConfig) GetTargetQueueSize(serviceType string) (int, error) {
 }
 
 // GetWorkerConcurrency returns the effective worker concurrency.
-// Returns runtime.NumCPU() if WorkerConcurrency is not set or <= 0.
+// Returns 1 if WorkerConcurrency is not set or <= 0.
 func (s *ScalingConfig) GetWorkerConcurrency() int {
 	if s.WorkerConcurrency <= 0 {
-		return runtime.NumCPU()
+		return 1
 	}
 	return s.WorkerConcurrency
 }

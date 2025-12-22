@@ -188,12 +188,14 @@ func filterToLogQL(clause QueryClause, ctx *TranslationContext) ([]string, []str
 	return matchers, pipeline, nil
 }
 
-// normalizeLabelName converts dotted label names to underscored names.
+// normalizeLabelName converts label names to a normalized form:
+// - Lowercased
+// - All non-alphanumeric characters replaced with underscores
 // Also handles the old _cardinalhq.* naming convention → chq_* or log_*
-func normalizeLabelName(dotted string) string {
+func normalizeLabelName(name string) string {
 	// Special cases: some _cardinalhq.* fields map to log_* (not chq_*)
 	// This maintains backward compatibility with old queries
-	switch dotted {
+	switch name {
 	case "_cardinalhq.message":
 		return "log_message"
 	case "_cardinalhq.level":
@@ -201,11 +203,24 @@ func normalizeLabelName(dotted string) string {
 	}
 
 	// Convert other _cardinalhq.* fields to chq_*
-	if strings.HasPrefix(dotted, "_cardinalhq.") {
-		rest := dotted[len("_cardinalhq."):]
-		dotted = "chq_" + rest
+	if strings.HasPrefix(name, "_cardinalhq.") {
+		rest := name[len("_cardinalhq."):]
+		name = "chq_" + rest
 	}
-	return strings.ReplaceAll(dotted, ".", "_")
+
+	// Lowercase and replace non-alphanumeric with underscores
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else if r >= 'A' && r <= 'Z' {
+			b.WriteRune(r + 32) // lowercase
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // escapeLogQLValue escapes special characters in a LogQL string value.

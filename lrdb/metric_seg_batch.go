@@ -210,6 +210,7 @@ func (q *Store) RollupMetricSegments(
 					StartTs:        newRec.StartTs,
 					MetricNames:    newRec.MetricNames,
 					MetricTypes:    newRec.MetricTypes,
+					LabelNameMap:   newRec.LabelNameMap,
 				}
 			}
 

@@ -1,0 +1,456 @@
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+package metricsprocessing
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/google/uuid"
+	"github.com/lib/pq"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/lrdb"
+)
+
+// metricProcessingParams contains the parameters needed for metric processing
+type metricProcessingParams struct {
+	TmpDir         string
+	StorageClient  cloudstorage.Client
+	OrganizationID uuid.UUID
+	StorageProfile storageprofile.StorageProfile
+	ActiveSegments []lrdb.MetricSeg
+	FrequencyMs    int32
+	MaxRecords     int64
+}
+
+// metricProcessingResult contains the output from DuckDB processing
+type metricProcessingResult struct {
+	Results           []parquetwriter.Result
+	ProcessedSegments []lrdb.MetricSeg // Only segments that were successfully downloaded and processed
+}
+
+// groupByColumns are the columns used to group metrics for aggregation.
+// Metrics with the same (metric_name, chq_tid, truncated_timestamp) are merged.
+var groupByColumns = []string{"metric_name", "chq_tid", "chq_timestamp"}
+
+// sketchColumn is the column containing the DDSketch data to merge.
+const sketchColumn = "chq_sketch"
+
+// rollupColumns are computed from the merged sketch.
+var rollupColumns = []string{
+	"chq_rollup_count",
+	"chq_rollup_sum",
+	"chq_rollup_avg",
+	"chq_rollup_min",
+	"chq_rollup_max",
+	"chq_rollup_p25",
+	"chq_rollup_p50",
+	"chq_rollup_p75",
+	"chq_rollup_p90",
+	"chq_rollup_p95",
+	"chq_rollup_p99",
+}
+
+// processMetricsWithDuckDB performs metric aggregation using DuckDB SQL:
+// 1. Read parquet files from local disk
+// 2. Truncate timestamps to aggregation period
+// 3. Group by (metric_name, chq_tid, truncated_timestamp)
+// 4. Merge DDSketches using ddsketch_agg
+// 5. Extract statistics from merged sketch
+// 6. Write result to parquet
+//
+// Returns both the results and the list of segments that were successfully processed.
+// Segments that failed to download are skipped and not included in ProcessedSegments.
+func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params metricProcessingParams) (*metricProcessingResult, error) {
+	span := trace.SpanFromContext(ctx)
+	ll := logctx.FromContext(ctx)
+
+	// Download parquet files to local temp directory
+	downloaded, err := downloadSegmentFiles(ctx, params)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("download segment files: %w", err)
+	}
+	defer cleanupLocalFiles(downloaded.localFiles)
+
+	if len(downloaded.localFiles) == 0 {
+		err := fmt.Errorf("no parquet files to process")
+		span.RecordError(err)
+		return nil, err
+	}
+
+	span.SetAttributes(
+		attribute.Int("duckdb.input_file_count", len(downloaded.localFiles)),
+		attribute.Int("duckdb.frequency_ms", int(params.FrequencyMs)),
+		attribute.Int("duckdb.segment_count", len(params.ActiveSegments)),
+		attribute.Int("duckdb.processed_segment_count", len(downloaded.downloadedSegments)),
+	)
+
+	ll.Info("Processing metrics with DuckDB",
+		slog.Int("fileCount", len(downloaded.localFiles)),
+		slog.Int("frequencyMs", int(params.FrequencyMs)),
+		slog.Int("skippedSegments", len(params.ActiveSegments)-len(downloaded.downloadedSegments)))
+
+	// Get a connection from the pool
+	conn, release, err := duckDB.GetConnection(ctx)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get duckdb connection: %w", err)
+	}
+	defer release()
+
+	// Load DDSketch extension on this connection
+	if err := duckdbx.LoadDDSketchExtension(ctx, conn); err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("load ddsketch extension: %w", err)
+	}
+
+	// Discover schema from input files
+	schema, err := discoverSchemaConn(ctx, conn, downloaded.localFiles[0])
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("discover schema: %w", err)
+	}
+	span.SetAttributes(attribute.Int("duckdb.schema_column_count", len(schema)))
+
+	// Generate and execute aggregation SQL
+	outputFile := filepath.Join(params.TmpDir, "rollup_output.parquet")
+	if err := executeAggregationConn(ctx, conn, downloaded.localFiles, outputFile, schema, params.FrequencyMs); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "aggregation query failed")
+		return nil, fmt.Errorf("execute aggregation: %w", err)
+	}
+
+	// Get output file stats
+	fileInfo, err := os.Stat(outputFile)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("stat output file: %w", err)
+	}
+
+	// Get record count from output file (the only thing we need to query)
+	recordCount, err := getRecordCount(ctx, conn, outputFile)
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("get record count: %w", err)
+	}
+
+	// Compute metadata only from successfully downloaded segments
+	firstTS, lastTS, fingerprints, metricNames, metricTypes := computeStatsFromSegments(downloaded.downloadedSegments)
+
+	result := parquetwriter.Result{
+		FileName:    outputFile,
+		FileSize:    fileInfo.Size(),
+		RecordCount: recordCount,
+		Metadata: factories.MetricsFileStats{
+			FirstTS:      firstTS,
+			LastTS:       lastTS,
+			Fingerprints: fingerprints,
+			MetricNames:  metricNames,
+			MetricTypes:  metricTypes,
+		},
+	}
+
+	span.SetAttributes(
+		attribute.Int64("duckdb.output_record_count", recordCount),
+		attribute.Int64("duckdb.output_file_size", fileInfo.Size()),
+	)
+
+	ll.Info("DuckDB aggregation completed",
+		slog.Int64("recordCount", recordCount),
+		slog.Int64("fileSize", fileInfo.Size()))
+
+	return &metricProcessingResult{
+		Results:           []parquetwriter.Result{result},
+		ProcessedSegments: downloaded.downloadedSegments,
+	}, nil
+}
+
+// downloadResult holds the result of downloading segment files.
+type downloadResult struct {
+	localFiles         []string
+	downloadedSegments []lrdb.MetricSeg
+}
+
+// downloadSegmentFiles downloads parquet files from cloud storage to local temp directory.
+// Returns both local file paths and the segments that were successfully downloaded.
+func downloadSegmentFiles(ctx context.Context, params metricProcessingParams) (downloadResult, error) {
+	ctx, span := boxerTracer.Start(ctx, "duckdb.download_segments", trace.WithAttributes(
+		attribute.Int("segment_count", len(params.ActiveSegments)),
+	))
+	defer span.End()
+
+	ll := logctx.FromContext(ctx)
+	var result downloadResult
+
+	for _, segment := range params.ActiveSegments {
+		objectPath := helpers.MakeDBObjectID(
+			params.OrganizationID,
+			params.StorageProfile.CollectorName,
+			segment.Dateint,
+			int16((segment.TsRange.Lower.Int64/(1000*60*60))%24),
+			segment.SegmentID,
+			"metrics",
+		)
+
+		localPath, _, _, err := params.StorageClient.DownloadObject(ctx, params.TmpDir, params.StorageProfile.Bucket, objectPath)
+		if err != nil {
+			ll.Warn("Failed to download segment file, skipping segment",
+				slog.Int64("segmentID", segment.SegmentID),
+				slog.Any("error", err))
+			continue
+		}
+
+		result.localFiles = append(result.localFiles, localPath)
+		result.downloadedSegments = append(result.downloadedSegments, segment)
+	}
+
+	span.SetAttributes(
+		attribute.Int("downloaded_count", len(result.localFiles)),
+		attribute.Int("skipped_count", len(params.ActiveSegments)-len(result.localFiles)),
+	)
+	return result, nil
+}
+
+// cleanupLocalFiles removes temporary local files.
+func cleanupLocalFiles(files []string) {
+	for _, f := range files {
+		_ = os.Remove(f)
+	}
+}
+
+// escapeSingleQuote escapes single quotes for safe inclusion in SQL string literals.
+func escapeSingleQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// discoverSchemaConn reads the schema from a parquet file and returns column names.
+func discoverSchemaConn(ctx context.Context, conn *sql.Conn, filePath string) ([]string, error) {
+	ctx, span := boxerTracer.Start(ctx, "duckdb.discover_schema")
+	defer span.End()
+
+	query := fmt.Sprintf("DESCRIBE SELECT * FROM read_parquet('%s')", escapeSingleQuote(filePath))
+	rows, err := conn.QueryContext(ctx, query)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "describe query failed")
+		return nil, fmt.Errorf("describe parquet: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var columns []string
+	for rows.Next() {
+		var name, typ, null, key, def, extra any
+		if err := rows.Scan(&name, &typ, &null, &key, &def, &extra); err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("scan column: %w", err)
+		}
+		if nameStr, ok := name.(string); ok {
+			columns = append(columns, nameStr)
+		}
+	}
+
+	span.SetAttributes(attribute.Int("column_count", len(columns)))
+	return columns, rows.Err()
+}
+
+// executeAggregationConn runs the DuckDB aggregation query.
+func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []string, outputFile string, schema []string, frequencyMs int32) error {
+	ctx, span := boxerTracer.Start(ctx, "duckdb.execute_aggregation", trace.WithAttributes(
+		attribute.Int("input_file_count", len(inputFiles)),
+		attribute.Int("frequency_ms", int(frequencyMs)),
+	))
+	defer span.End()
+
+	// Build file list for read_parquet (escape single quotes to prevent SQL injection)
+	quotedFiles := make([]string, len(inputFiles))
+	for i, f := range inputFiles {
+		quotedFiles[i] = fmt.Sprintf("'%s'", escapeSingleQuote(f))
+	}
+	fileList := strings.Join(quotedFiles, ", ")
+
+	// Classify columns
+	groupCols := make(map[string]bool)
+	for _, c := range groupByColumns {
+		groupCols[c] = true
+	}
+
+	rollupCols := make(map[string]bool)
+	for _, c := range rollupColumns {
+		rollupCols[c] = true
+	}
+
+	// Build SELECT clauses
+	var selectClauses []string
+	var groupByClauses []string
+
+	for _, col := range schema {
+		qcol := pq.QuoteIdentifier(col)
+		if col == sketchColumn {
+			// Merge sketches and compute all percentiles in a single pass using ddsketch_stats_agg
+			// This returns a struct with (sketch, p25, p50, p75, p90, p95, p99)
+			selectClauses = append(selectClauses, fmt.Sprintf("ddsketch_stats_agg(%s) AS chq_stats", qcol))
+		} else if col == "chq_timestamp" {
+			// Truncate timestamp to aggregation period
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"(%s / %d) * %d AS %s",
+				qcol, frequencyMs, frequencyMs, qcol))
+			groupByClauses = append(groupByClauses, fmt.Sprintf("(%s / %d) * %d", qcol, frequencyMs, frequencyMs))
+		} else if col == "chq_tsns" {
+			// Truncate nanosecond timestamp to aggregation period
+			freqNs := int64(frequencyMs) * 1_000_000
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"(%s / %d) * %d AS %s",
+				qcol, freqNs, freqNs, qcol))
+			groupByClauses = append(groupByClauses, fmt.Sprintf("(%s / %d) * %d", qcol, freqNs, freqNs))
+		} else if groupCols[col] {
+			// Group by column - pass through
+			selectClauses = append(selectClauses, qcol)
+			groupByClauses = append(groupByClauses, qcol)
+		} else if rollupCols[col] {
+			// Skip rollup columns - we'll compute them from the merged sketch
+			continue
+		} else {
+			// Metadata column - use first value
+			selectClauses = append(selectClauses, fmt.Sprintf("first(%s) AS %s", qcol, qcol))
+		}
+	}
+
+	// Build outer query with rollup column extraction
+	// Use union_by_name=true to handle schema differences between files
+	innerQuery := fmt.Sprintf(`
+		SELECT %s
+		FROM read_parquet([%s], union_by_name=true)
+		GROUP BY %s`,
+		strings.Join(selectClauses, ", "),
+		fileList,
+		strings.Join(groupByClauses, ", "))
+
+	// Extract rollup columns from the chq_stats struct returned by ddsketch_stats_agg
+	// The struct contains all stats computed in a single pass:
+	// (sketch BLOB, count BIGINT, sum DOUBLE, avg DOUBLE, min DOUBLE, max DOUBLE,
+	//  p25 DOUBLE, p50 DOUBLE, p75 DOUBLE, p90 DOUBLE, p95 DOUBLE, p99 DOUBLE)
+	rollupExtraction := []string{
+		"chq_stats.sketch AS chq_sketch",
+		"chq_stats.count AS chq_rollup_count",
+		"chq_stats.sum AS chq_rollup_sum",
+		"chq_stats.avg AS chq_rollup_avg",
+		"chq_stats.min AS chq_rollup_min",
+		"chq_stats.max AS chq_rollup_max",
+		"chq_stats.p25 AS chq_rollup_p25",
+		"chq_stats.p50 AS chq_rollup_p50",
+		"chq_stats.p75 AS chq_rollup_p75",
+		"chq_stats.p90 AS chq_rollup_p90",
+		"chq_stats.p95 AS chq_rollup_p95",
+		"chq_stats.p99 AS chq_rollup_p99",
+	}
+
+	fullQuery := fmt.Sprintf(`
+		COPY (
+			SELECT * EXCLUDE (chq_stats), %s
+			FROM (%s) AS merged
+			ORDER BY "metric_name", "chq_tid", "chq_timestamp"
+		) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)`,
+		strings.Join(rollupExtraction, ", "),
+		innerQuery,
+		escapeSingleQuote(outputFile))
+
+	_, err := conn.ExecContext(ctx, fullQuery)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "aggregation query failed")
+	}
+	return err
+}
+
+// getRecordCount queries the record count from a parquet file.
+func getRecordCount(ctx context.Context, conn *sql.Conn, filePath string) (int64, error) {
+	ctx, span := boxerTracer.Start(ctx, "duckdb.get_record_count")
+	defer span.End()
+
+	var count int64
+	err := conn.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM read_parquet('%s')", escapeSingleQuote(filePath))).Scan(&count)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "count query failed")
+		return 0, fmt.Errorf("count records: %w", err)
+	}
+	span.SetAttributes(attribute.Int64("record_count", count))
+	return count, nil
+}
+
+// computeStatsFromSegments computes merged metadata from input segments.
+func computeStatsFromSegments(segments []lrdb.MetricSeg) (firstTS, lastTS int64, fingerprints []int64, metricNames []string, metricTypes []int16) {
+	firstTS = int64(^uint64(0) >> 1) // max int64
+	lastTS = int64(0)
+
+	fingerprintSet := mapset.NewSet[int64]()
+	metricNameSet := mapset.NewSet[string]()
+	metricTypeMap := make(map[string]int16)
+
+	for _, seg := range segments {
+		// Merge timestamp range
+		if seg.TsRange.Lower.Int64 < firstTS {
+			firstTS = seg.TsRange.Lower.Int64
+		}
+		if seg.TsRange.Upper.Int64 > lastTS {
+			lastTS = seg.TsRange.Upper.Int64
+		}
+
+		// Merge fingerprints
+		for _, fp := range seg.Fingerprints {
+			fingerprintSet.Add(fp)
+		}
+
+		// Merge metric names and types
+		for i, name := range seg.MetricNames {
+			metricNameSet.Add(name)
+			if _, exists := metricTypeMap[name]; !exists && i < len(seg.MetricTypes) {
+				metricTypeMap[name] = seg.MetricTypes[i]
+			}
+		}
+	}
+
+	// Build sorted slices
+	fingerprints = fingerprintSet.ToSlice()
+	slices.Sort(fingerprints)
+
+	metricNames = metricNameSet.ToSlice()
+	slices.Sort(metricNames)
+
+	metricTypes = make([]int16, len(metricNames))
+	for i, name := range metricNames {
+		metricTypes[i] = metricTypeMap[name]
+	}
+
+	return firstTS, lastTS, fingerprints, metricNames, metricTypes
+}

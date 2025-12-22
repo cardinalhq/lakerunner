@@ -22,6 +22,7 @@ import (
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/xpdata/pref"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
@@ -223,8 +224,12 @@ func (r *IngestProtoLogsReader) Close() error {
 	}
 	r.closed = true
 
-	// Release references to parsed data
-	r.logs = nil
+	// Return logs to the pool if pooling is enabled.
+	// This must be called before clearing the reference.
+	if r.logs != nil {
+		pref.UnrefLogs(*r.logs)
+		r.logs = nil
+	}
 
 	return nil
 }
@@ -242,14 +247,12 @@ func (r *IngestProtoLogsReader) GetSchema() *ReaderSchema {
 func parseProtoToOtelLogs(reader io.Reader) (*plog.Logs, error) {
 	unmarshaler := &plog.ProtoUnmarshaler{}
 
-	// Use bytes.Buffer with pre-allocated capacity to avoid exponential growth
-	// Typical gzip compression ratio for protobuf is 5-10x
-	// Start with reasonable capacity to handle small-medium files without reallocation
-	var buf bytes.Buffer
-	buf.Grow(128 * 1024) // Pre-allocate 128KB
+	// Use pooled buffer to reduce allocations
+	buf := protoReadPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer protoReadPool.Put(buf)
 
-	_, err := io.Copy(&buf, reader)
-	if err != nil {
+	if _, err := buf.ReadFrom(reader); err != nil {
 		return nil, fmt.Errorf("failed to read data: %w", err)
 	}
 

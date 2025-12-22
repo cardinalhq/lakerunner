@@ -21,7 +21,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -251,8 +250,6 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 	ll := logctx.FromContext(ctx).With(
 		slog.String("organizationID", key.OrganizationID.String()),
 		slog.Int("instanceNum", int(key.InstanceNum)))
-
-	defer runtime.GC() // TODO find a way to not need this
 
 	ll.Info("Starting trace ingestion",
 		slog.Int("messageCount", len(msgs)))
@@ -624,10 +621,10 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 	// Get schema from reader (GetSchema returns a copy)
 	schema := reader.GetSchema()
 
-	// Add columns that will be injected by TraceTranslator and FileSplitter
+	// Add columns that will be injected by TraceTranslator
 	// These columns are added to every row but aren't in the OTEL schema
 	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true) // Added by FileSplitter
+	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true)
 
 	rpfEstimate := p.store.GetTraceEstimate(ctx, storageProfile.OrganizationID)
 
@@ -683,6 +680,9 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 				if takenRow == nil {
 					continue
 				}
+
+				// Add unique row ID for traces
+				takenRow[wkk.RowKeyCID] = idgen.NextBase32ID()
 
 				// Create a single-row batch with the taken row
 				singleRowBatch := pipeline.GetBatch()

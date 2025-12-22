@@ -131,6 +131,7 @@ type RollupNewRecord struct {
 	Fingerprints []int64
 	MetricNames  []string
 	MetricTypes  []int16
+	LabelNameMap []byte
 }
 
 type CompactMetricSegsParams struct {
