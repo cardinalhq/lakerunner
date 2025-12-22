@@ -22,6 +22,7 @@ import (
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/xpdata/pref"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
@@ -223,8 +224,12 @@ func (r *IngestProtoLogsReader) Close() error {
 	}
 	r.closed = true
 
-	// Release references to parsed data
-	r.logs = nil
+	// Return logs to the pool if pooling is enabled.
+	// This must be called before clearing the reference.
+	if r.logs != nil {
+		pref.UnrefLogs(*r.logs)
+		r.logs = nil
+	}
 
 	return nil
 }

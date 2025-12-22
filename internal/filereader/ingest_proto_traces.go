@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/collector/pdata/xpdata/pref"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
@@ -289,8 +290,12 @@ func (r *IngestProtoTracesReader) Close() error {
 	}
 	r.closed = true
 
-	// Release references to parsed data
-	r.traces = nil
+	// Return traces to the pool if pooling is enabled.
+	// This must be called before clearing the reference.
+	if r.traces != nil {
+		pref.UnrefTraces(*r.traces)
+		r.traces = nil
+	}
 
 	return nil
 }
