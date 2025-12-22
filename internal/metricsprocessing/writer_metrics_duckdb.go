@@ -246,8 +246,9 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 	for _, col := range schema {
 		qcol := pq.QuoteIdentifier(col)
 		if col == sketchColumn {
-			// Merge sketches
-			selectClauses = append(selectClauses, fmt.Sprintf("ddsketch_agg(%s) AS %s", qcol, qcol))
+			// Merge sketches and compute all percentiles in a single pass using ddsketch_stats_agg
+			// This returns a struct with (sketch, p25, p50, p75, p90, p95, p99)
+			selectClauses = append(selectClauses, fmt.Sprintf("ddsketch_stats_agg(%s) AS chq_stats", qcol))
 		} else if col == "chq_timestamp" {
 			// Truncate timestamp to aggregation period
 			selectClauses = append(selectClauses, fmt.Sprintf(
@@ -284,24 +285,27 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 		fileList,
 		strings.Join(groupByClauses, ", "))
 
-	// Add rollup columns computed from merged sketch
+	// Extract rollup columns from the chq_stats struct returned by ddsketch_stats_agg
+	// The struct contains: (sketch BLOB, p25, p50, p75, p90, p95, p99 DOUBLE)
+	// We also need count/sum/avg/min/max which require the sketch
 	rollupExtraction := []string{
-		"ddsketch_count(chq_sketch) AS chq_rollup_count",
-		"ddsketch_sum(chq_sketch) AS chq_rollup_sum",
-		"ddsketch_avg(chq_sketch) AS chq_rollup_avg",
-		"ddsketch_min(chq_sketch) AS chq_rollup_min",
-		"ddsketch_max(chq_sketch) AS chq_rollup_max",
-		"ddsketch_quantile(chq_sketch, 0.25) AS chq_rollup_p25",
-		"ddsketch_quantile(chq_sketch, 0.50) AS chq_rollup_p50",
-		"ddsketch_quantile(chq_sketch, 0.75) AS chq_rollup_p75",
-		"ddsketch_quantile(chq_sketch, 0.90) AS chq_rollup_p90",
-		"ddsketch_quantile(chq_sketch, 0.95) AS chq_rollup_p95",
-		"ddsketch_quantile(chq_sketch, 0.99) AS chq_rollup_p99",
+		"chq_stats.sketch AS chq_sketch",
+		"ddsketch_count(chq_stats.sketch) AS chq_rollup_count",
+		"ddsketch_sum(chq_stats.sketch) AS chq_rollup_sum",
+		"ddsketch_avg(chq_stats.sketch) AS chq_rollup_avg",
+		"ddsketch_min(chq_stats.sketch) AS chq_rollup_min",
+		"ddsketch_max(chq_stats.sketch) AS chq_rollup_max",
+		"chq_stats.p25 AS chq_rollup_p25",
+		"chq_stats.p50 AS chq_rollup_p50",
+		"chq_stats.p75 AS chq_rollup_p75",
+		"chq_stats.p90 AS chq_rollup_p90",
+		"chq_stats.p95 AS chq_rollup_p95",
+		"chq_stats.p99 AS chq_rollup_p99",
 	}
 
 	fullQuery := fmt.Sprintf(`
 		COPY (
-			SELECT *, %s
+			SELECT * EXCLUDE (chq_stats), %s
 			FROM (%s) AS merged
 			ORDER BY "metric_name", "chq_tid", "chq_timestamp"
 		) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)`,
