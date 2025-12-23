@@ -50,6 +50,10 @@ const (
 type MetricIngestDuckDBResult struct {
 	DateintBins map[int32]*DateintBinResult
 	TotalRows   int64
+	// FailedPartitions tracks dateint keys that failed processing with their errors.
+	// Processing uses best-effort strategy: failures are recorded but don't stop
+	// processing of other partitions. Callers should check this to detect partial results.
+	FailedPartitions map[int64]error
 }
 
 // DateintBinResult contains the result for a single dateint partition
@@ -169,7 +173,8 @@ func processMetricIngestWithDuckDB(
 
 	// Step 4: Process each dateint partition
 	result := &MetricIngestDuckDBResult{
-		DateintBins: make(map[int32]*DateintBinResult),
+		DateintBins:      make(map[int32]*DateintBinResult),
+		FailedPartitions: make(map[int64]error),
 	}
 
 	for _, dateintKey := range dateintKeys {
@@ -184,7 +189,8 @@ func processMetricIngestWithDuckDB(
 			ll.Error("Failed to process dateint partition",
 				slog.Int64("dateintKey", dateintKey),
 				slog.Any("error", err))
-			continue // Continue with other partitions
+			result.FailedPartitions[dateintKey] = err
+			continue // Continue with other partitions (best effort)
 		}
 
 		result.DateintBins[binResult.Dateint] = binResult
@@ -204,11 +210,19 @@ func processMetricIngestWithDuckDB(
 	span.SetAttributes(
 		attribute.Int("dateint_bins", len(result.DateintBins)),
 		attribute.Int64("total_rows", result.TotalRows),
+		attribute.Int("failed_partitions", len(result.FailedPartitions)),
 	)
 
-	ll.Info("DuckDB metric ingestion completed",
-		slog.Int("partitions", len(result.DateintBins)),
-		slog.Int64("totalRows", result.TotalRows))
+	if len(result.FailedPartitions) > 0 {
+		ll.Warn("DuckDB metric ingestion completed with failures",
+			slog.Int("succeeded", len(result.DateintBins)),
+			slog.Int("failed", len(result.FailedPartitions)),
+			slog.Int64("totalRows", result.TotalRows))
+	} else {
+		ll.Info("DuckDB metric ingestion completed",
+			slog.Int("partitions", len(result.DateintBins)),
+			slog.Int64("totalRows", result.TotalRows))
+	}
 
 	return result, nil
 }
