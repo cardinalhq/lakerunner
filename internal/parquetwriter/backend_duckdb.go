@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/duckdb/duckdb-go/v2"
@@ -328,33 +329,34 @@ func (b *DuckDBBackend) convertValue(fieldName string, value any, targetType fil
 	}
 }
 
-// convertToStringForDuckDB converts any value to string for DuckDB.
-func convertToStringForDuckDB(value any) string {
+// convertToStringForDuckDB converts any value to a string for DuckDB.
+// Returns nil for nil input to properly represent NULL in DuckDB.
+func convertToStringForDuckDB(value any) any {
 	if value == nil {
-		return ""
+		return nil
 	}
 
 	switch v := value.(type) {
 	case string:
 		return v
 	case int:
-		return fmt.Sprintf("%d", v)
+		return strconv.FormatInt(int64(v), 10)
 	case int32:
-		return fmt.Sprintf("%d", v)
+		return strconv.FormatInt(int64(v), 10)
 	case int64:
-		return fmt.Sprintf("%d", v)
+		return strconv.FormatInt(v, 10)
 	case uint:
-		return fmt.Sprintf("%d", v)
+		return strconv.FormatUint(uint64(v), 10)
 	case uint32:
-		return fmt.Sprintf("%d", v)
+		return strconv.FormatUint(uint64(v), 10)
 	case uint64:
-		return fmt.Sprintf("%d", v)
+		return strconv.FormatUint(v, 10)
 	case float32:
-		return fmt.Sprintf("%f", v)
+		return strconv.FormatFloat(float64(v), 'g', -1, 32)
 	case float64:
-		return fmt.Sprintf("%f", v)
+		return strconv.FormatFloat(v, 'g', -1, 64)
 	case bool:
-		return fmt.Sprintf("%t", v)
+		return strconv.FormatBool(v)
 	default:
 		return fmt.Sprintf("%v", v)
 	}
