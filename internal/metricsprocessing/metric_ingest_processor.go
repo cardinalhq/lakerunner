@@ -18,10 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,40 +27,19 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
-	"github.com/cardinalhq/lakerunner/internal/workqueue"
-
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/pipeline"
-	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
-
-// TimeBin represents a 60-second file group containing 10s aggregated data points
-type TimeBin struct {
-	StartTs int64 // Start timestamp of the file group (inclusive)
-	EndTs   int64 // End timestamp of the file group (exclusive)
-	Writer  parquetwriter.ParquetWriter
-	Results []parquetwriter.Result // Results after writer is closed (can be multiple files)
-}
-
-// TimeBinManager manages multiple file groups (60s-aligned files containing 10s data)
-type TimeBinManager struct {
-	bins        map[int64]*TimeBin // Key is start timestamp (60s aligned)
-	tmpDir      string
-	rpfEstimate int64
-	schema      *filereader.ReaderSchema
-}
 
 // MetricIngestProcessor implements the Processor interface for raw metric ingestion
 type MetricIngestProcessor struct {
@@ -195,8 +172,7 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 	}
 	storageSpan.End()
 
-	var readers []filereader.Reader
-	var readersToClose []filereader.Reader
+	var downloadedFiles []string
 	var totalInputSize int64
 
 	ctx, downloadSpan := boxerTracer.Start(ctx, "metrics.ingest.download_files", trace.WithAttributes(
@@ -204,7 +180,6 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 	))
 
 	for _, msg := range msgs {
-
 		ll.Debug("Processing raw metric file",
 			slog.String("objectID", msg.ObjectID),
 			slog.Int64("fileSize", msg.FileSize))
@@ -219,73 +194,55 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 			continue
 		}
 
-		reader, err := p.createReaderStack(tmpFilename, msg.OrganizationID.String(), msg.Bucket, msg.ObjectID)
-		if err != nil {
-			ll.Error("Failed to create reader stack", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
-			continue
-		}
-
-		readers = append(readers, reader)
-		readersToClose = append(readersToClose, reader)
+		downloadedFiles = append(downloadedFiles, tmpFilename)
 		totalInputSize += msg.FileSize
 	}
 
 	downloadSpan.SetAttributes(
-		attribute.Int("files_downloaded", len(readers)),
+		attribute.Int("files_downloaded", len(downloadedFiles)),
 		attribute.Int64("total_input_size", totalInputSize),
 	)
 	downloadSpan.End()
 
-	// Cleanup readers on exit
-	defer func() {
-		for _, reader := range readersToClose {
-			if closeErr := reader.Close(); closeErr != nil {
-				ll.Warn("Failed to close reader during cleanup", slog.Any("error", closeErr))
-			}
-		}
-	}()
-
-	if len(readers) == 0 {
-		ll.Info("No files processed successfully")
+	if len(downloadedFiles) == 0 {
+		ll.Info("No files downloaded successfully")
 		return nil
 	}
 
-	ctx, readerSpan := boxerTracer.Start(ctx, "metrics.ingest.create_unified_reader")
-	finalReader, err := p.createUnifiedReader(ctx, readers)
-	if err != nil {
-		readerSpan.RecordError(err)
-		readerSpan.SetStatus(codes.Error, "failed to create unified reader")
-		readerSpan.End()
-		return fmt.Errorf("failed to create unified reader: %w", err)
-	}
-	readerSpan.End()
-
-	ctx, processSpan := boxerTracer.Start(ctx, "metrics.ingest.process_rows")
-	timeBins, totalInputRecords, err := p.processRowsWithTimeBinning(ctx, finalReader, tmpDir, srcProfile)
+	// Process all files using pure DuckDB pipeline
+	// This handles reading, 10s aggregation, dateint partitioning, and parquet export
+	ctx, processSpan := boxerTracer.Start(ctx, "metrics.ingest.duckdb_process")
+	duckDBResult, err := processMetricIngestWithDuckDB(ctx, downloadedFiles, key.OrganizationID.String(), tmpDir)
 	if err != nil {
 		processSpan.RecordError(err)
-		processSpan.SetStatus(codes.Error, "failed to process rows")
+		processSpan.SetStatus(codes.Error, "failed to process with DuckDB")
 		processSpan.End()
-		return fmt.Errorf("failed to process rows: %w", err)
+		return fmt.Errorf("failed to process metrics with DuckDB: %w", err)
 	}
-	processSpan.SetAttributes(attribute.Int("time_bins", len(timeBins)))
+	processSpan.SetAttributes(
+		attribute.Int("dateint_bins", len(duckDBResult.DateintBins)),
+		attribute.Int64("total_rows", duckDBResult.TotalRows),
+	)
 	processSpan.End()
 
-	if len(timeBins) == 0 {
+	if len(duckDBResult.DateintBins) == 0 {
 		ll.Info("No output files generated")
 		return nil
 	}
 
+	// Upload dateint bins to S3 and create segment parameters
 	ctx, uploadSpan := boxerTracer.Start(ctx, "metrics.ingest.upload_segments")
-	segmentParams, err := p.uploadAndCreateSegments(ctx, outputClient, timeBins, dstProfile)
+	segmentParams, err := p.uploadDuckDBResults(ctx, outputClient, duckDBResult.DateintBins, dstProfile)
 	if err != nil {
 		uploadSpan.RecordError(err)
 		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
 		uploadSpan.End()
-		return fmt.Errorf("failed to upload and create segments: %w", err)
+		return fmt.Errorf("failed to upload DuckDB results: %w", err)
 	}
 	uploadSpan.SetAttributes(attribute.Int("segment_count", len(segmentParams)))
 	uploadSpan.End()
+
+	totalInputRecords := duckDBResult.TotalRows
 
 	criticalCtx := context.WithoutCancel(ctx)
 	ctx, dbSpan := boxerTracer.Start(ctx, "metrics.ingest.insert_segments", trace.WithAttributes(
@@ -477,278 +434,61 @@ func (p *MetricIngestProcessor) ShouldEmitImmediately(msg *messages.ObjStoreNoti
 	return false
 }
 
-// createReaderStack creates a reader stack: Translation(OTELMetricProto(file))
-// Sorting is deferred to the DuckDB Parquet writer for better efficiency.
-func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
-	// Determine file type from extension for logging
-	var fileType string
-	switch {
-	case strings.HasSuffix(tmpFilename, ".binpb.gz"):
-		fileType = "binpb.gz"
-	case strings.HasSuffix(tmpFilename, ".binpb"):
-		fileType = "binpb"
-	default:
-		fileType = "unknown"
-	}
-
-	slog.Info("Reading metric file",
-		"fileType", fileType,
-		"objectID", objectID,
-		"bucket", bucket)
-
-	// Use the non-sorting reader - sorting is done by DuckDB during Parquet export
-	reader, err := createMetricProtoReaderNoSort(tmpFilename, orgID, bucket, objectID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
-	}
-
-	return reader, nil
-}
-
-// createUnifiedReader creates a unified reader from multiple readers.
-// Uses SequentialReader (no sorting) since DuckDB handles sorting during Parquet export.
-func (p *MetricIngestProcessor) createUnifiedReader(_ context.Context, readers []filereader.Reader) (filereader.Reader, error) {
-	var finalReader filereader.Reader
-
-	if len(readers) == 1 {
-		finalReader = readers[0]
-	} else {
-		// Use SequentialReader - no sorting needed as DuckDB handles it
-		multiReader, err := filereader.NewSequentialReader(readers, 1000)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create sequential reader: %w", err)
-		}
-		finalReader = multiReader
-	}
-
-	// Add aggregation with 10-second window
-	finalReader, err := filereader.NewAggregatingMetricsReader(finalReader, 10000, 1000)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create aggregating reader: %w", err)
-	}
-
-	return finalReader, nil
-}
-
-// processRowsWithTimeBinning groups 10s aggregated data into 60s-aligned files
-func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int64]*TimeBin, int64, error) {
+// uploadDuckDBResults uploads DuckDB-generated parquet files to S3 and creates segment parameters
+func (p *MetricIngestProcessor) uploadDuckDBResults(ctx context.Context, storageClient cloudstorage.Client, dateintBins map[int32]*DateintBinResult, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertMetricSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Get schema from reader (GetSchema returns a copy)
-	schema := reader.GetSchema()
-
-	// Add columns that will be injected by MetricTranslator
-	// These columns are added to every row but aren't in the OTEL schema
-	schema.AddColumn(wkk.RowKeyCCustomerID, wkk.RowKeyCCustomerID, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, filereader.DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTID, wkk.RowKeyCTID, filereader.DataTypeInt64, true)
-
-	// Get RPF estimate for this org/instance
-	rpfEstimate := p.store.GetMetricEstimate(ctx, storageProfile.OrganizationID, 10000) // 10 second blocks
-
-	ll.Info("Starting file grouping with estimated records per file",
-		slog.Int64("recordsPerFile", rpfEstimate))
-
-	// Create time bin manager
-	binManager := &TimeBinManager{
-		bins:        make(map[int64]*TimeBin),
-		tmpDir:      tmpDir,
-		rpfEstimate: rpfEstimate,
-		schema:      schema,
+	if len(dateintBins) == 0 {
+		return nil, nil
 	}
 
-	var totalRowsRead, totalRowsProcessed int64
-
-	// Process all rows from the reader
-	for {
-		batch, readErr := reader.Next(ctx)
-		if readErr != nil && readErr != io.EOF {
-			if batch != nil {
-				pipeline.ReturnBatch(batch)
-			}
-			return nil, 0, fmt.Errorf("failed to read from unified pipeline: %w", readErr)
-		}
-
-		if batch != nil {
-			totalRowsRead += int64(batch.Len())
-			// Process each row in the batch
-			for i := 0; i < batch.Len(); i++ {
-				row := batch.Get(i)
-				if row == nil {
-					continue
-				}
-
-				// Extract timestamp to determine which bin this row belongs to
-				ts, ok := row[wkk.RowKeyCTimestamp].(int64)
-				if !ok {
-					ll.Warn("Row missing timestamp, skipping", slog.Int("rowIndex", i))
-					continue
-				}
-
-				// Group 10s aggregated data into 60s-aligned files
-				// Since data is already aggregated to 10s, we group 6 data points per file
-				fileGroupStartTs := (ts / 60000) * 60000
-
-				// Get or create time bin
-				bin, err := binManager.getOrCreateBin(ctx, fileGroupStartTs)
-				if err != nil {
-					ll.Error("Failed to get/create time bin", slog.Int64("fileGroupStartTs", fileGroupStartTs), slog.Any("error", err))
-					continue
-				}
-
-				// Process exemplar before taking the row
-				if p.exemplarProcessor != nil {
-					_ = p.exemplarProcessor.ProcessMetricsFromRow(ctx, storageProfile.OrganizationID, row)
-				}
-
-				takenRow := batch.TakeRow(i)
-				if takenRow == nil {
-					continue
-				}
-				singleRowBatch := pipeline.GetBatch()
-				singleRowBatch.AppendRow(takenRow)
-
-				// Write to the bin's writer
-				if err := bin.Writer.WriteBatch(singleRowBatch); err != nil {
-					ll.Error("Failed to write row to file group",
-						slog.Int64("fileGroupStartTs", fileGroupStartTs),
-						slog.Any("error", err))
-				} else {
-					totalRowsProcessed++
-				}
-
-				pipeline.ReturnBatch(singleRowBatch)
-			}
-			pipeline.ReturnBatch(batch)
-		}
-
-		if readErr == io.EOF {
-			break
-		}
-	}
-
-	ll.Info("File grouping completed",
-		slog.Int64("rowsRead", totalRowsRead),
-		slog.Int64("rowsProcessed", totalRowsProcessed),
-		slog.Int("fileGroupsCreated", len(binManager.bins)))
-
-	// Close all writers and collect results
-	for binStartTs, bin := range binManager.bins {
-		results, err := bin.Writer.Close(ctx)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to close writer for bin %d: %w", binStartTs, err)
-		}
-
-		if len(results) > 0 {
-			bin.Results = append(bin.Results, results...)
-		}
-	}
-
-	return binManager.bins, totalRowsRead, nil
-}
-
-// getOrCreateBin gets or creates a time bin for the given start timestamp
-func (manager *TimeBinManager) getOrCreateBin(_ context.Context, binStartTs int64) (*TimeBin, error) {
-	if bin, exists := manager.bins[binStartTs]; exists {
-		return bin, nil
-	}
-
-	writer, err := factories.NewMetricsWriter(manager.tmpDir, manager.schema, manager.rpfEstimate)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create writer for time bin: %w", err)
-	}
-
-	bin := &TimeBin{
-		StartTs: binStartTs,
-		EndTs:   binStartTs + 60000, // 60 seconds
-		Writer:  writer,
-	}
-
-	manager.bins[binStartTs] = bin
-	return bin, nil
-}
-
-// uploadAndCreateSegments uploads time bins to S3 and creates segment parameters
-func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, storageClient cloudstorage.Client, timeBins map[int64]*TimeBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertMetricSegmentParams, error) {
-	ll := logctx.FromContext(ctx)
+	// Generate unique batch IDs for all bins
+	batchSegmentIDs := idgen.GenerateBatchIDs(len(dateintBins))
 
 	var segmentParams []lrdb.InsertMetricSegmentParams
-	var totalOutputRecords, totalOutputSize int64
+	i := 0
 
-	type validResult struct {
-		binStartTs int64
-		result     parquetwriter.Result
-		metadata   *fileMetadata
-	}
-	var validResults []validResult
-
-	// Collect all valid results from all bins
-	for binStartTs, bin := range timeBins {
-		if len(bin.Results) == 0 {
-			ll.Debug("Skipping empty file group", slog.Int64("fileGroupStartTs", binStartTs))
+	for _, binResult := range dateintBins {
+		if binResult.RecordCount == 0 {
 			continue
 		}
 
-		// Process each result from this bin
-		for _, result := range bin.Results {
-			if result.RecordCount == 0 {
-				continue
-			}
-
-			metadata, err := extractFileMetadata(ctx, result)
-			if err != nil {
-				return nil, fmt.Errorf("failed to extract file metadata for bin %d: %w", binStartTs, err)
-			}
-
-			validResults = append(validResults, validResult{
-				binStartTs: binStartTs,
-				result:     result,
-				metadata:   metadata,
-			})
-		}
-	}
-
-	// Generate unique batch IDs for all valid results to avoid collisions
-	batchSegmentIDs := idgen.GenerateBatchIDs(len(validResults))
-
-	for i, valid := range validResults {
-		result := valid.result
-		metadata := valid.metadata
-
 		segmentID := batchSegmentIDs[i]
+		i++
+
+		metadata := binResult.Metadata
 
 		uploadPath := helpers.MakeDBObjectID(
 			storageProfile.OrganizationID,
 			storageProfile.CollectorName,
-			metadata.Dateint,
+			binResult.Dateint,
 			metadata.Hour,
 			segmentID,
 			"metrics",
 		)
 
 		// Upload file to S3
-		uploadErr := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadPath, result.FileName)
-		if uploadErr != nil {
-			return nil, fmt.Errorf("failed to upload file %s to %s: %w", result.FileName, uploadPath, uploadErr)
+		if err := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadPath, binResult.OutputFile); err != nil {
+			return nil, fmt.Errorf("failed to upload file %s to %s: %w", binResult.OutputFile, uploadPath, err)
 		}
 
 		ll.Debug("Uploaded segment",
 			slog.String("uploadPath", uploadPath),
 			slog.Int64("segmentID", segmentID),
-			slog.Int64("recordCount", result.RecordCount),
-			slog.Int64("fileSize", result.FileSize))
+			slog.Int64("recordCount", binResult.RecordCount),
+			slog.Int64("fileSize", binResult.FileSize))
 
-		// Create segment parameters for database insertion using extracted metadata
+		// Create segment parameters for database insertion
 		params := lrdb.InsertMetricSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
-			Dateint:        metadata.Dateint,
+			Dateint:        binResult.Dateint,
 			FrequencyMs:    10000, // 10 seconds
 			SegmentID:      segmentID,
 			InstanceNum:    storageProfile.InstanceNum,
 			StartTs:        metadata.StartTs,
 			EndTs:          metadata.EndTs,
-			RecordCount:    result.RecordCount,
-			FileSize:       result.FileSize,
+			RecordCount:    binResult.RecordCount,
+			FileSize:       binResult.FileSize,
 			CreatedBy:      lrdb.CreatedByIngest,
 			Published:      true,
 			Compacted:      false,
@@ -759,17 +499,10 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 			MetricTypes:    metadata.MetricTypes,
 		}
 
-		ll.Debug("Created segment params",
-			slog.Int64("segmentID", segmentID),
-			slog.Bool("hasLabelNameMap", metadata.LabelNameMap != nil),
-			slog.Int("labelNameMapSize", len(metadata.LabelNameMap)))
-
 		segmentParams = append(segmentParams, params)
-		totalOutputRecords += result.RecordCount
-		totalOutputSize += result.FileSize
 	}
 
-	ll.Info("Segment upload completed",
+	ll.Info("DuckDB segment upload completed",
 		slog.Int("totalSegments", len(segmentParams)))
 
 	return segmentParams, nil
