@@ -35,8 +35,8 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// DDSketchExtensionEnvVar is the environment variable for the DDSketch extension path.
-const DDSketchExtensionEnvVar = "LAKERUNNER_DDSKETCH_EXTENSION"
+// DuckDBExtensionsDirEnvVar is the environment variable for the DuckDB extensions directory.
+const DuckDBExtensionsDirEnvVar = "LAKERUNNER_DUCKDB_EXTENSIONS"
 
 // DB manages a pool of DuckDB connections to a single shared on-disk database.
 // All connections open the same file and thus share the same in-process database instance.
@@ -492,29 +492,33 @@ func (d *DB) pollMemoryMetrics(ctx context.Context) {
 }
 
 // LoadDDSketchExtension loads the DDSketch extension on the given connection.
-// The extension path is read from the LAKERUNNER_DDSKETCH_EXTENSION environment variable.
-// If not set, it searches for the extension in standard locations.
+// The extension is searched in LAKERUNNER_DUCKDB_EXTENSIONS directory or standard locations.
 func LoadDDSketchExtension(ctx context.Context, conn *sql.Conn) error {
-	extensionPath := os.Getenv(DDSketchExtensionEnvVar)
+	extensionPath := findExtension("ddsketch.duckdb_extension")
 	if extensionPath == "" {
-		extensionPath = findDDSketchExtension()
-	}
-	if extensionPath == "" {
-		return fmt.Errorf("DDSketch extension not found: set %s environment variable or place extension in docker/duckdb-extensions/", DDSketchExtensionEnvVar)
+		return fmt.Errorf("DDSketch extension not found: set %s environment variable or place extension in docker/duckdb-extensions/", DuckDBExtensionsDirEnvVar)
 	}
 	return LoadDDSketchExtensionFromPath(ctx, conn, extensionPath)
 }
 
-// findDDSketchExtension searches for the DDSketch extension in standard locations.
+// findExtension searches for a DuckDB extension by name.
+// It first checks LAKERUNNER_DUCKDB_EXTENSIONS env var, then standard locations.
 // If only a .gz version exists, it will be decompressed to a temp file.
-func findDDSketchExtension() string {
+func findExtension(extName string) string {
+	// Check env var first
+	if extDir := os.Getenv(DuckDBExtensionsDirEnvVar); extDir != "" {
+		extPath := filepath.Join(extDir, extName)
+		if _, err := os.Stat(extPath); err == nil {
+			return extPath
+		}
+	}
+
 	// Determine platform directory name (DuckDB uses "osx" not "darwin")
 	goos := runtime.GOOS
 	if goos == "darwin" {
 		goos = "osx"
 	}
 	platform := goos + "_" + runtime.GOARCH
-	extName := "ddsketch.duckdb_extension"
 
 	// Search paths (relative to current directory and parent directories)
 	basePaths := []string{
@@ -536,7 +540,7 @@ func findDDSketchExtension() string {
 		// Try gzipped and decompress
 		gzipped := filepath.Join(basePath, extName+".gz")
 		if _, err := os.Stat(gzipped); err == nil {
-			if decompressed, err := decompressExtension(gzipped); err == nil {
+			if decompressed, err := decompressExtension(gzipped, extName); err == nil {
 				return decompressed
 			}
 		}
@@ -546,8 +550,8 @@ func findDDSketchExtension() string {
 }
 
 // decompressExtension decompresses a gzipped extension to a temp file.
-// The extension filename must be exactly "ddsketch.duckdb_extension" for DuckDB to load it.
-func decompressExtension(gzPath string) (string, error) {
+// The extension filename must match exactly for DuckDB to load it.
+func decompressExtension(gzPath, extName string) (string, error) {
 	gzFile, err := os.Open(gzPath)
 	if err != nil {
 		return "", err
@@ -566,7 +570,7 @@ func decompressExtension(gzPath string) (string, error) {
 		return "", err
 	}
 
-	extPath := filepath.Join(tmpDir, "ddsketch.duckdb_extension")
+	extPath := filepath.Join(tmpDir, extName)
 	tmpFile, err := os.Create(extPath)
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
@@ -597,6 +601,31 @@ func LoadDDSketchExtensionFromPath(ctx context.Context, conn *sql.Conn, extensio
 	loadQuery := fmt.Sprintf("LOAD '%s'", escapeSingle(extensionPath))
 	if _, err := conn.ExecContext(ctx, loadQuery); err != nil {
 		return fmt.Errorf("load ddsketch extension: %w", err)
+	}
+
+	return nil
+}
+
+// LoadOtelMetricsExtension loads the otel_metrics extension on the given connection.
+// The extension is searched in LAKERUNNER_DUCKDB_EXTENSIONS directory or standard locations.
+func LoadOtelMetricsExtension(ctx context.Context, conn *sql.Conn) error {
+	extensionPath := findExtension("otel_metrics.duckdb_extension")
+	if extensionPath == "" {
+		return fmt.Errorf("otel_metrics extension not found: set %s environment variable or place extension in docker/duckdb-extensions/", DuckDBExtensionsDirEnvVar)
+	}
+	return LoadOtelMetricsExtensionFromPath(ctx, conn, extensionPath)
+}
+
+// LoadOtelMetricsExtensionFromPath loads the otel_metrics extension from a specific file path.
+// Note: The connection must have allow_unsigned_extensions enabled (done automatically by duckdbx.DB).
+func LoadOtelMetricsExtensionFromPath(ctx context.Context, conn *sql.Conn, extensionPath string) error {
+	if _, err := os.Stat(extensionPath); os.IsNotExist(err) {
+		return fmt.Errorf("otel_metrics extension not found at %s", extensionPath)
+	}
+
+	loadQuery := fmt.Sprintf("LOAD '%s'", escapeSingle(extensionPath))
+	if _, err := conn.ExecContext(ctx, loadQuery); err != nil {
+		return fmt.Errorf("load otel_metrics extension: %w", err)
 	}
 
 	return nil
