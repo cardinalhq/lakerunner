@@ -148,7 +148,7 @@ duckdb-extensions-download:
 #
 # Download otel_metrics extension from GitHub releases
 #
-OTEL_METRICS_VERSION=v0.1.0
+OTEL_METRICS_VERSION=v0.1.2
 OTEL_METRICS_BASE_URL=https://github.com/cardinalhq/duckdb-binpb/releases/download/${OTEL_METRICS_VERSION}
 
 .PHONY: otel-metrics-extension-download
