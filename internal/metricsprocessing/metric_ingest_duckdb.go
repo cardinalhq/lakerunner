@@ -214,17 +214,15 @@ func processMetricIngestWithDuckDB(
 }
 
 // loadBinpbFilesIntoTable loads all binpb files into a DuckDB table.
-// Files are passed as variadic arguments to otel_metrics_read() so schemas are merged correctly.
+// Files are passed as a list string to otel_metrics_read() so schemas are merged correctly.
+// The extension expects format: '[file1.binpb, file2.binpb]' (string, not DuckDB array).
 func loadBinpbFilesIntoTable(ctx context.Context, conn *sql.Conn, files []string, orgID string) error {
-	// Build file list as variadic args: 'file1', 'file2', ..., customer_id='xx'
-	quotedFiles := make([]string, len(files))
-	for i, file := range files {
-		quotedFiles[i] = fmt.Sprintf("'%s'", escapeSingleQuote(file))
-	}
-	fileList := strings.Join(quotedFiles, ", ")
+	// Build file list as string: '[file1, file2, ...]'
+	// Note: files inside the list are NOT quoted - the extension parses this as a string
+	fileList := "[" + strings.Join(files, ", ") + "]"
 
-	createSQL := fmt.Sprintf("CREATE TABLE metrics_raw AS SELECT * FROM otel_metrics_read(%s, customer_id='%s')",
-		fileList, escapeSingleQuote(orgID))
+	createSQL := fmt.Sprintf("CREATE TABLE metrics_raw AS SELECT * FROM otel_metrics_read('%s', customer_id='%s')",
+		escapeSingleQuote(fileList), escapeSingleQuote(orgID))
 
 	_, err := conn.ExecContext(ctx, createSQL)
 	if err != nil {
