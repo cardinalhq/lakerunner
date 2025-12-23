@@ -298,9 +298,10 @@ func EvaluatePushDown[T promql.Timestamped](
 				}
 			}
 
-			// Convert object IDs to local paths for streaming
-			localPaths := make([]string, len(objectIDs))
-			for i, objID := range objectIDs {
+			// Convert object IDs to local paths for streaming, filtering out non-existent files
+			var localPaths []string
+			var missingCount int
+			for _, objID := range objectIDs {
 				localPath, exists, err := w.parquetCache.GetOrPrepare(profile.Region, profile.Bucket, objID)
 				if err != nil {
 					evalSpan.RecordError(err)
@@ -308,9 +309,27 @@ func EvaluatePushDown[T promql.Timestamped](
 					return nil, fmt.Errorf("get local path for %s: %w", objID, err)
 				}
 				if !exists {
-					slog.Warn("Expected file to exist after download", "objectID", objID, "localPath", localPath)
+					slog.Warn("File not found after download, skipping", "objectID", objID)
+					missingCount++
+					continue
 				}
-				localPaths[i] = localPath
+				localPaths = append(localPaths, localPath)
+			}
+
+			if missingCount > 0 {
+				slog.Warn("Some segment files were not found",
+					"missing", missingCount,
+					"found", len(localPaths),
+					"total", len(objectIDs))
+			}
+
+			// If all files are missing, skip this org/instance group
+			if len(localPaths) == 0 {
+				slog.Warn("All segment files missing for org/instance, returning empty results",
+					"orgId", orgId,
+					"instanceNum", instanceNum,
+					"requestedFiles", len(objectIDs))
+				continue
 			}
 
 			// Stream from downloaded local files
@@ -599,10 +618,12 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 			}
 
 			// Split segments into agg-eligible and tbl-only based on:
-			// 1. agg_ file exists locally
-			// 2. segment's agg_fields support the query's GROUP BY
+			// 1. tbl_ file exists locally (skip missing files)
+			// 2. agg_ file exists locally
+			// 3. segment's agg_fields support the query's GROUP BY
 			var aggLocalPaths []string
 			var tblLocalPaths []string
+			var missingCount int
 
 			for _, seg := range segments {
 				tblObjectID := segmentObjectIDMap[seg.SegmentID]
@@ -613,7 +634,9 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 					return nil, fmt.Errorf("get local path for %s: %w", tblObjectID, err)
 				}
 				if !tblExists {
-					slog.Warn("Expected tbl_ file to exist after download", "objectID", tblObjectID, "localPath", tblLocalPath)
+					slog.Warn("File not found after download, skipping", "objectID", tblObjectID)
+					missingCount++
+					continue
 				}
 
 				// Check if we can use agg_ file for this segment
@@ -629,9 +652,26 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 				}
 			}
 
+			if missingCount > 0 {
+				slog.Warn("Some segment files were not found",
+					"missing", missingCount,
+					"found", len(aggLocalPaths)+len(tblLocalPaths),
+					"total", len(segments))
+			}
+
+			// If all files are missing, skip this org/instance group
+			if len(aggLocalPaths) == 0 && len(tblLocalPaths) == 0 {
+				slog.Warn("All segment files missing for org/instance, returning empty results",
+					"orgId", orgId,
+					"instanceNum", instanceNum,
+					"requestedFiles", len(segments))
+				continue
+			}
+
 			slog.Info("Segment Split",
 				"aggEligible", len(aggLocalPaths),
-				"tblOnly", len(tblLocalPaths))
+				"tblOnly", len(tblLocalPaths),
+				"missing", missingCount)
 
 			// Stream from agg_ files with agg SQL
 			if len(aggLocalPaths) > 0 {
