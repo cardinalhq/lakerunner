@@ -251,6 +251,7 @@ func (s *FileSplitter) startNewParquetWriter() error {
 		Schema:                   s.config.Schema,
 		ChunkSize:                s.config.GetChunkSize(),
 		StringConversionPrefixes: s.config.GetStringConversionPrefixes(),
+		SortColumns:              s.config.SortColumns,
 	}
 
 	// Create the appropriate backend
@@ -260,6 +261,8 @@ func (s *FileSplitter) startNewParquetWriter() error {
 		backend, err = NewArrowBackend(backendConfig)
 	case BackendGoParquet:
 		backend, err = NewGoParquetBackend(backendConfig)
+	case BackendDuckDB:
+		backend, err = NewDuckDBBackend(backendConfig)
 	default:
 		_ = tmpFile.Close()
 		_ = os.Remove(tmpFile.Name())

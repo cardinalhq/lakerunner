@@ -31,7 +31,7 @@ import (
 var prefixedKeyCache sync.Map // "prefix:name" -> wkk.RowKey
 
 // prefixAttributeRowKey creates a RowKey for an OTEL attribute with the given prefix.
-// Uses wkk.NormalizeName for consistent OTEL-to-underscore conversion.
+// Uses wkk.NormalizeName for consistent OTEL-to-underscore conversion (includes lowercasing).
 // Results are cached to avoid repeated allocations for common attribute names.
 func prefixAttributeRowKey(name, prefix string) wkk.RowKey {
 	if name == "" {
@@ -45,6 +45,7 @@ func prefixAttributeRowKey(name, prefix string) wkk.RowKey {
 	}
 
 	// Slow path: compute and cache
+	// NormalizeName already lowercases and replaces non-alphanumeric chars with underscores
 	normalized := wkk.NormalizeName(name)
 	var result wkk.RowKey
 	if name[0] == '_' {

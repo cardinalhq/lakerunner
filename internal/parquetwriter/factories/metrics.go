@@ -31,10 +31,15 @@ import (
 // NewMetricsWriter creates a writer optimized for metrics data.
 // Metrics are ordered by metric name and grouped for efficient fingerprinting.
 // The schema must be provided from the reader and cannot be nil.
+// Uses DuckDB backend for lower memory usage during large metric ingestion.
 func NewMetricsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
-		TmpDir: tmpdir,
-		Schema: schema,
+		TmpDir:      tmpdir,
+		Schema:      schema,
+		BackendType: parquetwriter.BackendDuckDB,
+
+		// Sort by metric_name, chq_tid, chq_timestamp for efficient querying
+		SortColumns: []string{"metric_name", "chq_tid", "chq_timestamp"},
 
 		// Group by [metric name, TID] - don't split groups with same name+TID
 		GroupKeyFunc:  metricsGroupKeyFunc(),

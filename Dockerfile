@@ -51,7 +51,7 @@ COPY --from=extensions /app/extensions/ /app/extensions/
 COPY --from=extensions /usr/bin/curl /usr/bin/curl
 COPY --from=extensions /runtime-deps/ /
 
-# Set environment variable for DDSketch extension path
-ENV LAKERUNNER_DDSKETCH_EXTENSION=/app/extensions/ddsketch.duckdb_extension
+# Set environment variable for DuckDB extensions directory
+ENV LAKERUNNER_DUCKDB_EXTENSIONS=/app/extensions
 
 CMD ["/app/bin/lakerunner"]
