@@ -213,17 +213,18 @@ func processMetricIngestWithDuckDB(
 	return result, nil
 }
 
-// loadBinpbFilesIntoTable loads all binpb files into a DuckDB table using UNION ALL
+// loadBinpbFilesIntoTable loads all binpb files into a DuckDB table.
+// Files are passed as variadic arguments to otel_metrics_read() so schemas are merged correctly.
 func loadBinpbFilesIntoTable(ctx context.Context, conn *sql.Conn, files []string, orgID string) error {
-	// Build UNION ALL query for all files
-	var unionParts []string
-	for _, file := range files {
-		part := fmt.Sprintf("SELECT * FROM otel_metrics_read('%s', customer_id='%s')",
-			escapeSingleQuote(file), escapeSingleQuote(orgID))
-		unionParts = append(unionParts, part)
+	// Build file list as variadic args: 'file1', 'file2', ..., customer_id='xx'
+	quotedFiles := make([]string, len(files))
+	for i, file := range files {
+		quotedFiles[i] = fmt.Sprintf("'%s'", escapeSingleQuote(file))
 	}
+	fileList := strings.Join(quotedFiles, ", ")
 
-	createSQL := fmt.Sprintf("CREATE TABLE metrics_raw AS %s", strings.Join(unionParts, " UNION ALL "))
+	createSQL := fmt.Sprintf("CREATE TABLE metrics_raw AS SELECT * FROM otel_metrics_read(%s, customer_id='%s')",
+		fileList, escapeSingleQuote(orgID))
 
 	_, err := conn.ExecContext(ctx, createSQL)
 	if err != nil {
@@ -235,7 +236,9 @@ func loadBinpbFilesIntoTable(ctx context.Context, conn *sql.Conn, files []string
 
 // getDistinctDateintKeys returns all unique dateint keys (days since epoch) from the table
 func getDistinctDateintKeys(ctx context.Context, conn *sql.Conn) ([]int64, error) {
-	query := fmt.Sprintf("SELECT DISTINCT (chq_timestamp / %d) AS dateint_key FROM metrics_raw ORDER BY dateint_key", msPerDay)
+	// Use // for integer division in DuckDB (/ returns float)
+	// msPerDay = 86400000 (24 hours in milliseconds)
+	const query = "SELECT DISTINCT (chq_timestamp // 86400000) AS dateint_key FROM metrics_raw ORDER BY dateint_key"
 
 	rows, err := conn.QueryContext(ctx, query)
 	if err != nil {
