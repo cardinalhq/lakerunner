@@ -15,7 +15,6 @@
 package wkk
 
 import (
-	"strings"
 	"sync"
 	"unique"
 	"unsafe"
@@ -30,22 +29,31 @@ import (
 // a memory issue.
 var normalizeCache sync.Map // string -> string
 
-// NormalizeName converts OTEL-style names (with dots) to our underscore format.
-// Example: "service.name" -> "service_name"
+// NormalizeName converts field names to a canonical format: lowercase with all
+// non-alphanumeric characters replaced by underscores.
+// Example: "service.name" -> "service_name", "http.status_code" -> "http_status_code"
 // This is the canonical normalization function - all OTEL-to-row conversions must use this.
 // Results are cached to avoid repeated allocations for common attribute names.
 func NormalizeName(name string) string {
-	if !strings.Contains(name, ".") {
-		return name
-	}
-
 	// Fast path: check cache
 	if cached, ok := normalizeCache.Load(name); ok {
 		return cached.(string)
 	}
 
-	// Slow path: compute and cache
-	normalized := strings.ReplaceAll(name, ".", "_")
+	// Normalize: lowercase alphanumeric, everything else becomes underscore
+	buf := make([]byte, len(name))
+	for i := range len(name) {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+			buf[i] = c
+		case c >= 'A' && c <= 'Z':
+			buf[i] = c + 32 // lowercase
+		default:
+			buf[i] = '_'
+		}
+	}
+	normalized := string(buf)
 	normalizeCache.Store(name, normalized)
 	return normalized
 }
