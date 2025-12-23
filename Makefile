@@ -115,40 +115,9 @@ bin/golangci-lint bin/goimports bin/license-eye:
 	./scripts/install-dev-tools.sh
 
 #
-# Download DuckDB extensions for air-gapped operation
-#
-.PHONY: duckdb-extensions-download
-duckdb-extensions-download:
-	@echo "Downloading DuckDB extensions (compressed) for linux and macOS ARM64..."
-	@mkdir -p docker/duckdb-extensions/linux_amd64
-	@mkdir -p docker/duckdb-extensions/linux_arm64
-	@mkdir -p docker/duckdb-extensions/osx_arm64
-	@DUCKDB_VERSION="v1.3.2"; \
-	\
-	echo "Downloading linux_amd64 extensions..."; \
-	BASE_URL="https://extensions.duckdb.org/$$DUCKDB_VERSION/linux_amd64"; \
-	curl -L -o docker/duckdb-extensions/linux_amd64/httpfs.duckdb_extension.gz "$$BASE_URL/httpfs.duckdb_extension.gz"; \
-	curl -L -o docker/duckdb-extensions/linux_amd64/aws.duckdb_extension.gz "$$BASE_URL/aws.duckdb_extension.gz"; \
-	curl -L -o docker/duckdb-extensions/linux_amd64/azure.duckdb_extension.gz "$$BASE_URL/azure.duckdb_extension.gz"; \
-	\
-	echo "Downloading linux_arm64 extensions..."; \
-	BASE_URL="https://extensions.duckdb.org/$$DUCKDB_VERSION/linux_arm64"; \
-	curl -L -o docker/duckdb-extensions/linux_arm64/httpfs.duckdb_extension.gz "$$BASE_URL/httpfs.duckdb_extension.gz"; \
-	curl -L -o docker/duckdb-extensions/linux_arm64/aws.duckdb_extension.gz "$$BASE_URL/aws.duckdb_extension.gz"; \
-	curl -L -o docker/duckdb-extensions/linux_arm64/azure.duckdb_extension.gz "$$BASE_URL/azure.duckdb_extension.gz"; \
-	\
-	echo "Downloading osx_arm64 extensions..."; \
-	BASE_URL="https://extensions.duckdb.org/$$DUCKDB_VERSION/osx_arm64"; \
-	curl -L -o docker/duckdb-extensions/osx_arm64/httpfs.duckdb_extension.gz "$$BASE_URL/httpfs.duckdb_extension.gz"; \
-	curl -L -o docker/duckdb-extensions/osx_arm64/aws.duckdb_extension.gz "$$BASE_URL/aws.duckdb_extension.gz"; \
-	curl -L -o docker/duckdb-extensions/osx_arm64/azure.duckdb_extension.gz "$$BASE_URL/azure.duckdb_extension.gz"; \
-	\
-	echo "Extensions downloaded (compressed) to docker/duckdb-extensions/"
-
-#
 # Download otel_metrics extension from GitHub releases
 #
-OTEL_METRICS_VERSION=v0.1.2
+OTEL_METRICS_VERSION=v0.1.6
 OTEL_METRICS_BASE_URL=https://github.com/cardinalhq/duckdb-binpb/releases/download/${OTEL_METRICS_VERSION}
 
 .PHONY: otel-metrics-extension-download
@@ -347,28 +316,3 @@ new-configdb-migration:
 
 check-migration-integrity:
 	@./scripts/check-migration-integrity.sh
-
-#
-# DuckDB SDK management
-#
-
-.PHONY: duckdb-sdk-local
-duckdb-sdk-local:
-	@echo "Building DuckDB SDK locally..."
-	$(call with_builder, docker buildx build --pull --load --platform linux/amd64 --tag ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-amd64 --build-arg DUCKDB_VERSION=v1.3.2 ./duckdb-images)
-	$(call with_builder, docker buildx build --pull --load --platform linux/arm64 --tag ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-arm64 --build-arg DUCKDB_VERSION=v1.3.2 ./duckdb-images)
-	@echo "Creating multi-arch manifests..."
-	@docker manifest create ${IMAGE_PREFIX}duckdb-sdk:v1.3 ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-amd64 ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-arm64 2>/dev/null || true
-	@docker manifest create ${IMAGE_PREFIX}duckdb-sdk:v1.3.2 ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-amd64 ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-arm64 2>/dev/null || true
-
-.PHONY: docker-with-duckdb
-docker-with-duckdb: duckdb-sdk-local
-	@echo "Building lakerunner with custom DuckDB..."
-	$(call with_builder, docker buildx build --load --platform linux/amd64 --tag ${IMAGE_PREFIX}lakerunner:local-$(shell date +%Y%m%d-%H%M%S)-amd64 --build-arg DUCKDB_SDK_VERSION=v1.3.2 --build-arg TARGETARCH=amd64 --build-arg LDFLAGS="-X main.version=local" .)
-	@docker tag ${IMAGE_PREFIX}lakerunner:local-$(shell date +%Y%m%d-%H%M%S)-amd64 ${IMAGE_PREFIX}lakerunner:local
-
-.PHONY: test-air-gapped
-test-air-gapped: docker-with-duckdb
-	@echo "Testing air-gapped container..."
-	@echo "Starting container without network access..."
-	docker run --rm --network none ${IMAGE_PREFIX}lakerunner:local --help
