@@ -472,11 +472,13 @@ func (p *MetricIngestProcessor) uploadDuckDBResults(ctx context.Context, storage
 			return nil, fmt.Errorf("failed to upload file %s to %s: %w", binResult.OutputFile, uploadPath, err)
 		}
 
-		ll.Debug("Uploaded segment",
-			slog.String("uploadPath", uploadPath),
+		ll.Info("Uploaded metric segment",
+			slog.String("bucket", storageProfile.Bucket),
+			slog.String("objectID", uploadPath),
 			slog.Int64("segmentID", segmentID),
 			slog.Int64("recordCount", binResult.RecordCount),
-			slog.Int64("fileSize", binResult.FileSize))
+			slog.Int64("fileSize", binResult.FileSize),
+			slog.Int("hour", int(metadata.Hour)))
 
 		// Create segment parameters for database insertion
 		params := lrdb.InsertMetricSegmentParams{
