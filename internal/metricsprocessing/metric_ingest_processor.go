@@ -222,8 +222,21 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 	processSpan.SetAttributes(
 		attribute.Int("dateint_bins", len(duckDBResult.DateintBins)),
 		attribute.Int64("total_rows", duckDBResult.TotalRows),
+		attribute.Int("failed_partitions", len(duckDBResult.FailedPartitions)),
 	)
 	processSpan.End()
+
+	// Check for partition failures - this indicates partial data loss
+	if len(duckDBResult.FailedPartitions) > 0 {
+		// If all partitions failed, return error to trigger retry
+		if len(duckDBResult.DateintBins) == 0 {
+			return fmt.Errorf("all %d dateint partitions failed to process", len(duckDBResult.FailedPartitions))
+		}
+		// Some partitions succeeded but others failed - return error for retry
+		// to avoid partial data ingestion without the caller knowing
+		return fmt.Errorf("partial failure: %d partitions succeeded, %d failed",
+			len(duckDBResult.DateintBins), len(duckDBResult.FailedPartitions))
+	}
 
 	if len(duckDBResult.DateintBins) == 0 {
 		ll.Info("No output files generated")
