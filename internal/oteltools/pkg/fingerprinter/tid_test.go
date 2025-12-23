@@ -409,6 +409,62 @@ func TestComputeTIDFromOTEL_MatchesComputeTID(t *testing.T) {
 	}
 }
 
+// TestTID_CrossValidation_WithRust provides concrete TID values that can be
+// cross-validated with the Rust implementation in duckdb-binpb.
+func TestTID_CrossValidation_WithRust(t *testing.T) {
+	testCases := []struct {
+		name     string
+		tags     []struct{ key, value string }
+		expected int64 // Expected TID from Rust - fill in after running Rust tests
+	}{
+		{
+			name: "simple gauge metric",
+			tags: []struct{ key, value string }{
+				{"chq_metric_type", "gauge"},
+				{"metric_name", "test_metric"},
+				{"resource_service_name", "my-service"},
+			},
+		},
+		{
+			name: "count metric with attributes",
+			tags: []struct{ key, value string }{
+				{"attr_http_method", "GET"},
+				{"attr_http_status", "200"},
+				{"chq_metric_type", "count"},
+				{"metric_name", "http_server_requests"},
+				{"resource_k8s_pod_name", "pod-123"},
+				{"resource_service_name", "my-service"},
+				{"resource_service_version", "1.0.0"},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Build the row map
+			row := make(map[wkk.RowKey]any)
+			for _, kv := range tc.tags {
+				row[wkk.NewRowKey(kv.key)] = kv.value
+			}
+
+			tid := ComputeTID(row)
+
+			// Print the hash input for cross-validation
+			// This is the format Rust expects: key=value|key=value|... (sorted by key)
+			t.Logf("Test: %s", tc.name)
+			t.Logf("TID (Go): %d", tid)
+			t.Logf("TID hex:  0x%x", uint64(tid))
+
+			// Print hash input (sorted keys)
+			var hashInput string
+			for _, kv := range tc.tags {
+				hashInput += kv.key + "=" + kv.value + "|"
+			}
+			t.Logf("Hash input: %q", hashInput)
+		})
+	}
+}
+
 // TestComputeTIDFromOTEL_ConsistencyWithFiltering verifies that ComputeTIDFromOTEL
 // correctly filters resource keys the same way as the translator.
 func TestComputeTIDFromOTEL_ConsistencyWithFiltering(t *testing.T) {
