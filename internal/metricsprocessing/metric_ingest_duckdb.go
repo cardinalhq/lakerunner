@@ -295,7 +295,6 @@ func processDateintPartition(
 	// Convert dateintKey to YYYYMMDD format
 	t := time.Unix(dateintKey*86400, 0).UTC()
 	dateint := int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
-	hour := int16(t.Hour()) // Will be 0 for start of day
 
 	// Output file path
 	outputFile := filepath.Join(tmpDir, fmt.Sprintf("metrics_%d.parquet", dateint))
@@ -322,7 +321,8 @@ func processDateintPartition(
 	if err != nil {
 		return nil, fmt.Errorf("extract metadata: %w", err)
 	}
-	metadata.Hour = hour
+	// Compute hour from the actual first timestamp in the data
+	metadata.Hour = getHourFromTimestamp(metadata.StartTs)
 
 	return &DateintBinResult{
 		Dateint:     dateint,
@@ -598,4 +598,9 @@ func isLabelColumn(columnName string) bool {
 		}
 	}
 	return false
+}
+
+// getHourFromTimestamp extracts the hour component from a timestamp in milliseconds
+func getHourFromTimestamp(timestampMs int64) int16 {
+	return int16((timestampMs / (1000 * 60 * 60)) % 24)
 }
