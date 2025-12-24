@@ -68,7 +68,7 @@ func ReaderForFile(filename string, signalType SignalType, orgId string, exempla
 //   - .json: Creates a JSONLinesReader (works for all signal types)
 //   - .csv: Creates a CSVReader (works for all signal types)
 //   - .csv.gz: Creates a CSVReader with gzip decompression (works for all signal types)
-//   - .binpb: Creates a signal-specific proto reader (NewIngestProtoLogsReader, NewIngestProtoMetricsReader, or NewProtoTracesReader)
+//   - .binpb: Creates a signal-specific proto reader (NewIngestProtoLogsReader or NewProtoTracesReader)
 //   - .binpb.gz: Creates a signal-specific proto reader with gzip decompression
 func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, error) {
 	// Determine file type from extension
@@ -197,8 +197,8 @@ func createProtoBinaryGzReader(filename string, opts ReaderOptions) (Reader, err
 		return nil, err
 	}
 
-	// Close file handles after reader is constructed since NewIngestProtoMetricsReader
-	// eagerly reads the entire stream into memory and doesn't need the handles
+	// Close file handles after reader is constructed since proto readers
+	// eagerly read the entire stream into memory and don't need the handles
 	_ = gzipReader.Close()
 	_ = file.Close()
 
@@ -218,8 +218,8 @@ func createProtoBinaryReader(filename string, opts ReaderOptions) (Reader, error
 		return nil, err
 	}
 
-	// Close file handle after reader is constructed since NewIngestProtoMetricsReader
-	// eagerly reads the entire stream into memory and doesn't need the handle
+	// Close file handle after reader is constructed since proto readers
+	// eagerly read the entire stream into memory and don't need the handle
 	_ = file.Close()
 
 	return reader, nil

@@ -71,7 +71,7 @@ Does not create segments, only generates and outputs exemplars.`,
 
 	cmd.Flags().StringVar(&bucket, "bucket", "", "S3 bucket name (required)")
 	cmd.Flags().IntVar(&fileCount, "file-count", 100, "Number of recent files to process")
-	cmd.Flags().StringVar(&signalType, "signal-type", "", "Filter by signal type: logs, metrics, or traces")
+	cmd.Flags().StringVar(&signalType, "signal-type", "", "Filter by signal type: logs, or traces")
 	cmd.Flags().BoolVar(&skipSchemaCheck, "skip-schema-check", false, "Skip database schema version check")
 	cmd.Flags().IntVar(&maxExemplars, "max-exemplars", 0, "Maximum exemplars to output per signal type (0 = unlimited)")
 	_ = cmd.MarkFlagRequired("bucket")

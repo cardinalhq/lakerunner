@@ -51,7 +51,6 @@
 //   - ParquetRawReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
 //   - JSONLinesReader: Streams JSON objects line-by-line from any io.ReadCloser
 //   - IngestProtoLogsReader: Raw OTEL log records from protobuf
-//   - IngestProtoMetricsReader: Raw OTEL metric data points from protobuf (ingestion only)
 //   - ProtoTracesReader: Raw OTEL span data from protobuf
 //
 // Example usage:
