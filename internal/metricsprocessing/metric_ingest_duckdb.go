@@ -422,11 +422,10 @@ func buildAggregationClauses(schema []string, windowMs int64) (selectClauses, gr
 			groupByClauses = append(groupByClauses, fmt.Sprintf("(%s / %d) * %d", qcol, windowMs, windowMs))
 
 		case col == "chq_tsns":
-			// Truncate nanosecond timestamp to aggregation window
+			// Truncate nanosecond timestamp to aggregation window (derived from chq_timestamp, use first)
 			windowNs := windowMs * 1_000_000
 			selectClauses = append(selectClauses, fmt.Sprintf(
-				"(%s / %d) * %d AS %s", qcol, windowNs, windowNs, qcol))
-			groupByClauses = append(groupByClauses, fmt.Sprintf("(%s / %d) * %d", qcol, windowNs, windowNs))
+				"first((%s / %d) * %d) AS %s", qcol, windowNs, windowNs, qcol))
 
 		case groupCols[col]:
 			// Group by columns pass through
