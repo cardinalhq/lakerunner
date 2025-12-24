@@ -93,7 +93,7 @@ func createTestMetricsParquetFile(t *testing.T, rows []map[string]any) string {
 	return tmpFile.Name()
 }
 
-func TestDiscoverSchemaConn(t *testing.T) {
+func TestGetTableSchema(t *testing.T) {
 	ctx := context.Background()
 
 	db, err := duckdbx.NewDB()
@@ -114,7 +114,13 @@ func TestDiscoverSchemaConn(t *testing.T) {
 	}
 	testFile := createTestMetricsParquetFile(t, rows)
 
-	schema, err := discoverSchemaConn(ctx, conn, testFile)
+	// Create table from parquet file
+	escapedFile := strings.ReplaceAll(testFile, "'", "''")
+	createSQL := fmt.Sprintf("CREATE TABLE test_table AS SELECT * FROM read_parquet('%s')", escapedFile)
+	_, err = conn.ExecContext(ctx, createSQL)
+	require.NoError(t, err)
+
+	schema, err := getTableSchema(ctx, conn, "test_table")
 	require.NoError(t, err)
 
 	assert.Contains(t, schema, "metric_name")
@@ -306,14 +312,11 @@ func TestExecuteAggregationConn(t *testing.T) {
 	}
 	inputFile := createTestMetricsParquetFile(t, rows)
 
-	schema, err := discoverSchemaConn(ctx, conn, inputFile)
-	require.NoError(t, err)
-
 	outputFile := inputFile + ".output.parquet"
 	defer func() { _ = os.Remove(outputFile) }()
 
 	// Aggregate with 60-second frequency (should combine all 3 rows)
-	err = executeAggregationConn(ctx, conn, []string{inputFile}, outputFile, schema, 60000)
+	err = executeAggregationConn(ctx, conn, []string{inputFile}, outputFile, 60000)
 	require.NoError(t, err)
 
 	// Verify output file exists
@@ -373,13 +376,10 @@ func TestExecuteAggregationConn_SpecialColumnNames(t *testing.T) {
 	}
 	inputFile := createTestMetricsParquetFile(t, rows)
 
-	schema, err := discoverSchemaConn(ctx, conn, inputFile)
-	require.NoError(t, err)
-
 	outputFile := inputFile + ".output.parquet"
 	defer func() { _ = os.Remove(outputFile) }()
 
-	err = executeAggregationConn(ctx, conn, []string{inputFile}, outputFile, schema, 60000)
+	err = executeAggregationConn(ctx, conn, []string{inputFile}, outputFile, 60000)
 	require.NoError(t, err)
 
 	_, err = os.Stat(outputFile)
@@ -433,13 +433,10 @@ func TestExecuteAggregationConn_MultipleInputFiles(t *testing.T) {
 	inputFile1 := createTestMetricsParquetFile(t, rows1)
 	inputFile2 := createTestMetricsParquetFile(t, rows2)
 
-	schema, err := discoverSchemaConn(ctx, conn, inputFile1)
-	require.NoError(t, err)
-
 	outputFile := inputFile1 + ".output.parquet"
 	defer func() { _ = os.Remove(outputFile) }()
 
-	err = executeAggregationConn(ctx, conn, []string{inputFile1, inputFile2}, outputFile, schema, 60000)
+	err = executeAggregationConn(ctx, conn, []string{inputFile1, inputFile2}, outputFile, 60000)
 	require.NoError(t, err)
 
 	recordCount, err := getRecordCount(ctx, conn, outputFile)
@@ -475,15 +472,18 @@ func TestColumnQuotingWithSpecialChars(t *testing.T) {
 	}
 	testFile := createTestMetricsParquetFile(t, rows)
 
-	// Test that schema discovery works
-	schema, err := discoverSchemaConn(ctx, conn, testFile)
+	// Test that schema discovery from a table works
+	escapedFile := strings.ReplaceAll(testFile, "'", "''")
+	createSQL := fmt.Sprintf("CREATE TABLE test_table AS SELECT * FROM read_parquet('%s')", escapedFile)
+	_, err = conn.ExecContext(ctx, createSQL)
+	require.NoError(t, err)
+
+	schema, err := getTableSchema(ctx, conn, "test_table")
 	require.NoError(t, err)
 	assert.Len(t, schema, 3)
 
 	// Verify that the SQL we generate uses proper quoting
 	// by running a simple query with quoted identifiers
-	// Note: escape single quotes in file path to prevent SQL injection
-	escapedFile := strings.ReplaceAll(testFile, "'", "''")
 	query := fmt.Sprintf(`SELECT "metric_name", "chq_tid", "chq_timestamp" FROM read_parquet('%s')`, escapedFile)
 	rows2, err := conn.QueryContext(ctx, query)
 	require.NoError(t, err)

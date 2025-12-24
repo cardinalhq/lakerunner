@@ -26,7 +26,6 @@ import (
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -56,28 +55,6 @@ type metricProcessingParams struct {
 type metricProcessingResult struct {
 	Results           []parquetwriter.Result
 	ProcessedSegments []lrdb.MetricSeg // Only segments that were successfully downloaded and processed
-}
-
-// groupByColumns are the columns used to group metrics for aggregation.
-// Metrics with the same (metric_name, chq_tid, truncated_timestamp) are merged.
-var groupByColumns = []string{"metric_name", "chq_tid", "chq_timestamp"}
-
-// sketchColumn is the column containing the DDSketch data to merge.
-const sketchColumn = "chq_sketch"
-
-// rollupColumns are computed from the merged sketch.
-var rollupColumns = []string{
-	"chq_rollup_count",
-	"chq_rollup_sum",
-	"chq_rollup_avg",
-	"chq_rollup_min",
-	"chq_rollup_max",
-	"chq_rollup_p25",
-	"chq_rollup_p50",
-	"chq_rollup_p75",
-	"chq_rollup_p90",
-	"chq_rollup_p95",
-	"chq_rollup_p99",
 }
 
 // processMetricsWithDuckDB performs metric aggregation using DuckDB SQL:
@@ -134,17 +111,9 @@ func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params me
 		return nil, fmt.Errorf("load ddsketch extension: %w", err)
 	}
 
-	// Discover schema from input files
-	schema, err := discoverSchemaConn(ctx, conn, downloaded.localFiles[0])
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("discover schema: %w", err)
-	}
-	span.SetAttributes(attribute.Int("duckdb.schema_column_count", len(schema)))
-
 	// Generate and execute aggregation SQL
 	outputFile := filepath.Join(params.TmpDir, "rollup_output.parquet")
-	if err := executeAggregationConn(ctx, conn, downloaded.localFiles, outputFile, schema, params.FrequencyMs); err != nil {
+	if err := executeAggregationConn(ctx, conn, downloaded.localFiles, outputFile, params.FrequencyMs); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "aggregation query failed")
 		return nil, fmt.Errorf("execute aggregation: %w", err)
@@ -253,112 +222,42 @@ func escapeSingleQuote(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }
 
-// discoverSchemaConn reads the schema from a parquet file and returns column names.
-func discoverSchemaConn(ctx context.Context, conn *sql.Conn, filePath string) ([]string, error) {
-	ctx, span := boxerTracer.Start(ctx, "duckdb.discover_schema")
-	defer span.End()
-
-	query := fmt.Sprintf("DESCRIBE SELECT * FROM read_parquet('%s')", escapeSingleQuote(filePath))
-	rows, err := conn.QueryContext(ctx, query)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "describe query failed")
-		return nil, fmt.Errorf("describe parquet: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var columns []string
-	for rows.Next() {
-		var name, typ, null, key, def, extra any
-		if err := rows.Scan(&name, &typ, &null, &key, &def, &extra); err != nil {
-			span.RecordError(err)
-			return nil, fmt.Errorf("scan column: %w", err)
-		}
-		if nameStr, ok := name.(string); ok {
-			columns = append(columns, nameStr)
-		}
-	}
-
-	span.SetAttributes(attribute.Int("column_count", len(columns)))
-	return columns, rows.Err()
-}
-
-// executeAggregationConn runs the DuckDB aggregation query.
-func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []string, outputFile string, schema []string, frequencyMs int32) error {
+// executeAggregationConn runs the DuckDB aggregation query using the same
+// table-based pattern as metric ingest: load files into table, aggregate, export.
+func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []string, outputFile string, frequencyMs int32) error {
 	ctx, span := boxerTracer.Start(ctx, "duckdb.execute_aggregation", trace.WithAttributes(
 		attribute.Int("input_file_count", len(inputFiles)),
 		attribute.Int("frequency_ms", int(frequencyMs)),
 	))
 	defer span.End()
 
-	// Build file list for read_parquet (escape single quotes to prevent SQL injection)
+	// Step 1: Load parquet files into a table (same pattern as metric ingest)
 	quotedFiles := make([]string, len(inputFiles))
 	for i, f := range inputFiles {
 		quotedFiles[i] = fmt.Sprintf("'%s'", escapeSingleQuote(f))
 	}
 	fileList := strings.Join(quotedFiles, ", ")
 
-	// Classify columns
-	groupCols := make(map[string]bool)
-	for _, c := range groupByColumns {
-		groupCols[c] = true
+	createSQL := fmt.Sprintf("CREATE TABLE metrics_input AS SELECT * FROM read_parquet([%s], union_by_name=true)", fileList)
+	if _, err := conn.ExecContext(ctx, createSQL); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to create metrics_input table")
+		return fmt.Errorf("create table: %w", err)
 	}
 
-	rollupCols := make(map[string]bool)
-	for _, c := range rollupColumns {
-		rollupCols[c] = true
+	// Step 2: Discover schema from the table (handles union of all input schemas)
+	schema, err := getTableSchema(ctx, conn, "metrics_input")
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to get table schema")
+		return fmt.Errorf("get table schema: %w", err)
 	}
+	span.SetAttributes(attribute.Int("schema_column_count", len(schema)))
 
-	// Build SELECT clauses
-	var selectClauses []string
-	var groupByClauses []string
+	// Step 3: Build aggregation clauses using shared function
+	selectClauses, groupByClauses := buildAggregationClauses(schema, int64(frequencyMs))
 
-	for _, col := range schema {
-		qcol := pq.QuoteIdentifier(col)
-		if col == sketchColumn {
-			// Merge sketches and compute all percentiles in a single pass using ddsketch_stats_agg
-			// This returns a struct with (sketch, p25, p50, p75, p90, p95, p99)
-			selectClauses = append(selectClauses, fmt.Sprintf("ddsketch_stats_agg(%s) AS chq_stats", qcol))
-		} else if col == "chq_timestamp" {
-			// Truncate timestamp to aggregation period
-			selectClauses = append(selectClauses, fmt.Sprintf(
-				"(%s / %d) * %d AS %s",
-				qcol, frequencyMs, frequencyMs, qcol))
-			groupByClauses = append(groupByClauses, fmt.Sprintf("(%s / %d) * %d", qcol, frequencyMs, frequencyMs))
-		} else if col == "chq_tsns" {
-			// Truncate nanosecond timestamp to aggregation period
-			freqNs := int64(frequencyMs) * 1_000_000
-			selectClauses = append(selectClauses, fmt.Sprintf(
-				"(%s / %d) * %d AS %s",
-				qcol, freqNs, freqNs, qcol))
-			groupByClauses = append(groupByClauses, fmt.Sprintf("(%s / %d) * %d", qcol, freqNs, freqNs))
-		} else if groupCols[col] {
-			// Group by column - pass through
-			selectClauses = append(selectClauses, qcol)
-			groupByClauses = append(groupByClauses, qcol)
-		} else if rollupCols[col] {
-			// Skip rollup columns - we'll compute them from the merged sketch
-			continue
-		} else {
-			// Metadata column - use first value
-			selectClauses = append(selectClauses, fmt.Sprintf("first(%s) AS %s", qcol, qcol))
-		}
-	}
-
-	// Build outer query with rollup column extraction
-	// Use union_by_name=true to handle schema differences between files
-	innerQuery := fmt.Sprintf(`
-		SELECT %s
-		FROM read_parquet([%s], union_by_name=true)
-		GROUP BY %s`,
-		strings.Join(selectClauses, ", "),
-		fileList,
-		strings.Join(groupByClauses, ", "))
-
-	// Extract rollup columns from the chq_stats struct returned by ddsketch_stats_agg
-	// The struct contains all stats computed in a single pass:
-	// (sketch BLOB, count BIGINT, sum DOUBLE, avg DOUBLE, min DOUBLE, max DOUBLE,
-	//  p25 DOUBLE, p50 DOUBLE, p75 DOUBLE, p90 DOUBLE, p95 DOUBLE, p99 DOUBLE)
+	// Step 4: Build and execute COPY query (same pattern as metric ingest)
 	rollupExtraction := []string{
 		"chq_stats.sketch AS chq_sketch",
 		"chq_stats.count AS chq_rollup_count",
@@ -374,22 +273,29 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 		"chq_stats.p99 AS chq_rollup_p99",
 	}
 
-	fullQuery := fmt.Sprintf(`
+	innerQuery := fmt.Sprintf(`
+		SELECT %s
+		FROM metrics_input
+		GROUP BY %s`,
+		strings.Join(selectClauses, ", "),
+		strings.Join(groupByClauses, ", "))
+
+	copyQuery := fmt.Sprintf(`
 		COPY (
 			SELECT * EXCLUDE (chq_stats), %s
-			FROM (%s) AS merged
+			FROM (%s) AS aggregated
 			ORDER BY "metric_name", "chq_tid", "chq_timestamp"
 		) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)`,
 		strings.Join(rollupExtraction, ", "),
 		innerQuery,
 		escapeSingleQuote(outputFile))
 
-	_, err := conn.ExecContext(ctx, fullQuery)
-	if err != nil {
+	if _, err := conn.ExecContext(ctx, copyQuery); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "aggregation query failed")
+		return err
 	}
-	return err
+	return nil
 }
 
 // getRecordCount queries the record count from a parquet file.
