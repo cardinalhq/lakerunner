@@ -330,12 +330,12 @@ func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, t
 		StreamField:    streamField,
 	}
 
-	results, err := processLogsWithSorting(ctx, params)
+	result, err := processLogsWithDuckDB(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 
-	return results, nil
+	return result.Results, nil
 }
 
 func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.LogCompactionKey, inputSegments []lrdb.LogSeg) ([]lrdb.LogSeg, error) {
