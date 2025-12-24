@@ -28,7 +28,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -46,7 +45,6 @@ type MetricCompactionProcessor struct {
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
 	config          *config.Config
-	duckDB          *duckdbx.DB
 }
 
 // NewMetricCompactionProcessor creates a new metric compaction processor
@@ -55,14 +53,12 @@ func NewMetricCompactionProcessor(
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 	cfg *config.Config,
-	duckDB *duckdbx.DB,
 ) *MetricCompactionProcessor {
 	return &MetricCompactionProcessor{
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
 		config:          cfg,
-		duckDB:          duckDB,
 	}
 }
 
@@ -88,7 +84,7 @@ func (p *MetricCompactionProcessor) performCompaction(ctx context.Context, tmpDi
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	return processMetricsWithDuckDB(ctx, p.duckDB, params)
+	return processMetricsWithDuckDB(ctx, params)
 }
 
 func (p *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {

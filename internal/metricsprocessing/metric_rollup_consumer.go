@@ -20,7 +20,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
@@ -38,7 +37,6 @@ var rollupAccumulationTimes = map[int32]time.Duration{
 type MetricRollupConsumer struct {
 	*QueueWorkerConsumer
 	processor *MetricRollupProcessor
-	duckDB    *duckdbx.DB
 }
 
 // NewMetricRollupConsumer creates a new metric rollup consumer that processes bundles from the work queue
@@ -55,22 +53,7 @@ func NewMetricRollupConsumer(
 		return nil, err
 	}
 
-	// Create DuckDB instance for aggregation with config settings
-	duckDB, err := duckdbx.NewDB(
-		duckdbx.WithMetrics(30*time.Second),
-		duckdbx.WithDuckDBSettings(duckdbx.DuckDBSettings{
-			MemoryLimitMB:        cfg.DuckDB.GetMemoryLimit(),
-			TempDirectory:        cfg.DuckDB.GetTempDirectory(),
-			MaxTempDirectorySize: cfg.DuckDB.GetMaxTempDirectorySize(),
-			PoolSize:             cfg.DuckDB.GetPoolSize(),
-			Threads:              cfg.DuckDB.GetThreads(),
-		}),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	processor := newMetricRollupProcessor(cfg, store, storageProvider, cmgr, kafkaProducer, duckDB)
+	processor := newMetricRollupProcessor(cfg, store, storageProvider, cmgr, kafkaProducer)
 
 	workerID := time.Now().UnixNano() // Unique worker ID
 	manager := workqueue.NewManager(
@@ -86,14 +69,5 @@ func NewMetricRollupConsumer(
 	return &MetricRollupConsumer{
 		QueueWorkerConsumer: queueConsumer,
 		processor:           processor,
-		duckDB:              duckDB,
 	}, nil
-}
-
-// Close closes the consumer and releases resources
-func (c *MetricRollupConsumer) Close() error {
-	if c.duckDB != nil {
-		return c.duckDB.Close()
-	}
-	return nil
 }

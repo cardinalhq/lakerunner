@@ -20,7 +20,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
 )
@@ -29,7 +28,6 @@ import (
 type MetricCompactionConsumer struct {
 	*QueueWorkerConsumer
 	processor *MetricCompactionProcessor
-	duckDB    *duckdbx.DB
 }
 
 // NewMetricCompactionConsumer creates a new metric compaction consumer that processes bundles from the work queue
@@ -40,22 +38,7 @@ func NewMetricCompactionConsumer(
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) (*MetricCompactionConsumer, error) {
-	// Create DuckDB instance for aggregation with config settings
-	duckDB, err := duckdbx.NewDB(
-		duckdbx.WithMetrics(30*time.Second),
-		duckdbx.WithDuckDBSettings(duckdbx.DuckDBSettings{
-			MemoryLimitMB:        cfg.DuckDB.GetMemoryLimit(),
-			TempDirectory:        cfg.DuckDB.GetTempDirectory(),
-			MaxTempDirectorySize: cfg.DuckDB.GetMaxTempDirectorySize(),
-			PoolSize:             cfg.DuckDB.GetPoolSize(),
-			Threads:              cfg.DuckDB.GetThreads(),
-		}),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	processor := NewMetricCompactionProcessor(store, storageProvider, cmgr, cfg, duckDB)
+	processor := NewMetricCompactionProcessor(store, storageProvider, cmgr, cfg)
 
 	workerID := time.Now().UnixNano() // Unique worker ID
 	manager := workqueue.NewManager(
@@ -71,14 +54,5 @@ func NewMetricCompactionConsumer(
 	return &MetricCompactionConsumer{
 		QueueWorkerConsumer: queueConsumer,
 		processor:           processor,
-		duckDB:              duckDB,
 	}, nil
-}
-
-// Close closes the consumer and releases resources
-func (c *MetricCompactionConsumer) Close() error {
-	if c.duckDB != nil {
-		return c.duckDB.Close()
-	}
-	return nil
 }

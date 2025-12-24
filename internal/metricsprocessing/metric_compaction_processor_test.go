@@ -29,7 +29,7 @@ import (
 
 func TestMetricCompactionProcessor_New(t *testing.T) {
 	store := &MockMetricCompactionStore{}
-	processor := NewMetricCompactionProcessor(store, nil, nil, getTestConfig(), nil)
+	processor := NewMetricCompactionProcessor(store, nil, nil, getTestConfig())
 
 	assert.NotNil(t, processor)
 	assert.Equal(t, store, processor.store)
@@ -38,7 +38,7 @@ func TestMetricCompactionProcessor_New(t *testing.T) {
 
 func TestMetricCompactionProcessor_GetTargetRecordCount(t *testing.T) {
 	mockStore := &MockMetricCompactionStore{}
-	processor := NewMetricCompactionProcessor(mockStore, nil, nil, getTestConfig(), nil)
+	processor := NewMetricCompactionProcessor(mockStore, nil, nil, getTestConfig())
 
 	orgID := uuid.New()
 	frequencyMs := int32(10000)
@@ -59,7 +59,7 @@ func TestMetricCompactionProcessor_GetTargetRecordCount(t *testing.T) {
 
 func TestMetricCompactionProcessor_markSegmentsAsCompacted_EmptySegments(t *testing.T) {
 	mockStore := &MockMetricCompactionStore{}
-	processor := NewMetricCompactionProcessor(mockStore, nil, nil, getTestConfig(), nil)
+	processor := NewMetricCompactionProcessor(mockStore, nil, nil, getTestConfig())
 
 	key := messages.CompactionKey{
 		OrganizationID: uuid.New(),
@@ -77,7 +77,7 @@ func TestMetricCompactionProcessor_markSegmentsAsCompacted_EmptySegments(t *test
 
 func TestMetricCompactionProcessor_markSegmentsAsCompacted_WithSegments(t *testing.T) {
 	mockStore := &MockMetricCompactionStore{}
-	processor := NewMetricCompactionProcessor(mockStore, nil, nil, getTestConfig(), nil)
+	processor := NewMetricCompactionProcessor(mockStore, nil, nil, getTestConfig())
 
 	key := messages.CompactionKey{
 		OrganizationID: uuid.New(),
@@ -109,7 +109,7 @@ func TestMetricCompactionProcessor_markSegmentsAsCompacted_WithSegments(t *testi
 }
 
 func TestMetricCompactionProcessor_getHourFromTimestamp(t *testing.T) {
-	processor := NewMetricCompactionProcessor(nil, nil, nil, getTestConfig(), nil)
+	processor := NewMetricCompactionProcessor(nil, nil, nil, getTestConfig())
 
 	tests := []struct {
 		name        string
@@ -149,7 +149,7 @@ func TestMetricCompactionProcessor_getHourFromTimestamp(t *testing.T) {
 func TestMetricCompactionProcessor_performCompaction_ParameterConstruction(t *testing.T) {
 	// This test verifies that the method exists with the correct signature
 	// and constructs the parameters struct correctly
-	processor := NewMetricCompactionProcessor(nil, nil, nil, getTestConfig(), nil)
+	processor := NewMetricCompactionProcessor(nil, nil, nil, getTestConfig())
 
 	key := messages.CompactionKey{
 		OrganizationID: uuid.New(),
