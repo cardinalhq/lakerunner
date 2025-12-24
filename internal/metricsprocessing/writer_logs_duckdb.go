@@ -254,7 +254,7 @@ func executeLogCompaction(ctx context.Context, conn *sql.Conn, inputFiles []stri
 }
 
 // buildLogOrderByClause constructs the ORDER BY clause for log sorting.
-// Sort order: [service_identifier, c_fingerprint, c_timestamp]
+// Sort order: [service_identifier, chq_fingerprint, chq_timestamp]
 // where service_identifier = streamField > resource_customer_domain > resource_service_name
 func buildLogOrderByClause(schema []string, streamField string) string {
 	schemaSet := mapset.NewSet[string]()

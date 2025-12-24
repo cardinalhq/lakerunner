@@ -235,7 +235,7 @@ func (p *LogCompactionProcessor) processBundleInternal(ctx context.Context, key 
 		attribute.Int("active_segments", len(activeSegments)),
 	))
 
-	results, err := p.performLogCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
+	compactionResult, err := p.performLogCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to perform compaction")
@@ -248,14 +248,18 @@ func (p *LogCompactionProcessor) processBundleInternal(ctx context.Context, key 
 			slog.Any("error", err))
 		return nil
 	}
-	processSpan.SetAttributes(attribute.Int("output_files", len(results)))
+	processSpan.SetAttributes(attribute.Int("output_files", len(compactionResult.Results)))
 	processSpan.End()
 
+	// Use ProcessedSegments (successfully downloaded) for upload and DB update
+	// to avoid marking failed downloads as compacted (data loss prevention)
+	processedSegments := compactionResult.ProcessedSegments
+
 	ctx, uploadSpan := boxerTracer.Start(ctx, "logs.compact.upload_segments", trace.WithAttributes(
-		attribute.Int("result_count", len(results)),
+		attribute.Int("result_count", len(compactionResult.Results)),
 	))
 
-	newSegments, err := p.uploadAndCreateLogSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
+	newSegments, err := p.uploadAndCreateLogSegments(ctx, storageClient, storageProfile, compactionResult.Results, key, processedSegments)
 	if err != nil {
 		uploadSpan.RecordError(err)
 		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
@@ -264,7 +268,7 @@ func (p *LogCompactionProcessor) processBundleInternal(ctx context.Context, key 
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
 			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("resultsCount", len(results)),
+			slog.Int("resultsCount", len(compactionResult.Results)),
 			slog.Any("error", err))
 		return nil
 	}
@@ -272,11 +276,11 @@ func (p *LogCompactionProcessor) processBundleInternal(ctx context.Context, key 
 	uploadSpan.End()
 
 	ctx, dbSpan := boxerTracer.Start(ctx, "logs.compact.update_db", trace.WithAttributes(
-		attribute.Int("old_segment_count", len(activeSegments)),
+		attribute.Int("old_segment_count", len(processedSegments)),
 		attribute.Int("new_segment_count", len(newSegments)),
 	))
 
-	if err := p.atomicLogDatabaseUpdate(ctx, activeSegments, newSegments, key); err != nil {
+	if err := p.atomicLogDatabaseUpdate(ctx, processedSegments, newSegments, key); err != nil {
 		dbSpan.RecordError(err)
 		dbSpan.SetStatus(codes.Error, "failed to update database")
 		dbSpan.End()
@@ -284,7 +288,7 @@ func (p *LogCompactionProcessor) processBundleInternal(ctx context.Context, key 
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
 			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("activeSegments", len(activeSegments)),
+			slog.Int("processedSegments", len(processedSegments)),
 			slog.Int("newSegments", len(newSegments)),
 			slog.Any("error", err))
 		return nil
@@ -292,14 +296,14 @@ func (p *LogCompactionProcessor) processBundleInternal(ctx context.Context, key 
 	dbSpan.End()
 
 	var totalRecords, totalSize int64
-	for _, result := range results {
+	for _, result := range compactionResult.Results {
 		totalRecords += result.RecordCount
 		totalSize += result.FileSize
 	}
 
 	ll.Info("Log compaction completed successfully",
-		slog.Int("inputSegments", len(activeSegments)),
-		slog.Int("outputFiles", len(results)),
+		slog.Int("inputSegments", len(processedSegments)),
+		slog.Int("outputFiles", len(compactionResult.Results)),
 		slog.Int64("outputRecords", totalRecords),
 		slog.Int64("outputFileSize", totalSize))
 
@@ -316,7 +320,7 @@ func (p *LogCompactionProcessor) ShouldEmitImmediately(msg *messages.LogCompacti
 	return false
 }
 
-func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.LogCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.LogSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
+func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.LogCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.LogSeg, recordCountEstimate int64) (*logProcessingResult, error) {
 	// Get stream field config for this organization
 	streamField := configservice.Global().GetLogStreamConfig(ctx, compactionKey.OrganizationID).FieldName
 
@@ -330,12 +334,7 @@ func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, t
 		StreamField:    streamField,
 	}
 
-	result, err := processLogsWithDuckDB(ctx, params)
-	if err != nil {
-		return nil, err
-	}
-
-	return result.Results, nil
+	return processLogsWithDuckDB(ctx, params)
 }
 
 func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.LogCompactionKey, inputSegments []lrdb.LogSeg) ([]lrdb.LogSeg, error) {

@@ -102,6 +102,7 @@ func (q *Store) CompactTraceSegments(
 					Fingerprints:   r.Fingerprints,
 					Published:      true,
 					Compacted:      true,
+					LabelNameMap:   r.LabelNameMap,
 				}
 			}
 
