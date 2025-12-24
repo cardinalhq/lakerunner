@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"cmp"
 	"sync"
 
 	"github.com/cardinalhq/lakerunner/pipeline"
@@ -28,6 +29,22 @@ type LogSortKey struct {
 	Timestamp         int64
 	ServiceOk         bool
 	TsOk              bool
+}
+
+// compareOptional compares two optional values (value + ok flag)
+// Returns: -1 if k < o, 0 if k == o, 1 if k > o
+// nil values sort after non-nil values
+func compareOptional[T cmp.Ordered](kVal T, kOk bool, oVal T, oOk bool) int {
+	if !kOk || !oOk {
+		if !kOk && !oOk {
+			return 0
+		}
+		if !kOk {
+			return 1
+		}
+		return -1
+	}
+	return cmp.Compare(kVal, oVal)
 }
 
 // Compare implements SortKey interface for LogSortKey

@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/plog"
-	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
@@ -62,74 +61,6 @@ func createSyntheticLogsFile(t *testing.T, compressed bool) string {
 	logs := builder.Build()
 	marshaler := &plog.ProtoMarshaler{}
 	data, err := marshaler.MarshalLogs(logs)
-	require.NoError(t, err)
-
-	// Create temporary file
-	var tmpFile *os.File
-	if compressed {
-		tmpFile, err = os.CreateTemp("", "*.binpb.gz")
-		require.NoError(t, err)
-
-		gzWriter := gzip.NewWriter(tmpFile)
-		_, err = gzWriter.Write(data)
-		require.NoError(t, err)
-
-		err = gzWriter.Close()
-		require.NoError(t, err)
-	} else {
-		tmpFile, err = os.CreateTemp("", "*.binpb")
-		require.NoError(t, err)
-
-		_, err = tmpFile.Write(data)
-		require.NoError(t, err)
-	}
-
-	err = tmpFile.Close()
-	require.NoError(t, err)
-
-	// Clean up the file when test completes
-	t.Cleanup(func() {
-		_ = os.Remove(tmpFile.Name())
-	})
-
-	return tmpFile.Name()
-}
-
-func createSyntheticMetricsFile(t *testing.T, compressed bool) string {
-	builder := signalbuilder.NewMetricsBuilder()
-	resourceMetrics := &signalbuilder.ResourceMetrics{
-		Resource: map[string]any{
-			"service.name": "factory-test-metrics-service",
-		},
-		ScopeMetrics: []signalbuilder.ScopeMetrics{
-			{
-				Name:    "factory-test-meter",
-				Version: "1.0.0",
-				Metrics: []signalbuilder.Metric{
-					{
-						Name: "factory_test_counter",
-						Type: "sum",
-						Sum: &signalbuilder.SumMetric{
-							IsMonotonic: true,
-							DataPoints: []signalbuilder.NumberDataPoint{
-								{
-									Value:     100,
-									Timestamp: time.Now().UnixNano(),
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	err := builder.Add(resourceMetrics)
-	require.NoError(t, err)
-
-	metrics := builder.Build()
-	marshaler := &pmetric.ProtoMarshaler{}
-	data, err := marshaler.MarshalMetrics(metrics)
 	require.NoError(t, err)
 
 	// Create temporary file
@@ -291,14 +222,6 @@ func TestReaderForFile(t *testing.T) {
 			description:   "Logs protobuf file",
 		},
 		{
-			name:          "BinpbGzMetrics",
-			filename:      "",
-			signalType:    SignalTypeMetrics,
-			expectSuccess: true,
-			expectedType:  "*filereader.SortingIngestProtoMetricsReader",
-			description:   "Gzipped metrics protobuf file",
-		},
-		{
 			name:          "BinpbGzTraces",
 			filename:      "",
 			signalType:    SignalTypeTraces,
@@ -333,8 +256,6 @@ func TestReaderForFile(t *testing.T) {
 				switch tt.name {
 				case "BinpbLogs":
 					filename = createSyntheticLogsFile(t, false)
-				case "BinpbGzMetrics":
-					filename = createSyntheticMetricsFile(t, true)
 				case "BinpbGzTraces":
 					filename = createSyntheticTracesFile(t, true)
 				}
@@ -411,12 +332,6 @@ func TestSignalTypeSpecificProtoReaders(t *testing.T) {
 			readerType: "*filereader.IngestProtoLogsReader",
 		},
 		{
-			name:       "MetricsProtoReader",
-			filename:   "",
-			signalType: SignalTypeMetrics,
-			readerType: "*filereader.SortingIngestProtoMetricsReader",
-		},
-		{
 			name:       "TracesProtoReader",
 			filename:   "",
 			signalType: SignalTypeTraces,
@@ -431,8 +346,6 @@ func TestSignalTypeSpecificProtoReaders(t *testing.T) {
 				switch tt.name {
 				case "LogsProtoReader":
 					filename = createSyntheticLogsFile(t, false)
-				case "MetricsProtoReader":
-					filename = createSyntheticMetricsFile(t, true)
 				case "TracesProtoReader":
 					filename = createSyntheticTracesFile(t, true)
 				}
@@ -457,11 +370,6 @@ func TestGzippedProtobufSupport(t *testing.T) {
 		signalType SignalType
 	}{
 		{
-			name:       "GzippedMetrics",
-			filename:   "",
-			signalType: SignalTypeMetrics,
-		},
-		{
 			name:       "GzippedTraces",
 			filename:   "",
 			signalType: SignalTypeTraces,
@@ -473,8 +381,6 @@ func TestGzippedProtobufSupport(t *testing.T) {
 			filename := tt.filename
 			if tt.filename == "" {
 				switch tt.name {
-				case "GzippedMetrics":
-					filename = createSyntheticMetricsFile(t, true)
 				case "GzippedTraces":
 					filename = createSyntheticTracesFile(t, true)
 				}

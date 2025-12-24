@@ -56,7 +56,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &memoryTestSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 
@@ -77,7 +77,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	// Should have 4 rows in sorted order
 	require.Len(t, allRows, 4)
 
-	// Verify sorting: [cpu.usage:12345:10000, cpu.usage:12345:20000, cpu.usage:54321:10000, memory.usage:12345:10000]
+	// Verify sorting by name, TID, timestamp: [cpu.usage:12345:10000, cpu.usage:12345:20000, cpu.usage:54321:10000, memory.usage:12345:10000]
 	expectedOrder := []struct {
 		name      string
 		tid       int64
@@ -98,7 +98,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 
 func TestMemorySortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]pipeline.Row{})
-	sortingReader, err := NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &LogSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 
@@ -131,7 +131,7 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &memoryTestSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 
@@ -197,6 +197,47 @@ func (k *reverseTimestampSortKey) Compare(other SortKey) int {
 }
 
 func (k *reverseTimestampSortKey) Release() {
+	// No pooling for test-only key
+}
+
+// nameTidTimestampSortKeyProvider is a test sort key provider that sorts by name, TID, and timestamp.
+type memoryTestSortKeyProvider struct{}
+
+func (p *memoryTestSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
+	key := &memoryTestSortKey{}
+	key.name, key.nameOk = row[wkk.RowKeyCName].(string)
+	key.tid, key.tidOk = row[wkk.RowKeyCTID].(int64)
+	key.timestamp, key.tsOk = row[wkk.RowKeyCTimestamp].(int64)
+	return key
+}
+
+type memoryTestSortKey struct {
+	name      string
+	tid       int64
+	timestamp int64
+	nameOk    bool
+	tidOk     bool
+	tsOk      bool
+}
+
+func (k *memoryTestSortKey) Compare(other SortKey) int {
+	o := other.(*memoryTestSortKey)
+
+	// Compare name
+	if cmp := compareOptional(k.name, k.nameOk, o.name, o.nameOk); cmp != 0 {
+		return cmp
+	}
+
+	// Compare TID
+	if cmp := compareOptional(k.tid, k.tidOk, o.tid, o.tidOk); cmp != 0 {
+		return cmp
+	}
+
+	// Compare timestamp
+	return compareOptional(k.timestamp, k.tsOk, o.timestamp, o.tsOk)
+}
+
+func (k *memoryTestSortKey) Release() {
 	// No pooling for test-only key
 }
 

@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
@@ -553,94 +552,6 @@ func TestParquetRawReader_TIDConversion(t *testing.T) {
 	tsInt64, isInt64 := timestampValue.(int64)
 	require.True(t, isInt64, "Timestamp should be int64, got %T", timestampValue)
 	assert.Equal(t, int64(1000000), tsInt64, "Timestamp value should match")
-}
-
-func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
-	// Test DiskSortingReader(CookedMetricTranslatingReader(ParquetReader)) combination
-	// CookedMetricTranslatingReader filters out rows with NaN values
-	testCases := []struct {
-		name          string
-		rowCount      int
-		nanRows       int // number of rows with NaN values that will be filtered
-		expectedCount int64
-	}{
-		{"no_nan_rows", 227, 0, 227},
-		{"with_one_nan", 227, 1, 226},
-		{"with_multiple_nan", 231, 2, 229},
-		{"all_valid", 227, 0, 227},
-	}
-
-	// Use the standard metric sorting provider
-	keyProvider := &MetricSortKeyProvider{}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Create test data with metric fields
-			testRows := make([]map[string]any, tc.rowCount)
-			for i := range testRows {
-				testRows[i] = map[string]any{
-					"chq_collector_id": fmt.Sprintf("collector-%d", i),
-					"chq_timestamp":    int64(1000000 + i),
-					"chq_metric_name":  "test_metric",
-					"chq_rollup_sum":   float64(i * 10),
-					"chq_rollup_count": float64(i),
-					"chq_rollup_avg":   float64(10),
-				}
-
-				// Add NaN values to some rows to test filtering
-				if i < tc.nanRows {
-					testRows[i]["chq_rollup_sum"] = math.NaN()
-				}
-			}
-
-			// Generate parquet file in memory
-			parquetData, _ := createTestParquetInMemory(t, testRows)
-
-			// Create the ParquetReader
-			parquetReader, err := NewParquetRawReader(bytes.NewReader(parquetData), int64(len(parquetData)), 1000)
-			require.NoError(t, err, "Failed to create ParquetReader")
-			defer func() { _ = parquetReader.Close() }()
-
-			// Wrap with CookedMetricTranslatingReader to handle metric-specific transformations
-			translatingReader := NewCookedMetricTranslatingReader(parquetReader)
-			defer func() { _ = translatingReader.Close() }()
-
-			// Wrap with DiskSortingReader
-			diskSortingReader, err := NewDiskSortingReader(translatingReader, keyProvider, 1000)
-			require.NoError(t, err, "Failed to create DiskSortingReader")
-			defer func() { _ = diskSortingReader.Close() }()
-
-			var totalRows int64
-			batchCount := 0
-
-			for {
-				batch, err := diskSortingReader.Next(context.TODO())
-				if batch != nil {
-					batchCount++
-					totalRows += int64(batch.Len())
-
-					// Verify batch structure for first batch only
-					if batchCount == 1 {
-						assert.Greater(t, batch.Len(), 0, "First batch should have rows")
-						for i := 0; i < batch.Len() && i < 3; i++ {
-							row := batch.Get(i)
-							assert.NotNil(t, row, "Row %d should not be nil", i)
-							assert.Greater(t, len(row), 0, "Row %d should have fields", i)
-						}
-					}
-				}
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				require.NoError(t, err, "DiskSortingReader error in test %s", tc.name)
-			}
-
-			assert.Equal(t, tc.expectedCount, totalRows, "DiskSortingReader should preserve all %d records from %s", tc.expectedCount, tc.name)
-			assert.Equal(t, totalRows, diskSortingReader.TotalRowsReturned(), "DiskSortingReader TotalRowsReturned should match for %s", tc.name)
-
-			t.Logf("Test %s: DiskSortingReader successfully read %d records in %d batches (filtered %d NaN rows)", tc.name, totalRows, batchCount, tc.nanRows)
-		})
-	}
 }
 
 // TestParquetRawReaderSmallFiles tests the NewParquetRawReader with different file sizes

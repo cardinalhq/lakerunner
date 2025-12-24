@@ -73,26 +73,6 @@ func ReaderForMetricAggregation(filename, orgId string, aggregationPeriodMs int6
 	return ReaderForFileWithOptions(filename, opts)
 }
 
-// WrapReaderForAggregation wraps a reader with aggregation if enabled.
-func WrapReaderForAggregation(reader Reader, opts ReaderOptions) (Reader, error) {
-	if opts.SignalType != SignalTypeMetrics {
-		return reader, nil
-	}
-
-	wrappedReader := reader
-
-	// Add aggregation if enabled
-	if opts.EnableAggregation && opts.AggregationPeriodMs > 0 {
-		var err error
-		wrappedReader, err = NewAggregatingMetricsReader(wrappedReader, opts.AggregationPeriodMs, opts.BatchSize)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create aggregating metrics reader: %w", err)
-		}
-	}
-
-	return wrappedReader, nil
-}
-
 // ReaderForFileWithOptions creates a Reader for the given file with the provided options.
 // Supported file formats:
 //   - .parquet: Creates a ParquetRawReader (works for all signal types)
@@ -331,13 +311,6 @@ func createProtoReaderWithOptions(reader io.Reader, opts ReaderOptions) (Reader,
 			return nil, err
 		}
 		return protoReader, nil
-	case SignalTypeMetrics:
-		return NewSortingIngestProtoMetricsReader(reader, SortingReaderOptions{
-			OrgID:     opts.OrgID,
-			Bucket:    opts.Bucket,
-			ObjectID:  opts.ObjectID,
-			BatchSize: opts.BatchSize,
-		})
 	case SignalTypeTraces:
 		return NewIngestProtoTracesReader(reader, opts)
 	default:
