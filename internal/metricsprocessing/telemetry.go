@@ -71,6 +71,16 @@ func recordTraceSegmentDownload404(
 	recordSegmentDownload404(ctx, "traces", bucket, organizationID, instanceNum, createdBy)
 }
 
+func recordMetricSegmentDownload404(
+	ctx context.Context,
+	bucket string,
+	organizationID uuid.UUID,
+	instanceNum int16,
+	createdBy lrdb.CreatedBy,
+) {
+	recordSegmentDownload404(ctx, "metrics", bucket, organizationID, instanceNum, createdBy)
+}
+
 func recordSegmentDownload404(
 	ctx context.Context,
 	signal string,
