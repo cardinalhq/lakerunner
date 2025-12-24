@@ -67,7 +67,7 @@ type metricProcessingResult struct {
 //
 // Returns both the results and the list of segments that were successfully processed.
 // Segments that failed to download are skipped and not included in ProcessedSegments.
-func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params metricProcessingParams) (*metricProcessingResult, error) {
+func processMetricsWithDuckDB(ctx context.Context, params metricProcessingParams) (*metricProcessingResult, error) {
 	span := trace.SpanFromContext(ctx)
 	ll := logctx.FromContext(ctx)
 
@@ -97,15 +97,23 @@ func processMetricsWithDuckDB(ctx context.Context, duckDB *duckdbx.DB, params me
 		slog.Int("frequencyMs", int(params.FrequencyMs)),
 		slog.Int("skippedSegments", len(params.ActiveSegments)-len(downloaded.downloadedSegments)))
 
-	// Get a connection from the pool
-	conn, release, err := duckDB.GetConnection(ctx)
+	// Create a temporary file-based DuckDB database (isolated per work item)
+	dbPath := filepath.Join(params.TmpDir, "metrics_rollup.duckdb")
+	db, err := duckdbx.NewDB(duckdbx.WithDatabasePath(dbPath))
+	if err != nil {
+		span.RecordError(err)
+		return nil, fmt.Errorf("create duckdb: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	conn, release, err := db.GetConnection(ctx)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("get duckdb connection: %w", err)
 	}
 	defer release()
 
-	// Load DDSketch extension on this connection
+	// Load DDSketch extension
 	if err := duckdbx.LoadDDSketchExtension(ctx, conn); err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("load ddsketch extension: %w", err)

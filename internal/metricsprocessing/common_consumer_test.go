@@ -439,7 +439,7 @@ func TestNewMetricProcessorV2(t *testing.T) {
 	assert.NotNil(t, NewMetricCompactionProcessor)
 
 	// Test the processor creation
-	processor := NewMetricCompactionProcessor(mockStore, nil, nil, getTestConfig(), nil)
+	processor := NewMetricCompactionProcessor(mockStore, nil, nil, getTestConfig())
 	assert.NotNil(t, processor)
 	assert.Equal(t, mockStore, processor.store)
 }
@@ -494,7 +494,7 @@ func TestCommonProcessor_InterfaceImplementation(t *testing.T) {
 	metricStore := &MockMetricCompactionStore{}
 	logStore := &MockLogCompactionStore{}
 
-	metricProcessor := NewMetricCompactionProcessor(metricStore, nil, nil, getTestConfig(), nil)
+	metricProcessor := NewMetricCompactionProcessor(metricStore, nil, nil, getTestConfig())
 	logProcessor := NewLogCompactionProcessor(logStore, nil, nil, getTestConfig())
 
 	// Test that they implement the interface by calling GetTargetRecordCount
@@ -526,7 +526,7 @@ func TestCommonProcessor_InterfaceImplementation(t *testing.T) {
 func TestMetricCompactionProcessor_ProcessWorkInterface(t *testing.T) {
 	// Test that the processor implements the CompactionProcessor interface
 	// by verifying ProcessWork method exists with correct signature
-	processor := NewMetricCompactionProcessor(&MockMetricCompactionStore{}, nil, nil, getTestConfig(), nil)
+	processor := NewMetricCompactionProcessor(&MockMetricCompactionStore{}, nil, nil, getTestConfig())
 
 	// Test that we can create the group structure that ProcessWork expects
 	group := &accumulationGroup[messages.CompactionKey]{
