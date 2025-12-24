@@ -233,7 +233,7 @@ func (p *TraceCompactionProcessor) ProcessWork(
 		attribute.Int("segment_count", len(activeSegments)),
 	))
 
-	results, err := p.performTraceCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
+	compactionResult, err := p.performTraceCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to perform compaction core")
@@ -246,15 +246,19 @@ func (p *TraceCompactionProcessor) ProcessWork(
 			slog.Any("error", err))
 		return err
 	}
-	processSpan.SetAttributes(attribute.Int("result_count", len(results)))
+	processSpan.SetAttributes(attribute.Int("result_count", len(compactionResult.Results)))
 	processSpan.End()
+
+	// Use ProcessedSegments (successfully downloaded) for upload and DB update
+	// to avoid marking failed downloads as compacted (data loss prevention)
+	processedSegments := compactionResult.ProcessedSegments
 
 	// Upload segments
 	ctx, uploadSpan := boxerTracer.Start(ctx, "traces.compact.upload_segments", trace.WithAttributes(
-		attribute.Int("result_count", len(results)),
+		attribute.Int("result_count", len(compactionResult.Results)),
 	))
 
-	newSegments, err := p.uploadAndCreateTraceSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
+	newSegments, err := p.uploadAndCreateTraceSegments(ctx, storageClient, storageProfile, compactionResult.Results, key, processedSegments)
 	if err != nil {
 		uploadSpan.RecordError(err)
 		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
@@ -263,7 +267,7 @@ func (p *TraceCompactionProcessor) ProcessWork(
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
 			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("resultsCount", len(results)),
+			slog.Int("resultsCount", len(compactionResult.Results)),
 			slog.Any("error", err))
 		return err
 	}
@@ -272,11 +276,11 @@ func (p *TraceCompactionProcessor) ProcessWork(
 
 	// Update database
 	ctx, dbSpan := boxerTracer.Start(ctx, "traces.compact.update_db", trace.WithAttributes(
-		attribute.Int("old_segments", len(activeSegments)),
+		attribute.Int("old_segments", len(processedSegments)),
 		attribute.Int("new_segments", len(newSegments)),
 	))
 
-	if err := p.atomicTraceDatabaseUpdate(ctx, activeSegments, newSegments, key, partition, offset); err != nil {
+	if err := p.atomicTraceDatabaseUpdate(ctx, processedSegments, newSegments, key, partition, offset); err != nil {
 		dbSpan.RecordError(err)
 		dbSpan.SetStatus(codes.Error, "failed to update database")
 		dbSpan.End()
@@ -284,7 +288,7 @@ func (p *TraceCompactionProcessor) ProcessWork(
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
 			slog.Int("instanceNum", int(key.InstanceNum)),
-			slog.Int("activeSegments", len(activeSegments)),
+			slog.Int("processedSegments", len(processedSegments)),
 			slog.Int("newSegments", len(newSegments)),
 			slog.Any("error", err))
 		return err
@@ -292,14 +296,14 @@ func (p *TraceCompactionProcessor) ProcessWork(
 	dbSpan.End()
 
 	var totalRecords, totalSize int64
-	for _, result := range results {
+	for _, result := range compactionResult.Results {
 		totalRecords += result.RecordCount
 		totalSize += result.FileSize
 	}
 
 	ll.Info("Trace compaction completed successfully",
-		slog.Int("inputSegments", len(activeSegments)),
-		slog.Int("outputFiles", len(results)),
+		slog.Int("inputSegments", len(processedSegments)),
+		slog.Int("outputFiles", len(compactionResult.Results)),
 		slog.Int64("outputRecords", totalRecords),
 		slog.Int64("outputFileSize", totalSize))
 	return nil
@@ -316,7 +320,7 @@ func (p *TraceCompactionProcessor) ShouldEmitImmediately(msg *messages.TraceComp
 }
 
 // Helper methods similar to logs but for traces
-func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.TraceCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.TraceSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
+func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.TraceCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.TraceSeg, recordCountEstimate int64) (*traceProcessingResult, error) {
 	params := traceProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
@@ -326,12 +330,7 @@ func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Contex
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	results, err := processTracesWithSorting(ctx, params)
-	if err != nil {
-		return nil, err
-	}
-
-	return results, nil
+	return processTracesWithDuckDB(ctx, params)
 }
 
 func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.TraceCompactionKey, inputSegments []lrdb.TraceSeg) ([]lrdb.TraceSeg, error) {
@@ -380,6 +379,7 @@ func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Cont
 			Compacted:    true,
 			Published:    true,
 			Fingerprints: stats.Fingerprints,
+			LabelNameMap: stats.LabelNameMap,
 			CreatedBy:    lrdb.CreatedByCompact,
 		}
 
@@ -420,6 +420,7 @@ func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context
 			RecordCount:  seg.RecordCount,
 			FileSize:     seg.FileSize,
 			Fingerprints: seg.Fingerprints,
+			LabelNameMap: seg.LabelNameMap,
 		}
 	}
 

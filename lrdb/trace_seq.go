@@ -44,6 +44,7 @@ type CompactTraceSegsNew struct {
 	RecordCount  int64
 	FileSize     int64
 	Fingerprints []int64
+	LabelNameMap []byte
 }
 
 func (q *Store) InsertTraceSegment(ctx context.Context, params InsertTraceSegmentParams) error {
