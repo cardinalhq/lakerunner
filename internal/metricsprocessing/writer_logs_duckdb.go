@@ -53,7 +53,7 @@ type logDownloadResult struct {
 // processLogsWithDuckDB performs log compaction using DuckDB:
 // 1. Download parquet files from S3 to local disk
 // 2. Load all files into a DuckDB table with union_by_name for schema merging
-// 3. Sort by [service_identifier, c_fingerprint, c_timestamp]
+// 3. Sort by [service_identifier, chq_fingerprint, chq_timestamp]
 // 4. Export sorted result to parquet
 // 5. Merge metadata from input segments (timestamps, fingerprints, stream values)
 // 6. Compute agg counts from DuckDB (10s bucket aggregation)
