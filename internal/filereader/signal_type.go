@@ -20,8 +20,6 @@ type SignalType int
 const (
 	// SignalTypeLogs represents log data
 	SignalTypeLogs SignalType = iota
-	// SignalTypeMetrics represents metric data
-	SignalTypeMetrics
 	// SignalTypeTraces represents trace data
 	SignalTypeTraces
 )
@@ -31,8 +29,6 @@ func (s SignalType) String() string {
 	switch s {
 	case SignalTypeLogs:
 		return "logs"
-	case SignalTypeMetrics:
-		return "metrics"
 	case SignalTypeTraces:
 		return "traces"
 	default:

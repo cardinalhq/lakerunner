@@ -61,18 +61,6 @@ func ReaderForFile(filename string, signalType SignalType, orgId string, exempla
 	return ReaderForFileWithOptions(filename, options)
 }
 
-// ReaderForMetricAggregation creates a Reader for metrics with aggregation enabled.
-func ReaderForMetricAggregation(filename, orgId string, aggregationPeriodMs int64) (Reader, error) {
-	opts := ReaderOptions{
-		SignalType:          SignalTypeMetrics,
-		BatchSize:           1000,
-		EnableAggregation:   true,
-		OrgID:               orgId,
-		AggregationPeriodMs: aggregationPeriodMs,
-	}
-	return ReaderForFileWithOptions(filename, opts)
-}
-
 // ReaderForFileWithOptions creates a Reader for the given file with the provided options.
 // Supported file formats:
 //   - .parquet: Creates a ParquetRawReader (works for all signal types)

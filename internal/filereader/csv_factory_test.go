@@ -15,7 +15,6 @@
 package filereader
 
 import (
-	"compress/gzip"
 	"context"
 	"os"
 	"path/filepath"
@@ -68,46 +67,6 @@ func TestReaderForFileWithOptions_CSV(t *testing.T) {
 		assert.Equal(t, "Test message 1", row[wkk.RowKeyCMessage])
 		assert.Equal(t, int64(1758397185000), row[wkk.RowKeyCTimestamp])
 		assert.Equal(t, "INFO", row[wkk.NewRowKey("log_level")])
-	})
-
-	// Test gzipped CSV
-	t.Run("gzipped CSV", func(t *testing.T) {
-		csvGzPath := filepath.Join(tempDir, "test.csv.gz")
-		csvContent := `id,value,name
-1,100,Alice
-2,200,Bob`
-
-		// Create gzipped file
-		file, err := os.Create(csvGzPath)
-		require.NoError(t, err)
-		gzWriter := gzip.NewWriter(file)
-		_, err = gzWriter.Write([]byte(csvContent))
-		require.NoError(t, err)
-		require.NoError(t, gzWriter.Close())
-		require.NoError(t, file.Close())
-
-		opts := ReaderOptions{
-			SignalType: SignalTypeMetrics, // Test non-logs type
-			BatchSize:  10,
-		}
-
-		reader, err := ReaderForFileWithOptions(csvGzPath, opts)
-		require.NoError(t, err)
-		defer func() {
-			_ = reader.Close()
-		}()
-
-		// Read batch
-		batch, err := reader.Next(ctx)
-		require.NoError(t, err)
-		require.NotNil(t, batch)
-		assert.Equal(t, 2, batch.Len())
-
-		// Check data was read correctly (no translation for metrics)
-		row := batch.Get(0)
-		assert.Equal(t, int64(1), row[wkk.NewRowKey("id")])
-		assert.Equal(t, int64(100), row[wkk.NewRowKey("value")])
-		assert.Equal(t, "Alice", row[wkk.NewRowKey("name")])
 	})
 
 	// Test CSV with logs translation
