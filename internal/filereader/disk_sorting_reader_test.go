@@ -52,7 +52,7 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &LogSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 
@@ -100,7 +100,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	}
 
 	mockReader := NewMockReader([]pipeline.Row{testRow})
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &nameTidTimestampSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 
@@ -125,7 +125,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 
 func TestDiskSortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]pipeline.Row{})
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &nameTidTimestampSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 
@@ -151,7 +151,7 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &nameTidTimestampSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 
@@ -174,7 +174,7 @@ func TestDiskSortingReader_CleanupOnError(t *testing.T) {
 		readError: fmt.Errorf("simulated read error"),
 	}
 
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &nameTidTimestampSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 
 	tempFileName := sortingReader.tempFile.Name()
@@ -243,6 +243,48 @@ func (m *MockReader) GetSchema() *ReaderSchema {
 	return NewReaderSchema()
 }
 
+// nameTidTimestampSortKeyProvider is a test sort key provider that sorts by name, TID, and timestamp.
+// This replaces the production MetricSortKeyProvider for testing purposes.
+type nameTidTimestampSortKeyProvider struct{}
+
+func (p *nameTidTimestampSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
+	key := &nameTidTimestampSortKey{}
+	key.name, key.nameOk = row[wkk.RowKeyCName].(string)
+	key.tid, key.tidOk = row[wkk.RowKeyCTID].(int64)
+	key.timestamp, key.tsOk = row[wkk.RowKeyCTimestamp].(int64)
+	return key
+}
+
+type nameTidTimestampSortKey struct {
+	name      string
+	tid       int64
+	timestamp int64
+	nameOk    bool
+	tidOk     bool
+	tsOk      bool
+}
+
+func (k *nameTidTimestampSortKey) Compare(other SortKey) int {
+	o := other.(*nameTidTimestampSortKey)
+
+	// Compare name
+	if cmp := compareOptional(k.name, k.nameOk, o.name, o.nameOk); cmp != 0 {
+		return cmp
+	}
+
+	// Compare TID
+	if cmp := compareOptional(k.tid, k.tidOk, o.tid, o.tidOk); cmp != 0 {
+		return cmp
+	}
+
+	// Compare timestamp
+	return compareOptional(k.timestamp, k.tsOk, o.timestamp, o.tsOk)
+}
+
+func (k *nameTidTimestampSortKey) Release() {
+	// No pooling for test-only key
+}
+
 func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
 	// Test to verify DiskSortingReader doesn't drop rows due to batch size boundaries
 	// This test creates exactly 1234 rows and verifies we get exactly 1234 back
@@ -261,7 +303,7 @@ func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, batchSize)
+	sortingReader, err := NewDiskSortingReader(mockReader, &nameTidTimestampSortKeyProvider{}, batchSize)
 	require.NoError(t, err)
 	defer func() { _ = sortingReader.Close() }()
 
@@ -337,7 +379,7 @@ func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
 	initialStats := pipeline.GlobalBatchPoolStats()
 
 	reader := &manyBatchReader{remaining: batchCount}
-	dsr, err := NewDiskSortingReader(reader, &MetricSortKeyProvider{}, 10)
+	dsr, err := NewDiskSortingReader(reader, &nameTidTimestampSortKeyProvider{}, 10)
 	require.NoError(t, err)
 	defer func() { _ = dsr.Close() }()
 

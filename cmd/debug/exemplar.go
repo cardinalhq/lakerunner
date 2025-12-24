@@ -71,7 +71,7 @@ Does not create segments, only generates and outputs exemplars.`,
 
 	cmd.Flags().StringVar(&bucket, "bucket", "", "S3 bucket name (required)")
 	cmd.Flags().IntVar(&fileCount, "file-count", 100, "Number of recent files to process")
-	cmd.Flags().StringVar(&signalType, "signal-type", "", "Filter by signal type: logs, metrics, or traces")
+	cmd.Flags().StringVar(&signalType, "signal-type", "", "Filter by signal type: logs, or traces")
 	cmd.Flags().BoolVar(&skipSchemaCheck, "skip-schema-check", false, "Skip database schema version check")
 	cmd.Flags().IntVar(&maxExemplars, "max-exemplars", 0, "Maximum exemplars to output per signal type (0 = unlimited)")
 	_ = cmd.MarkFlagRequired("bucket")
@@ -96,14 +96,11 @@ func runExemplarFromParquet(ctx context.Context, bucket string, fileCount int, s
 		case "logs":
 			filterSignalType = filereader.SignalTypeLogs
 			hasFilter = true
-		case "metrics":
-			filterSignalType = filereader.SignalTypeMetrics
-			hasFilter = true
 		case "traces":
 			filterSignalType = filereader.SignalTypeTraces
 			hasFilter = true
 		default:
-			return fmt.Errorf("invalid signal-type: %s (must be logs, metrics, or traces)", signalTypeFilter)
+			return fmt.Errorf("invalid signal-type: %s (must be logs, or traces)", signalTypeFilter)
 		}
 	}
 
@@ -200,8 +197,6 @@ func runExemplarFromParquet(ctx context.Context, bucket string, fileCount int, s
 		switch strings.ToLower(signal) {
 		case "logs":
 			fileSignalType = filereader.SignalTypeLogs
-		case "metrics":
-			fileSignalType = filereader.SignalTypeMetrics
 		case "traces":
 			fileSignalType = filereader.SignalTypeTraces
 		default:
@@ -362,10 +357,6 @@ func processFile(ctx context.Context, cloudManagers cloudstorage.ClientProvider,
 				if err := exemplarProcessor.ProcessLogsFromRow(ctx, orgID, row); err != nil {
 					return fmt.Errorf("failed to process log row: %w", err)
 				}
-			case filereader.SignalTypeMetrics:
-				if err := exemplarProcessor.ProcessMetricsFromRow(ctx, orgID, row); err != nil {
-					return fmt.Errorf("failed to process metric row: %w", err)
-				}
 			case filereader.SignalTypeTraces:
 				if err := exemplarProcessor.ProcessTracesFromRow(ctx, orgID, row); err != nil {
 					return fmt.Errorf("failed to process trace row: %w", err)
@@ -405,18 +396,6 @@ func createReaderStack(tmpFilename, orgID, bucket, objectID string, signalType f
 				_ = reader.Close()
 				return nil, fmt.Errorf("failed to create translating reader: %w", err)
 			}
-		}
-	case filereader.SignalTypeMetrics:
-		translator := &metricsprocessing.MetricTranslator{
-			OrgID:    orgID,
-			Bucket:   bucket,
-			ObjectID: objectID,
-		}
-		var err error
-		translatedReader, err = filereader.NewTranslatingReader(reader, translator, 1000)
-		if err != nil {
-			_ = reader.Close()
-			return nil, fmt.Errorf("failed to create translating reader: %w", err)
 		}
 	case filereader.SignalTypeTraces:
 		translator := metricsprocessing.NewTraceTranslator(orgID, bucket, objectID)

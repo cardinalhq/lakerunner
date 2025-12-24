@@ -17,7 +17,6 @@ package filereader
 import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
-	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
@@ -128,129 +127,6 @@ func extractSchemaFromOTELTraces(traces *ptrace.Traces) *ReaderSchema {
 					schema.AddColumn(key, key, dataType, true)
 					return true
 				})
-			}
-		}
-	}
-
-	return schema
-}
-
-// extractSchemaFromOTELMetrics scans all OTEL metrics and extracts the complete schema.
-func extractSchemaFromOTELMetrics(metrics *pmetric.Metrics) *ReaderSchema {
-	schema := NewReaderSchema()
-
-	// Add core metric fields that are always present
-	schema.AddColumn(wkk.RowKeyCName, wkk.RowKeyCName, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTID, wkk.RowKeyCTID, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCTimestamp, wkk.RowKeyCTimestamp, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCTsns, wkk.RowKeyCTsns, DataTypeInt64, true)
-	schema.AddColumn(wkk.RowKeyCMetricType, wkk.RowKeyCMetricType, DataTypeString, true)
-
-	// Translation fields (added by applyTranslation)
-	schema.AddColumn(wkk.RowKeyCCustomerID, wkk.RowKeyCCustomerID, DataTypeString, true)
-	schema.AddColumn(wkk.RowKeyCTelemetryType, wkk.RowKeyCTelemetryType, DataTypeString, true)
-
-	// Scope fields (added by buildMetricRow)
-	schema.AddColumn(wkk.NewRowKey("chq_scope_url"), wkk.NewRowKey("chq_scope_url"), DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("chq_scope_name"), wkk.NewRowKey("chq_scope_name"), DataTypeString, true)
-
-	// Metric metadata fields (added by buildMetricRow)
-	schema.AddColumn(wkk.NewRowKey("chq_description"), wkk.NewRowKey("chq_description"), DataTypeString, true)
-	schema.AddColumn(wkk.NewRowKey("chq_unit"), wkk.NewRowKey("chq_unit"), DataTypeString, true)
-
-	// Rollup fields
-	schema.AddColumn(wkk.RowKeySketch, wkk.RowKeySketch, DataTypeBytes, true)
-	schema.AddColumn(wkk.RowKeyRollupAvg, wkk.RowKeyRollupAvg, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupMax, wkk.RowKeyRollupMax, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupMin, wkk.RowKeyRollupMin, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupCount, wkk.RowKeyRollupCount, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupSum, wkk.RowKeyRollupSum, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP25, wkk.RowKeyRollupP25, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP50, wkk.RowKeyRollupP50, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP75, wkk.RowKeyRollupP75, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP90, wkk.RowKeyRollupP90, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP95, wkk.RowKeyRollupP95, DataTypeFloat64, true)
-	schema.AddColumn(wkk.RowKeyRollupP99, wkk.RowKeyRollupP99, DataTypeFloat64, true)
-
-	// Scan all metrics to discover attributes
-	for i := 0; i < metrics.ResourceMetrics().Len(); i++ {
-		rm := metrics.ResourceMetrics().At(i)
-
-		// Resource attributes
-		rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-			key := prefixAttributeRowKey(name, "resource")
-			dataType := otelValueTypeToDataType(v.Type())
-			schema.AddColumn(key, key, dataType, true)
-			return true
-		})
-
-		for j := 0; j < rm.ScopeMetrics().Len(); j++ {
-			sm := rm.ScopeMetrics().At(j)
-
-			// Scope attributes
-			sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-				key := prefixAttributeRowKey(name, "scope")
-				dataType := otelValueTypeToDataType(v.Type())
-				schema.AddColumn(key, key, dataType, true)
-				return true
-			})
-
-			for k := 0; k < sm.Metrics().Len(); k++ {
-				metric := sm.Metrics().At(k)
-
-				// Scan datapoints for attributes (different datapoint types)
-				switch metric.Type() {
-				case pmetric.MetricTypeGauge:
-					for l := 0; l < metric.Gauge().DataPoints().Len(); l++ {
-						dp := metric.Gauge().DataPoints().At(l)
-						dp.Attributes().Range(func(name string, v pcommon.Value) bool {
-							key := prefixAttributeRowKey(name, "attr")
-							dataType := otelValueTypeToDataType(v.Type())
-							schema.AddColumn(key, key, dataType, true)
-							return true
-						})
-					}
-				case pmetric.MetricTypeSum:
-					for l := 0; l < metric.Sum().DataPoints().Len(); l++ {
-						dp := metric.Sum().DataPoints().At(l)
-						dp.Attributes().Range(func(name string, v pcommon.Value) bool {
-							key := prefixAttributeRowKey(name, "attr")
-							dataType := otelValueTypeToDataType(v.Type())
-							schema.AddColumn(key, key, dataType, true)
-							return true
-						})
-					}
-				case pmetric.MetricTypeHistogram:
-					for l := 0; l < metric.Histogram().DataPoints().Len(); l++ {
-						dp := metric.Histogram().DataPoints().At(l)
-						dp.Attributes().Range(func(name string, v pcommon.Value) bool {
-							key := prefixAttributeRowKey(name, "attr")
-							dataType := otelValueTypeToDataType(v.Type())
-							schema.AddColumn(key, key, dataType, true)
-							return true
-						})
-					}
-				case pmetric.MetricTypeSummary:
-					for l := 0; l < metric.Summary().DataPoints().Len(); l++ {
-						dp := metric.Summary().DataPoints().At(l)
-						dp.Attributes().Range(func(name string, v pcommon.Value) bool {
-							key := prefixAttributeRowKey(name, "attr")
-							dataType := otelValueTypeToDataType(v.Type())
-							schema.AddColumn(key, key, dataType, true)
-							return true
-						})
-					}
-				case pmetric.MetricTypeExponentialHistogram:
-					for l := 0; l < metric.ExponentialHistogram().DataPoints().Len(); l++ {
-						dp := metric.ExponentialHistogram().DataPoints().At(l)
-						dp.Attributes().Range(func(name string, v pcommon.Value) bool {
-							key := prefixAttributeRowKey(name, "attr")
-							dataType := otelValueTypeToDataType(v.Type())
-							schema.AddColumn(key, key, dataType, true)
-							return true
-						})
-					}
-				}
 			}
 		}
 	}
