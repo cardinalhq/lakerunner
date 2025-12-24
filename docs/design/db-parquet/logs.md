@@ -29,6 +29,7 @@ string after searching for common message keys. Must be valid JSON when present.
 no JSON content is detected or extractable.
 
 `log_message` (string, nullable) contains the human-readable log content extracted from either:
+
 1. The OTEL `body` field directly (if it's a simple string)
 2. Common message keys found within JSON content in the body
 3. Processed/cleaned message text after JSON parsing
@@ -40,8 +41,9 @@ May be blank or null if no readable message content can be extracted.
 
 `chq_timestamp` (int64, required) represents milliseconds since the Unix epoch. Derived using
 the following priority order:
+
 1. OTEL `timestamp` field (converted from nanoseconds if > 1e15)
-2. OTEL `observed_timestamp` field (converted from nanoseconds if > 1e15)  
+2. OTEL `observed_timestamp` field (converted from nanoseconds if > 1e15)
 3. Current system time at processing (if both above are missing or invalid)
 Must be a positive integer representing a valid timestamp.
 
@@ -401,7 +403,7 @@ Input: 0 or missing → Output: 1640995400000 (current time at processing)
 3. **Body missing:** Only timestamp present
 4. **Empty everything:** All fields empty or null
 
-### Comprehensive Valid Cases  
+### Comprehensive Valid Cases
 1. **All fields populated:** Every possible field has valid data
 2. **Maximum attribute counts:** 100+ attributes of each type
 3. **Unicode content:** Messages with emoji, international characters
@@ -450,11 +452,11 @@ Input: 0 or missing → Output: 1640995400000 (current time at processing)
 ### Required Fields (Never Remove)
 These fields must always be present in log Parquet files:
 - `chq_id` - Required for UI record identification
-- `metric_name` - Always "log.events" 
+- `metric_name` - Always "log.events"
 - `chq_telemetry_type` - Always "logs"
 - `chq_timestamp` - Required for time-based queries and partitioning
 - `resource.bucket.name` - Required for data lineage
-- `resource.file.name` - Required for data lineage  
+- `resource.file.name` - Required for data lineage
 - `resource.file.type` - Required for processing routing
 
 ### Optional Fields (Nullable)

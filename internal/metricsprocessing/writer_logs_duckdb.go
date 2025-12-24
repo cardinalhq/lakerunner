@@ -189,6 +189,13 @@ func downloadLogSegmentFiles(ctx context.Context, params logProcessingParams) (l
 			ll.Warn("Log segment file not found, skipping segment",
 				slog.Int64("segmentID", segment.SegmentID),
 				slog.String("objectPath", objectPath))
+			recordLogSegmentDownload404(
+				ctx,
+				params.StorageProfile.Bucket,
+				params.OrganizationID,
+				params.StorageProfile.InstanceNum,
+				segment.CreatedBy,
+			)
 			continue
 		}
 

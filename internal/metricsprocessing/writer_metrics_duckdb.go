@@ -72,7 +72,7 @@ func processMetricsWithDuckDB(ctx context.Context, params metricProcessingParams
 	ll := logctx.FromContext(ctx)
 
 	// Download parquet files to local temp directory
-	downloaded, err := downloadSegmentFiles(ctx, params)
+	downloaded, err := downloadMetricSegmentFiles(ctx, params)
 	if err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("download segment files: %w", err)
@@ -178,9 +178,9 @@ type downloadResult struct {
 	downloadedSegments []lrdb.MetricSeg
 }
 
-// downloadSegmentFiles downloads parquet files from cloud storage to local temp directory.
+// downloadMetricSegmentFiles downloads parquet files from cloud storage to local temp directory.
 // Returns both local file paths and the segments that were successfully downloaded.
-func downloadSegmentFiles(ctx context.Context, params metricProcessingParams) (downloadResult, error) {
+func downloadMetricSegmentFiles(ctx context.Context, params metricProcessingParams) (downloadResult, error) {
 	ctx, span := boxerTracer.Start(ctx, "duckdb.download_segments", trace.WithAttributes(
 		attribute.Int("segment_count", len(params.ActiveSegments)),
 	))
@@ -199,11 +199,24 @@ func downloadSegmentFiles(ctx context.Context, params metricProcessingParams) (d
 			"metrics",
 		)
 
-		localPath, _, _, err := params.StorageClient.DownloadObject(ctx, params.TmpDir, params.StorageProfile.Bucket, objectPath)
+		localPath, _, is404, err := params.StorageClient.DownloadObject(ctx, params.TmpDir, params.StorageProfile.Bucket, objectPath)
 		if err != nil {
 			ll.Warn("Failed to download segment file, skipping segment",
 				slog.Int64("segmentID", segment.SegmentID),
 				slog.Any("error", err))
+			continue
+		}
+		if is404 {
+			ll.Warn("Metric segment file not found, skipping segment",
+				slog.Int64("segmentID", segment.SegmentID),
+				slog.String("objectPath", objectPath))
+			recordMetricSegmentDownload404(
+				ctx,
+				params.StorageProfile.Bucket,
+				params.OrganizationID,
+				params.StorageProfile.InstanceNum,
+				segment.CreatedBy,
+			)
 			continue
 		}
 
