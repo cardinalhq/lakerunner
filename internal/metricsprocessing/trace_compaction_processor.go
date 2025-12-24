@@ -326,12 +326,12 @@ func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Contex
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	results, err := processTracesWithSorting(ctx, params)
+	result, err := processTracesWithDuckDB(ctx, params)
 	if err != nil {
 		return nil, err
 	}
 
-	return results, nil
+	return result.Results, nil
 }
 
 func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.TraceCompactionKey, inputSegments []lrdb.TraceSeg) ([]lrdb.TraceSeg, error) {
@@ -380,6 +380,7 @@ func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Cont
 			Compacted:    true,
 			Published:    true,
 			Fingerprints: stats.Fingerprints,
+			LabelNameMap: stats.LabelNameMap,
 			CreatedBy:    lrdb.CreatedByCompact,
 		}
 
