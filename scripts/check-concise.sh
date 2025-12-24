@@ -95,7 +95,7 @@ run_license_check() {
     return $result
 }
 
-# Run gofmt check
+# Run gofmt check (auto-fixes and warns if files changed)
 run_gofmt() {
     local output_file="$TMPDIR/gofmt.out"
 
@@ -106,12 +106,16 @@ run_gofmt() {
         print_pass "Format check passed"
         return 0
     else
+        # Auto-fix formatting
+        while IFS= read -r file; do
+            gofmt -w "$file"
+        done < "$output_file"
+
+        echo -e "${YELLOW}⚠${NC} Format check: auto-fixed $(wc -l < "$output_file" | tr -d ' ') file(s)"
         if [ "$VERBOSE" = "1" ]; then
-            print_section "Format Check Failures"
             cat "$output_file"
         fi
-        print_fail "Format check failed - run 'make gofmt'"
-        return 1
+        return 0
     fi
 }
 
