@@ -117,9 +117,9 @@ func processMetricIngestWithDuckDB(
 	defer release()
 
 	// Load required extensions
-	if err := duckdbx.LoadOtelMetricsExtension(ctx, conn); err != nil {
+	if err := duckdbx.LoadOtelBinpbExtension(ctx, conn); err != nil {
 		span.RecordError(err)
-		return nil, fmt.Errorf("load otel_metrics extension: %w", err)
+		return nil, fmt.Errorf("load otel_binpb extension: %w", err)
 	}
 
 	if err := duckdbx.LoadDDSketchExtension(ctx, conn); err != nil {
