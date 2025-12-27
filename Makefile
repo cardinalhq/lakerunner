@@ -115,25 +115,25 @@ bin/golangci-lint bin/goimports bin/license-eye:
 	./scripts/install-dev-tools.sh
 
 #
-# Download otel_metrics extension from GitHub releases
+# Download otel_binpb extension from GitHub releases
 #
-OTEL_METRICS_VERSION=v0.1.6
-OTEL_METRICS_BASE_URL=https://github.com/cardinalhq/duckdb-binpb/releases/download/${OTEL_METRICS_VERSION}
+OTEL_BINPB_VERSION=v0.2.0
+OTEL_BINPB_BASE_URL=https://github.com/cardinalhq/duckdb-binpb/releases/download/${OTEL_BINPB_VERSION}
 
-.PHONY: otel-metrics-extension-download
-otel-metrics-extension-download:
-	@echo "Downloading otel_metrics extension (${OTEL_METRICS_VERSION}) for all platforms..."
+.PHONY: otel-binpb-extension-download
+otel-binpb-extension-download:
+	@echo "Downloading otel_binpb extension (${OTEL_BINPB_VERSION}) for all platforms..."
 	@mkdir -p docker/duckdb-extensions/linux_amd64
 	@mkdir -p docker/duckdb-extensions/linux_arm64
 	@mkdir -p docker/duckdb-extensions/osx_amd64
 	@mkdir -p docker/duckdb-extensions/osx_arm64
-	curl -L -o docker/duckdb-extensions/linux_amd64/otel_metrics.duckdb_extension "${OTEL_METRICS_BASE_URL}/otel_metrics-linux_amd64.duckdb_extension"
-	curl -L -o docker/duckdb-extensions/linux_arm64/otel_metrics.duckdb_extension "${OTEL_METRICS_BASE_URL}/otel_metrics-linux_arm64.duckdb_extension"
-	curl -L -o docker/duckdb-extensions/osx_amd64/otel_metrics.duckdb_extension "${OTEL_METRICS_BASE_URL}/otel_metrics-osx_amd64.duckdb_extension"
-	curl -L -o docker/duckdb-extensions/osx_arm64/otel_metrics.duckdb_extension "${OTEL_METRICS_BASE_URL}/otel_metrics-osx_arm64.duckdb_extension"
+	curl -L -o docker/duckdb-extensions/linux_amd64/otel_binpb.duckdb_extension "${OTEL_BINPB_BASE_URL}/otel_binpb-linux_amd64.duckdb_extension"
+	curl -L -o docker/duckdb-extensions/linux_arm64/otel_binpb.duckdb_extension "${OTEL_BINPB_BASE_URL}/otel_binpb-linux_arm64.duckdb_extension"
+	curl -L -o docker/duckdb-extensions/osx_amd64/otel_binpb.duckdb_extension "${OTEL_BINPB_BASE_URL}/otel_binpb-osx_amd64.duckdb_extension"
+	curl -L -o docker/duckdb-extensions/osx_arm64/otel_binpb.duckdb_extension "${OTEL_BINPB_BASE_URL}/otel_binpb-osx_arm64.duckdb_extension"
 	@echo "Compressing extensions..."
-	@for f in docker/duckdb-extensions/*/otel_metrics.duckdb_extension; do gzip -kf "$$f"; done
-	@echo "otel_metrics extension downloaded and compressed"
+	@for f in docker/duckdb-extensions/*/otel_binpb.duckdb_extension; do gzip -kf "$$f"; done
+	@echo "otel_binpb extension downloaded and compressed"
 
 #
 # Decompress DuckDB extensions (if compressed versions exist)

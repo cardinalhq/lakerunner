@@ -606,26 +606,26 @@ func LoadDDSketchExtensionFromPath(ctx context.Context, conn *sql.Conn, extensio
 	return nil
 }
 
-// LoadOtelMetricsExtension loads the otel_metrics extension on the given connection.
+// LoadOtelBinpbExtension loads the otel_binpb extension on the given connection.
 // The extension is searched in LAKERUNNER_DUCKDB_EXTENSIONS directory or standard locations.
-func LoadOtelMetricsExtension(ctx context.Context, conn *sql.Conn) error {
-	extensionPath := findExtension("otel_metrics.duckdb_extension")
+func LoadOtelBinpbExtension(ctx context.Context, conn *sql.Conn) error {
+	extensionPath := findExtension("otel_binpb.duckdb_extension")
 	if extensionPath == "" {
-		return fmt.Errorf("otel_metrics extension not found: set %s environment variable or place extension in docker/duckdb-extensions/", DuckDBExtensionsDirEnvVar)
+		return fmt.Errorf("otel_binpb extension not found: set %s environment variable or place extension in docker/duckdb-extensions/", DuckDBExtensionsDirEnvVar)
 	}
-	return LoadOtelMetricsExtensionFromPath(ctx, conn, extensionPath)
+	return LoadOtelBinpbExtensionFromPath(ctx, conn, extensionPath)
 }
 
-// LoadOtelMetricsExtensionFromPath loads the otel_metrics extension from a specific file path.
+// LoadOtelBinpbExtensionFromPath loads the otel_binpb extension from a specific file path.
 // Note: The connection must have allow_unsigned_extensions enabled (done automatically by duckdbx.DB).
-func LoadOtelMetricsExtensionFromPath(ctx context.Context, conn *sql.Conn, extensionPath string) error {
+func LoadOtelBinpbExtensionFromPath(ctx context.Context, conn *sql.Conn, extensionPath string) error {
 	if _, err := os.Stat(extensionPath); os.IsNotExist(err) {
-		return fmt.Errorf("otel_metrics extension not found at %s", extensionPath)
+		return fmt.Errorf("otel_binpb extension not found at %s", extensionPath)
 	}
 
 	loadQuery := fmt.Sprintf("LOAD '%s'", escapeSingle(extensionPath))
 	if _, err := conn.ExecContext(ctx, loadQuery); err != nil {
-		return fmt.Errorf("load otel_metrics extension: %w", err)
+		return fmt.Errorf("load otel_binpb extension: %w", err)
 	}
 
 	return nil
