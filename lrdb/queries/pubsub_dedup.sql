@@ -5,6 +5,12 @@ INSERT INTO pubsub_message_history (
     @bucket, @object_id, @source
 ) ON CONFLICT (bucket, object_id, source) DO NOTHING;
 
+-- name: PubSubMessageHistoryInsertBatch :many
+INSERT INTO pubsub_message_history (bucket, object_id, source)
+SELECT unnest(@buckets::text[]), unnest(@object_ids::text[]), unnest(@sources::text[])
+ON CONFLICT (bucket, object_id, source) DO NOTHING
+RETURNING bucket, object_id;
+
 -- name: PubSubMessageHistoryCleanup :execresult
 DELETE FROM pubsub_message_history
 WHERE (bucket, object_id, source) IN (

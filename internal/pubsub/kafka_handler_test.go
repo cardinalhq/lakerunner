@@ -77,6 +77,14 @@ func (m *mockDeduplicator) CheckAndRecord(ctx context.Context, bucket, objectID,
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *mockDeduplicator) CheckAndRecordBatch(ctx context.Context, items []DedupItem, source string) ([]DedupItem, error) {
+	args := m.Called(ctx, items, source)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]DedupItem), args.Error(1)
+}
+
 func TestConvertItemsToKafkaMessages_OtelRawPath(t *testing.T) {
 	ctx := context.Background()
 

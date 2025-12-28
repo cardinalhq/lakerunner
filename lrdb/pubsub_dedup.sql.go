@@ -99,3 +99,41 @@ type PubSubMessageHistoryInsertParams struct {
 func (q *Queries) PubSubMessageHistoryInsert(ctx context.Context, arg PubSubMessageHistoryInsertParams) (pgconn.CommandTag, error) {
 	return q.db.Exec(ctx, pubSubMessageHistoryInsert, arg.Bucket, arg.ObjectID, arg.Source)
 }
+
+const pubSubMessageHistoryInsertBatch = `-- name: PubSubMessageHistoryInsertBatch :many
+INSERT INTO pubsub_message_history (bucket, object_id, source)
+SELECT unnest($1::text[]), unnest($2::text[]), unnest($3::text[])
+ON CONFLICT (bucket, object_id, source) DO NOTHING
+RETURNING bucket, object_id
+`
+
+type PubSubMessageHistoryInsertBatchParams struct {
+	Buckets   []string `json:"buckets"`
+	ObjectIds []string `json:"object_ids"`
+	Sources   []string `json:"sources"`
+}
+
+type PubSubMessageHistoryInsertBatchRow struct {
+	Bucket   string `json:"bucket"`
+	ObjectID string `json:"object_id"`
+}
+
+func (q *Queries) PubSubMessageHistoryInsertBatch(ctx context.Context, arg PubSubMessageHistoryInsertBatchParams) ([]PubSubMessageHistoryInsertBatchRow, error) {
+	rows, err := q.db.Query(ctx, pubSubMessageHistoryInsertBatch, arg.Buckets, arg.ObjectIds, arg.Sources)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PubSubMessageHistoryInsertBatchRow
+	for rows.Next() {
+		var i PubSubMessageHistoryInsertBatchRow
+		if err := rows.Scan(&i.Bucket, &i.ObjectID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
