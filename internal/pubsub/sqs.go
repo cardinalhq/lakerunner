@@ -100,7 +100,6 @@ func (ps *SQSService) Run(doneCtx context.Context) error {
 
 	queueURL := ps.sqsConfig.QueueURL
 	if queueURL == "" {
-		// Fall back to legacy env var for backwards compatibility
 		queueURL = os.Getenv("SQS_QUEUE_URL")
 		if queueURL == "" {
 			return fmt.Errorf("LAKERUNNER_PUBSUB_SQS_QUEUE_URL is required")
@@ -109,14 +108,22 @@ func (ps *SQSService) Run(doneCtx context.Context) error {
 
 	region := ps.sqsConfig.Region
 	if region == "" {
-		region = os.Getenv("AWS_REGION")
+		region = os.Getenv("SQS_REGION")
 		if region == "" {
-			region = "us-west-2"
+			region = os.Getenv("AWS_REGION")
+			if region == "" {
+				region = "us-west-2"
+			}
 		}
 	}
 
+	roleARN := ps.sqsConfig.RoleARN
+	if roleARN == "" {
+		roleARN = os.Getenv("SQS_ROLE_ARN")
+	}
+
 	sqsClient, err := ps.awsMgr.GetSQS(context.Background(),
-		awsclient.WithSQSRole(ps.sqsConfig.RoleARN),
+		awsclient.WithSQSRole(roleARN),
 		awsclient.WithSQSRegion(region),
 	)
 	if err != nil {
