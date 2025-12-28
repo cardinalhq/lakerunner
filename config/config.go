@@ -283,7 +283,7 @@ func Load() (*Config, error) {
 			},
 			SQS: PubSubSQSConfig{
 				NumPollers:     10,
-				MaxOutstanding: 10000,
+				MaxOutstanding: 500,
 			},
 		},
 		KafkaTopics: KafkaTopicsConfig{
