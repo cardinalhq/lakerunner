@@ -137,7 +137,7 @@ func convertItemsToKafkaMessages(
 		collectorName := profile.CollectorName
 		item.InstanceNum = instanceNum
 
-		slog.Info("Processing item for Kafka",
+		slog.Debug("Processing item for Kafka",
 			slog.String("bucket", item.Bucket),
 			slog.String("object_id", item.ObjectID),
 			slog.String("telemetry_type", item.Signal),
