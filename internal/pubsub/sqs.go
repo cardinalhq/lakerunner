@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -43,13 +42,10 @@ type SQSService struct {
 	sp           storageprofile.StorageProfileProvider
 	kafkaHandler *KafkaHandler
 	deduplicator Deduplicator
+	sqsConfig    config.PubSubSQSConfig
 
 	// Async Kafka handling
-	maxOutstanding int
-	outstanding    chan struct{} // Semaphore for max outstanding messages
-
-	// Parallel polling
-	numPollers int
+	outstanding chan struct{} // Semaphore for max outstanding messages
 }
 
 // Ensure SQSService implements Backend interface
@@ -80,36 +76,21 @@ func NewSQSService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Fa
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}
 
-	// Configure max outstanding messages
-	maxOutstanding := 1000
-	if v := os.Getenv("SQS_MAX_OUTSTANDING"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			maxOutstanding = n
-		}
-	}
-
-	// Configure number of parallel pollers (default 10)
-	numPollers := 10
-	if v := os.Getenv("SQS_NUM_POLLERS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			numPollers = n
-		}
-	}
+	sqsConfig := cfg.PubSub.SQS
 
 	service := &SQSService{
-		tracer:         otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/sqs"),
-		awsMgr:         awsMgr,
-		sp:             sp,
-		kafkaHandler:   kafkaHandler,
-		deduplicator:   deduplicator,
-		maxOutstanding: maxOutstanding,
-		outstanding:    make(chan struct{}, maxOutstanding),
-		numPollers:     numPollers,
+		tracer:       otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/sqs"),
+		awsMgr:       awsMgr,
+		sp:           sp,
+		kafkaHandler: kafkaHandler,
+		deduplicator: deduplicator,
+		sqsConfig:    sqsConfig,
+		outstanding:  make(chan struct{}, sqsConfig.MaxOutstanding),
 	}
 
 	slog.Info("SQS pubsub service initialized",
-		slog.Int("numPollers", numPollers),
-		slog.Int("maxOutstanding", maxOutstanding))
+		slog.Int("numPollers", sqsConfig.NumPollers),
+		slog.Int("maxOutstanding", sqsConfig.MaxOutstanding))
 
 	return service, nil
 }
@@ -117,12 +98,16 @@ func NewSQSService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Fa
 func (ps *SQSService) Run(doneCtx context.Context) error {
 	slog.Info("Starting SQS pubsub service for S3 events")
 
-	queueURL := os.Getenv("SQS_QUEUE_URL")
+	queueURL := ps.sqsConfig.QueueURL
 	if queueURL == "" {
-		return fmt.Errorf("SQS_QUEUE_URL environment variable is required")
+		// Fall back to legacy env var for backwards compatibility
+		queueURL = os.Getenv("SQS_QUEUE_URL")
+		if queueURL == "" {
+			return fmt.Errorf("LAKERUNNER_PUBSUB_SQS_QUEUE_URL is required")
+		}
 	}
 
-	region := os.Getenv("SQS_REGION")
+	region := ps.sqsConfig.Region
 	if region == "" {
 		region = os.Getenv("AWS_REGION")
 		if region == "" {
@@ -130,11 +115,8 @@ func (ps *SQSService) Run(doneCtx context.Context) error {
 		}
 	}
 
-	// Get role ARN from environment (optional)
-	roleARN := os.Getenv("SQS_ROLE_ARN")
-
 	sqsClient, err := ps.awsMgr.GetSQS(context.Background(),
-		awsclient.WithSQSRole(roleARN),
+		awsclient.WithSQSRole(ps.sqsConfig.RoleARN),
 		awsclient.WithSQSRegion(region),
 	)
 	if err != nil {
@@ -144,7 +126,7 @@ func (ps *SQSService) Run(doneCtx context.Context) error {
 
 	// Start multiple parallel polling goroutines
 	var wg sync.WaitGroup
-	for i := range ps.numPollers {
+	for i := range ps.sqsConfig.NumPollers {
 		wg.Add(1)
 		go func(pollerID int) {
 			defer wg.Done()
