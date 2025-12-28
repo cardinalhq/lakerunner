@@ -42,10 +42,10 @@ type SQSService struct {
 	sp           storageprofile.StorageProfileProvider
 	kafkaHandler *KafkaHandler
 	deduplicator Deduplicator
+	sqsConfig    config.PubSubSQSConfig
 
 	// Async Kafka handling
-	maxOutstanding int
-	outstanding    chan struct{} // Semaphore for max outstanding messages
+	outstanding chan struct{} // Semaphore for max outstanding messages
 }
 
 // Ensure SQSService implements Backend interface
@@ -76,20 +76,21 @@ func NewSQSService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Fa
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}
 
-	// Configure max outstanding messages (can be made configurable via env var)
-	maxOutstanding := 1000
+	sqsConfig := cfg.PubSub.SQS
 
 	service := &SQSService{
-		tracer:         otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/sqs"),
-		awsMgr:         awsMgr,
-		sp:             sp,
-		kafkaHandler:   kafkaHandler,
-		deduplicator:   deduplicator,
-		maxOutstanding: maxOutstanding,
-		outstanding:    make(chan struct{}, maxOutstanding),
+		tracer:       otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/sqs"),
+		awsMgr:       awsMgr,
+		sp:           sp,
+		kafkaHandler: kafkaHandler,
+		deduplicator: deduplicator,
+		sqsConfig:    sqsConfig,
+		outstanding:  make(chan struct{}, sqsConfig.MaxOutstanding),
 	}
 
-	slog.Info("SQS pubsub service initialized with Kafka support")
+	slog.Info("SQS pubsub service initialized",
+		slog.Int("numPollers", sqsConfig.NumPollers),
+		slog.Int("maxOutstanding", sqsConfig.MaxOutstanding))
 
 	return service, nil
 }
@@ -97,21 +98,29 @@ func NewSQSService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Fa
 func (ps *SQSService) Run(doneCtx context.Context) error {
 	slog.Info("Starting SQS pubsub service for S3 events")
 
-	queueURL := os.Getenv("SQS_QUEUE_URL")
+	queueURL := ps.sqsConfig.QueueURL
 	if queueURL == "" {
-		return fmt.Errorf("SQS_QUEUE_URL environment variable is required")
-	}
-
-	region := os.Getenv("SQS_REGION")
-	if region == "" {
-		region = os.Getenv("AWS_REGION")
-		if region == "" {
-			region = "us-west-2"
+		queueURL = os.Getenv("SQS_QUEUE_URL")
+		if queueURL == "" {
+			return fmt.Errorf("LAKERUNNER_PUBSUB_SQS_QUEUE_URL is required")
 		}
 	}
 
-	// Get role ARN from environment (optional)
-	roleARN := os.Getenv("SQS_ROLE_ARN")
+	region := ps.sqsConfig.Region
+	if region == "" {
+		region = os.Getenv("SQS_REGION")
+		if region == "" {
+			region = os.Getenv("AWS_REGION")
+			if region == "" {
+				region = "us-west-2"
+			}
+		}
+	}
+
+	roleARN := ps.sqsConfig.RoleARN
+	if roleARN == "" {
+		roleARN = os.Getenv("SQS_ROLE_ARN")
+	}
 
 	sqsClient, err := ps.awsMgr.GetSQS(context.Background(),
 		awsclient.WithSQSRole(roleARN),
@@ -122,11 +131,20 @@ func (ps *SQSService) Run(doneCtx context.Context) error {
 		return fmt.Errorf("failed to create SQS client: %w", err)
 	}
 
-	go ps.pollSQS(doneCtx, sqsClient, queueURL)
+	// Start multiple parallel polling goroutines
+	var wg sync.WaitGroup
+	for i := range ps.sqsConfig.NumPollers {
+		wg.Add(1)
+		go func(pollerID int) {
+			defer wg.Done()
+			ps.pollSQS(doneCtx, sqsClient, queueURL, pollerID)
+		}(i)
+	}
 
 	<-doneCtx.Done()
 
-	slog.Info("Shutting down SQS pubsub service")
+	slog.Info("Shutting down SQS pubsub service, waiting for pollers...")
+	wg.Wait()
 
 	// Close Kafka handler if it exists
 	if ps.kafkaHandler != nil {
@@ -138,16 +156,15 @@ func (ps *SQSService) Run(doneCtx context.Context) error {
 	return nil
 }
 
-func (ps *SQSService) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQSClient, queueURL string) {
-	slog.Info("Starting SQS polling loop", slog.String("queueURL", queueURL))
-
-	// Configure concurrency - can be made configurable via env var if needed
-	const maxConcurrentMessages = 10
+func (ps *SQSService) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQSClient, queueURL string, pollerID int) {
+	slog.Info("Starting SQS polling loop",
+		slog.String("queueURL", queueURL),
+		slog.Int("pollerID", pollerID))
 
 	for {
 		select {
 		case <-doneCtx.Done():
-			slog.Info("SQS polling loop stopped")
+			slog.Info("SQS polling loop stopped", slog.Int("pollerID", pollerID))
 			return
 		default:
 		}
@@ -158,77 +175,31 @@ func (ps *SQSService) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQSC
 			WaitTimeSeconds:     20,
 		})
 		if err != nil {
-			slog.Error("Failed to receive messages from SQS", slog.Any("error", err))
+			if doneCtx.Err() != nil {
+				return // Context cancelled, exit gracefully
+			}
+			slog.Error("Failed to receive messages from SQS",
+				slog.Any("error", err),
+				slog.Int("pollerID", pollerID))
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
 		if len(result.Messages) == 0 {
-			// No messages, continue to next poll
 			continue
 		}
 
-		// Process messages concurrently
-		ps.processMessagesConcurrently(doneCtx, sqsClient, queueURL, result.Messages, maxConcurrentMessages)
+		// Process messages (non-blocking - fires off goroutines and returns immediately)
+		ps.processMessages(doneCtx, sqsClient, queueURL, result.Messages)
 	}
 }
 
-// processMessagesConcurrently processes SQS messages with async Kafka writes and completion-based deletion
-func (ps *SQSService) processMessagesConcurrently(doneCtx context.Context, sqsClient *awsclient.SQSClient, queueURL string, messages []types.Message, _ int) {
-	// Track completion of Kafka writes for SQS deletion
-	type pendingMessage struct {
-		sqsMessage    types.Message
-		kafkaComplete chan error
-	}
-
-	// Channel for completion notifications
-	completions := make(chan *pendingMessage, len(messages))
-	var wg sync.WaitGroup
-
-	// Start goroutine to handle SQS deletions based on Kafka completions
-	wg.Go(func() {
-		successCount := 0
-		failureCount := 0
-
-		for pending := range completions {
-			err := <-pending.kafkaComplete
-
-			<-ps.outstanding
-
-			if err != nil {
-				failureCount++
-				slog.Error("Kafka write failed, leaving message in SQS for retry",
-					slog.Any("error", err),
-					slog.String("messageId", *pending.sqsMessage.MessageId))
-				continue
-			}
-
-			successCount++
-
-			// Delete from SQS after successful Kafka write
-			deleteCtx, deleteCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_, deleteErr := sqsClient.Client.DeleteMessage(deleteCtx, &sqs.DeleteMessageInput{
-				QueueUrl:      aws.String(queueURL),
-				ReceiptHandle: pending.sqsMessage.ReceiptHandle,
-			})
-			deleteCancel()
-
-			if deleteErr != nil {
-				slog.Error("Failed to delete SQS message after successful Kafka handling",
-					slog.Any("error", deleteErr),
-					slog.String("messageId", *pending.sqsMessage.MessageId))
-			}
-		}
-	})
-
-	// Queue all messages for Kafka processing immediately
+// processMessages processes SQS messages with async Kafka writes (non-blocking)
+func (ps *SQSService) processMessages(doneCtx context.Context, sqsClient *awsclient.SQSClient, queueURL string, messages []types.Message) {
 	for _, message := range messages {
 		// Check if context is cancelled
 		select {
 		case <-doneCtx.Done():
-			slog.Info("Context cancelled, stopping message processing")
-			close(completions)
-			wg.Wait()
 			return
 		default:
 		}
@@ -238,45 +209,49 @@ func (ps *SQSService) processMessagesConcurrently(doneCtx context.Context, sqsCl
 			continue
 		}
 
-		// Acquire outstanding slot (blocks if at max)
+		// Acquire outstanding slot (blocks if at max - provides backpressure)
 		select {
 		case ps.outstanding <- struct{}{}:
 			// Got slot, proceed
 		case <-doneCtx.Done():
-			slog.Info("Context cancelled while waiting for outstanding slot")
-			close(completions)
-			wg.Wait()
 			return
 		}
 
-		pending := &pendingMessage{
-			sqsMessage:    message,
-			kafkaComplete: make(chan error, 1),
-		}
+		// Start async processing (non-blocking)
+		go ps.handleMessage(doneCtx, sqsClient, queueURL, message)
+	}
+}
 
-		// Send to completions channel for tracking
-		completions <- pending
+// handleMessage processes a single message and deletes on success
+func (ps *SQSService) handleMessage(doneCtx context.Context, sqsClient *awsclient.SQSClient, queueURL string, msg types.Message) {
+	defer func() { <-ps.outstanding }() // Release slot when done
 
-		// Start async Kafka write immediately (non-blocking)
-		go func(msg types.Message, complete chan error) {
-			// Process message with timeout
-			msgCtx, cancel := context.WithTimeout(doneCtx, 30*time.Second)
-			defer cancel()
+	// Process message with timeout
+	msgCtx, cancel := context.WithTimeout(doneCtx, 30*time.Second)
+	defer cancel()
 
-			// Send to Kafka (this does the batching internally)
-			err := ps.kafkaHandler.HandleMessage(msgCtx, []byte(*msg.Body))
-
-			// Signal completion
-			complete <- err
-			close(complete)
-		}(message, pending.kafkaComplete)
+	// Send to Kafka
+	err := ps.kafkaHandler.HandleMessage(msgCtx, []byte(*msg.Body))
+	if err != nil {
+		slog.Error("Kafka write failed, leaving message in SQS for retry",
+			slog.Any("error", err),
+			slog.String("messageId", *msg.MessageId))
+		return
 	}
 
-	// Close completions channel to signal deletion goroutine to finish
-	close(completions)
+	// Delete from SQS
+	deleteCtx, deleteCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, deleteErr := sqsClient.Client.DeleteMessage(deleteCtx, &sqs.DeleteMessageInput{
+		QueueUrl:      aws.String(queueURL),
+		ReceiptHandle: msg.ReceiptHandle,
+	})
+	deleteCancel()
 
-	// Wait for all deletions to complete
-	wg.Wait()
+	if deleteErr != nil {
+		slog.Error("Failed to delete SQS message",
+			slog.Any("error", deleteErr),
+			slog.String("messageId", *msg.MessageId))
+	}
 }
 
 func (ps *SQSService) GetName() string {

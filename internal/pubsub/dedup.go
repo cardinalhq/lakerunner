@@ -31,11 +31,19 @@ import (
 // DedupInserter defines the interface needed for deduplication
 type DedupInserter interface {
 	PubSubMessageHistoryInsert(ctx context.Context, params lrdb.PubSubMessageHistoryInsertParams) (pgconn.CommandTag, error)
+	PubSubMessageHistoryInsertBatch(ctx context.Context, params lrdb.PubSubMessageHistoryInsertBatchParams) ([]lrdb.PubSubMessageHistoryInsertBatchRow, error)
+}
+
+// DedupItem represents an item to be deduplicated
+type DedupItem struct {
+	Bucket   string
+	ObjectID string
 }
 
 // Deduplicator defines the interface for message deduplication
 type Deduplicator interface {
 	CheckAndRecord(ctx context.Context, bucket, objectID, source string) (bool, error)
+	CheckAndRecordBatch(ctx context.Context, items []DedupItem, source string) ([]DedupItem, error)
 }
 
 // DatabaseDeduplicator handles message deduplication using database
@@ -88,6 +96,59 @@ func (d *DatabaseDeduplicator) CheckAndRecord(ctx context.Context, bucket, objec
 		slog.String("source", source))
 	recordDuplicate(ctx, bucket, source)
 	return false, nil
+}
+
+// CheckAndRecordBatch checks multiple items for duplicates in a single database call.
+// Returns the list of items that should be processed (not duplicates).
+func (d *DatabaseDeduplicator) CheckAndRecordBatch(ctx context.Context, items []DedupItem, source string) ([]DedupItem, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	// Build arrays for batch insert
+	buckets := make([]string, len(items))
+	objectIDs := make([]string, len(items))
+	sources := make([]string, len(items))
+	for i, item := range items {
+		buckets[i] = item.Bucket
+		objectIDs[i] = item.ObjectID
+		sources[i] = source
+	}
+
+	// Batch insert - returns only the rows that were actually inserted (non-duplicates)
+	inserted, err := d.store.PubSubMessageHistoryInsertBatch(ctx, lrdb.PubSubMessageHistoryInsertBatchParams{
+		Buckets:   buckets,
+		ObjectIds: objectIDs,
+		Sources:   sources,
+	})
+	if err != nil {
+		slog.Error("Failed to batch check message deduplication", slog.Any("error", err))
+		return nil, fmt.Errorf("batch deduplication check failed: %w", err)
+	}
+
+	// Build set of inserted items for fast lookup
+	insertedSet := make(map[string]struct{}, len(inserted))
+	for _, row := range inserted {
+		key := row.Bucket + "\x00" + row.ObjectID
+		insertedSet[key] = struct{}{}
+	}
+
+	// Filter to only non-duplicate items
+	var result []DedupItem
+	for _, item := range items {
+		key := item.Bucket + "\x00" + item.ObjectID
+		if _, ok := insertedSet[key]; ok {
+			result = append(result, item)
+		} else {
+			slog.Debug("Duplicate message detected in batch",
+				slog.String("bucket", item.Bucket),
+				slog.String("object_id", item.ObjectID),
+				slog.String("source", source))
+			recordDuplicate(ctx, item.Bucket, source)
+		}
+	}
+
+	return result, nil
 }
 
 // GetCleanupRetention returns the retention period for cleanup from config

@@ -89,11 +89,20 @@ type AdminConfig struct {
 
 type PubSubConfig struct {
 	Dedup PubSubDedupConfig `mapstructure:"dedup"`
+	SQS   PubSubSQSConfig   `mapstructure:"sqs"`
 }
 
 type PubSubDedupConfig struct {
 	RetentionDuration time.Duration `mapstructure:"retention_duration"`
 	CleanupBatchSize  int           `mapstructure:"cleanup_batch_size"`
+}
+
+type PubSubSQSConfig struct {
+	QueueURL       string `mapstructure:"queue_url"`
+	Region         string `mapstructure:"region"`
+	RoleARN        string `mapstructure:"role_arn"`
+	NumPollers     int    `mapstructure:"num_pollers"`
+	MaxOutstanding int    `mapstructure:"max_outstanding"`
 }
 
 type ExpiryConfig struct {
@@ -272,6 +281,10 @@ func Load() (*Config, error) {
 				RetentionDuration: 24 * time.Hour, // Default 24 hours
 				CleanupBatchSize:  1000,           // Default batch size
 			},
+			SQS: PubSubSQSConfig{
+				NumPollers:     10,
+				MaxOutstanding: 500,
+			},
 		},
 		KafkaTopics: KafkaTopicsConfig{
 			TopicPrefix: "lakerunner", // Default topic prefix
@@ -291,7 +304,7 @@ func Load() (*Config, error) {
 			BatchSize:                20000, // Default batch size for expiry operations
 		},
 		Query: QueryConfig{
-			MaxSegmentsPerWorkerPerWave: 50,  // Default wave size
+			MaxSegmentsPerWorkerPerWave: 100, // Default wave size
 			MaxParallelDownloads:        100, // Default max parallel downloads
 		},
 	}

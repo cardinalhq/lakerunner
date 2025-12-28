@@ -137,7 +137,7 @@ func convertItemsToKafkaMessages(
 		collectorName := profile.CollectorName
 		item.InstanceNum = instanceNum
 
-		slog.Info("Processing item for Kafka",
+		slog.Debug("Processing item for Kafka",
 			slog.String("bucket", item.Bucket),
 			slog.String("object_id", item.ObjectID),
 			slog.String("telemetry_type", item.Signal),
@@ -189,15 +189,27 @@ func handleMessageWithKafka(
 		return fmt.Errorf("failed to parse S3-like events: %w", err)
 	}
 
-	// Deduplicate items early before processing
+	// Deduplicate items early before processing (batch operation)
+	dedupItems := make([]DedupItem, len(items))
+	for i, item := range items {
+		dedupItems[i] = DedupItem{Bucket: item.Bucket, ObjectID: item.ObjectID}
+	}
+
+	nonDuplicates, err := deduplicator.CheckAndRecordBatch(ctx, dedupItems, source)
+	if err != nil {
+		return fmt.Errorf("batch deduplication check failed: %w", err)
+	}
+
+	// Build set of non-duplicate items for filtering
+	nonDupSet := make(map[string]struct{}, len(nonDuplicates))
+	for _, d := range nonDuplicates {
+		nonDupSet[d.Bucket+"\x00"+d.ObjectID] = struct{}{}
+	}
+
+	// Filter to only non-duplicate items
 	var dedupedItems []IngestItem
 	for _, item := range items {
-		shouldProcess, err := deduplicator.CheckAndRecord(ctx, item.Bucket, item.ObjectID, source)
-		if err != nil {
-			return fmt.Errorf("deduplication check failed for bucket %s object %s: %w",
-				item.Bucket, item.ObjectID, err)
-		}
-		if shouldProcess {
+		if _, ok := nonDupSet[item.Bucket+"\x00"+item.ObjectID]; ok {
 			dedupedItems = append(dedupedItems, item)
 		}
 	}

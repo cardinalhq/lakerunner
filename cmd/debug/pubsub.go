@@ -194,3 +194,7 @@ type NoOpDeduplicator struct{}
 func (d *NoOpDeduplicator) CheckAndRecord(ctx context.Context, bucket, objectID, source string) (bool, error) {
 	return true, nil // Always allow processing
 }
+
+func (d *NoOpDeduplicator) CheckAndRecordBatch(ctx context.Context, items []pubsub.DedupItem, source string) ([]pubsub.DedupItem, error) {
+	return items, nil // Always allow all items
+}
