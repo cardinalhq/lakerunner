@@ -283,7 +283,7 @@ func Load() (*Config, error) {
 			},
 			SQS: PubSubSQSConfig{
 				NumPollers:     10,
-				MaxOutstanding: 1000,
+				MaxOutstanding: 10000,
 			},
 		},
 		KafkaTopics: KafkaTopicsConfig{
@@ -304,7 +304,7 @@ func Load() (*Config, error) {
 			BatchSize:                20000, // Default batch size for expiry operations
 		},
 		Query: QueryConfig{
-			MaxSegmentsPerWorkerPerWave: 50,  // Default wave size
+			MaxSegmentsPerWorkerPerWave: 100, // Default wave size
 			MaxParallelDownloads:        100, // Default max parallel downloads
 		},
 	}
