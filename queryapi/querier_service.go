@@ -42,8 +42,9 @@ type PushDownRequest struct {
 	Reverse    bool             `json:"reverse"`
 	Fields     []string         `json:"fields,omitempty"`
 
-	TagName string `json:"tagName"` // Set this to a tag name to get distinct values for that tag
-	IsSpans bool   `json:"isSpans"` // Set this to true for spans queries
+	TagName  string `json:"tagName"`  // Set this to a tag name to get distinct values for that tag
+	TagNames bool   `json:"tagNames"` // Set this to true to get distinct tag names (column names) instead of values
+	IsSpans  bool   `json:"isSpans"`  // Set this to true for spans queries
 }
 
 func (p *PushDownRequest) ToOrderString() string {
