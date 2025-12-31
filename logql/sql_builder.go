@@ -111,6 +111,78 @@ func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
 	return sql
 }
 
+// ToWorkerSQLForTagNames generates a DuckDB SQL query that returns distinct column names
+// (tag names) that have at least one non-null value in rows matching the filter criteria.
+// This is used for scoped tag discovery - finding which tags are relevant for a given filter.
+func (be *LogLeaf) ToWorkerSQLForTagNames() string {
+	const baseRel = "{table}"
+	const bodyCol = `"log_message"`
+	const tsCol = `"chq_timestamp"`
+
+	// System columns to exclude from tag names - these are not user-facing tags
+	excludeCols := []string{
+		"chq_timestamp",
+		"chq_id",
+		"chq_fingerprint",
+		"log_message",
+	}
+
+	var whereConds []string
+
+	// Add time range filter
+	whereConds = append(whereConds, fmt.Sprintf("%s >= {start} AND %s <= {end}", tsCol, tsCol))
+
+	// Apply selector matchers
+	if len(be.Matchers) > 0 {
+		mLfs := make([]LabelFilter, 0, len(be.Matchers))
+		for _, m := range be.Matchers {
+			mLfs = append(mLfs, LabelFilter{Label: m.Label, Op: m.Op, Value: m.Value})
+		}
+		mWhere := buildLabelFilterWhere(mLfs, nil)
+		whereConds = append(whereConds, mWhere...)
+	}
+
+	// Apply line filters
+	lineWhere := buildLineFilterWhere(be.LineFilters, bodyCol)
+	whereConds = append(whereConds, lineWhere...)
+
+	// Apply label filters
+	if len(be.LabelFilters) > 0 {
+		lfWhere := buildLabelFilterWhere(be.LabelFilters, nil)
+		whereConds = append(whereConds, lfWhere...)
+	}
+
+	var whereClause string
+	if len(whereConds) > 0 {
+		whereClause = " WHERE " + strings.Join(whereConds, " AND ")
+	}
+
+	// Build EXCLUDE clause for system columns
+	var excludeClause string
+	if len(excludeCols) > 0 {
+		quotedCols := make([]string, len(excludeCols))
+		for i, col := range excludeCols {
+			quotedCols[i] = quoteIdent(col)
+		}
+		excludeClause = " EXCLUDE (" + strings.Join(quotedCols, ", ") + ")"
+	}
+
+	// Use UNPIVOT to transform columns into rows, then get distinct non-null column names
+	// The query:
+	// 1. Filters rows based on matchers/line filters/label filters
+	// 2. Unpivots all columns (except system columns) into name/value rows
+	// 3. Filters out NULL values
+	// 4. Returns distinct column names as tag_value (to reuse tagValuesMapper)
+	sql := "SELECT DISTINCT col_name AS tag_value FROM (" +
+		"UNPIVOT (" +
+		"SELECT *" + excludeClause + " FROM " + baseRel + whereClause +
+		") ON COLUMNS(*) INTO NAME col_name VALUE col_value" +
+		") WHERE col_value IS NOT NULL " +
+		"ORDER BY tag_value ASC"
+
+	return sql
+}
+
 // buildTagValuesQueryWithParsers builds a complex query when the tag is extracted by parsers
 func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
 	const baseRel = "{table}"         // replace upstream

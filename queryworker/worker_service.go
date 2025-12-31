@@ -394,7 +394,18 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else if req.LogLeaf != nil {
-		if req.TagName != "" {
+		if req.TagNames {
+			// Return distinct tag names (column names) instead of values
+			workerSql = req.LogLeaf.ToWorkerSQLForTagNames()
+			if req.IsSpans {
+				cacheManager = ws.TracesCM
+				globSize = ws.TracesGlobSize
+			} else {
+				cacheManager = ws.LogsCM
+				globSize = ws.LogsGlobSize
+			}
+			isTagValuesQuery = true // Reuse the same result handling path
+		} else if req.TagName != "" {
 			workerSql = req.LogLeaf.ToWorkerSQLForTagValues(req.TagName)
 			if req.IsSpans {
 				cacheManager = ws.TracesCM

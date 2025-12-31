@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -34,6 +36,7 @@ import (
 type logsSeriesPayload struct {
 	S string `json:"s"`
 	E string `json:"e"`
+	Q string `json:"q,omitempty"` // Optional LogQL selector for scoping
 
 	OrgUUID uuid.UUID `json:"-"`
 	StartTs int64     `json:"-"`
@@ -85,6 +88,7 @@ func readLogsSeriesPayload(w http.ResponseWriter, r *http.Request) *logsSeriesPa
 // handleListLogSeries returns distinct log streams for a time range.
 // Response format is Loki-compatible: {"status": "success", "data": [{field_name: "value"}, ...]}
 // The field_name is the actual source field (resource_customer_domain, resource_service_name, or stream_id for legacy).
+// Supports optional 'q' parameter for scoping results to streams matching a LogQL selector.
 func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Request) {
 	p := readLogsSeriesPayload(w, r)
 	if p == nil {
@@ -93,6 +97,25 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+
+	// Parse the optional LogQL selector for filtering
+	var matchers []logql.LabelMatch
+	if p.Q != "" {
+		logAst, err := logql.FromLogQL(p.Q)
+		if err != nil {
+			http.Error(w, "invalid query expression: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		lplan, err := logql.CompileLog(logAst)
+		if err != nil {
+			http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Collect all matchers from all leaves
+		for _, leaf := range lplan.Leaves {
+			matchers = append(matchers, leaf.Matchers...)
+		}
+	}
 
 	// Convert timestamps to dateint for partition pruning
 	startDateint, _ := helpers.MSToDateintHour(p.StartTs)
@@ -112,12 +135,19 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Convert to Loki-compatible format using the actual field name as the key
+	// Apply matchers filter if provided
 	data := make([]map[string]string, 0, len(streams))
 	for _, stream := range streams {
 		// Skip entries with nil FieldName - these are broken data that can't be queried
 		if stream.FieldName == nil {
 			continue
 		}
+
+		// Apply matchers filter if provided
+		if len(matchers) > 0 && !matchesSeries(*stream.FieldName, stream.StreamValue, matchers) {
+			continue
+		}
+
 		data = append(data, map[string]string{*stream.FieldName: stream.StreamValue})
 	}
 
@@ -128,4 +158,40 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// matchesSeries checks if a series (field_name, value) matches the given matchers.
+// Returns true if all matchers that apply to this field_name match.
+func matchesSeries(fieldName, value string, matchers []logql.LabelMatch) bool {
+	for _, m := range matchers {
+		// Only apply matchers that match this field name
+		if m.Label != fieldName {
+			continue
+		}
+
+		matched := false
+		switch m.Op {
+		case logql.MatchEq:
+			matched = value == m.Value
+		case logql.MatchNe:
+			matched = value != m.Value
+		case logql.MatchRe:
+			re, err := regexp.Compile("^(?:" + m.Value + ")$")
+			if err != nil {
+				return false
+			}
+			matched = re.MatchString(value)
+		case logql.MatchNre:
+			re, err := regexp.Compile("^(?:" + m.Value + ")$")
+			if err != nil {
+				return false
+			}
+			matched = !re.MatchString(value)
+		}
+
+		if !matched {
+			return false
+		}
+	}
+	return true
 }
