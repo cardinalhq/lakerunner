@@ -130,12 +130,12 @@ func TestFingerprintSpeedComparison(t *testing.T) {
 		require.NoError(t, err)
 
 		type spanData struct {
-			serviceName   string
-			namespace     string
-			cluster       string
-			traceID       string
-			spanName      string
-			spanKind      string
+			serviceName string
+			namespace   string
+			cluster     string
+			traceID     string
+			spanName    string
+			spanKind    string
 		}
 
 		var spans []spanData
