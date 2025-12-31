@@ -290,3 +290,41 @@ func TestMatchesSeries_MultipleMatchers(t *testing.T) {
 	// Doesn't match: doesn't start with "api-"
 	assert.False(t, matchesSeries("resource_service_name", "web-server", matchers))
 }
+
+func TestMatchesSeriesGroups_ORSemantics(t *testing.T) {
+	// Multiple groups represent OR semantics: {service="api"} or {service="web"}
+	groups := [][]logql.LabelMatch{
+		{{Label: "resource_service_name", Op: logql.MatchEq, Value: "api-server"}},
+		{{Label: "resource_service_name", Op: logql.MatchEq, Value: "web-server"}},
+	}
+
+	// Matches: equals "api-server" OR equals "web-server"
+	assert.True(t, matchesSeriesGroups("resource_service_name", "api-server", groups))
+	assert.True(t, matchesSeriesGroups("resource_service_name", "web-server", groups))
+
+	// Doesn't match: neither "api-server" nor "web-server"
+	assert.False(t, matchesSeriesGroups("resource_service_name", "db-server", groups))
+}
+
+func TestMatchesSeriesGroups_ComplexOR(t *testing.T) {
+	// Complex OR: {service=~"api-.*"} or {service="legacy"}
+	groups := [][]logql.LabelMatch{
+		{{Label: "resource_service_name", Op: logql.MatchRe, Value: "api-.*"}},
+		{{Label: "resource_service_name", Op: logql.MatchEq, Value: "legacy"}},
+	}
+
+	// Matches regex in first group
+	assert.True(t, matchesSeriesGroups("resource_service_name", "api-server", groups))
+	assert.True(t, matchesSeriesGroups("resource_service_name", "api-gateway", groups))
+
+	// Matches exact in second group
+	assert.True(t, matchesSeriesGroups("resource_service_name", "legacy", groups))
+
+	// Doesn't match either group
+	assert.False(t, matchesSeriesGroups("resource_service_name", "web-server", groups))
+}
+
+func TestMatchesSeriesGroups_EmptyGroups(t *testing.T) {
+	// Empty groups should not match anything
+	assert.False(t, matchesSeriesGroups("resource_service_name", "any-value", [][]logql.LabelMatch{}))
+}

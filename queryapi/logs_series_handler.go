@@ -99,7 +99,8 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 
 	// Parse the optional LogQL selector for filtering
-	var matchers []logql.LabelMatch
+	// Each leaf represents an OR branch; matchers within a leaf are AND'd together
+	var matcherGroups [][]logql.LabelMatch
 	if p.Q != "" {
 		logAst, err := logql.FromLogQL(p.Q)
 		if err != nil {
@@ -111,9 +112,9 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 			http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Collect all matchers from all leaves
+		// Keep matchers grouped by leaf to preserve OR semantics
 		for _, leaf := range lplan.Leaves {
-			matchers = append(matchers, leaf.Matchers...)
+			matcherGroups = append(matcherGroups, leaf.Matchers)
 		}
 	}
 
@@ -143,8 +144,8 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 
-		// Apply matchers filter if provided
-		if len(matchers) > 0 && !matchesSeries(*stream.FieldName, stream.StreamValue, matchers) {
+		// Apply matchers filter if provided (OR across groups, AND within each group)
+		if len(matcherGroups) > 0 && !matchesSeriesGroups(*stream.FieldName, stream.StreamValue, matcherGroups) {
 			continue
 		}
 
@@ -158,6 +159,17 @@ func (q *QuerierService) handleListLogSeries(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// matchesSeriesGroups checks if a series matches any of the matcher groups (OR semantics).
+// Each group represents a LogQL leaf; within each group, all matchers must match (AND).
+func matchesSeriesGroups(fieldName, value string, groups [][]logql.LabelMatch) bool {
+	for _, matchers := range groups {
+		if matchesSeries(fieldName, value, matchers) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchesSeries checks if a series (field_name, value) matches the given matchers.
