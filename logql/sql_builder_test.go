@@ -1898,3 +1898,180 @@ func TestToWorkerSQL_CustomerIssue_ResourceFileTypeFilter(t *testing.T) {
 		t.Fatalf("wrong row returned: log_message=%q, want \"log from avxgwstatesync\"", message)
 	}
 }
+
+// --- Tests for ToWorkerSQLForTagNames ---
+
+func TestToWorkerSQLForTagNames_Basic(t *testing.T) {
+	db := openDuckDB(t)
+
+	// Create table with system columns (excluded) and user columns (included)
+	mustExec(t, db, `CREATE TABLE logs(
+		"chq_timestamp"   BIGINT,
+		"chq_id"          TEXT,
+		"chq_fingerprint" BIGINT,
+		"log_message"     TEXT,
+		"log_level"       TEXT,
+		"service"         TEXT,
+		"pod"             TEXT,
+		"region"          TEXT
+	);`)
+
+	// Insert test data - all user columns have values
+	mustExec(t, db, `INSERT INTO logs VALUES
+		(0, 'id1', 123, 'test message', 'info', 'api', 'pod1', 'us-east-1'),
+		(1000, 'id2', 456, 'another message', 'error', 'web', 'pod2', 'us-west-2')`)
+
+	be := &LogLeaf{}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return user columns only (log_level, service, pod, region)
+	// System columns (chq_timestamp, chq_id, chq_fingerprint, log_message) should be excluded
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	// Verify expected columns are present
+	expected := []string{"log_level", "service", "pod", "region"}
+	for _, col := range expected {
+		if !got[col] {
+			t.Errorf("expected tag name %q not found in results: %v", col, got)
+		}
+	}
+
+	// Verify system columns are NOT present
+	excluded := []string{"chq_timestamp", "chq_id", "chq_fingerprint", "log_message"}
+	for _, col := range excluded {
+		if got[col] {
+			t.Errorf("system column %q should be excluded but was found in results", col)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagNames_ExcludesNullColumns(t *testing.T) {
+	db := openDuckDB(t)
+
+	mustExec(t, db, `CREATE TABLE logs(
+		"chq_timestamp"   BIGINT,
+		"chq_id"          TEXT,
+		"chq_fingerprint" BIGINT,
+		"log_message"     TEXT,
+		"log_level"       TEXT,
+		"service"         TEXT,
+		"pod"             TEXT,
+		"region"          TEXT
+	);`)
+
+	// Insert test data where 'region' is always NULL
+	mustExec(t, db, `INSERT INTO logs VALUES
+		(0, 'id1', 123, 'test message', 'info', 'api', 'pod1', NULL),
+		(1000, 'id2', 456, 'another message', 'error', 'web', 'pod2', NULL)`)
+
+	be := &LogLeaf{}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	// 'region' should NOT be in results since it's always NULL
+	if got["region"] {
+		t.Errorf("column 'region' has only NULL values and should be excluded, but was found")
+	}
+
+	// Other columns should still be present
+	for _, col := range []string{"log_level", "service", "pod"} {
+		if !got[col] {
+			t.Errorf("expected tag name %q not found in results: %v", col, got)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagNames_WithMatchers(t *testing.T) {
+	db := openDuckDB(t)
+
+	mustExec(t, db, `CREATE TABLE logs(
+		"chq_timestamp"   BIGINT,
+		"chq_id"          TEXT,
+		"chq_fingerprint" BIGINT,
+		"log_message"     TEXT,
+		"log_level"       TEXT,
+		"service"         TEXT,
+		"pod"             TEXT,
+		"extra_field"     TEXT
+	);`)
+
+	// Insert data where 'extra_field' only has values for service=api
+	mustExec(t, db, `INSERT INTO logs VALUES
+		(0, 'id1', 123, 'test', 'info', 'api', 'pod1', 'extra_value'),
+		(1000, 'id2', 456, 'test', 'error', 'web', 'pod2', NULL)`)
+
+	// Filter to service=api only
+	be := &LogLeaf{
+		Matchers: []LabelMatch{
+			{Label: "service", Op: MatchEq, Value: "api"},
+		},
+	}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	// 'extra_field' should be present because it has a value for service=api
+	if !got["extra_field"] {
+		t.Errorf("expected 'extra_field' to be present for service=api filter, got: %v", got)
+	}
+}
+
+func TestToWorkerSQLForTagNames_WithLineFilters(t *testing.T) {
+	db := openDuckDB(t)
+
+	mustExec(t, db, `CREATE TABLE logs(
+		"chq_timestamp"   BIGINT,
+		"chq_id"          TEXT,
+		"chq_fingerprint" BIGINT,
+		"log_message"     TEXT,
+		"log_level"       TEXT,
+		"service"         TEXT,
+		"error_code"      TEXT
+	);`)
+
+	// 'error_code' only has values for messages containing "error"
+	mustExec(t, db, `INSERT INTO logs VALUES
+		(0, 'id1', 123, 'error occurred', 'error', 'api', 'ERR001'),
+		(1000, 'id2', 456, 'success message', 'info', 'web', NULL)`)
+
+	// Filter to messages containing "error"
+	be := &LogLeaf{
+		LineFilters: []LineFilter{
+			{Op: LineContains, Match: "error"},
+		},
+	}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	// 'error_code' should be present because it has a value for error messages
+	if !got["error_code"] {
+		t.Errorf("expected 'error_code' to be present for error line filter, got: %v", got)
+	}
+
+	// Should also have the other non-null columns
+	if !got["log_level"] || !got["service"] {
+		t.Errorf("expected 'log_level' and 'service' to be present, got: %v", got)
+	}
+}
