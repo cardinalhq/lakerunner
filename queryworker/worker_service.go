@@ -404,7 +404,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				cacheManager = ws.LogsCM
 				globSize = ws.LogsGlobSize
 			}
-			isTagValuesQuery = true // Reuse the same result handling path
+			isTagValuesQuery = true // Use same string-based streaming handler for tag names
 		} else if req.TagName != "" {
 			workerSql = req.LogLeaf.ToWorkerSQLForTagValues(req.TagName)
 			if req.IsSpans {

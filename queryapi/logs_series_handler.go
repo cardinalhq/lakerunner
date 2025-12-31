@@ -178,12 +178,14 @@ func matchesSeries(fieldName, value string, matchers []logql.LabelMatch) bool {
 		case logql.MatchRe:
 			re, err := regexp.Compile("^(?:" + m.Value + ")$")
 			if err != nil {
+				slog.Error("failed to compile regex for series matcher", "field", fieldName, "pattern", m.Value, "error", err)
 				return false
 			}
 			matched = re.MatchString(value)
 		case logql.MatchNre:
 			re, err := regexp.Compile("^(?:" + m.Value + ")$")
 			if err != nil {
+				slog.Error("failed to compile regex for series matcher", "field", fieldName, "pattern", m.Value, "error", err)
 				return false
 			}
 			matched = !re.MatchString(value)
