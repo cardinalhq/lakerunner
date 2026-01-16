@@ -103,10 +103,11 @@ Pre-aggregated metrics reduce query complexity:
 
 **Rollup Granularities:**
 
-- 1-minute (raw resolution)
+- 10-second (raw resolution)
+- 1-minute (triggered by 10s completion)
 - 5-minute (triggered by 1m completion)
-- 1-hour (triggered by 5m completion)
-- 1-day (triggered by 1h completion)
+- 20-minute (triggered by 5m completion)
+- 1-hour (triggered by 20m completion)
 
 **Aggregation Functions:**
 
