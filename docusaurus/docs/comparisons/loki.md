@@ -16,8 +16,9 @@ organizational usage grow. Cardinal Lakerunner, by contrast, is designed to
 shift cost from expensive infrastructure to low-cost object storage and
 analytics-friendly formats to reduce marginal cost as data scales.
 
-Cardinal Lakerunner integrates with Grafana—teams keep their familiar dashboards while
-gaining long-term analytics.
+Cardinal Lakerunner integrates with Grafana—teams keep their familiar dashboards
+while gaining long-term analytics. Combined with Cardinal's Agent Builder,
+observability data can drive automated workflows and cross-dataset insights.
 
 ---
 
