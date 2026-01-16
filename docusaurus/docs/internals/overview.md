@@ -39,19 +39,21 @@ OTEL attribute keys are normalized before storage:
 
 Example: `http.request.method` becomes `attr_http_request_method`
 
-### Type Handling
+### Type Coercion {#type-coercion}
 
-Attribute values are stored with consistent type handling:
+OTEL attribute values are coerced to Parquet types:
 
-| Source Type | Storage Type |
-| ----------- | ------------ |
-| String | String |
-| Boolean | String (`"true"`, `"false"`) |
-| Integer | Int64 or String |
-| Float | Float64 or String |
+| Source Type | Stored As |
+| ----------- | --------- |
+| String | string |
+| Boolean | `"true"` / `"false"` |
+| Integer | int64 or string |
+| Float | float64 or string |
 | Array | JSON string |
-| Object | JSON string |
+| Object/Map | JSON string |
 | Null | Parquet null |
+
+Metrics may preserve numeric types; logs and traces convert most values to strings.
 
 ## Schema Evolution
 

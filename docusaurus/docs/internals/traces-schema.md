@@ -4,347 +4,127 @@ sidebar_position: 4
 
 # Traces Parquet Schema
 
-Traces Parquet files contain flattened OpenTelemetry span data optimized for distributed tracing queries.
+See [Schema Conventions](./overview.md#schema-conventions) for field prefixes, name normalization, and [type coercion](./overview.md#type-coercion).
 
-## Span Fields
+## Quick Reference
 
-Core span data from the OpenTelemetry Span object:
+| Field | Type | Required | Description |
+| ----- | ---- | -------- | ----------- |
+| `span_trace_id` | string | yes | 32-char hex trace ID |
+| `span_id` | string | yes | 16-char hex span ID |
+| `span_parent_span_id` | string | no | Parent span ID (empty for root) |
+| `span_name` | string | yes | Operation name |
+| `span_kind` | string | yes | Span relationship type |
+| `span_status_code` | string | yes | Operation status |
+| `span_status_message` | string | no | Status message (usually on error) |
+| `span_end_timestamp` | int64 | yes | End time (ms since epoch) |
+| `span_duration` | int64 | yes | Duration in milliseconds |
+| `chq_id` | string | yes | Unique row ID |
+| `chq_timestamp` | int64 | yes | Start time (ms since epoch) |
+| `chq_tsns` | int64 | yes | Start time (ns since epoch) |
+| `chq_fingerprint` | int64 | yes | Semantic span hash |
+| `chq_telemetry_type` | string | yes | Always `"traces"` |
+| `chq_customer_id` | string | no | Organization ID |
 
-### span_trace_id
-
-**Type:** string (required)
-
-32-character hex-encoded trace ID that groups all spans in the same trace.
-
-### span_id
-
-**Type:** string (required)
-
-16-character hex-encoded span ID uniquely identifying this span within a trace.
-
-### span_parent_span_id
-
-**Type:** string (nullable)
-
-16-character hex-encoded parent span ID. Empty string for root spans.
-
-### span_name
-
-**Type:** string (required)
-
-Operation name. Primary human-readable identifier for the operation being traced.
-
-### span_kind
-
-**Type:** string (required)
-
-Relationship between the span and its parent:
+## Span Kind Values
 
 | Value | Description |
 | ----- | ----------- |
-| `SPAN_KIND_UNSPECIFIED` | Default, relationship unknown |
-| `SPAN_KIND_INTERNAL` | Internal operation within an application |
-| `SPAN_KIND_SERVER` | Server side of synchronous RPC |
-| `SPAN_KIND_CLIENT` | Client side of synchronous RPC |
-| `SPAN_KIND_PRODUCER` | Initiator of async request |
-| `SPAN_KIND_CONSUMER` | Receiver of async request |
+| `SPAN_KIND_UNSPECIFIED` | Unknown |
+| `SPAN_KIND_INTERNAL` | Internal operation |
+| `SPAN_KIND_SERVER` | Server-side RPC |
+| `SPAN_KIND_CLIENT` | Client-side RPC |
+| `SPAN_KIND_PRODUCER` | Async request initiator |
+| `SPAN_KIND_CONSUMER` | Async request receiver |
 
-### span_status_code
-
-**Type:** string (required)
-
-Operation status:
+## Status Code Values
 
 | Value | Description |
 | ----- | ----------- |
-| `STATUS_CODE_UNSET` | Default status |
-| `STATUS_CODE_OK` | Completed successfully |
-| `STATUS_CODE_ERROR` | Operation failed |
+| `STATUS_CODE_UNSET` | Default |
+| `STATUS_CODE_OK` | Success |
+| `STATUS_CODE_ERROR` | Failure |
 
-### span_status_message
-
-**Type:** string (nullable)
-
-Human-readable status message, typically populated when status is ERROR.
-
-### span_end_timestamp
-
-**Type:** int64 (required)
-
-Span end time in milliseconds since Unix epoch.
-
-### span_duration
-
-**Type:** int64 (required)
-
-Span duration in milliseconds (`span_end_timestamp - chq_timestamp`). Set to 0 if either timestamp required a fallback.
-
-## System Fields
-
-### chq_id
-
-**Type:** string (required)
-
-Unique identifier for this span row. Generated using `idgen.NextBase32ID()`.
-
-### chq_timestamp
-
-**Type:** int64 (required)
-
-Span start time in milliseconds since Unix epoch. Falls back to current time if start timestamp is zero.
-
-### chq_tsns
-
-**Type:** int64 (required)
-
-Span start time in nanoseconds for full precision.
-
-### chq_fingerprint
-
-**Type:** int64 (required)
-
-Semantic fingerprint that groups similar spans. Computed using xxhash from a combination of resource and span attributes based on span type.
-
-### chq_telemetry_type
-
-**Type:** string (required)
-
-Always `"traces"` for span records.
-
-### chq_customer_id
-
-**Type:** string (nullable)
-
-Organization ID that owns this trace data.
-
-## Fingerprint Calculation
-
-The fingerprint groups semantically similar spans for analysis.
-
-### Base Components
-
-All fingerprints include:
-
-1. `resource_k8s_cluster_name` (or `"unknown"`)
-2. `resource_k8s_namespace_name` (or `"unknown"`)
-3. `resource_service_name` (or `"unknown"`)
-4. `span_kind`
-
-### Pattern-Specific Components
-
-Checked in order; first match determines pattern:
-
-**Messaging Pattern** (when `attr_messaging_system` present):
-
-| Component |
-| --------- |
-| `attr_messaging_system` |
-| `attr_messaging_operation_type` |
-| `attr_messaging_destination_name` |
-
-**Database Pattern** (when `attr_db_system_name` present):
-
-| Component |
-| --------- |
-| `span_name` |
-| `attr_db_system_name` |
-| `attr_db_namespace` |
-| `attr_db_operation_name` |
-| `attr_server_address` |
-| `attr_db_collection_name` |
-
-**HTTP Pattern** (when `attr_http_request_method` present):
-
-| Component |
-| --------- |
-| `attr_http_request_method` |
-| `attr_url_template` |
-
-**Default Pattern** (no specific system detected):
-
-| Component |
-| --------- |
-| `span_name` |
-
-### Hash Computation
-
-Components joined with `"##"` separator and hashed with xxhash to produce signed int64.
-
-## Attribute Mapping
-
-### Prefixes
+## Attribute Prefixes
 
 | Prefix | Source |
 | ------ | ------ |
-| `resource_*` | OTEL Resource attributes |
-| `scope_*` | OTEL Scope/InstrumentationScope attributes |
+| `resource_*` | OTEL Resource |
+| `scope_*` | OTEL InstrumentationScope |
 | `attr_*` | Span attributes |
 
-### Name Normalization
+## Fingerprint Calculation
 
-OTEL attribute keys normalized via `NormalizeName()`:
+Base components (all spans):
+- `resource_k8s_cluster_name` (or "unknown")
+- `resource_k8s_namespace_name` (or "unknown")
+- `resource_service_name` (or "unknown")
+- `span_kind`
 
-- Dots converted to underscores
-- All characters lowercased
-- Non-alphanumeric characters become underscores
+Pattern-specific components (first match):
 
-Example: `http.request.method` → `attr_http_request_method`
+| Pattern | Detected By | Additional Components |
+| ------- | ----------- | --------------------- |
+| Messaging | `attr_messaging_system` | system, operation_type, destination_name |
+| Database | `attr_db_system_name` | span_name, system, namespace, operation, server, collection |
+| HTTP | `attr_http_request_method` | method, url_template |
+| Default | (none) | span_name |
 
-### Type Handling
+Components joined with `##`, hashed with xxhash.
 
-| Source Type | Storage |
-| ----------- | ------- |
-| Empty values | Nil |
-| Bytes | Raw byte array |
-| All others | String via `AsString()` |
-
-## Common Resource Attributes
-
-| Attribute | Description |
-| --------- | ----------- |
-| `resource_service_name` | Service that generated the span |
-| `resource_service_version` | Service version |
-| `resource_k8s_cluster_name` | Kubernetes cluster |
-| `resource_k8s_namespace_name` | Kubernetes namespace |
-| `resource_k8s_pod_name` | Kubernetes pod |
-| `resource_k8s_deployment_name` | Kubernetes deployment |
-
-## Common Span Attributes
+## Common Attributes
 
 ### HTTP Spans
-
-| Attribute | Description |
-| --------- | ----------- |
-| `attr_http_request_method` | HTTP method (GET, POST, etc.) |
-| `attr_url_template` | URL pattern/template |
-| `attr_http_response_status_code` | HTTP status code |
+- `attr_http_request_method`: GET, POST, etc.
+- `attr_url_template`: URL pattern
+- `attr_http_response_status_code`: HTTP status
 
 ### Database Spans
-
-| Attribute | Description |
-| --------- | ----------- |
-| `attr_db_system_name` | Database system (postgresql, mysql, etc.) |
-| `attr_db_namespace` | Database name |
-| `attr_db_operation_name` | Operation (SELECT, INSERT, etc.) |
-| `attr_db_collection_name` | Table or collection name |
-| `attr_server_address` | Database host |
+- `attr_db_system_name`: postgresql, mysql, etc.
+- `attr_db_namespace`: Database name
+- `attr_db_operation_name`: SELECT, INSERT, etc.
+- `attr_db_collection_name`: Table name
+- `attr_server_address`: Database host
 
 ### Messaging Spans
+- `attr_messaging_system`: kafka, rabbitmq, etc.
+- `attr_messaging_operation_type`: publish, receive
+- `attr_messaging_destination_name`: Queue/topic
 
-| Attribute | Description |
-| --------- | ----------- |
-| `attr_messaging_system` | Messaging system (kafka, rabbitmq, etc.) |
-| `attr_messaging_operation_type` | Operation (publish, receive, etc.) |
-| `attr_messaging_destination_name` | Queue or topic name |
+## Sorting
 
-## Example Transformation
+Files sorted by: `[span_trace_id, chq_timestamp]`
 
-### OTEL Input
+## Example
 
-```text
+**Input (OTEL Span):**
+```
 trace_id: "d4cda95b652f4a1592b449d5929fda1b"
 span_id: "6e0c63257de34c92"
 parent_span_id: "1c3a5f19d2e4b8a7"
 name: "GET /api/users/:id"
 kind: SPAN_KIND_SERVER
-status: { code: STATUS_CODE_OK }
-start_time: 1640995200000000000  # nanoseconds
-end_time: 1640995200050000000    # 50ms later
-attributes: [
-  {key: "http.request.method", value: "GET"},
-  {key: "url.template", value: "/api/users/:id"},
-  {key: "http.response.status_code", value: 200}
-]
-resource: {
-  attributes: [
-    {key: "service.name", value: "api-gateway"},
-    {key: "k8s.namespace.name", value: "production"},
-    {key: "k8s.cluster.name", value: "us-west-2"}
-  ]
-}
-scope: {
-  name: "opentelemetry-go"
-  version: "1.21.0"
-}
+status: STATUS_CODE_OK
+start_time: 1640995200000000000
+end_time: 1640995200050000000
+attributes: {http.request.method: "GET", url.template: "/api/users/:id"}
+resource: {service.name: "api", k8s.namespace.name: "prod"}
 ```
 
-### Parquet Output
-
-```text
+**Output (Parquet):**
+```
 span_trace_id: "d4cda95b652f4a1592b449d5929fda1b"
 span_id: "6e0c63257de34c92"
 span_parent_span_id: "1c3a5f19d2e4b8a7"
 span_name: "GET /api/users/:id"
 span_kind: "SPAN_KIND_SERVER"
 span_status_code: "STATUS_CODE_OK"
-span_status_message: ""
-span_end_timestamp: 1640995200050
 span_duration: 50
-
 chq_timestamp: 1640995200000
-chq_tsns: 1640995200000000000
-chq_telemetry_type: "traces"
-chq_id: "a1b2c3d4e5f6g7h8"
 chq_fingerprint: 1234567890123456789
-
-resource_service_name: "api-gateway"
-resource_k8s_namespace_name: "production"
-resource_k8s_cluster_name: "us-west-2"
-
-scope_name: "opentelemetry-go"
-scope_version: "1.21.0"
-
+chq_telemetry_type: "traces"
+resource_service_name: "api"
+resource_k8s_namespace_name: "prod"
 attr_http_request_method: "GET"
 attr_url_template: "/api/users/:id"
-attr_http_response_status_code: "200"
 ```
-
-## Edge Cases
-
-### Timestamp Handling
-
-| Condition | Behavior |
-| --------- | -------- |
-| Zero start timestamp | Falls back to current system time |
-| Zero end timestamp | Falls back to current system time |
-| Either timestamp fallback | Duration set to 0 |
-
-### Missing Fingerprint Components
-
-| Missing | Replacement |
-| ------- | ----------- |
-| `resource_k8s_cluster_name` | `"unknown"` |
-| `resource_k8s_namespace_name` | `"unknown"` |
-| `resource_service_name` | `"unknown"` |
-| Pattern-specific attributes | Empty string in hash |
-
-## File Sorting
-
-Sorted by `[span_trace_id, chq_timestamp]`:
-
-- Groups all spans of a trace together
-- Orders spans chronologically within each trace
-- Optimizes trace assembly queries
-
-## Required Fields
-
-- `span_trace_id`
-- `span_id`
-- `span_name`
-- `span_kind`
-- `span_status_code`
-- `span_duration`
-- `chq_timestamp`
-- `chq_tsns`
-- `chq_telemetry_type`
-- `chq_fingerprint`
-- `chq_id`
-
-## Optional Fields
-
-- `span_parent_span_id` (empty for root spans)
-- `span_status_message`
-- `chq_customer_id`
-- All `resource_*` fields
-- All `scope_*` fields
-- All `attr_*` fields
