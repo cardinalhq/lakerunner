@@ -37,3 +37,4 @@ vendor
 docusaurus/node_modules/
 docusaurus/build/
 docusaurus/.docusaurus/
+.playwright-mcp
