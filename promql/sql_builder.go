@@ -395,6 +395,48 @@ func (be *BaseExpr) ToWorkerSQLForTagValues(step time.Duration, tagName string) 
 	return sql
 }
 
+// ToWorkerSQLForTagNames generates a DuckDB SQL query that returns distinct column names
+// (tag names) that have at least one non-null value in rows matching the filter criteria.
+// This is used for scoped tag discovery - finding which tags are relevant for a given filter.
+func (be *BaseExpr) ToWorkerSQLForTagNames() string {
+	// Build WHERE clause with metric name and matchers
+	where := withTime(whereFor(be))
+
+	// System columns to exclude from tag names - these are not user-facing tags
+	// Note: We only exclude columns that are guaranteed to exist in all metric tables.
+	// The COLUMNS(*)::VARCHAR cast handles type conversion for any BIGINT columns.
+	excludeCols := []string{
+		"chq_timestamp",
+		"chq_id",
+		"chq_fingerprint",
+		"chq_rollup_sum",
+		"chq_rollup_count",
+		"chq_rollup_min",
+		"chq_rollup_max",
+		"metric_name",
+	}
+
+	// Build EXCLUDE clause for system columns
+	quotedCols := make([]string, len(excludeCols))
+	for i, col := range excludeCols {
+		quotedCols[i] = fmt.Sprintf("\"%s\"", col)
+	}
+	excludeClause := " EXCLUDE (" + strings.Join(quotedCols, ", ") + ")"
+
+	// Use UNPIVOT to transform columns into rows, then get distinct non-null column names
+	// Cast all columns to VARCHAR first to avoid "Cannot unpivot columns of types VARCHAR and BIGINT" errors.
+	sql := "SELECT DISTINCT col_name AS tag_value FROM (" +
+		"UNPIVOT (" +
+		"SELECT *" + excludeClause + " FROM (" +
+		"SELECT COLUMNS(*)::VARCHAR FROM {table}" + where +
+		")" +
+		") ON COLUMNS(*) INTO NAME col_name VALUE col_value" +
+		") WHERE col_value IS NOT NULL AND col_value != '' " +
+		"ORDER BY tag_value ASC"
+
+	return sql
+}
+
 func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	where := withTime(whereFor(be))

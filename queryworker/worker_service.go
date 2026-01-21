@@ -373,7 +373,13 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var isSimpleLogAgg = false // true when agg_ files can be used
 
 	if req.BaseExpr != nil {
-		if req.TagName != "" {
+		if req.TagNames {
+			// Return distinct tag names (column names) instead of values
+			workerSql = req.BaseExpr.ToWorkerSQLForTagNames()
+			cacheManager = ws.MetricsCM
+			globSize = ws.MetricsGlobSize
+			isTagValuesQuery = true // Use same string-based streaming handler for tag names
+		} else if req.TagName != "" {
 			workerSql = req.BaseExpr.ToWorkerSQLForTagValues(req.Step, req.TagName)
 			cacheManager = ws.MetricsCM
 			globSize = ws.MetricsGlobSize
