@@ -33,6 +33,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 var metadataDefaultTimeRangeCounter metric.Int64Counter
@@ -54,6 +55,7 @@ type promTagsReq struct {
 	S      string `json:"s"`
 	E      string `json:"e"`
 	Metric string `json:"metric,omitempty"`
+	Q      string `json:"q,omitempty"` // Optional PromQL selector for scoping
 }
 
 type metricItem struct {
@@ -147,6 +149,10 @@ func (q *QuerierService) handleListPromQLMetricsMetadata(w http.ResponseWriter, 
 	_ = json.NewEncoder(w).Encode(out)
 }
 
+// handleListPromQLTags returns distinct tag names (label keys) for metrics.
+// Supports optional 'q' parameter for scoping results to tags that exist on metrics matching a PromQL selector.
+// - With metric only: Fast DB-only path using segment metadata
+// - With q filter: Query workers to find tags that exist in matching rows
 func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST method is allowed", http.StatusMethodNotAllowed)
@@ -173,15 +179,20 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 	}
 
 	metric := strings.TrimSpace(req.Metric)
-	if metric == "" {
-		http.Error(w, "missing metric", http.StatusBadRequest)
+	queryExpr := strings.TrimSpace(req.Q)
+
+	// Require either metric or query expression
+	if metric == "" && queryExpr == "" {
+		http.Error(w, "missing metric or q parameter", http.StatusBadRequest)
 		return
 	}
 
 	// Parse time range from request, or use defaults (yesterday to today)
+	var startTs, endTs int64
 	var startDateint, endDateint int32
 	if req.S != "" && req.E != "" {
-		startTs, endTs, err := dateutils.ToStartEnd(req.S, req.E)
+		var err error
+		startTs, endTs, err = dateutils.ToStartEnd(req.S, req.E)
 		if err != nil {
 			http.Error(w, "invalid start/end time: "+err.Error(), http.StatusBadRequest)
 			return
@@ -191,11 +202,51 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 	} else {
 		// Default to yesterday and today for partition pruning
 		now := time.Now().UTC()
-		endDateint, _ = helpers.MSToDateintHour(now.UnixMilli())
-		yesterday := now.AddDate(0, 0, -1)
-		startDateint, _ = helpers.MSToDateintHour(yesterday.UnixMilli())
+		endTs = now.UnixMilli()
+		startTs = now.AddDate(0, 0, -1).UnixMilli()
+		endDateint, _ = helpers.MSToDateintHour(endTs)
+		startDateint, _ = helpers.MSToDateintHour(startTs)
 	}
 
+	// If query expression is provided, use worker query path for scoped results
+	if queryExpr != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+
+		// Parse the PromQL selector
+		promAst, parseErr := promql.FromPromQL(queryExpr)
+		if parseErr != nil {
+			http.Error(w, "invalid query expression: "+parseErr.Error(), http.StatusBadRequest)
+			return
+		}
+		plan, compileErr := promql.Compile(promAst)
+		if compileErr != nil {
+			http.Error(w, "compile error: "+compileErr.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Query workers for tag names matching the filter
+		resultsCh, err := q.EvaluateMetricTagNamesQuery(ctx, orgUUID, startTs, endTs, plan)
+		if err != nil {
+			slog.Error("EvaluateMetricTagNamesQuery failed", "org", orgUUID, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		// Collect all tag names from the channel
+		var tags []string
+		for res := range resultsCh {
+			if tv, ok := res.(promql.TagValue); ok {
+				tags = append(tags, tv.Value)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(tagsResponse{Tags: tags})
+		return
+	}
+
+	// No query expression - use fast DB-only path with metric name
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 

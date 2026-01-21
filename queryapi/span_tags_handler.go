@@ -26,12 +26,16 @@ import (
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 type spanTagsPayload struct {
 	S string `json:"s"`
 	E string `json:"e"`
+	Q string `json:"q,omitempty"` // Optional LogQL-style selector for scoping
 
 	OrgUUID uuid.UUID `json:"-"`
 	StartTs int64     `json:"-"`
@@ -73,33 +77,73 @@ func readSpanTagsPayload(w http.ResponseWriter, r *http.Request) *spanTagsPayloa
 	return &p
 }
 
+// handleListSpanTags returns distinct tag names (label keys) for spans.
+// Supports optional 'q' parameter for scoping results to tags that exist on spans matching a LogQL-style selector.
+// - No filter: Fast DB-only path using segment metadata
+// - With filter: Query workers to find tags that exist in matching rows
 func (q *QuerierService) handleListSpanTags(w http.ResponseWriter, r *http.Request) {
 	p := readSpanTagsPayload(w, r)
 	if p == nil {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	// Calculate dateint from the request time range
+	startDateint, _ := helpers.MSToDateintHour(p.StartTs)
+	endDateint, _ := helpers.MSToDateintHour(p.EndTs)
+
+	if p.Q == "" {
+		// No filter - use fast DB-only path
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		tags, err := q.mdb.ListSpanTags(ctx, lrdb.ListSpanTagsParams{
+			OrganizationID: p.OrgUUID,
+			StartDateint:   startDateint,
+			EndDateint:     endDateint,
+		})
+		if err != nil {
+			slog.Error("ListSpanTags failed", "org", p.OrgUUID, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(tagsResponse{Tags: tags})
+		return
+	}
+
+	// With filter - use worker query path for accurate scoped results
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	// Calculate dateint for today and yesterday for partition pruning
-	now := time.Now().UTC()
-	todayDateint := int32(now.Year()*10000 + int(now.Month())*100 + now.Day())
-	yesterday := now.AddDate(0, 0, -1)
-	yesterdayDateint := int32(yesterday.Year()*10000 + int(yesterday.Month())*100 + yesterday.Day())
+	// Parse the LogQL-style selector (spans use same syntax as logs)
+	logAst, parseErr := logql.FromLogQL(p.Q)
+	if parseErr != nil {
+		http.Error(w, "invalid query expression: "+parseErr.Error(), http.StatusBadRequest)
+		return
+	}
+	lplan, compileErr := logql.CompileLog(logAst)
+	if compileErr != nil {
+		http.Error(w, "compile error: "+compileErr.Error(), http.StatusBadRequest)
+		return
+	}
 
-	tags, err := q.mdb.ListSpanTags(ctx, lrdb.ListSpanTagsParams{
-		OrganizationID: p.OrgUUID,
-		StartDateint:   yesterdayDateint,
-		EndDateint:     todayDateint,
-	})
+	// Query workers for tag names matching the filter
+	resultsCh, err := q.EvaluateSpanTagNamesQuery(ctx, p.OrgUUID, p.StartTs, p.EndTs, lplan)
 	if err != nil {
-		slog.Error("ListSpanTags failed", "org", p.OrgUUID, "error", err)
+		slog.Error("EvaluateSpanTagNamesQuery failed", "org", p.OrgUUID, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	// tags is already []string, so no need to cast
+	// Collect all tag names from the channel
+	var tags []string
+	for res := range resultsCh {
+		if tv, ok := res.(promql.TagValue); ok {
+			tags = append(tags, tv.Value)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(tagsResponse{Tags: tags})
 }
