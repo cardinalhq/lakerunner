@@ -94,9 +94,6 @@ func acquireScanBuffers(n int) (*scanBuffers, func()) {
 		for i := range buf.vals {
 			buf.vals[i] = nil
 		}
-		for i := range buf.ptrs {
-			buf.ptrs[i] = nil
-		}
 		buf.vals = buf.vals[:0]
 		buf.ptrs = buf.ptrs[:0]
 		scanBufferPool.Put(buf)
