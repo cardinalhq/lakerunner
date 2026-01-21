@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -135,6 +136,16 @@ func (c *QueueWorkerConsumer) processWorkItem(ctx context.Context, workItem work
 		slog.String("organizationID", workItem.OrganizationID().String()),
 		slog.Int("instanceNum", int(workItem.InstanceNum())),
 		slog.Int("tries", int(workItem.Tries())))
+
+	// NOP_PROCESSING mode: skip actual processing and mark as completed immediately
+	if os.Getenv("NOP_PROCESSING") == "true" {
+		ll.Info("NOP_PROCESSING enabled, skipping processing and marking as completed")
+		if err := workItem.Complete(); err != nil {
+			ll.Error("Failed to complete work item in NOP mode", slog.Any("error", err))
+			return err
+		}
+		return nil
+	}
 
 	// Process the bundle using the processor
 	if err := c.processor.ProcessBundleFromQueue(ctx, workItem); err != nil {

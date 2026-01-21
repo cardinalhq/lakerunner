@@ -120,6 +120,8 @@ func (be *LogLeaf) ToWorkerSQLForTagNames() string {
 	const tsCol = `"chq_timestamp"`
 
 	// System columns to exclude from tag names - these are not user-facing tags
+	// Note: We only exclude columns that are guaranteed to exist in all log tables.
+	// The COLUMNS(*)::VARCHAR cast handles type conversion for any BIGINT columns.
 	excludeCols := []string{
 		"chq_timestamp",
 		"chq_id",
@@ -169,15 +171,82 @@ func (be *LogLeaf) ToWorkerSQLForTagNames() string {
 
 	// Use UNPIVOT to transform columns into rows, then get distinct non-null column names
 	// The query:
-	// 1. Filters rows based on matchers/line filters/label filters
-	// 2. Unpivots all columns (except system columns) into name/value rows
-	// 3. Filters out NULL values
-	// 4. Returns distinct column names as tag_value (to reuse tagValuesMapper)
+	// 1. Casts all columns to VARCHAR (UNPIVOT requires homogeneous types)
+	// 2. Filters rows based on matchers/line filters/label filters
+	// 3. Unpivots all columns (except system columns) into name/value rows
+	// 4. Filters out NULL values and empty strings
+	// 5. Returns distinct column names as tag_value (to reuse tagValuesMapper)
+	//
+	// Note: We use a subquery with COLUMNS(*)::VARCHAR to cast all columns to VARCHAR
+	// before UNPIVOT, avoiding "Cannot unpivot columns of types VARCHAR and BIGINT" errors.
 	sql := "SELECT DISTINCT col_name AS tag_value FROM (" +
 		"UNPIVOT (" +
-		"SELECT *" + excludeClause + " FROM " + baseRel + whereClause +
+		"SELECT *" + excludeClause + " FROM (" +
+		"SELECT COLUMNS(*)::VARCHAR FROM " + baseRel + whereClause +
+		")" +
 		") ON COLUMNS(*) INTO NAME col_name VALUE col_value" +
-		") WHERE col_value IS NOT NULL " +
+		") WHERE col_value IS NOT NULL AND col_value != '' " +
+		"ORDER BY tag_value ASC"
+
+	return sql
+}
+
+// ToSpansWorkerSQLForTagNames generates a DuckDB SQL query that returns distinct column names
+// for spans/traces. This is separate from logs because spans don't have log_message column.
+func (be *LogLeaf) ToSpansWorkerSQLForTagNames() string {
+	const baseRel = "{table}"
+	const tsCol = `"chq_timestamp"`
+
+	// System columns to exclude from tag names - these are not user-facing tags
+	// Note: Spans don't have log_message, so we exclude different columns than logs.
+	excludeCols := []string{
+		"chq_timestamp",
+		"chq_id",
+	}
+
+	var whereConds []string
+
+	// Add time range filter
+	whereConds = append(whereConds, fmt.Sprintf("%s >= {start} AND %s <= {end}", tsCol, tsCol))
+
+	// Apply selector matchers
+	if len(be.Matchers) > 0 {
+		mLfs := make([]LabelFilter, 0, len(be.Matchers))
+		for _, m := range be.Matchers {
+			mLfs = append(mLfs, LabelFilter{Label: m.Label, Op: m.Op, Value: m.Value})
+		}
+		mWhere := buildLabelFilterWhere(mLfs, nil)
+		whereConds = append(whereConds, mWhere...)
+	}
+
+	// Apply label filters
+	if len(be.LabelFilters) > 0 {
+		lfWhere := buildLabelFilterWhere(be.LabelFilters, nil)
+		whereConds = append(whereConds, lfWhere...)
+	}
+
+	var whereClause string
+	if len(whereConds) > 0 {
+		whereClause = " WHERE " + strings.Join(whereConds, " AND ")
+	}
+
+	// Build EXCLUDE clause for system columns
+	var excludeClause string
+	if len(excludeCols) > 0 {
+		quotedCols := make([]string, len(excludeCols))
+		for i, col := range excludeCols {
+			quotedCols[i] = quoteIdent(col)
+		}
+		excludeClause = " EXCLUDE (" + strings.Join(quotedCols, ", ") + ")"
+	}
+
+	sql := "SELECT DISTINCT col_name AS tag_value FROM (" +
+		"UNPIVOT (" +
+		"SELECT *" + excludeClause + " FROM (" +
+		"SELECT COLUMNS(*)::VARCHAR FROM " + baseRel + whereClause +
+		")" +
+		") ON COLUMNS(*) INTO NAME col_name VALUE col_value" +
+		") WHERE col_value IS NOT NULL AND col_value != '' " +
 		"ORDER BY tag_value ASC"
 
 	return sql

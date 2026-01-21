@@ -22,14 +22,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -38,35 +36,27 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/cardinalhq/lakerunner/pipeline"
 )
 
 // MetricIngestProcessor implements the Processor interface for raw metric ingestion
 type MetricIngestProcessor struct {
-	store             MetricIngestStore
-	storageProvider   storageprofile.StorageProfileProvider
-	cmgr              cloudstorage.ClientProvider
-	kafkaProducer     fly.Producer
-	exemplarProcessor *exemplars.Processor
-	config            *config.Config
+	store           MetricIngestStore
+	storageProvider storageprofile.StorageProfileProvider
+	cmgr            cloudstorage.ClientProvider
+	kafkaProducer   fly.Producer
+	config          *config.Config
 }
 
 // newMetricIngestProcessor creates a new metric ingest processor instance
 func newMetricIngestProcessor(
 	cfg *config.Config,
 	store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
-	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row) error {
-		return processMetricsExemplarsDirect(ctx, organizationID, rows, store)
-	})
-
 	return &MetricIngestProcessor{
-		store:             store,
-		storageProvider:   storageProvider,
-		cmgr:              cmgr,
-		kafkaProducer:     kafkaProducer,
-		exemplarProcessor: exemplarProcessor,
-		config:            cfg,
+		store:           store,
+		storageProvider: storageProvider,
+		cmgr:            cmgr,
+		kafkaProducer:   kafkaProducer,
+		config:          cfg,
 	}
 }
 

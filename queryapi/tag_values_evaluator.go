@@ -548,6 +548,130 @@ func (q *QuerierService) EvaluateLogTagValuesQuery(
 	return out, nil
 }
 
+// tagNamesQueryConfig holds configuration for the runTagNamesQuery helper.
+type tagNamesQueryConfig struct {
+	logPrefix      string
+	dateIntIsLog   bool // passed to dateIntHoursRange
+	batchStep      time.Duration
+	batchIsLog     bool // passed to ComputeReplayBatchesWithWorkers
+	stepDuration   time.Duration
+	lookupSegments func(dih DateIntHours) ([]SegmentInfo, error)
+	buildRequest   func(group SegmentGroup, workerSegments []SegmentInfo) PushDownRequest
+	logSegmentInfo func(dih DateIntHours, segmentCount int)
+}
+
+// runTagNamesQuery is a generic helper that runs the tag names query loop.
+// It handles worker discovery, segment batching, pushdown, and deduplication.
+func (q *QuerierService) runTagNamesQuery(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs int64,
+	endTs int64,
+	leafCount int,
+	iterateLeaves func(yield func() bool),
+	cfg tagNamesQueryConfig,
+) (<-chan promql.Timestamped, error) {
+	workers, err := q.workerDiscovery.GetAllWorkers()
+	if err != nil {
+		slog.Error("failed to get all workers", "err", err)
+		return nil, fmt.Errorf("failed to get all workers: %w", err)
+	}
+
+	dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, cfg.dateIntIsLog)
+	slog.Info(cfg.logPrefix+": using worker path",
+		"orgID", orgID,
+		"startTs", startTs,
+		"endTs", endTs,
+		"workerCount", len(workers),
+		"dateIntHoursCount", len(dateIntHours),
+		"leafCount", leafCount,
+	)
+
+	out := make(chan promql.Timestamped, 1024)
+
+	go func() {
+		defer close(out)
+
+		seenTagNames := make(map[string]bool)
+
+		iterateLeaves(func() bool {
+			for _, dih := range dateIntHours {
+				segments, err := cfg.lookupSegments(dih)
+				if err != nil {
+					slog.Error(cfg.logPrefix+": failed to lookup segments", "err", err, "dih", dih)
+					return false
+				}
+				cfg.logSegmentInfo(dih, len(segments))
+				if len(segments) == 0 {
+					continue
+				}
+
+				groups := ComputeReplayBatchesWithWorkers(segments, cfg.batchStep, startTs, endTs, len(workers), cfg.batchIsLog)
+				for _, group := range groups {
+					select {
+					case <-ctx.Done():
+						return false
+					default:
+					}
+
+					segmentIDs := make([]int64, 0, len(group.Segments))
+					segmentMap := make(map[int64][]SegmentInfo)
+					for _, segment := range group.Segments {
+						segmentIDs = append(segmentIDs, segment.SegmentID)
+						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
+					}
+
+					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+					if err != nil {
+						slog.Error("failed to get worker assignments", "err", err)
+						continue
+					}
+
+					workerGroups := make(map[Worker][]SegmentInfo)
+					for _, mapping := range mappings {
+						segmentList := segmentMap[mapping.SegmentID]
+						workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
+					}
+
+					var groupLeafChans []<-chan promql.TagValue
+					for worker, workerSegments := range workerGroups {
+						req := cfg.buildRequest(group, workerSegments)
+						ch, err := q.tagValuesPushDown(ctx, worker, req)
+						if err != nil {
+							slog.Error("pushdown failed", "worker", worker, "err", err)
+							continue
+						}
+						groupLeafChans = append(groupLeafChans, ch)
+					}
+					if len(groupLeafChans) == 0 {
+						continue
+					}
+
+					mergedGroup := mergeChannels(ctx, 1024, groupLeafChans...)
+
+				drainLoop:
+					for {
+						select {
+						case <-ctx.Done():
+							return false
+						case res, ok := <-mergedGroup:
+							if !ok {
+								break drainLoop
+							}
+							if !seenTagNames[res.Value] {
+								seenTagNames[res.Value] = true
+								out <- res
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+	}()
+	return out, nil
+}
+
 // EvaluateLogTagNamesQuery queries workers to find distinct tag names (column names)
 // that have at least one non-null value in logs matching the filter criteria.
 // This is used for scoped tag discovery.
@@ -558,127 +682,153 @@ func (q *QuerierService) EvaluateLogTagNamesQuery(
 	endTs int64,
 	queryPlan logql.LQueryPlan,
 ) (<-chan promql.Timestamped, error) {
-	workers, err := q.workerDiscovery.GetAllWorkers()
-	if err != nil {
-		slog.Error("failed to get all workers", "err", err)
-		return nil, fmt.Errorf("failed to get all workers: %w", err)
-	}
 	stepDuration := StepForQueryDuration(startTs, endTs)
 
-	dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, true)
-	slog.Info("log tag names: using worker path",
-		"selectors", logLeafSelectorsDebug(queryPlan.Leaves),
-		"orgID", orgID,
-		"startTs", startTs,
-		"endTs", endTs,
-		"workerCount", len(workers),
-		"dateIntHoursCount", len(dateIntHours),
-		"leafCount", len(queryPlan.Leaves),
-	)
-
-	out := make(chan promql.Timestamped, 1024)
-
-	go func() {
-		defer close(out)
-
-		// Use a map to track unique tag names across all workers and groups
-		seenTagNames := make(map[string]bool)
-
-		for _, leaf := range queryPlan.Leaves {
-			for _, dih := range dateIntHours {
-				segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery)
-				if err != nil {
-					slog.Error("log tag names: failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
+	var currentLeaf logql.LogLeaf
+	return q.runTagNamesQuery(ctx, orgID, startTs, endTs, len(queryPlan.Leaves),
+		func(yield func() bool) {
+			for _, leaf := range queryPlan.Leaves {
+				currentLeaf = leaf
+				if !yield() {
 					return
 				}
+			}
+		},
+		tagNamesQueryConfig{
+			logPrefix:    "log tag names",
+			dateIntIsLog: true,
+			batchStep:    DefaultLogStep,
+			batchIsLog:   true,
+			stepDuration: stepDuration,
+			lookupSegments: func(dih DateIntHours) ([]SegmentInfo, error) {
+				return q.lookupLogsSegments(ctx, dih, currentLeaf, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery)
+			},
+			buildRequest: func(group SegmentGroup, workerSegments []SegmentInfo) PushDownRequest {
+				leaf := currentLeaf
+				return PushDownRequest{
+					OrganizationID: orgID,
+					LogLeaf:        &leaf,
+					TagNames:       true,
+					StartTs:        group.StartTs,
+					EndTs:          group.EndTs,
+					Segments:       workerSegments,
+					Step:           stepDuration,
+				}
+			},
+			logSegmentInfo: func(dih DateIntHours, segmentCount int) {
 				slog.Info("log tag names: segment lookup",
 					"dateIntHour", dih,
-					"segmentCount", len(segments),
-					"selectors", logLeafSelectorsDebug([]logql.LogLeaf{leaf}),
+					"segmentCount", segmentCount,
+					"selectors", logLeafSelectorsDebug([]logql.LogLeaf{currentLeaf}),
 				)
-				if len(segments) == 0 {
-					continue
-				}
-				// Form time-contiguous batches sized for the number of workers.
-				groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), true)
-				for _, group := range groups {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
+			},
+		})
+}
 
-					// Collect all segment IDs for worker assignment
-					segmentIDs := make([]int64, 0, len(group.Segments))
-					segmentMap := make(map[int64][]SegmentInfo)
-					for _, segment := range group.Segments {
-						segmentIDs = append(segmentIDs, segment.SegmentID)
-						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
-					}
+// EvaluateMetricTagNamesQuery queries workers to find distinct tag names (column names)
+// that have at least one non-null value in metrics matching the filter criteria.
+// This is used for scoped tag discovery.
+func (q *QuerierService) EvaluateMetricTagNamesQuery(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs int64,
+	endTs int64,
+	queryPlan promql.QueryPlan,
+) (<-chan promql.Timestamped, error) {
+	stepDuration := StepForQueryDuration(startTs, endTs)
 
-					// Get worker assignments for all segments
-					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
-					if err != nil {
-						slog.Error("failed to get worker assignments", "err", err)
-						continue
-					}
-
-					// Group segments by assigned worker
-					workerGroups := make(map[Worker][]SegmentInfo)
-					for _, mapping := range mappings {
-						segmentList := segmentMap[mapping.SegmentID]
-						workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
-					}
-
-					var groupLeafChans []<-chan promql.TagValue
-					for worker, workerSegments := range workerGroups {
-						req := PushDownRequest{
-							OrganizationID: orgID,
-							LogLeaf:        &leaf,
-							TagNames:       true, // Request tag names instead of values
-							StartTs:        group.StartTs,
-							EndTs:          group.EndTs,
-							Segments:       workerSegments,
-							Step:           stepDuration,
-						}
-						ch, err := q.tagValuesPushDown(ctx, worker, req)
-						if err != nil {
-							slog.Error("pushdown failed", "worker", worker, "err", err)
-							continue
-						}
-						groupLeafChans = append(groupLeafChans, ch)
-					}
-					// No channels for this group — skip.
-					if len(groupLeafChans) == 0 {
-						continue
-					}
-
-					// Merge this group's worker streams without sorting
-					mergedGroup := mergeChannels(ctx, 1024, groupLeafChans...)
-
-					// Forward group results into final output stream as they arrive, with deduplication
-					for {
-						select {
-						case <-ctx.Done():
-							return
-						case res, ok := <-mergedGroup:
-							if !ok {
-								// Group done, proceed to next group.
-								goto nextGroup
-							}
-							// Only send unique tag names
-							if !seenTagNames[res.Value] {
-								seenTagNames[res.Value] = true
-								out <- res
-							}
-						}
-					}
-				nextGroup:
+	var currentLeaf promql.BaseExpr
+	return q.runTagNamesQuery(ctx, orgID, startTs, endTs, len(queryPlan.Leaves),
+		func(yield func() bool) {
+			for _, leaf := range queryPlan.Leaves {
+				currentLeaf = leaf
+				if !yield() {
+					return
 				}
 			}
-		}
-	}()
-	return out, nil
+		},
+		tagNamesQueryConfig{
+			logPrefix:    "metric tag names",
+			dateIntIsLog: false,
+			batchStep:    stepDuration,
+			batchIsLog:   false,
+			stepDuration: stepDuration,
+			lookupSegments: func(dih DateIntHours) ([]SegmentInfo, error) {
+				return q.lookupMetricsSegments(ctx, dih, currentLeaf, startTs, endTs, stepDuration, orgID)
+			},
+			buildRequest: func(group SegmentGroup, workerSegments []SegmentInfo) PushDownRequest {
+				leaf := currentLeaf
+				return PushDownRequest{
+					OrganizationID: orgID,
+					BaseExpr:       &leaf,
+					TagNames:       true,
+					StartTs:        group.StartTs,
+					EndTs:          group.EndTs,
+					Segments:       workerSegments,
+					Step:           stepDuration,
+				}
+			},
+			logSegmentInfo: func(dih DateIntHours, segmentCount int) {
+				slog.Info("metric tag names: segment lookup",
+					"dateIntHour", dih,
+					"segmentCount", segmentCount,
+				)
+			},
+		})
+}
+
+// EvaluateSpanTagNamesQuery queries workers to find distinct tag names (column names)
+// that have at least one non-null value in spans matching the filter criteria.
+// This is used for scoped tag discovery.
+func (q *QuerierService) EvaluateSpanTagNamesQuery(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs int64,
+	endTs int64,
+	queryPlan logql.LQueryPlan,
+) (<-chan promql.Timestamped, error) {
+	stepDuration := StepForQueryDuration(startTs, endTs)
+
+	var currentLeaf logql.LogLeaf
+	return q.runTagNamesQuery(ctx, orgID, startTs, endTs, len(queryPlan.Leaves),
+		func(yield func() bool) {
+			for _, leaf := range queryPlan.Leaves {
+				currentLeaf = leaf
+				if !yield() {
+					return
+				}
+			}
+		},
+		tagNamesQueryConfig{
+			logPrefix:    "span tag names",
+			dateIntIsLog: true,
+			batchStep:    DefaultLogStep,
+			batchIsLog:   true,
+			stepDuration: stepDuration,
+			lookupSegments: func(dih DateIntHours) ([]SegmentInfo, error) {
+				return q.lookupSpansSegments(ctx, dih, currentLeaf, startTs, endTs, orgID, q.mdb.ListTraceSegmentsForQuery)
+			},
+			buildRequest: func(group SegmentGroup, workerSegments []SegmentInfo) PushDownRequest {
+				leaf := currentLeaf
+				return PushDownRequest{
+					OrganizationID: orgID,
+					LogLeaf:        &leaf,
+					TagNames:       true,
+					StartTs:        group.StartTs,
+					EndTs:          group.EndTs,
+					Segments:       workerSegments,
+					Step:           stepDuration,
+					IsSpans:        true,
+				}
+			},
+			logSegmentInfo: func(dih DateIntHours, segmentCount int) {
+				slog.Info("span tag names: segment lookup",
+					"dateIntHour", dih,
+					"segmentCount", segmentCount,
+					"selectors", logLeafSelectorsDebug([]logql.LogLeaf{currentLeaf}),
+				)
+			},
+		})
 }
 
 func (q *QuerierService) EvaluateSpanTagValuesQuery(
