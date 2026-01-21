@@ -25,13 +25,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -181,30 +179,23 @@ type TraceDateintBinManager struct {
 
 // TraceIngestProcessor implements the Processor interface for raw trace ingestion
 type TraceIngestProcessor struct {
-	store             TraceIngestStore
-	storageProvider   storageprofile.StorageProfileProvider
-	cmgr              cloudstorage.ClientProvider
-	kafkaProducer     fly.Producer
-	exemplarProcessor *exemplars.Processor
-	config            *config.Config
+	store           TraceIngestStore
+	storageProvider storageprofile.StorageProfileProvider
+	cmgr            cloudstorage.ClientProvider
+	kafkaProducer   fly.Producer
+	config          *config.Config
 }
 
 // newTraceIngestProcessor creates a new trace ingest processor instance
 func newTraceIngestProcessor(
 	cfg *config.Config,
 	store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
-	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetTracesCallback(func(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row) error {
-		return processTracesExemplarsDirect(ctx, organizationID, rows, store)
-	})
-
 	return &TraceIngestProcessor{
-		store:             store,
-		storageProvider:   storageProvider,
-		cmgr:              cmgr,
-		kafkaProducer:     kafkaProducer,
-		exemplarProcessor: exemplarProcessor,
-		config:            cfg,
+		store:           store,
+		storageProvider: storageProvider,
+		cmgr:            cmgr,
+		kafkaProducer:   kafkaProducer,
+		config:          cfg,
 	}
 }
 
@@ -668,11 +659,6 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 				if err != nil {
 					ll.Error("Failed to get/create dateint bin", slog.Int("dateint", int(dateint)), slog.Any("error", err))
 					continue
-				}
-
-				// Process exemplar before taking the row
-				if p.exemplarProcessor != nil {
-					_ = p.exemplarProcessor.ProcessTracesFromRow(ctx, storageProfile.OrganizationID, row)
 				}
 
 				// Now take the row to avoid copying
