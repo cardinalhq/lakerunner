@@ -241,16 +241,20 @@ func EvaluatePushDown[T promql.Timestamped](
 	metadataCreationTime := time.Since(start)
 	groupSpan.SetAttributes(attribute.Int("org_instance_groups", len(segmentsByOrg)))
 	groupSpan.End()
-	slog.Info("Metadata Creation Time", "duration", metadataCreationTime.String())
+	slog.Debug("Metadata Creation Time", "duration", metadataCreationTime.String())
 	start = time.Now()
 
 	outs := make([]<-chan T, 0)
 
+	// Create a cancellable context for producers that MergeSorted can cancel when limit is reached
+	producerCtx, producerCancel := context.WithCancel(ctx)
+
 	// Build channels per (org, instance)
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
-			profile, err := w.getProfile(ctx, orgId, instanceNum)
+			profile, err := w.getProfile(producerCtx, orgId, instanceNum)
 			if err != nil {
+				producerCancel()
 				evalSpan.RecordError(err)
 				evalSpan.SetStatus(codes.Error, "failed to get profile")
 				return nil, err
@@ -281,7 +285,8 @@ func EvaluatePushDown[T promql.Timestamped](
 
 			// Download tbl_ files from S3 before querying
 			if len(objectIDs) > 0 {
-				if err := w.downloadForQuery(ctx, profile, objectIDs); err != nil {
+				if err := w.downloadForQuery(producerCtx, profile, objectIDs); err != nil {
+					producerCancel()
 					evalSpan.RecordError(err)
 					evalSpan.SetStatus(codes.Error, "failed to download from S3")
 					return nil, fmt.Errorf("download from S3: %w", err)
@@ -290,7 +295,7 @@ func EvaluatePushDown[T promql.Timestamped](
 
 			// Download agg_ files (best-effort - don't fail if not found)
 			if len(aggObjectIDs) > 0 {
-				if err := w.downloadForQuery(ctx, profile, aggObjectIDs); err != nil {
+				if err := w.downloadForQuery(producerCtx, profile, aggObjectIDs); err != nil {
 					// Log but don't fail - we'll fall back to tbl_ queries
 					slog.Warn("Failed to download some agg_ files, will use tbl_ fallback",
 						"error", err,
@@ -304,6 +309,7 @@ func EvaluatePushDown[T promql.Timestamped](
 			for _, objID := range objectIDs {
 				localPath, exists, err := w.parquetCache.GetOrPrepare(profile.Region, profile.Bucket, objID)
 				if err != nil {
+					producerCancel()
 					evalSpan.RecordError(err)
 					evalSpan.SetStatus(codes.Error, "failed to get local path")
 					return nil, fmt.Errorf("get local path for %s: %w", objID, err)
@@ -333,11 +339,12 @@ func EvaluatePushDown[T promql.Timestamped](
 			}
 
 			// Stream from downloaded local files
-			s3Channels, err := streamFromLocalFiles(ctx, w, request,
+			s3Channels, err := streamFromLocalFiles(producerCtx, w, request,
 				localPaths,
 				userSQL,
 				mapper)
 			if err != nil {
+				producerCancel()
 				evalSpan.RecordError(err)
 				evalSpan.SetStatus(codes.Error, "failed to stream from local files")
 				return nil, fmt.Errorf("stream from local files: %w", err)
@@ -346,7 +353,7 @@ func EvaluatePushDown[T promql.Timestamped](
 		}
 	}
 	channelCreationTime := time.Since(start)
-	slog.Info("Channel Creation Time", "duration", channelCreationTime.String())
+	slog.Debug("Channel Creation Time", "duration", channelCreationTime.String())
 
 	evalSpan.SetAttributes(
 		attribute.Int("total_segments", len(request.Segments)),
@@ -354,7 +361,8 @@ func EvaluatePushDown[T promql.Timestamped](
 	)
 
 	// Merge all sources in timestamp order.
-	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
+	// Pass the producer cancel function so MergeSorted can stop producers when limit is reached
+	return promql.MergeSorted(ctx, producerCancel, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
 }
 
 func streamFromLocalFiles[T promql.Timestamped](
@@ -456,7 +464,13 @@ func streamFromLocalFiles[T promql.Timestamped](
 				slog.Error("Row mapping failed", slog.Any("error", mErr))
 				return
 			}
-			out <- v
+			// Blocking send with context check - preserves data integrity.
+			// MergeSorted will drain the channel if it stops early (limit reached, etc.)
+			select {
+			case <-ctx.Done():
+				return
+			case out <- v:
+			}
 			rowCount++
 		}
 		if err := rows.Err(); err != nil {
@@ -557,16 +571,20 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 	metadataCreationTime := time.Since(start)
 	groupSpan.SetAttributes(attribute.Int("org_instance_groups", len(segmentsByOrg)))
 	groupSpan.End()
-	slog.Info("Metadata Creation Time", "duration", metadataCreationTime.String())
+	slog.Debug("Metadata Creation Time", "duration", metadataCreationTime.String())
 	start = time.Now()
 
 	outs := make([]<-chan T, 0)
 
+	// Create a cancellable context for producers that MergeSorted can cancel when limit is reached
+	producerCtx, producerCancel := context.WithCancel(ctx)
+
 	// Build channels per (org, instance)
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
-			profile, err := w.getProfile(ctx, orgId, instanceNum)
+			profile, err := w.getProfile(producerCtx, orgId, instanceNum)
 			if err != nil {
+				producerCancel()
 				evalSpan.RecordError(err)
 				evalSpan.SetStatus(codes.Error, "failed to get profile")
 				return nil, err
@@ -600,7 +618,8 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 
 			// Download tbl_ files from S3 before querying
 			if len(objectIDs) > 0 {
-				if err := w.downloadForQuery(ctx, profile, objectIDs); err != nil {
+				if err := w.downloadForQuery(producerCtx, profile, objectIDs); err != nil {
+					producerCancel()
 					evalSpan.RecordError(err)
 					evalSpan.SetStatus(codes.Error, "failed to download from S3")
 					return nil, fmt.Errorf("download from S3: %w", err)
@@ -609,7 +628,7 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 
 			// Download agg_ files (best-effort - don't fail if not found)
 			if len(aggObjectIDs) > 0 {
-				if err := w.downloadForQuery(ctx, profile, aggObjectIDs); err != nil {
+				if err := w.downloadForQuery(producerCtx, profile, aggObjectIDs); err != nil {
 					// Log but don't fail - we'll fall back to tbl_ queries
 					slog.Warn("Failed to download some agg_ files, will use tbl_ fallback",
 						"error", err,
@@ -629,6 +648,7 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 				tblObjectID := segmentObjectIDMap[seg.SegmentID]
 				tblLocalPath, tblExists, err := w.parquetCache.GetOrPrepare(profile.Region, profile.Bucket, tblObjectID)
 				if err != nil {
+					producerCancel()
 					evalSpan.RecordError(err)
 					evalSpan.SetStatus(codes.Error, "failed to get local path")
 					return nil, fmt.Errorf("get local path for %s: %w", tblObjectID, err)
@@ -645,10 +665,10 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 
 				if aggExists && promql.CanUseAggFile(seg.AggFields, groupBy, matcherFields) {
 					aggLocalPaths = append(aggLocalPaths, aggLocalPath)
-					promql.RecordLogAggregationSource(ctx, profile.OrganizationID.String(), "agg", profile.InstanceNum)
+					promql.RecordLogAggregationSource(producerCtx, profile.OrganizationID.String(), "agg", profile.InstanceNum)
 				} else {
 					tblLocalPaths = append(tblLocalPaths, tblLocalPath)
-					promql.RecordLogAggregationSource(ctx, profile.OrganizationID.String(), "tbl", profile.InstanceNum)
+					promql.RecordLogAggregationSource(producerCtx, profile.OrganizationID.String(), "tbl", profile.InstanceNum)
 				}
 			}
 
@@ -675,8 +695,9 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 
 			// Stream from agg_ files with agg SQL
 			if len(aggLocalPaths) > 0 {
-				aggChannels, err := streamFromLocalFiles(ctx, w, request, aggLocalPaths, aggSQL, mapper)
+				aggChannels, err := streamFromLocalFiles(producerCtx, w, request, aggLocalPaths, aggSQL, mapper)
 				if err != nil {
+					producerCancel()
 					evalSpan.RecordError(err)
 					evalSpan.SetStatus(codes.Error, "failed to stream from agg files")
 					return nil, fmt.Errorf("stream from agg files: %w", err)
@@ -686,8 +707,9 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 
 			// Stream from tbl_ files with tbl SQL
 			if len(tblLocalPaths) > 0 {
-				tblChannels, err := streamFromLocalFiles(ctx, w, request, tblLocalPaths, tblSQL, mapper)
+				tblChannels, err := streamFromLocalFiles(producerCtx, w, request, tblLocalPaths, tblSQL, mapper)
 				if err != nil {
+					producerCancel()
 					evalSpan.RecordError(err)
 					evalSpan.SetStatus(codes.Error, "failed to stream from tbl files")
 					return nil, fmt.Errorf("stream from tbl files: %w", err)
@@ -697,7 +719,7 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 		}
 	}
 	channelCreationTime := time.Since(start)
-	slog.Info("Channel Creation Time", "duration", channelCreationTime.String())
+	slog.Debug("Channel Creation Time", "duration", channelCreationTime.String())
 
 	evalSpan.SetAttributes(
 		attribute.Int("total_segments", len(request.Segments)),
@@ -705,5 +727,6 @@ func EvaluatePushDownWithAggSplit[T promql.Timestamped](
 	)
 
 	// Merge all sources in timestamp order.
-	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
+	// Pass the producer cancel function so MergeSorted can stop producers when limit is reached
+	return promql.MergeSorted(ctx, producerCancel, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
 }
