@@ -117,7 +117,7 @@ bin/golangci-lint bin/goimports bin/license-eye:
 #
 # Download otel_binpb extension from GitHub releases
 #
-OTEL_BINPB_VERSION=v0.2.0
+OTEL_BINPB_VERSION=v0.2.1
 OTEL_BINPB_BASE_URL=https://github.com/cardinalhq/duckdb-binpb/releases/download/${OTEL_BINPB_VERSION}
 
 .PHONY: otel-binpb-extension-download

@@ -20,8 +20,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/prometheus/common/model"
+
+	"github.com/cardinalhq/lakerunner/logql"
 )
 
 // normalizeFieldName converts field names from dotted format to underscore format

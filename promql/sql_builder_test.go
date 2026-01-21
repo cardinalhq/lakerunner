@@ -23,8 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/logql"
 	_ "github.com/duckdb/duckdb-go/v2"
+
+	"github.com/cardinalhq/lakerunner/logql"
 )
 
 func openDuckDB(t *testing.T) *sql.DB {
