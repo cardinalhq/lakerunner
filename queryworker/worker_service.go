@@ -402,11 +402,13 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if req.LogLeaf != nil {
 		if req.TagNames {
 			// Return distinct tag names (column names) instead of values
-			workerSql = req.LogLeaf.ToWorkerSQLForTagNames()
+			// Use different SQL generators for logs vs spans since they have different schemas
 			if req.IsSpans {
+				workerSql = req.LogLeaf.ToSpansWorkerSQLForTagNames()
 				cacheManager = ws.TracesCM
 				globSize = ws.TracesGlobSize
 			} else {
+				workerSql = req.LogLeaf.ToWorkerSQLForTagNames()
 				cacheManager = ws.LogsCM
 				globSize = ws.LogsGlobSize
 			}
