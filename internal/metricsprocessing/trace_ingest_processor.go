@@ -302,6 +302,11 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 	}
 	setupSpan.End()
 
+	// Use DuckDB path when all files are binpb for better memory efficiency
+	if allFilesBinpb(msgs) {
+		return p.processBundleWithDuckDB(ctx, key, msgs, tmpDir, inputClient, outputClient, dstProfile)
+	}
+
 	// Download files
 	ctx, downloadSpan := boxerTracer.Start(ctx, "traces.ingest.download_files", trace.WithAttributes(
 		attribute.Int("message_count", len(msgs)),
@@ -501,6 +506,243 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 		slog.Int("outputSegments", len(segmentParams)))
 
 	return nil
+}
+
+// processBundleWithDuckDB handles trace ingestion using the pure DuckDB pipeline
+// for better memory efficiency when all input files are binpb format.
+func (p *TraceIngestProcessor) processBundleWithDuckDB(
+	ctx context.Context,
+	key messages.IngestKey,
+	msgs []*messages.ObjStoreNotificationMessage,
+	tmpDir string,
+	inputClient cloudstorage.Client,
+	outputClient cloudstorage.Client,
+	dstProfile storageprofile.StorageProfile,
+) error {
+	ll := logctx.FromContext(ctx).With(
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("instanceNum", int(key.InstanceNum)),
+		slog.String("pipeline", "duckdb"))
+
+	ll.Info("Processing trace bundle with DuckDB pipeline",
+		slog.Int("messageCount", len(msgs)))
+
+	ctx, downloadSpan := boxerTracer.Start(ctx, "traces.ingest.duckdb.download_files", trace.WithAttributes(
+		attribute.Int("file_count", len(msgs)),
+	))
+
+	// Download all binpb files
+	var binpbFiles []string
+	var totalInputSize int64
+
+	for _, msg := range msgs {
+		ll.Debug("Downloading binpb file",
+			slog.String("objectID", msg.ObjectID),
+			slog.Int64("fileSize", msg.FileSize))
+
+		tmpFilename, _, is404, err := inputClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
+		if err != nil {
+			ll.Error("Failed to download file", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
+			continue
+		}
+		if is404 {
+			ll.Warn("Object not found, skipping", slog.String("objectID", msg.ObjectID))
+			continue
+		}
+
+		binpbFiles = append(binpbFiles, tmpFilename)
+		totalInputSize += msg.FileSize
+	}
+
+	downloadSpan.SetAttributes(
+		attribute.Int("files_downloaded", len(binpbFiles)),
+		attribute.Int64("total_input_size", totalInputSize),
+	)
+	downloadSpan.End()
+
+	if len(binpbFiles) == 0 {
+		ll.Info("No binpb files downloaded successfully")
+		return nil
+	}
+
+	// Process with DuckDB
+	ctx, duckdbSpan := boxerTracer.Start(ctx, "traces.ingest.duckdb.process")
+	result, err := processTraceIngestWithDuckDB(ctx, binpbFiles, key.OrganizationID.String(), tmpDir)
+	if err != nil {
+		duckdbSpan.RecordError(err)
+		duckdbSpan.SetStatus(codes.Error, "duckdb processing failed")
+		duckdbSpan.End()
+		return fmt.Errorf("duckdb trace processing failed: %w", err)
+	}
+	duckdbSpan.SetAttributes(
+		attribute.Int("dateint_bins", len(result.DateintBins)),
+		attribute.Int64("total_rows", result.TotalRows),
+	)
+	duckdbSpan.End()
+
+	if len(result.DateintBins) == 0 {
+		ll.Info("No output files generated from DuckDB processing")
+		return nil
+	}
+
+	// Upload segments and create database records
+	ctx, uploadSpan := boxerTracer.Start(ctx, "traces.ingest.duckdb.upload_segments")
+	segmentParams, err := p.uploadDuckDBTraceSegments(ctx, outputClient, result, dstProfile)
+	if err != nil {
+		uploadSpan.RecordError(err)
+		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
+		uploadSpan.End()
+		return fmt.Errorf("failed to upload duckdb segments: %w", err)
+	}
+	uploadSpan.SetAttributes(attribute.Int("segment_count", len(segmentParams)))
+	uploadSpan.End()
+
+	criticalCtx := context.WithoutCancel(ctx)
+	ctx, dbSpan := boxerTracer.Start(ctx, "traces.ingest.duckdb.insert_segments", trace.WithAttributes(
+		attribute.Int("segment_count", len(segmentParams)),
+	))
+
+	if err := p.store.InsertTraceSegmentsBatch(criticalCtx, segmentParams); err != nil {
+		dbSpan.RecordError(err)
+		dbSpan.SetStatus(codes.Error, "failed to insert segments")
+		dbSpan.End()
+		return fmt.Errorf("failed to insert trace segments: %w", err)
+	}
+	dbSpan.End()
+
+	// Send compaction notifications
+	_, kafkaSpan := boxerTracer.Start(ctx, "traces.ingest.duckdb.publish_compaction", trace.WithAttributes(
+		attribute.Int("message_count", len(segmentParams)),
+	))
+
+	compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerTracesCompact)
+
+	for _, segParams := range segmentParams {
+		compactionNotification := messages.TraceCompactionMessage{
+			Version:        1,
+			OrganizationID: segParams.OrganizationID,
+			DateInt:        segParams.Dateint,
+			SegmentID:      segParams.SegmentID,
+			InstanceNum:    segParams.InstanceNum,
+			Records:        segParams.RecordCount,
+			FileSize:       segParams.FileSize,
+			StartTs:        segParams.StartTs,
+			EndTs:          segParams.EndTs,
+			QueuedAt:       time.Now(),
+		}
+
+		compactionMsgBytes, err := compactionNotification.Marshal()
+		if err != nil {
+			kafkaSpan.RecordError(err)
+			kafkaSpan.SetStatus(codes.Error, "failed to marshal compaction message")
+			kafkaSpan.End()
+			return fmt.Errorf("failed to marshal trace compaction notification: %w", err)
+		}
+
+		compactionMessage := fly.Message{
+			Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.InstanceNum, segParams.StartTs/300000),
+			Value: compactionMsgBytes,
+		}
+
+		if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
+			kafkaSpan.RecordError(err)
+			kafkaSpan.SetStatus(codes.Error, "failed to send to kafka")
+			kafkaSpan.End()
+			return fmt.Errorf("failed to send trace compaction notification to Kafka: %w", err)
+		}
+	}
+	kafkaSpan.End()
+
+	// Report telemetry
+	var totalOutputRecords, totalOutputSize int64
+	for _, params := range segmentParams {
+		totalOutputRecords += params.RecordCount
+		totalOutputSize += params.FileSize
+	}
+	reportTelemetry(ctx, "traces", "ingestion", int64(len(msgs)), int64(len(segmentParams)), result.TotalRows, totalOutputRecords, totalInputSize, totalOutputSize)
+
+	ll.Info("DuckDB trace ingestion completed successfully",
+		slog.Int("inputFiles", len(msgs)),
+		slog.Int64("totalInputSize", totalInputSize),
+		slog.Int("outputSegments", len(segmentParams)),
+		slog.Int64("totalRows", result.TotalRows))
+
+	return nil
+}
+
+// uploadDuckDBTraceSegments uploads DuckDB-produced parquet files and creates segment params
+func (p *TraceIngestProcessor) uploadDuckDBTraceSegments(
+	ctx context.Context,
+	storageClient cloudstorage.Client,
+	result *TraceIngestDuckDBResult,
+	storageProfile storageprofile.StorageProfile,
+) ([]lrdb.InsertTraceSegmentParams, error) {
+	ll := logctx.FromContext(ctx)
+
+	var segmentParams []lrdb.InsertTraceSegmentParams
+
+	// Collect valid bins and generate batch IDs
+	type validBin struct {
+		dateint int32
+		bin     *TraceDateintBinResult
+	}
+	var validBins []validBin
+
+	for dateint, bin := range result.DateintBins {
+		if bin.RecordCount == 0 {
+			continue
+		}
+		validBins = append(validBins, validBin{dateint: dateint, bin: bin})
+	}
+
+	batchSegmentIDs := idgen.GenerateBatchIDs(len(validBins))
+
+	for i, vb := range validBins {
+		segmentID := batchSegmentIDs[i]
+
+		// Generate upload path
+		uploadKey := helpers.MakeDBObjectID(
+			storageProfile.OrganizationID,
+			storageProfile.CollectorName,
+			vb.dateint,
+			vb.bin.Metadata.Hour,
+			segmentID,
+			"traces",
+		)
+
+		err := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadKey, vb.bin.OutputFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upload trace segment for dateint %d: %w", vb.dateint, err)
+		}
+
+		ll.Info("Uploaded trace segment",
+			slog.String("uploadKey", uploadKey),
+			slog.Int64("segmentID", segmentID),
+			slog.Int64("recordCount", vb.bin.RecordCount))
+
+		segmentParam := lrdb.InsertTraceSegmentParams{
+			OrganizationID: storageProfile.OrganizationID,
+			SegmentID:      segmentID,
+			Dateint:        vb.dateint,
+			InstanceNum:    storageProfile.InstanceNum,
+			StartTs:        vb.bin.Metadata.StartTs,
+			EndTs:          vb.bin.Metadata.EndTs,
+			RecordCount:    vb.bin.RecordCount,
+			FileSize:       vb.bin.FileSize,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   vb.bin.Metadata.Fingerprints,
+			Published:      true,
+			Compacted:      false,
+			LabelNameMap:   vb.bin.Metadata.LabelNameMap,
+		}
+
+		segmentParams = append(segmentParams, segmentParam)
+	}
+
+	ll.Info("DuckDB trace segment upload completed",
+		slog.Int("totalSegments", len(segmentParams)))
+
+	return segmentParams, nil
 }
 
 // ProcessBundleFromQueue implements the BundleProcessor interface for work queue integration
