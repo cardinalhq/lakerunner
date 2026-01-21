@@ -24,10 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
@@ -75,7 +72,6 @@ type LogIngestProcessor struct {
 	storageProvider          storageprofile.StorageProfileProvider
 	cmgr                     cloudstorage.ClientProvider
 	kafkaProducer            fly.Producer
-	exemplarProcessor        *exemplars.Processor
 	fingerprintTenantManager *fingerprint.TenantManager
 	config                   *config.Config
 }
@@ -84,11 +80,6 @@ type LogIngestProcessor struct {
 func newLogIngestProcessor(
 	cfg *config.Config,
 	store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
-	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetLogsCallback(func(ctx context.Context, organizationID uuid.UUID, rows []pipeline.Row) error {
-		return processLogsExemplarsDirect(ctx, organizationID, rows, store)
-	})
-
 	fingerprintTenantManager := fingerprint.NewTenantManager(0.5)
 
 	return &LogIngestProcessor{
@@ -96,7 +87,6 @@ func newLogIngestProcessor(
 		storageProvider:          storageProvider,
 		cmgr:                     cmgr,
 		kafkaProducer:            kafkaProducer,
-		exemplarProcessor:        exemplarProcessor,
 		fingerprintTenantManager: fingerprintTenantManager,
 		config:                   cfg,
 	}
@@ -801,11 +791,6 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 					if err == nil {
 						row[wkk.RowKeyCFingerprint] = fp
 					}
-				}
-
-				// Process exemplar before taking the row
-				if p.exemplarProcessor != nil {
-					_ = p.exemplarProcessor.ProcessLogsFromRow(ctx, storageProfile.OrganizationID, row)
 				}
 
 				takenRow := batch.TakeRow(i)
