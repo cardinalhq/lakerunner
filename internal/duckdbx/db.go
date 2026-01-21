@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -79,6 +80,45 @@ type DuckDBSettings struct {
 	MaxTempDirectorySize string // Max size for temp directory (e.g., "10GB" or bytes as string)
 	PoolSize             int    // Connection pool size (0 = use default)
 	Threads              int    // Total threads (0 = use default)
+}
+
+// settingsFromEnv reads DuckDB settings from environment variables.
+// This allows automatic configuration without explicit settings.
+func settingsFromEnv() *DuckDBSettings {
+	settings := &DuckDBSettings{}
+
+	// LAKERUNNER_DUCKDB_MEMORY_LIMIT (MB)
+	if v := os.Getenv("LAKERUNNER_DUCKDB_MEMORY_LIMIT"); v != "" {
+		if limit, err := strconv.ParseInt(v, 10, 64); err == nil {
+			settings.MemoryLimitMB = limit
+		}
+	}
+
+	// LAKERUNNER_DUCKDB_TEMP_DIRECTORY
+	if v := os.Getenv("LAKERUNNER_DUCKDB_TEMP_DIRECTORY"); v != "" {
+		settings.TempDirectory = v
+	}
+
+	// LAKERUNNER_DUCKDB_MAX_TEMP_DIRECTORY_SIZE
+	if v := os.Getenv("LAKERUNNER_DUCKDB_MAX_TEMP_DIRECTORY_SIZE"); v != "" {
+		settings.MaxTempDirectorySize = v
+	}
+
+	// LAKERUNNER_DUCKDB_POOL_SIZE
+	if v := os.Getenv("LAKERUNNER_DUCKDB_POOL_SIZE"); v != "" {
+		if size, err := strconv.Atoi(v); err == nil {
+			settings.PoolSize = size
+		}
+	}
+
+	// LAKERUNNER_DUCKDB_THREADS
+	if v := os.Getenv("LAKERUNNER_DUCKDB_THREADS"); v != "" {
+		if threads, err := strconv.Atoi(v); err == nil {
+			settings.Threads = threads
+		}
+	}
+
+	return settings
 }
 
 // dbConfig holds configuration options for DB
@@ -166,10 +206,10 @@ func NewDB(opts ...DBOption) (*DB, error) {
 		cleanupOnClose = true
 	}
 
-	// Get settings from config or use defaults
+	// Get settings from config, or fall back to environment variables
 	settings := cfg.duckdb
 	if settings == nil {
-		settings = &DuckDBSettings{}
+		settings = settingsFromEnv()
 	}
 
 	// Pool size: from settings, or default (half cores, capped at 8, min 2)
