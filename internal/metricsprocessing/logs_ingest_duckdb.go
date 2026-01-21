@@ -32,6 +32,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
@@ -389,8 +390,8 @@ func extractLogPartitionMetadata(
 		return nil, fmt.Errorf("query log timestamp range: %w", err)
 	}
 
-	// Get unique fingerprints from the chq_fingerprint column (provided by extension)
-	fingerprints, err := getLogFingerprints(ctx, conn, startMs, endMs)
+	// Get query fingerprints computed from indexed dimensions
+	fingerprints, err := getLogFingerprints(ctx, conn, startMs, endMs, schema)
 	if err != nil {
 		return nil, fmt.Errorf("get log fingerprints: %w", err)
 	}
@@ -422,33 +423,66 @@ func extractLogPartitionMetadata(
 	}, nil
 }
 
-// getLogFingerprints extracts unique fingerprints from the chq_fingerprint column.
-// The extension computes these during otel_logs_read() based on log message patterns.
-func getLogFingerprints(ctx context.Context, conn *sql.Conn, startMs, endMs int64) ([]int64, error) {
-	query := fmt.Sprintf(`
-		SELECT DISTINCT chq_fingerprint
-		FROM logs_raw
-		WHERE chq_timestamp >= %d AND chq_timestamp < %d AND chq_fingerprint IS NOT NULL`,
-		startMs, endMs)
+// getLogFingerprints computes query fingerprints from indexed dimensions in the log partition.
+// This matches the fingerprinting logic used by query-api to find segments.
+func getLogFingerprints(ctx context.Context, conn *sql.Conn, startMs, endMs int64, schema []string) ([]int64, error) {
+	// Build a map of field values for indexed dimensions
+	tagValuesByName := make(map[string]mapset.Set[string])
 
-	rows, err := conn.QueryContext(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("query log fingerprints: %w", err)
+	// Get indexed columns that exist in schema
+	indexedCols := []string{}
+	for col := range fingerprint.IndexedDimensions {
+		for _, schemaCol := range schema {
+			if schemaCol == col {
+				indexedCols = append(indexedCols, col)
+				break
+			}
+		}
 	}
-	defer func() { _ = rows.Close() }()
 
-	fps := mapset.NewSet[int64]()
-	for rows.Next() {
-		var fp int64
-		if err := rows.Scan(&fp); err != nil {
+	// Also add "exists" fingerprints for all columns (but only index values for indexed dims)
+	for _, col := range schema {
+		tagValuesByName[col] = mapset.NewSet[string]()
+	}
+
+	// Query distinct values for each indexed column
+	for _, col := range indexedCols {
+		query := fmt.Sprintf(`
+			SELECT DISTINCT %s
+			FROM logs_raw
+			WHERE chq_timestamp >= %d AND chq_timestamp < %d AND %s IS NOT NULL`,
+			pq.QuoteIdentifier(col), startMs, endMs, pq.QuoteIdentifier(col))
+
+		rows, err := conn.QueryContext(ctx, query)
+		if err != nil {
+			// Column might not exist or query error - skip silently
 			continue
 		}
-		fps.Add(fp)
+
+		values := mapset.NewSet[string]()
+		for rows.Next() {
+			var val string
+			if err := rows.Scan(&val); err != nil {
+				_ = rows.Close()
+				continue
+			}
+			if val != "" {
+				values.Add(val)
+			}
+		}
+		_ = rows.Close()
+
+		if values.Cardinality() > 0 {
+			tagValuesByName[col] = values
+		}
 	}
 
-	result := fps.ToSlice()
-	slices.Sort(result)
-	return result, rows.Err()
+	// Compute fingerprints using the fingerprint package
+	fpSet := fingerprint.ToFingerprints(tagValuesByName)
+	fps := fpSet.ToSlice()
+	slices.Sort(fps)
+
+	return fps, nil
 }
 
 // getLogStreamIds extracts unique stream identifier values.
