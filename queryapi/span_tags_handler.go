@@ -137,7 +137,7 @@ func (q *QuerierService) handleListSpanTags(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Collect all tag names from the channel
-	var tags []string
+	tags := make([]string, 0)
 	for res := range resultsCh {
 		if tv, ok := res.(promql.TagValue); ok {
 			tags = append(tags, tv.Value)
