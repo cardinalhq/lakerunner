@@ -181,7 +181,9 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 	metric := strings.TrimSpace(req.Metric)
 	queryExpr := strings.TrimSpace(req.Q)
 
-	// Require either metric or query expression
+	// Require either metric or query expression.
+	// When both are provided, q takes precedence since the metric name is
+	// included in the PromQL selector (e.g., "cpu_usage{env=\"prod\"}").
 	if metric == "" && queryExpr == "" {
 		http.Error(w, "missing metric or q parameter", http.StatusBadRequest)
 		return
