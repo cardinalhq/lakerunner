@@ -30,11 +30,46 @@ func TestObjStoreNotificationMessage_RecordCount_Compression(t *testing.T) {
 		description  string
 	}{
 		{
-			name:         "gz file uses 150x estimate",
-			objectID:     "logs/org1/2024/01/data.json.gz",
+			name:         "logs gz uses 150x",
+			objectID:     "otel-raw/logs/org1/2024/01/logs_123.binpb.gz",
 			fileSize:     1000,
 			expectedSize: 150000,
-			description:  ".gz files estimate 150x decompression",
+			description:  "logs .gz files use 150x estimate",
+		},
+		{
+			name:         "metrics gz uses 20x",
+			objectID:     "otel-raw/metrics/org1/2024/01/metrics_123.binpb.gz",
+			fileSize:     1000,
+			expectedSize: 20000,
+			description:  "metrics .gz files use 20x estimate",
+		},
+		{
+			name:         "traces gz uses 40x",
+			objectID:     "otel-raw/traces/org1/2024/01/traces_123.binpb.gz",
+			fileSize:     1000,
+			expectedSize: 40000,
+			description:  "traces .gz files use 40x estimate",
+		},
+		{
+			name:         "logs filename prefix detection",
+			objectID:     "some/path/logs_456.binpb.gz",
+			fileSize:     1000,
+			expectedSize: 150000,
+			description:  "logs_ filename prefix triggers 150x",
+		},
+		{
+			name:         "metrics filename prefix detection",
+			objectID:     "some/path/metrics_456.binpb.gz",
+			fileSize:     1000,
+			expectedSize: 20000,
+			description:  "metrics_ filename prefix triggers 20x",
+		},
+		{
+			name:         "unknown signal uses default 150x",
+			objectID:     "some/path/data.binpb.gz",
+			fileSize:     1000,
+			expectedSize: 150000,
+			description:  "unknown signal uses conservative 150x default",
 		},
 		{
 			name:         "json file uses actual size",
@@ -44,32 +79,11 @@ func TestObjStoreNotificationMessage_RecordCount_Compression(t *testing.T) {
 			description:  "uncompressed JSON uses actual size",
 		},
 		{
-			name:         "binpb file uses actual size",
-			objectID:     "traces/org1/2024/01/data.binpb",
-			fileSize:     2000,
-			expectedSize: 2000,
-			description:  "uncompressed binpb uses actual size",
-		},
-		{
 			name:         "parquet file uses actual size",
 			objectID:     "metrics/org1/2024/01/data.parquet",
 			fileSize:     1500,
 			expectedSize: 1500,
 			description:  "parquet files use actual size",
-		},
-		{
-			name:         "other file uses actual size",
-			objectID:     "logs/org1/2024/01/data.avro",
-			fileSize:     800,
-			expectedSize: 800,
-			description:  "other file types use actual size",
-		},
-		{
-			name:         "binpb.gz uses 150x estimate",
-			objectID:     "logs/org1/2024/01/data.binpb.gz",
-			fileSize:     500,
-			expectedSize: 75000,
-			description:  ".gz suffix triggers 150x estimate",
 		},
 	}
 
@@ -112,19 +126,31 @@ func TestObjStoreNotificationMessage_RecordCount_EdgeCases(t *testing.T) {
 			name:         "empty filename",
 			objectID:     "",
 			fileSize:     1000,
-			expectedSize: 1000, // defaults to actual size
+			expectedSize: 1000, // defaults to actual size (not .gz)
 		},
 		{
-			name:         "zero size gz file",
-			objectID:     "data.json.gz",
+			name:         "zero size logs gz file",
+			objectID:     "logs_123.binpb.gz",
 			fileSize:     0,
 			expectedSize: 0,
 		},
 		{
-			name:         "small gz file uses 150x",
-			objectID:     "data.json.gz",
+			name:         "small logs gz uses 150x",
+			objectID:     "logs_123.binpb.gz",
 			fileSize:     10,
 			expectedSize: 1500,
+		},
+		{
+			name:         "small metrics gz uses 20x",
+			objectID:     "metrics_123.binpb.gz",
+			fileSize:     10,
+			expectedSize: 200,
+		},
+		{
+			name:         "small traces gz uses 40x",
+			objectID:     "traces_123.binpb.gz",
+			fileSize:     10,
+			expectedSize: 400,
 		},
 	}
 

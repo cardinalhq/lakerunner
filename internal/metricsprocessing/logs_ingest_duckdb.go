@@ -98,7 +98,11 @@ func processLogIngestWithDuckDB(
 		span.RecordError(err)
 		return nil, fmt.Errorf("create duckdb: %w", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() {
+		if err := db.Close(); err != nil {
+			slog.Error("failed to close duckdb", slog.Any("error", err))
+		}
+	}()
 
 	conn, release, err := db.GetConnection(ctx)
 	if err != nil {
@@ -213,20 +217,142 @@ func processLogIngestWithDuckDB(
 	return result, nil
 }
 
-// loadLogBinpbFilesIntoTable loads all log binpb files into a DuckDB table.
+// loadLogBinpbFilesIntoTable loads log binpb files into a DuckDB table using incremental schema merging.
+// Files are processed one at a time to avoid loading all data into memory at once.
+// Schema differences are handled by adding new columns as they're discovered.
 func loadLogBinpbFilesIntoTable(ctx context.Context, conn *sql.Conn, files []string, orgID string) error {
-	// Build file list as string: '[file1, file2, ...]'
-	fileList := "[" + strings.Join(files, ", ") + "]"
+	ll := logctx.FromContext(ctx)
+	const accumTable = "logs_raw"
+	accumExists := false
 
-	createSQL := fmt.Sprintf("CREATE TABLE logs_raw AS SELECT * FROM otel_logs_read('%s', customer_id='%s')",
-		escapeSingleQuote(fileList), escapeSingleQuote(orgID))
+	for i, file := range files {
+		tempTable := fmt.Sprintf("logs_temp_%d", i)
 
-	_, err := conn.ExecContext(ctx, createSQL)
-	if err != nil {
-		return fmt.Errorf("create logs table: %w", err)
+		// Load this file into a temp table
+		createTempSQL := fmt.Sprintf("CREATE TABLE %s AS SELECT * FROM otel_logs_read('[%s]', customer_id='%s')",
+			tempTable, escapeSingleQuote(file), escapeSingleQuote(orgID))
+
+		if _, err := conn.ExecContext(ctx, createTempSQL); err != nil {
+			return fmt.Errorf("create temp table for file %d (%s): %w", i, filepath.Base(file), err)
+		}
+
+		if !accumExists {
+			// First file: rename temp table to accumulation table
+			renameSQL := fmt.Sprintf("ALTER TABLE %s RENAME TO %s", tempTable, accumTable)
+			if _, err := conn.ExecContext(ctx, renameSQL); err != nil {
+				return fmt.Errorf("rename first table: %w", err)
+			}
+			accumExists = true
+		} else {
+			// Add new columns, insert data, and drop temp table
+			if err := mergeSchemaAndInsert(ctx, conn, tempTable, accumTable, i); err != nil {
+				return err
+			}
+		}
+
+		if (i+1)%10 == 0 || i == len(files)-1 {
+			ll.Debug("Log ingestion progress",
+				slog.Int("processed", i+1),
+				slog.Int("total", len(files)))
+		}
 	}
 
 	return nil
+}
+
+// mergeSchemaAndInsert adds missing columns from tempTable to accumTable, inserts data, and drops tempTable.
+// Uses defer for proper Close() error handling.
+func mergeSchemaAndInsert(ctx context.Context, conn *sql.Conn, tempTable, accumTable string, fileIdx int) error {
+	// Get columns from temp table that don't exist in accumulation table
+	newColsQuery := fmt.Sprintf(`
+		SELECT t.column_name, t.data_type
+		FROM information_schema.columns t
+		WHERE t.table_name = '%s'
+		AND t.column_name NOT IN (
+			SELECT a.column_name FROM information_schema.columns a WHERE a.table_name = '%s'
+		)
+	`, tempTable, accumTable)
+
+	rows, err := conn.QueryContext(ctx, newColsQuery)
+	if err != nil {
+		return fmt.Errorf("query new columns for file %d: %w", fileIdx, err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Error("failed to close rows", slog.Any("error", err))
+		}
+	}()
+
+	// Add any new columns to accumulation table
+	for rows.Next() {
+		var colName, dataType string
+		if err := rows.Scan(&colName, &dataType); err != nil {
+			return fmt.Errorf("scan column for file %d: %w", fileIdx, err)
+		}
+
+		alterSQL := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s",
+			accumTable, pq.QuoteIdentifier(colName), dataType)
+		if _, err := conn.ExecContext(ctx, alterSQL); err != nil {
+			return fmt.Errorf("add column %s for file %d: %w", colName, fileIdx, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate new columns for file %d: %w", fileIdx, err)
+	}
+
+	// Get columns from temp table for explicit INSERT
+	tempCols, err := getTempTableColumns(ctx, conn, tempTable, fileIdx)
+	if err != nil {
+		return err
+	}
+
+	// Insert with explicit column list - DuckDB fills NULLs for missing columns
+	colList := strings.Join(tempCols, ", ")
+	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s",
+		accumTable, colList, colList, tempTable)
+	if _, err := conn.ExecContext(ctx, insertSQL); err != nil {
+		return fmt.Errorf("insert from temp table %d: %w", fileIdx, err)
+	}
+
+	// Drop temp table to free memory
+	dropSQL := fmt.Sprintf("DROP TABLE %s", tempTable)
+	if _, err := conn.ExecContext(ctx, dropSQL); err != nil {
+		return fmt.Errorf("drop temp table %d: %w", fileIdx, err)
+	}
+
+	return nil
+}
+
+// getTempTableColumns returns the column names from the temp table, quoted for SQL.
+func getTempTableColumns(ctx context.Context, conn *sql.Conn, tempTable string, fileIdx int) ([]string, error) {
+	query := fmt.Sprintf(`
+		SELECT column_name FROM information_schema.columns
+		WHERE table_name = '%s' ORDER BY ordinal_position
+	`, tempTable)
+
+	rows, err := conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query temp columns for file %d: %w", fileIdx, err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Error("failed to close column rows", slog.Any("error", err))
+		}
+	}()
+
+	var cols []string
+	for rows.Next() {
+		var colName string
+		if err := rows.Scan(&colName); err != nil {
+			return nil, fmt.Errorf("scan temp column for file %d: %w", fileIdx, err)
+		}
+		cols = append(cols, pq.QuoteIdentifier(colName))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate temp columns for file %d: %w", fileIdx, err)
+	}
+
+	return cols, nil
 }
 
 // getDistinctLogDateintKeys returns all unique dateint keys (days since epoch) from the logs table
@@ -238,7 +364,11 @@ func getDistinctLogDateintKeys(ctx context.Context, conn *sql.Conn) ([]int64, er
 	if err != nil {
 		return nil, fmt.Errorf("query log dateints: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Error("failed to close rows", slog.Any("error", err))
+		}
+	}()
 
 	var keys []int64
 	for rows.Next() {
@@ -504,7 +634,11 @@ func getLogStreamIds(ctx context.Context, conn *sql.Conn, startMs, endMs int64, 
 	if err != nil {
 		return nil, fmt.Errorf("query log stream ids: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Error("failed to close rows", slog.Any("error", err))
+		}
+	}()
 
 	ids := mapset.NewSet[string]()
 	for rows.Next() {

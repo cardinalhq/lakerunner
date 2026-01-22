@@ -58,19 +58,67 @@ func (m *ObjStoreNotificationMessage) GroupingKey() any {
 	}
 }
 
+// Compression ratio estimates per signal type (based on empirical measurements)
+const (
+	logsCompressionRatio    = 150
+	metricsCompressionRatio = 20
+	tracesCompressionRatio  = 40
+	defaultCompressionRatio = 150 // Conservative default for unknown signals
+)
+
 // RecordCount returns the estimated uncompressed size for batching purposes.
-// - .gz files: estimate 150x decompression ratio (binpb/json compress very well)
-// - Non-gz JSON or binpb: actual size (already uncompressed)
-// - Parquet and other files: actual size
+// - .gz files: signal-specific decompression ratio (logs=150x, metrics=20x, traces=40x)
+// - Non-gz files: actual size (already uncompressed)
 func (m *ObjStoreNotificationMessage) RecordCount() int64 {
-	// Check if file is compressed (.gz)
-	if strings.HasSuffix(m.ObjectID, ".gz") {
-		// Estimate decompressed size - binpb and json compress ~150x with gzip
-		return m.FileSize * 150
+	// Only estimate compression for .gz files
+	if !strings.HasSuffix(m.ObjectID, ".gz") {
+		return m.FileSize
 	}
 
-	// All other files (json, binpb, parquet, etc.) use actual size
-	return m.FileSize
+	// Extract signal from filename (e.g., "logs_123.binpb.gz" -> "logs")
+	signal := extractSignalFromPath(m.ObjectID)
+
+	switch signal {
+	case "logs":
+		return m.FileSize * logsCompressionRatio
+	case "metrics":
+		return m.FileSize * metricsCompressionRatio
+	case "traces":
+		return m.FileSize * tracesCompressionRatio
+	default:
+		return m.FileSize * defaultCompressionRatio
+	}
+}
+
+// extractSignalFromPath extracts the signal type from an object path.
+// Handles formats like:
+// - "otel-raw/logs/..." or "logs-raw/..."
+// - "path/to/logs_123.binpb.gz" (signal prefix in filename)
+func extractSignalFromPath(objectID string) string {
+	// Check for otel-raw/{signal}/ or {signal}-raw/ path patterns
+	for _, signal := range []string{"logs", "metrics", "traces"} {
+		if strings.Contains(objectID, "/"+signal+"/") ||
+			strings.HasPrefix(objectID, signal+"-raw/") ||
+			strings.HasPrefix(objectID, "otel-raw/"+signal+"/") {
+			return signal
+		}
+	}
+
+	// Check filename prefix (e.g., "logs_123.binpb.gz")
+	// Find the last path component
+	lastSlash := strings.LastIndex(objectID, "/")
+	filename := objectID
+	if lastSlash >= 0 {
+		filename = objectID[lastSlash+1:]
+	}
+
+	for _, signal := range []string{"logs", "metrics", "traces"} {
+		if strings.HasPrefix(filename, signal+"_") {
+			return signal
+		}
+	}
+
+	return ""
 }
 
 // Marshal converts the message to JSON bytes
