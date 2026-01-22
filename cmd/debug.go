@@ -36,6 +36,4 @@ func init() {
 	debugCmd.AddCommand(debugcmd.GetIngestLogsCmd())
 	debugCmd.AddCommand(debugcmd.GetPubSubCmd())
 	debugCmd.AddCommand(debugcmd.GetExemplarCmd())
-	debugCmd.AddCommand(debugcmd.GetCompressionTestCmd())
-	debugCmd.AddCommand(debugcmd.GetParquetCompactCmd())
 }
