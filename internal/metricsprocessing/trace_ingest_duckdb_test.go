@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -172,4 +173,185 @@ func TestGetTraceFingerprints(t *testing.T) {
 	for i := 1; i < len(fingerprints); i++ {
 		assert.LessOrEqual(t, fingerprints[i-1], fingerprints[i], "fingerprints should be sorted")
 	}
+}
+
+func TestMergeTraceSchemaAndInsert(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := duckdbx.NewDB()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	conn, release, err := db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release()
+
+	// Create accumulation table with initial schema
+	_, err = conn.ExecContext(ctx, `
+		CREATE TABLE traces_accum (
+			trace_id VARCHAR,
+			span_id VARCHAR,
+			chq_timestamp BIGINT
+		)
+	`)
+	require.NoError(t, err)
+
+	// Insert initial data
+	_, err = conn.ExecContext(ctx, `INSERT INTO traces_accum VALUES ('trace-1', 'span-1', 1000)`)
+	require.NoError(t, err)
+
+	// Create temp table with additional column
+	_, err = conn.ExecContext(ctx, `
+		CREATE TABLE traces_temp_0 (
+			trace_id VARCHAR,
+			span_id VARCHAR,
+			chq_timestamp BIGINT,
+			resource_service_name VARCHAR
+		)
+	`)
+	require.NoError(t, err)
+
+	// Insert data into temp table
+	_, err = conn.ExecContext(ctx, `INSERT INTO traces_temp_0 VALUES ('trace-2', 'span-2', 2000, 'my-service')`)
+	require.NoError(t, err)
+
+	// Merge schema and insert
+	err = mergeTraceSchemaAndInsert(ctx, conn, "traces_temp_0", "traces_accum", 0)
+	require.NoError(t, err)
+
+	// Verify accum table has new column and both rows
+	var count int64
+	err = conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM traces_accum").Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count, "should have 2 rows after merge")
+
+	// Verify the new column exists and has correct value for new row
+	var serviceName sql.NullString
+	err = conn.QueryRowContext(ctx, "SELECT resource_service_name FROM traces_accum WHERE trace_id = 'trace-2'").Scan(&serviceName)
+	require.NoError(t, err)
+	assert.True(t, serviceName.Valid)
+	assert.Equal(t, "my-service", serviceName.String)
+
+	// Verify first row has NULL for new column
+	err = conn.QueryRowContext(ctx, "SELECT resource_service_name FROM traces_accum WHERE trace_id = 'trace-1'").Scan(&serviceName)
+	require.NoError(t, err)
+	assert.False(t, serviceName.Valid, "first row should have NULL for resource_service_name")
+
+	// Verify temp table was dropped
+	var exists int
+	err = conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'traces_temp_0'").Scan(&exists)
+	require.NoError(t, err)
+	assert.Equal(t, 0, exists, "temp table should be dropped")
+}
+
+func TestMergeTraceSchemaAndInsert_MultipleNewColumns(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := duckdbx.NewDB()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	conn, release, err := db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release()
+
+	// Create accumulation table with minimal schema
+	_, err = conn.ExecContext(ctx, `
+		CREATE TABLE traces_accum2 (
+			trace_id VARCHAR
+		)
+	`)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx, `INSERT INTO traces_accum2 VALUES ('trace-1')`)
+	require.NoError(t, err)
+
+	// Create temp table with multiple additional columns
+	_, err = conn.ExecContext(ctx, `
+		CREATE TABLE traces_temp_1 (
+			trace_id VARCHAR,
+			span_id VARCHAR,
+			resource_service_name VARCHAR,
+			attr_http_method VARCHAR
+		)
+	`)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx, `INSERT INTO traces_temp_1 VALUES ('trace-2', 'span-1', 'service-a', 'GET')`)
+	require.NoError(t, err)
+
+	// Merge schema and insert
+	err = mergeTraceSchemaAndInsert(ctx, conn, "traces_temp_1", "traces_accum2", 1)
+	require.NoError(t, err)
+
+	// Verify all columns were added
+	var count int64
+	err = conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM traces_accum2").Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count)
+
+	// Verify schema has all columns
+	var colCount int
+	err = conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = 'traces_accum2'").Scan(&colCount)
+	require.NoError(t, err)
+	assert.Equal(t, 4, colCount, "should have 4 columns after merge")
+}
+
+func TestGetTraceTempTableColumns(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := duckdbx.NewDB()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	conn, release, err := db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release()
+
+	// Create a table with known columns
+	_, err = conn.ExecContext(ctx, `
+		CREATE TABLE trace_test_cols (
+			trace_id VARCHAR,
+			span_id VARCHAR,
+			chq_timestamp BIGINT,
+			resource_service_name VARCHAR
+		)
+	`)
+	require.NoError(t, err)
+
+	cols, err := getTraceTempTableColumns(ctx, conn, "trace_test_cols", 0)
+	require.NoError(t, err)
+
+	assert.Len(t, cols, 4, "should have 4 columns")
+	// Columns should be quoted
+	assert.Equal(t, `"trace_id"`, cols[0])
+	assert.Equal(t, `"span_id"`, cols[1])
+	assert.Equal(t, `"chq_timestamp"`, cols[2])
+	assert.Equal(t, `"resource_service_name"`, cols[3])
+}
+
+func TestGetTraceTempTableColumns_EmptyTable(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := duckdbx.NewDB()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	conn, release, err := db.GetConnection(ctx)
+	require.NoError(t, err)
+	defer release()
+
+	// Create an empty table
+	_, err = conn.ExecContext(ctx, `
+		CREATE TABLE trace_empty_cols (
+			id INTEGER
+		)
+	`)
+	require.NoError(t, err)
+
+	cols, err := getTraceTempTableColumns(ctx, conn, "trace_empty_cols", 0)
+	require.NoError(t, err)
+
+	assert.Len(t, cols, 1, "should have 1 column")
+	assert.Equal(t, `"id"`, cols[0])
 }

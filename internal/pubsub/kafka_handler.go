@@ -71,7 +71,7 @@ func getFileExtensionCategory(objectID string) string {
 }
 
 // convertItemsToKafkaMessages processes parsed S3 items and converts them to Kafka notification messages
-// This function is separated from sending to make it testable in isolation
+// This function is separated from sending to make it testable in isolation.
 func convertItemsToKafkaMessages(
 	ctx context.Context,
 	items []IngestItem,
