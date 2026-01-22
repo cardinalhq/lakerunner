@@ -107,6 +107,13 @@ jobs:
         with:
           registry-type: public
 
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Verify RC image exists
@@ -135,6 +142,27 @@ jobs:
           MAJOR_TAG="public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}"
           echo "Creating tag: $MAJOR_TAG"
           docker buildx imagetools create --tag $MAJOR_TAG $RC_IMAGE
+
+      - name: Copy production tags to GHCR
+        run: |
+          echo "Copying production tags to GHCR..."
+
+          ECR_IMAGE="public.ecr.aws/cardinalhq.io/lakerunner:${{ needs.validate.outputs.final_version }}"
+
+          # Tag with exact version
+          GHCR_FINAL="ghcr.io/cardinalhq/lakerunner:${{ needs.validate.outputs.final_version }}"
+          echo "Creating tag: $GHCR_FINAL"
+          docker buildx imagetools create --tag $GHCR_FINAL $ECR_IMAGE
+
+          # Tag with minor version (v1.2)
+          GHCR_MINOR="ghcr.io/cardinalhq/lakerunner:v${{ needs.validate.outputs.major }}.${{ needs.validate.outputs.minor }}"
+          echo "Creating tag: $GHCR_MINOR"
+          docker buildx imagetools create --tag $GHCR_MINOR $ECR_IMAGE
+
+          # Tag with major version (v1)
+          GHCR_MAJOR="ghcr.io/cardinalhq/lakerunner:v${{ needs.validate.outputs.major }}"
+          echo "Creating tag: $GHCR_MAJOR"
+          docker buildx imagetools create --tag $GHCR_MAJOR $ECR_IMAGE
 
       - name: Generate GitHub App token
         id: app-token
@@ -168,11 +196,17 @@ jobs:
         run: |
           echo "Updating stable tag to point to ${{ needs.validate.outputs.final_version }}"
 
-          STABLE_TAG="public.ecr.aws/cardinalhq.io/lakerunner:stable"
           RC_IMAGE="public.ecr.aws/cardinalhq.io/lakerunner:${{ inputs.rc_version }}"
 
-          docker buildx imagetools create --tag $STABLE_TAG $RC_IMAGE
-          echo "Stable tag updated"
+          # Update ECR stable tag
+          ECR_STABLE="public.ecr.aws/cardinalhq.io/lakerunner:stable"
+          docker buildx imagetools create --tag $ECR_STABLE $RC_IMAGE
+
+          # Update GHCR stable tag
+          GHCR_STABLE="ghcr.io/cardinalhq/lakerunner:stable"
+          docker buildx imagetools create --tag $GHCR_STABLE $RC_IMAGE
+
+          echo "Stable tags updated"
 
       - name: Notify chip-release-watcher
         run: |
@@ -220,11 +254,17 @@ jobs:
         run: |
           echo "Release promotion completed successfully!"
           echo ""
-          echo "Available tags:"
+          echo "Available ECR tags:"
           echo "  • public.ecr.aws/cardinalhq.io/lakerunner:${{ needs.validate.outputs.final_version }}"
           echo "  • public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}.${{ needs.validate.outputs.minor }}"
           echo "  • public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}"
           echo "  • public.ecr.aws/cardinalhq.io/lakerunner:stable"
+          echo ""
+          echo "Available GHCR tags:"
+          echo "  • ghcr.io/cardinalhq/lakerunner:${{ needs.validate.outputs.final_version }}"
+          echo "  • ghcr.io/cardinalhq/lakerunner:v${{ needs.validate.outputs.major }}.${{ needs.validate.outputs.minor }}"
+          echo "  • ghcr.io/cardinalhq/lakerunner:v${{ needs.validate.outputs.major }}"
+          echo "  • ghcr.io/cardinalhq/lakerunner:stable"
           echo ""
           echo "Git tag: ${{ needs.validate.outputs.final_version }}"
           echo "GitHub release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate.outputs.final_version }}"

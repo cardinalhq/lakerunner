@@ -116,6 +116,13 @@ jobs:
         with:
           registry-type: public
 
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - shell: bash
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
@@ -163,10 +170,19 @@ jobs:
           }
           EOF
 
+      - name: Copy image to GHCR
+        run: |
+          ECR_IMAGE="public.ecr.aws/cardinalhq.io/lakerunner:${{ github.ref_name }}"
+          GHCR_IMAGE="ghcr.io/cardinalhq/lakerunner:${{ github.ref_name }}"
+          echo "Copying $ECR_IMAGE to $GHCR_IMAGE"
+          docker buildx imagetools create --tag $GHCR_IMAGE $ECR_IMAGE
+
       - name: Output built images
         run: |
           echo "Release Candidate built successfully!"
-          echo "Image: public.ecr.aws/cardinalhq.io/lakerunner:${{ github.ref_name }}"
+          echo "Images:"
+          echo "  • public.ecr.aws/cardinalhq.io/lakerunner:${{ github.ref_name }}"
+          echo "  • ghcr.io/cardinalhq/lakerunner:${{ github.ref_name }}"
           echo ""
           echo "Testing this RC before promotion:"
           echo "  1. Deploy to staging environment"
