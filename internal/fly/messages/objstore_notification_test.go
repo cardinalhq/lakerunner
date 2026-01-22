@@ -30,25 +30,25 @@ func TestObjStoreNotificationMessage_RecordCount_Compression(t *testing.T) {
 		description  string
 	}{
 		{
-			name:         "gz file uses actual size",
+			name:         "gz file uses 150x estimate",
 			objectID:     "logs/org1/2024/01/data.json.gz",
 			fileSize:     1000,
-			expectedSize: 1000,
-			description:  ".gz files use actual size",
+			expectedSize: 150000,
+			description:  ".gz files estimate 150x decompression",
 		},
 		{
-			name:         "json file uses 10x smaller",
+			name:         "json file uses actual size",
 			objectID:     "logs/org1/2024/01/data.json",
 			fileSize:     1000,
-			expectedSize: 100,
-			description:  "uncompressed JSON uses 10x smaller than actual size",
+			expectedSize: 1000,
+			description:  "uncompressed JSON uses actual size",
 		},
 		{
-			name:         "binpb file uses 10x smaller",
+			name:         "binpb file uses actual size",
 			objectID:     "traces/org1/2024/01/data.binpb",
 			fileSize:     2000,
-			expectedSize: 200,
-			description:  "uncompressed binpb uses 10x smaller than actual size",
+			expectedSize: 2000,
+			description:  "uncompressed binpb uses actual size",
 		},
 		{
 			name:         "parquet file uses actual size",
@@ -65,11 +65,11 @@ func TestObjStoreNotificationMessage_RecordCount_Compression(t *testing.T) {
 			description:  "other file types use actual size",
 		},
 		{
-			name:         "json.gz uses actual size (gz takes precedence)",
-			objectID:     "logs/org1/2024/01/data.json.gz",
+			name:         "binpb.gz uses 150x estimate",
+			objectID:     "logs/org1/2024/01/data.binpb.gz",
 			fileSize:     500,
-			expectedSize: 500,
-			description:  ".gz suffix takes precedence over .json",
+			expectedSize: 75000,
+			description:  ".gz suffix triggers 150x estimate",
 		},
 	}
 
@@ -103,16 +103,28 @@ func TestObjStoreNotificationMessage_RecordCount_EdgeCases(t *testing.T) {
 			expectedSize: 0,
 		},
 		{
-			name:         "very small json file",
+			name:         "small json file uses actual size",
 			objectID:     "data.json",
 			fileSize:     5,
-			expectedSize: 0, // 5/10 = 0 due to integer division
+			expectedSize: 5,
 		},
 		{
 			name:         "empty filename",
 			objectID:     "",
 			fileSize:     1000,
 			expectedSize: 1000, // defaults to actual size
+		},
+		{
+			name:         "zero size gz file",
+			objectID:     "data.json.gz",
+			fileSize:     0,
+			expectedSize: 0,
+		},
+		{
+			name:         "small gz file uses 150x",
+			objectID:     "data.json.gz",
+			fileSize:     10,
+			expectedSize: 1500,
 		},
 	}
 

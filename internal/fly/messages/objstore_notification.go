@@ -58,23 +58,18 @@ func (m *ObjStoreNotificationMessage) GroupingKey() any {
 	}
 }
 
-// RecordCount returns the adjusted file size for batching purposes
-// - .gz files: actual size
-// - Non-gz JSON or binpb: 10x smaller than actual size (since they're uncompressed)
+// RecordCount returns the estimated uncompressed size for batching purposes.
+// - .gz files: estimate 150x decompression ratio (binpb/json compress very well)
+// - Non-gz JSON or binpb: actual size (already uncompressed)
 // - Parquet and other files: actual size
 func (m *ObjStoreNotificationMessage) RecordCount() int64 {
 	// Check if file is compressed (.gz)
 	if strings.HasSuffix(m.ObjectID, ".gz") {
-		return m.FileSize
+		// Estimate decompressed size - binpb and json compress ~150x with gzip
+		return m.FileSize * 150
 	}
 
-	// Check if file is uncompressed JSON or binpb
-	if strings.HasSuffix(m.ObjectID, ".json") || strings.HasSuffix(m.ObjectID, ".binpb") {
-		// These will expand significantly when processed, so use 10x smaller threshold
-		return m.FileSize / 10
-	}
-
-	// Parquet and other files use actual size
+	// All other files (json, binpb, parquet, etc.) use actual size
 	return m.FileSize
 }
 
