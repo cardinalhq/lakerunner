@@ -24,6 +24,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/internal/gcpclient"
@@ -57,8 +58,16 @@ func (c *gcsClient) DownloadObject(ctx context.Context, tmpdir, bucket, key stri
 		_ = f.Close()
 		_ = os.Remove(f.Name())
 		if errors.Is(err, storage.ErrObjectNotExist) {
+			downloadErrors.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("bucket", bucket),
+				attribute.String("reason", "not_found"),
+			))
 			return "", 0, true, nil
 		}
+		downloadErrors.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("bucket", bucket),
+			attribute.String("reason", "unknown"),
+		))
 		return "", 0, false, fmt.Errorf("download %s/%s: %w", bucket, key, err)
 	}
 	defer func() { _ = reader.Close() }()
@@ -67,8 +76,19 @@ func (c *gcsClient) DownloadObject(ctx context.Context, tmpdir, bucket, key stri
 	if err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
+		downloadErrors.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("bucket", bucket),
+			attribute.String("reason", "copy_failed"),
+		))
 		return "", 0, false, fmt.Errorf("copy object content: %w", err)
 	}
+
+	downloadCount.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("bucket", bucket),
+	))
+	downloadBytes.Add(ctx, size, metric.WithAttributes(
+		attribute.String("bucket", bucket),
+	))
 
 	_ = f.Close()
 	return f.Name(), size, false, nil
@@ -90,6 +110,11 @@ func (c *gcsClient) UploadObject(ctx context.Context, bucket, key, sourceFilenam
 	}
 	defer func() { _ = file.Close() }()
 
+	stat, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat source file: %w", err)
+	}
+
 	obj := c.storageClient.Client.Bucket(bucket).Object(key)
 	writer := obj.NewWriter(ctx)
 	writer.ContentType = "application/vnd.apache.parquet"
@@ -105,6 +130,13 @@ func (c *gcsClient) UploadObject(ctx context.Context, bucket, key, sourceFilenam
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("failed to close writer for %s/%s: %w", bucket, key, err)
 	}
+
+	uploadCount.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("bucket", bucket),
+	))
+	uploadBytes.Add(ctx, stat.Size(), metric.WithAttributes(
+		attribute.String("bucket", bucket),
+	))
 
 	return nil
 }
@@ -130,6 +162,10 @@ func (c *gcsClient) DeleteObject(ctx context.Context, bucket, key string) error 
 // DeleteObjects deletes multiple objects from GCS.
 // GCS SDK does not support batch delete, so we delete sequentially.
 func (c *gcsClient) DeleteObjects(ctx context.Context, bucket string, keys []string) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
 	ctx, span := c.storageClient.Tracer.Start(ctx, "cloudstorage.gcsDeleteObjects",
 		trace.WithAttributes(
 			attribute.String("bucket", bucket),
@@ -143,7 +179,12 @@ func (c *gcsClient) DeleteObjects(ctx context.Context, bucket string, keys []str
 		obj := c.storageClient.Client.Bucket(bucket).Object(key)
 		if err := obj.Delete(ctx); err != nil {
 			failed = append(failed, key)
+			span.RecordError(fmt.Errorf("failed to delete object %s/%s: %w", bucket, key, err))
 		}
+	}
+
+	if len(failed) > 0 {
+		span.SetAttributes(attribute.Int("failed_object_count", len(failed)))
 	}
 
 	return failed, nil
