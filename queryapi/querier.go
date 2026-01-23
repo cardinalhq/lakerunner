@@ -24,7 +24,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
@@ -34,7 +33,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/cardinalhq/lakerunner/logql"
-	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
 )
 
@@ -582,128 +580,12 @@ func (q *QuerierService) handleListServices(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(map[string][]string{"services": services})
 }
 
-func (q *QuerierService) handleListServiceMetrics(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "only GET method is allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Parse URL parameters
-	queryParams := r.URL.Query()
-	serviceName := queryParams.Get("serviceName")
-	startTimeStr := queryParams.Get("startTime")
-	endTimeStr := queryParams.Get("endTime")
-
-	// Validate required parameters
-	if serviceName == "" {
-		http.Error(w, "missing required parameter: serviceName", http.StatusBadRequest)
-		return
-	}
-	if startTimeStr == "" {
-		http.Error(w, "missing required parameter: startTime", http.StatusBadRequest)
-		return
-	}
-	if endTimeStr == "" {
-		http.Error(w, "missing required parameter: endTime", http.StatusBadRequest)
-		return
-	}
-
-	// Parse time parameters
-	startTime, err := strconv.ParseInt(startTimeStr, 10, 64)
-	if err != nil {
-		http.Error(w, "invalid startTime: must be a number", http.StatusBadRequest)
-		return
-	}
-	endTime, err := strconv.ParseInt(endTimeStr, 10, 64)
-	if err != nil {
-		http.Error(w, "invalid endTime: must be a number", http.StatusBadRequest)
-		return
-	}
-
-	// Get organization ID from context
-	orgUUID, ok := GetOrgIDFromContext(r.Context())
-	if !ok {
-		http.Error(w, "organization ID not found in context", http.StatusInternalServerError)
-		return
-	}
-
-	ctx := r.Context()
-	metrics, err := q.mdb.ListServiceMetrics(ctx, lrdb.ListServiceMetricsParams{
-		OrganizationID: orgUUID,
-		ServiceName:    serviceName,
-		StartTime:      float64(startTime),
-		EndTime:        float64(endTime),
-	})
-	if err != nil {
-		slog.Error("ListServiceMetrics failed",
-			"org", orgUUID,
-			"service", serviceName,
-			"startTime", startTime,
-			"endTime", endTime,
-			"error", err)
-		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string][]string{"metrics": metrics})
-}
-
-type exemplarLogsRequest struct {
-	Fingerprints []int64 `json:"fingerprints"`
-}
-
-func (q *QuerierService) handleGetExemplarLogs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "only POST method is allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	orgUUID, ok := GetOrgIDFromContext(r.Context())
-	if !ok {
-		http.Error(w, "organization ID not found in context", http.StatusInternalServerError)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer func() { _ = r.Body.Close() }()
-
-	var req exemplarLogsRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if len(req.Fingerprints) == 0 {
-		http.Error(w, "fingerprints array is required and cannot be empty", http.StatusBadRequest)
-		return
-	}
-
-	exemplars, err := q.mdb.GetExemplarLogsByFingerprints(r.Context(), lrdb.GetExemplarLogsByFingerprintsParams{
-		OrganizationID: orgUUID,
-		Fingerprints:   req.Fingerprints,
-	})
-	if err != nil {
-		slog.Error("GetExemplarLogsByFingerprints failed", slog.Any("error", err))
-		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"exemplars": exemplars})
-}
-
 func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/v1/services", q.apiKeyMiddleware(q.handleListServices))
-	mux.HandleFunc("/api/v1/services/metrics", q.apiKeyMiddleware(q.handleListServiceMetrics))
 
 	mux.HandleFunc("/api/v1/metrics/metadata", q.apiKeyMiddleware(q.handleListPromQLMetricsMetadata))
 	mux.HandleFunc("/api/v1/metrics/tags", q.apiKeyMiddleware(q.handleListPromQLTags))
@@ -714,7 +596,6 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	mux.HandleFunc("/api/v1/logs/tagvalues", q.apiKeyMiddleware(q.handleGetLogTagValues))
 	mux.HandleFunc("/api/v1/logs/query", q.apiKeyMiddleware(q.handleLogQuery))
 	mux.HandleFunc("/api/v1/logs/series", q.apiKeyMiddleware(q.handleListLogSeries))
-	mux.HandleFunc("/api/v1/logs/exemplars", q.apiKeyMiddleware(q.handleGetExemplarLogs))
 
 	mux.HandleFunc("/api/v1/spans/tags", q.apiKeyMiddleware(q.handleListSpanTags))
 	mux.HandleFunc("/api/v1/spans/tagvalues", q.apiKeyMiddleware(q.handleGetSpanTagValues))

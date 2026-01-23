@@ -28,8 +28,6 @@ type MetricIngestStore interface {
 	workqueue.DB
 	InsertMetricSegmentsBatch(ctx context.Context, segments []lrdb.InsertMetricSegmentParams) error
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
-	BatchUpsertExemplarMetrics(ctx context.Context, batch []lrdb.BatchUpsertExemplarMetricsParams) *lrdb.BatchUpsertExemplarMetricsBatchResults
-	UpsertServiceIdentifier(ctx context.Context, arg lrdb.UpsertServiceIdentifierParams) (lrdb.UpsertServiceIdentifierRow, error)
 }
 
 // LogIngestStore defines database operations needed for log ingestion
@@ -37,8 +35,6 @@ type LogIngestStore interface {
 	workqueue.DB
 	InsertLogSegmentsBatch(ctx context.Context, segments []lrdb.InsertLogSegmentParams) error
 	GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64
-	BatchUpsertExemplarLogs(ctx context.Context, batch []lrdb.BatchUpsertExemplarLogsParams) *lrdb.BatchUpsertExemplarLogsBatchResults
-	UpsertServiceIdentifier(ctx context.Context, arg lrdb.UpsertServiceIdentifierParams) (lrdb.UpsertServiceIdentifierRow, error)
 }
 
 // TraceIngestStore defines database operations needed for trace ingestion
@@ -46,8 +42,6 @@ type TraceIngestStore interface {
 	workqueue.DB
 	InsertTraceSegmentsBatch(ctx context.Context, segments []lrdb.InsertTraceSegmentParams) error
 	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
-	BatchUpsertExemplarTraces(ctx context.Context, batch []lrdb.BatchUpsertExemplarTracesParams) *lrdb.BatchUpsertExemplarTracesBatchResults
-	UpsertServiceIdentifier(ctx context.Context, arg lrdb.UpsertServiceIdentifierParams) (lrdb.UpsertServiceIdentifierRow, error)
 }
 
 // LogCompactionStore defines database operations needed for log compaction

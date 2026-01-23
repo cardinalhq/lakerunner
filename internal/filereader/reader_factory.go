@@ -21,8 +21,6 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 )
 
 type multiReadCloser struct {
@@ -55,7 +53,7 @@ type ReaderOptions struct {
 
 // ReaderForFile creates a Reader for the given file based on its extension and signal type.
 // This is a convenience function that uses default options.
-func ReaderForFile(filename string, signalType SignalType, orgId string, exemplarProcessor *exemplars.Processor) (Reader, error) {
+func ReaderForFile(filename string, signalType SignalType, orgId string) (Reader, error) {
 	options := ReaderOptions{SignalType: signalType, BatchSize: 1000}
 	options.OrgID = orgId
 	return ReaderForFileWithOptions(filename, options)

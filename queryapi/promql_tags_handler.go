@@ -17,7 +17,6 @@ package queryapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,7 +25,6 @@ import (
 	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
-	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 
@@ -252,15 +250,14 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	mt, err := q.mdb.GetMetricType(ctx, lrdb.GetMetricTypeParams{
+	// Get the metric type from segment metadata
+	metricType, err := q.mdb.GetMetricType(ctx, lrdb.GetMetricTypeParams{
 		OrganizationID: orgUUID,
+		StartDateint:   startDateint,
+		EndDateint:     endDateint,
 		MetricName:     metric,
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			http.Error(w, "metric not found for org", http.StatusNotFound)
-			return
-		}
 		slog.Error("GetMetricType failed", slog.Any("error", err))
 		http.Error(w, "db error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -282,7 +279,7 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 	}
 
 	resp := promTagsForMetricResp{
-		Metric: metricItem{Name: metric, Type: mt},
+		Metric: metricItem{Name: metric, Type: lrdb.MetricTypeToString(metricType)},
 		Tags:   tags,
 	}
 	w.Header().Set("Content-Type", "application/json")

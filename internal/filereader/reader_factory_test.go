@@ -247,7 +247,7 @@ func TestReaderForFile(t *testing.T) {
 
 			t.Logf("Testing %s: %s", tt.description, filename)
 
-			reader, err := ReaderForFile(filename, tt.signalType, "orgId", nil)
+			reader, err := ReaderForFile(filename, tt.signalType, "orgId")
 
 			if tt.expectSuccess {
 				require.NoError(t, err, "Expected success for %s but got error: %v", tt.description, err)
@@ -288,7 +288,7 @@ func TestReaderForFileWithOptions(t *testing.T) {
 	filename := createSyntheticLogsFile(t, false)
 
 	// Using ReaderForFile
-	reader1, err1 := ReaderForFile(filename, SignalTypeLogs, "orgId", nil)
+	reader1, err1 := ReaderForFile(filename, SignalTypeLogs, "orgId")
 	require.NoError(t, err1)
 	defer func() { _ = reader1.Close() }()
 
@@ -335,7 +335,7 @@ func TestSignalTypeSpecificProtoReaders(t *testing.T) {
 				}
 			}
 
-			reader, err := ReaderForFile(filename, tt.signalType, "orgId", nil)
+			reader, err := ReaderForFile(filename, tt.signalType, "orgId")
 			require.NoError(t, err)
 			defer func() { _ = reader.Close() }()
 
@@ -370,7 +370,7 @@ func TestGzippedProtobufSupport(t *testing.T) {
 				}
 			}
 
-			reader, err := ReaderForFile(filename, tt.signalType, "orgId", nil)
+			reader, err := ReaderForFile(filename, tt.signalType, "orgId")
 			require.NoError(t, err, "Should support .binpb.gz files")
 			defer func() { _ = reader.Close() }()
 
@@ -421,7 +421,7 @@ func TestErrorCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader, err := ReaderForFile(tt.filename, tt.signalType, "orgId", nil)
+			reader, err := ReaderForFile(tt.filename, tt.signalType, "orgId")
 
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expectError)

@@ -202,3 +202,17 @@ WHERE organization_id = @organization_id
   AND published = true
   AND metric_names IS NOT NULL
   AND metric_types IS NOT NULL;
+
+-- name: GetMetricType :one
+-- Returns the metric type for a specific metric name from segment metadata
+-- Uses array_position to find the metric name index and get corresponding type
+SELECT metric_types[array_position(metric_names, @metric_name)]::smallint AS metric_type
+FROM metric_seg
+WHERE organization_id = @organization_id
+  AND dateint >= @start_dateint
+  AND dateint <= @end_dateint
+  AND @metric_name = ANY(metric_names)
+  AND published = true
+  AND metric_names IS NOT NULL
+  AND metric_types IS NOT NULL
+LIMIT 1;

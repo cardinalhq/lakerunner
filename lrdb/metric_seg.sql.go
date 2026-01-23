@@ -176,6 +176,40 @@ func (q *Queries) GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIds
 	return items, nil
 }
 
+const getMetricType = `-- name: GetMetricType :one
+SELECT metric_types[array_position(metric_names, $1)]::smallint AS metric_type
+FROM metric_seg
+WHERE organization_id = $2
+  AND dateint >= $3
+  AND dateint <= $4
+  AND $1 = ANY(metric_names)
+  AND published = true
+  AND metric_names IS NOT NULL
+  AND metric_types IS NOT NULL
+LIMIT 1
+`
+
+type GetMetricTypeParams struct {
+	MetricName     interface{} `json:"metric_name"`
+	OrganizationID uuid.UUID   `json:"organization_id"`
+	StartDateint   int32       `json:"start_dateint"`
+	EndDateint     int32       `json:"end_dateint"`
+}
+
+// Returns the metric type for a specific metric name from segment metadata
+// Uses array_position to find the metric name index and get corresponding type
+func (q *Queries) GetMetricType(ctx context.Context, arg GetMetricTypeParams) (int16, error) {
+	row := q.db.QueryRow(ctx, getMetricType,
+		arg.MetricName,
+		arg.OrganizationID,
+		arg.StartDateint,
+		arg.EndDateint,
+	)
+	var metric_type int16
+	err := row.Scan(&metric_type)
+	return metric_type, err
+}
+
 const listMetricNames = `-- name: ListMetricNames :many
 SELECT DISTINCT
     unnest(metric_names)::text AS metric_name

@@ -131,40 +131,6 @@ type LogSeg struct {
 	AggFields      []string                  `json:"agg_fields"`
 }
 
-type LrdbExemplarLog struct {
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	OrganizationID      uuid.UUID      `json:"organization_id"`
-	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
-	Exemplar            map[string]any `json:"exemplar"`
-	Fingerprint         int64          `json:"fingerprint"`
-	RelatedFingerprints []int64        `json:"related_fingerprints"`
-	Source              ExemplarSource `json:"source"`
-}
-
-type LrdbExemplarMetric struct {
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	OrganizationID      uuid.UUID      `json:"organization_id"`
-	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
-	Exemplar            map[string]any `json:"exemplar"`
-	MetricName          string         `json:"metric_name"`
-	MetricType          string         `json:"metric_type"`
-	Source              ExemplarSource `json:"source"`
-}
-
-type LrdbExemplarTrace struct {
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	OrganizationID      uuid.UUID      `json:"organization_id"`
-	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
-	Exemplar            map[string]any `json:"exemplar"`
-	Fingerprint         int64          `json:"fingerprint"`
-	SpanName            string         `json:"span_name"`
-	SpanKind            int32          `json:"span_kind"`
-	Source              ExemplarSource `json:"source"`
-}
-
 type LrdbServiceIdentifier struct {
 	ID             uuid.UUID   `json:"id"`
 	CreatedAt      time.Time   `json:"created_at"`
