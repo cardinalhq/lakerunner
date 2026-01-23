@@ -52,7 +52,8 @@ func (c *gcsClient) DownloadObject(ctx context.Context, tmpdir, bucket, key stri
 		return "", 0, false, fmt.Errorf("create temp file: %w", err)
 	}
 
-	obj := c.storageClient.Client.Bucket(bucket).Object(key)
+	// ReadCompressed(true) disables automatic decompression of gzip-encoded objects
+	obj := c.storageClient.Client.Bucket(bucket).Object(key).ReadCompressed(true)
 	reader, err := obj.NewReader(ctx)
 	if err != nil {
 		_ = f.Close()
