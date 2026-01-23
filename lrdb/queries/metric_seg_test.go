@@ -536,3 +536,82 @@ func TestCompactMetricSegs_CrossFrequencyIsolation(t *testing.T) {
 	assert.True(t, seg10000Data[0].Published, "10000ms segment should remain published")
 	assert.Equal(t, int64(2000), seg10000Data[0].RecordCount, "10000ms segment should be unchanged")
 }
+
+// TestGetMetricType tests retrieving the metric type for a specific metric name
+// from segment metadata using array_position
+func TestGetMetricType(t *testing.T) {
+	ctx := context.Background()
+	db := testhelpers.NewTestLRDBStore(t)
+
+	orgID := uuid.New()
+	now := time.Now()
+	dateint := int32(20250830)
+
+	// Insert a segment with multiple metrics and their types
+	// Metric types: 0=unknown, 1=gauge, 2=counter, 3=histogram, 4=summary
+	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
+		OrganizationID: orgID,
+		Dateint:        dateint,
+		FrequencyMs:    5000,
+		SegmentID:      12345,
+		InstanceNum:    1,
+		StartTs:        now.UnixMilli(),
+		EndTs:          now.Add(time.Hour).UnixMilli(),
+		RecordCount:    1000,
+		FileSize:       50000,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Published:      true,
+		Fingerprints:   []int64{100, 200, 300},
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+		Compacted:      false,
+		MetricNames:    []string{"cpu_usage", "memory_bytes", "http_requests_total"},
+		MetricTypes:    []int16{1, 1, 2}, // gauge, gauge, counter
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name         string
+		metricName   string
+		expectedType int16
+		expectError  bool
+	}{
+		{
+			name:         "gauge metric",
+			metricName:   "cpu_usage",
+			expectedType: 1,
+		},
+		{
+			name:         "counter metric",
+			metricName:   "http_requests_total",
+			expectedType: 2,
+		},
+		{
+			name:         "another gauge metric",
+			metricName:   "memory_bytes",
+			expectedType: 1,
+		},
+		{
+			name:        "non-existent metric",
+			metricName:  "nonexistent_metric",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metricType, err := db.GetMetricType(ctx, lrdb.GetMetricTypeParams{
+				OrganizationID: orgID,
+				StartDateint:   dateint,
+				EndDateint:     dateint,
+				MetricName:     tt.metricName,
+			})
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedType, metricType)
+			}
+		})
+	}
+}
