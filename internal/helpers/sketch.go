@@ -89,12 +89,3 @@ func EncodeAndReturnSketch(sketch *ddsketch.DDSketch) []byte {
 	PutSketch(sketch)
 	return buf
 }
-
-// DecodeSketch decodes a DDSketch from bytes using shared mapping and dense store.
-func DecodeSketch(data []byte) (*ddsketch.DDSketch, error) {
-	m, err := getSharedMapping()
-	if err != nil {
-		return nil, err
-	}
-	return ddsketch.DecodeDDSketch(data, store.DenseStoreConstructor, m)
-}
