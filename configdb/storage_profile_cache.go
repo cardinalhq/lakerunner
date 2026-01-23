@@ -23,16 +23,16 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 )
 
-type StorageProfileCacheValue struct {
+type storageProfileCacheValue struct {
 	GetStorageProfileRow
 	error
 }
 
 func (store *Store) GetStorageProfile(ctx context.Context, params GetStorageProfileParams) (GetStorageProfileRow, error) {
-	loader := ttlcache.LoaderFunc[GetStorageProfileParams, StorageProfileCacheValue](
-		func(cache *ttlcache.Cache[GetStorageProfileParams, StorageProfileCacheValue], key GetStorageProfileParams) *ttlcache.Item[GetStorageProfileParams, StorageProfileCacheValue] {
+	loader := ttlcache.LoaderFunc[GetStorageProfileParams, storageProfileCacheValue](
+		func(cache *ttlcache.Cache[GetStorageProfileParams, storageProfileCacheValue], key GetStorageProfileParams) *ttlcache.Item[GetStorageProfileParams, storageProfileCacheValue] {
 			row, err := store.GetStorageProfileUncached(ctx, key)
-			item := cache.Set(key, StorageProfileCacheValue{
+			item := cache.Set(key, storageProfileCacheValue{
 				GetStorageProfileRow: row,
 				error:                err,
 			}, ttlcache.DefaultTTL)
@@ -46,23 +46,23 @@ func (store *Store) GetStorageProfile(ctx context.Context, params GetStorageProf
 	return GetStorageProfileRow{}, errors.New("failed to get storage profile from cache")
 }
 
-type StorageProfileByNameCacheValue struct {
+type storageProfileByNameCacheValue struct {
 	GetStorageProfileByCollectorNameRow
 	error
 }
 
 func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, organizationID uuid.UUID) (GetStorageProfileByCollectorNameRow, error) {
-	loader := ttlcache.LoaderFunc[uuid.UUID, StorageProfileByNameCacheValue](
-		func(cache *ttlcache.Cache[uuid.UUID, StorageProfileByNameCacheValue], key uuid.UUID) *ttlcache.Item[uuid.UUID, StorageProfileByNameCacheValue] {
+	loader := ttlcache.LoaderFunc[uuid.UUID, storageProfileByNameCacheValue](
+		func(cache *ttlcache.Cache[uuid.UUID, storageProfileByNameCacheValue], key uuid.UUID) *ttlcache.Item[uuid.UUID, storageProfileByNameCacheValue] {
 			pgUUID := pgtype.UUID{}
 			if scanErr := pgUUID.Scan(key); scanErr != nil {
-				item := cache.Set(key, StorageProfileByNameCacheValue{
+				item := cache.Set(key, storageProfileByNameCacheValue{
 					error: scanErr,
 				}, ttlcache.DefaultTTL)
 				return item
 			}
 			row, err := store.GetStorageProfileByCollectorNameUncached(ctx, pgUUID)
-			item := cache.Set(key, StorageProfileByNameCacheValue{
+			item := cache.Set(key, storageProfileByNameCacheValue{
 				GetStorageProfileByCollectorNameRow: row,
 				error:                               err,
 			}, ttlcache.DefaultTTL)
@@ -76,16 +76,16 @@ func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, organi
 	return GetStorageProfileByCollectorNameRow{}, errors.New("failed to get storage profile by collector name from cache")
 }
 
-type StorageProfilesByBucketNameCacheValue struct {
+type storageProfilesByBucketNameCacheValue struct {
 	rows []GetStorageProfilesByBucketNameRow
 	err  error
 }
 
 func (store *Store) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error) {
-	loader := ttlcache.LoaderFunc[string, StorageProfilesByBucketNameCacheValue](
-		func(cache *ttlcache.Cache[string, StorageProfilesByBucketNameCacheValue], key string) *ttlcache.Item[string, StorageProfilesByBucketNameCacheValue] {
+	loader := ttlcache.LoaderFunc[string, storageProfilesByBucketNameCacheValue](
+		func(cache *ttlcache.Cache[string, storageProfilesByBucketNameCacheValue], key string) *ttlcache.Item[string, storageProfilesByBucketNameCacheValue] {
 			rows, err := store.GetStorageProfilesByBucketNameUncached(ctx, key)
-			item := cache.Set(key, StorageProfilesByBucketNameCacheValue{
+			item := cache.Set(key, storageProfilesByBucketNameCacheValue{
 				rows: rows,
 				err:  err,
 			}, ttlcache.DefaultTTL)

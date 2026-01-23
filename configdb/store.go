@@ -30,21 +30,21 @@ import (
 type Store struct {
 	*Queries
 	connPool                           *pgxpool.Pool
-	storageProfileCache                *ttlcache.Cache[GetStorageProfileParams, StorageProfileCacheValue]
-	storageProfileByCollectorNameCache *ttlcache.Cache[uuid.UUID, StorageProfileByNameCacheValue]
-	storageProfilesByBucketNameCache   *ttlcache.Cache[string, StorageProfilesByBucketNameCacheValue]
+	storageProfileCache                *ttlcache.Cache[GetStorageProfileParams, storageProfileCacheValue]
+	storageProfileByCollectorNameCache *ttlcache.Cache[uuid.UUID, storageProfileByNameCacheValue]
+	storageProfilesByBucketNameCache   *ttlcache.Cache[string, storageProfilesByBucketNameCacheValue]
 }
 
-func NewEmptyStore() *Store {
+func newEmptyStore() *Store {
 	store := &Store{
 		storageProfileCache: ttlcache.New(
-			ttlcache.WithTTL[GetStorageProfileParams, StorageProfileCacheValue](5 * time.Minute),
+			ttlcache.WithTTL[GetStorageProfileParams, storageProfileCacheValue](5 * time.Minute),
 		),
 		storageProfileByCollectorNameCache: ttlcache.New(
-			ttlcache.WithTTL[uuid.UUID, StorageProfileByNameCacheValue](5 * time.Minute),
+			ttlcache.WithTTL[uuid.UUID, storageProfileByNameCacheValue](5 * time.Minute),
 		),
 		storageProfilesByBucketNameCache: ttlcache.New(
-			ttlcache.WithTTL[string, StorageProfilesByBucketNameCacheValue](5 * time.Minute),
+			ttlcache.WithTTL[string, storageProfilesByBucketNameCacheValue](5 * time.Minute),
 		),
 	}
 	go store.storageProfileCache.Start()
@@ -55,7 +55,7 @@ func NewEmptyStore() *Store {
 
 // NewStore creates a new Store
 func NewStore(connPool *pgxpool.Pool) *Store {
-	s := NewEmptyStore()
+	s := newEmptyStore()
 	s.connPool = connPool
 	s.Queries = New(connPool)
 	return s
