@@ -155,7 +155,8 @@ func (c *azureClient) UploadObject(ctx context.Context, bucket, key, sourceFilen
 	return nil
 }
 
-// DeleteObject deletes a blob from Azure Blob Storage
+// DeleteObject deletes a blob from Azure Blob Storage.
+// Returns nil if the blob doesn't exist (idempotent, matching S3 behavior).
 func (c *azureClient) DeleteObject(ctx context.Context, bucket, key string) error {
 	ctx, span := c.blobClient.Tracer.Start(ctx, "cloudstorage.azureDeleteObject",
 		trace.WithAttributes(
@@ -167,6 +168,10 @@ func (c *azureClient) DeleteObject(ctx context.Context, bucket, key string) erro
 
 	_, err := c.blobClient.Client.DeleteBlob(ctx, bucket, key, nil)
 	if err != nil {
+		// Treat "not found" as success to match S3's idempotent delete behavior
+		if bloberror.HasCode(err, bloberror.BlobNotFound) {
+			return nil
+		}
 		return fmt.Errorf("failed to delete blob %s/%s: %w", bucket, key, err)
 	}
 	return nil
@@ -191,8 +196,11 @@ func (c *azureClient) DeleteObjects(ctx context.Context, bucket string, keys []s
 	for _, key := range keys {
 		_, err := c.blobClient.Client.DeleteBlob(ctx, bucket, key, nil)
 		if err != nil {
-			failed = append(failed, key)
-			span.RecordError(fmt.Errorf("failed to delete blob %s/%s: %w", bucket, key, err))
+			// Treat "not found" as success to match S3's idempotent delete behavior
+			if !bloberror.HasCode(err, bloberror.BlobNotFound) {
+				failed = append(failed, key)
+				span.RecordError(fmt.Errorf("failed to delete blob %s/%s: %w", bucket, key, err))
+			}
 		}
 	}
 

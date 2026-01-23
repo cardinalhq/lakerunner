@@ -142,6 +142,7 @@ func (c *gcsClient) UploadObject(ctx context.Context, bucket, key, sourceFilenam
 }
 
 // DeleteObject deletes an object from GCS.
+// Returns nil if the object doesn't exist (idempotent, matching S3 behavior).
 func (c *gcsClient) DeleteObject(ctx context.Context, bucket, key string) error {
 	ctx, span := c.storageClient.Tracer.Start(ctx, "cloudstorage.gcsDeleteObject",
 		trace.WithAttributes(
@@ -153,6 +154,10 @@ func (c *gcsClient) DeleteObject(ctx context.Context, bucket, key string) error 
 
 	obj := c.storageClient.Client.Bucket(bucket).Object(key)
 	if err := obj.Delete(ctx); err != nil {
+		// Treat "not found" as success to match S3's idempotent delete behavior
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil
+		}
 		return fmt.Errorf("failed to delete object %s/%s: %w", bucket, key, err)
 	}
 
@@ -178,8 +183,11 @@ func (c *gcsClient) DeleteObjects(ctx context.Context, bucket string, keys []str
 	for _, key := range keys {
 		obj := c.storageClient.Client.Bucket(bucket).Object(key)
 		if err := obj.Delete(ctx); err != nil {
-			failed = append(failed, key)
-			span.RecordError(fmt.Errorf("failed to delete object %s/%s: %w", bucket, key, err))
+			// Treat "not found" as success to match S3's idempotent delete behavior
+			if !errors.Is(err, storage.ErrObjectNotExist) {
+				failed = append(failed, key)
+				span.RecordError(fmt.Errorf("failed to delete object %s/%s: %w", bucket, key, err))
+			}
 		}
 	}
 
