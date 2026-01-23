@@ -36,10 +36,10 @@ func init() {
 	go partitionTableCache.Start()
 }
 
-func RememberPartitionTable(tableName string) {
+func rememberPartitionTable(tableName string) {
 	partitionTableCache.Set(tableName, struct{}{}, ttlcache.DefaultTTL)
 }
 
-func IsPartitionTableRemembered(tableName string) bool {
+func isPartitionTableRemembered(tableName string) bool {
 	return partitionTableCache.Get(tableName) != nil
 }

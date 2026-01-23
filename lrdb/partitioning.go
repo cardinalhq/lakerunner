@@ -26,7 +26,7 @@ import (
 func (q *Queries) ensureLogFPPartition(ctx context.Context, parent string, org_id uuid.UUID, dateint int32) error {
 	partitionTableName := parent + "_" + idgen.UUIDToBase36(org_id)
 	key := fmt.Sprintf("%s_%d", partitionTableName, dateint)
-	if IsPartitionTableRemembered(key) {
+	if isPartitionTableRemembered(key) {
 		return nil
 	}
 	sql := fmt.Sprintf(`SELECT create_logfpseg_partition('%s', '%s', '%s', %d, %d)`,
@@ -35,14 +35,14 @@ func (q *Queries) ensureLogFPPartition(ctx context.Context, parent string, org_i
 	if err != nil {
 		return fmt.Errorf("failed to create partition %s for table %s: %w", partitionTableName, parent, err)
 	}
-	RememberPartitionTable(key)
+	rememberPartitionTable(key)
 	return nil
 }
 
 func (q *Queries) ensureTraceFPPartition(ctx context.Context, parent string, org_id uuid.UUID, dateint int32) error {
 	partitionTableName := parent + "_" + idgen.UUIDToBase36(org_id)
 	key := fmt.Sprintf("%s_%d", partitionTableName, dateint)
-	if IsPartitionTableRemembered(key) {
+	if isPartitionTableRemembered(key) {
 		return nil
 	}
 	sql := fmt.Sprintf(`SELECT create_tracefpseg_partition('%s', '%s', '%s', %d, %d)`,
@@ -51,14 +51,14 @@ func (q *Queries) ensureTraceFPPartition(ctx context.Context, parent string, org
 	if err != nil {
 		return fmt.Errorf("failed to create partition %s for table %s: %w", partitionTableName, parent, err)
 	}
-	RememberPartitionTable(key)
+	rememberPartitionTable(key)
 	return nil
 }
 
 func (q *Queries) ensureMetricSegmentPartition(ctx context.Context, org_id uuid.UUID, dateint int32) error {
 	partitionTableName := "mseg_" + idgen.UUIDToBase36(org_id)
 	key := fmt.Sprintf("%s_%d", partitionTableName, dateint)
-	if IsPartitionTableRemembered(key) {
+	if isPartitionTableRemembered(key) {
 		return nil
 	}
 	sql := fmt.Sprintf(`SELECT create_metricseg_partition('metric_seg', '%s', '%s', %d, %d)`,
@@ -67,6 +67,6 @@ func (q *Queries) ensureMetricSegmentPartition(ctx context.Context, org_id uuid.
 	if err != nil {
 		return fmt.Errorf("failed to create partition %s for table metric_seg: %w", partitionTableName, err)
 	}
-	RememberPartitionTable(key)
+	rememberPartitionTable(key)
 	return nil
 }

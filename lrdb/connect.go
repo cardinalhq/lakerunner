@@ -32,7 +32,7 @@ func ConnectTolrdb(ctx context.Context, opts ...dbopen.Options) (*pgxpool.Pool, 
 		return nil, errors.Join(dbopen.ErrDatabaseNotConfigured, fmt.Errorf("failed to get LRDB connection string: %w", err))
 	}
 
-	pool, err := NewConnectionPool(ctx, connectionString)
+	pool, err := newConnectionPool(ctx, connectionString)
 	if err != nil {
 		return nil, err
 	}
