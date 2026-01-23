@@ -586,7 +586,7 @@ func TestCalculateLag(t *testing.T) {
 func TestProcessConsumerGroupLags(t *testing.T) {
 	adminClient := &AdminClient{}
 
-	highWaterMarks := HighWaterMarkMap{
+	highWaterMarks := highWaterMarkMap{
 		"topic1": {
 			0: 100,
 			1: 200,
@@ -720,8 +720,8 @@ func TestProcessConsumerGroupLags(t *testing.T) {
 	}
 }
 
-func TestTopicPartitionInfo(t *testing.T) {
-	info := TopicPartitionInfo{
+func TesttopicPartitionInfo(t *testing.T) {
+	info := topicPartitionInfo{
 		Topic:      "test-topic",
 		Partitions: []int{0, 1, 2},
 	}
@@ -730,8 +730,8 @@ func TestTopicPartitionInfo(t *testing.T) {
 	assert.Equal(t, []int{0, 1, 2}, info.Partitions)
 }
 
-func TestHighWaterMarkMap(t *testing.T) {
-	hwm := make(HighWaterMarkMap)
+func TesthighWaterMarkMap(t *testing.T) {
+	hwm := make(highWaterMarkMap)
 	hwm["topic1"] = make(map[int]int64)
 	hwm["topic1"][0] = 100
 	hwm["topic1"][1] = 200

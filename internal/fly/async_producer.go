@@ -44,11 +44,11 @@ type AsyncProducer interface {
 	PendingCount() int
 
 	// Stats returns producer statistics
-	Stats() ProducerStats
+	Stats() producerStats
 }
 
-// ProducerStats tracks async producer performance
-type ProducerStats struct {
+// producerStats tracks async producer performance
+type producerStats struct {
 	MessagesSent     int64
 	MessagesFailed   int64
 	MessagesQueued   int64
@@ -79,7 +79,7 @@ type asyncKafkaProducer struct {
 	wg      sync.WaitGroup
 
 	// Stats
-	stats     ProducerStats
+	stats     producerStats
 	statsLock sync.RWMutex
 
 	// Pending tracking
@@ -159,7 +159,7 @@ func (p *asyncKafkaProducer) SendAsync(ctx context.Context, topic string, messag
 		return ctx.Err()
 	case p.sendChan <- msg:
 		p.pending.Add(1)
-		p.updateStats(func(s *ProducerStats) {
+		p.updateStats(func(s *producerStats) {
 			s.MessagesQueued++
 		})
 		return nil
@@ -248,7 +248,7 @@ func (p *asyncKafkaProducer) sendBatch(batch []*asyncMessage) {
 		err := writer.WriteMessages(sendCtx, kafkaMsgs...)
 
 		// Update stats
-		p.updateStats(func(s *ProducerStats) {
+		p.updateStats(func(s *producerStats) {
 			s.BatchesSent++
 			if err == nil {
 				s.MessagesSent += int64(len(msgs))
@@ -276,7 +276,7 @@ func (p *asyncKafkaProducer) sendBatch(batch []*asyncMessage) {
 
 				m.callback(m.message, partition, offset, err)
 
-				p.updateStats(func(s *ProducerStats) {
+				p.updateStats(func(s *producerStats) {
 					s.CallbacksInvoked++
 				})
 			}
@@ -325,14 +325,14 @@ func (p *asyncKafkaProducer) PendingCount() int {
 }
 
 // Stats returns current producer statistics
-func (p *asyncKafkaProducer) Stats() ProducerStats {
+func (p *asyncKafkaProducer) Stats() producerStats {
 	p.statsLock.RLock()
 	defer p.statsLock.RUnlock()
 	return p.stats
 }
 
 // updateStats safely updates statistics
-func (p *asyncKafkaProducer) updateStats(update func(*ProducerStats)) {
+func (p *asyncKafkaProducer) updateStats(update func(*producerStats)) {
 	p.statsLock.Lock()
 	defer p.statsLock.Unlock()
 	update(&p.stats)
