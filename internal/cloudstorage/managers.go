@@ -63,7 +63,10 @@ func (m *CloudManagers) NewClient(ctx context.Context, profile storageprofile.St
 		if err != nil {
 			return nil, fmt.Errorf("failed to create S3 client: %w", err)
 		}
-		return &s3Client{awsS3Client: awsS3Client}, nil
+		return &s3Client{
+			awsS3Client: awsS3Client,
+			isGCP:       profile.CloudProvider == "gcp",
+		}, nil
 	case "azure":
 		azureBlobClient, err := m.Azure.GetBlobForProfile(ctx, profile)
 		if err != nil {

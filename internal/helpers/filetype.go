@@ -15,6 +15,8 @@
 package helpers
 
 import (
+	"io"
+	"os"
 	"path"
 	"regexp"
 	"strings"
@@ -71,4 +73,37 @@ func ExtractCustomerDomain(resourceFile string) string {
 
 	// 3) No recognizable domain pattern
 	return ""
+}
+
+// IsGzipFile checks if a file is actually gzip compressed by examining magic bytes.
+// GCP Cloud Storage may transparently decompress .gz files during download,
+// resulting in files that have a .gz extension but contain uncompressed data.
+// This function checks the file content, not the extension.
+func IsGzipFile(filename string) (bool, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	return IsGzipReader(f)
+}
+
+// IsGzipReader checks if a reader contains gzip compressed data.
+// It reads the first 2 bytes to check for the gzip magic number (0x1f 0x8b).
+// The reader should be at position 0; after calling, the reader position
+// will have advanced by up to 2 bytes.
+func IsGzipReader(r io.Reader) (bool, error) {
+	magic := make([]byte, 2)
+	n, err := io.ReadFull(r, magic)
+	if err != nil {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return false, nil // File too short to be gzip
+		}
+		return false, err
+	}
+	if n < 2 {
+		return false, nil
+	}
+	// Gzip magic number: 0x1f 0x8b
+	return magic[0] == 0x1f && magic[1] == 0x8b, nil
 }

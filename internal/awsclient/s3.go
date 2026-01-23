@@ -97,6 +97,9 @@ func WithGCPProvider() S3Option {
 	return func(c *s3Config) {
 		c.applyConfigs = append(c.applyConfigs, func(cfg *aws.Config) {
 			cfg.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+			// GCP may transparently decompress .gz files during download, which causes
+			// the downloaded bytes to not match the stored checksum (computed on compressed data).
+			cfg.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 		})
 		c.applyS3s = append(c.applyS3s, func(o *s3.Options) {
 			SignForGCP(o)

@@ -15,6 +15,10 @@
 package helpers
 
 import (
+	"bytes"
+	"compress/gzip"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -179,4 +183,112 @@ func TestExtractCustomerDomain(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsGzipReader(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		expected bool
+	}{
+		{
+			name:     "valid gzip data",
+			data:     createGzipData(t, []byte("hello world")),
+			expected: true,
+		},
+		{
+			name:     "plain text",
+			data:     []byte("hello world"),
+			expected: false,
+		},
+		{
+			name:     "empty data",
+			data:     []byte{},
+			expected: false,
+		},
+		{
+			name:     "single byte",
+			data:     []byte{0x1f},
+			expected: false,
+		},
+		{
+			name:     "first byte matches but not second",
+			data:     []byte{0x1f, 0x00},
+			expected: false,
+		},
+		{
+			name:     "json data",
+			data:     []byte(`{"key": "value"}`),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader := bytes.NewReader(tt.data)
+			got, err := IsGzipReader(reader)
+			if err != nil {
+				t.Errorf("IsGzipReader() error = %v", err)
+				return
+			}
+			if got != tt.expected {
+				t.Errorf("IsGzipReader() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsGzipFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	t.Run("gzip file", func(t *testing.T) {
+		filename := filepath.Join(tmpDir, "test.gz")
+		data := createGzipData(t, []byte("hello world"))
+		if err := os.WriteFile(filename, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := IsGzipFile(filename)
+		if err != nil {
+			t.Errorf("IsGzipFile() error = %v", err)
+			return
+		}
+		if !got {
+			t.Errorf("IsGzipFile() = false, want true")
+		}
+	})
+
+	t.Run("plain text file with .gz extension", func(t *testing.T) {
+		filename := filepath.Join(tmpDir, "fake.gz")
+		if err := os.WriteFile(filename, []byte("plain text"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := IsGzipFile(filename)
+		if err != nil {
+			t.Errorf("IsGzipFile() error = %v", err)
+			return
+		}
+		if got {
+			t.Errorf("IsGzipFile() = true, want false")
+		}
+	})
+
+	t.Run("non-existent file", func(t *testing.T) {
+		_, err := IsGzipFile(filepath.Join(tmpDir, "nonexistent"))
+		if err == nil {
+			t.Error("IsGzipFile() expected error for non-existent file")
+		}
+	})
+}
+
+func createGzipData(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }

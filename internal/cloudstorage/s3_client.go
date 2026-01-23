@@ -16,18 +16,43 @@ package cloudstorage
 
 import (
 	"context"
+	"os"
+	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
 // s3Client wraps the existing S3 implementation
 type s3Client struct {
 	awsS3Client *awsclient.S3Client
+	isGCP       bool // true if this client is for GCP Cloud Storage
 }
 
-// DownloadObject downloads an object from S3 to a temporary file
+// DownloadObject downloads an object from S3 to a temporary file.
+// For GCP Cloud Storage, it detects if the file was transparently decompressed
+// and renames the file to remove the .gz extension if so.
 func (c *s3Client) DownloadObject(ctx context.Context, tmpdir, bucket, key string) (string, int64, bool, error) {
-	return downloadS3Object(ctx, tmpdir, c.awsS3Client, bucket, key)
+	filename, size, notFound, err := downloadS3Object(ctx, tmpdir, c.awsS3Client, bucket, key)
+	if err != nil || notFound {
+		return filename, size, notFound, err
+	}
+
+	// For GCP, check if .gz files were transparently decompressed
+	if c.isGCP && strings.HasSuffix(filename, ".gz") {
+		isGzip, checkErr := helpers.IsGzipFile(filename)
+		if checkErr == nil && !isGzip {
+			// File was transparently decompressed by GCP, rename to remove .gz
+			newFilename := strings.TrimSuffix(filename, ".gz")
+			if renameErr := os.Rename(filename, newFilename); renameErr != nil {
+				// Must rename or readers will fail trying to decompress non-gzip data
+				return "", 0, false, renameErr
+			}
+			filename = newFilename
+		}
+	}
+
+	return filename, size, notFound, nil
 }
 
 // UploadObject uploads a file to S3
