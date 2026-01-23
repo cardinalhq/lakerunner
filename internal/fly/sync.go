@@ -29,8 +29,8 @@ type TopicSyncer struct {
 	factory *Factory
 }
 
-// NewTopicSyncer creates a new topic syncer
-func NewTopicSyncer(factory *Factory) *TopicSyncer {
+// newTopicSyncer creates a new topic syncer
+func newTopicSyncer(factory *Factory) *TopicSyncer {
 	return &TopicSyncer{
 		factory: factory,
 	}
@@ -97,13 +97,13 @@ func (ts *TopicSyncer) createConnectionConfig() (kafkasync.ConnectionConfig, err
 	return connConfig, nil
 }
 
-// LoadTopicsConfig loads a kafkasync configuration from a file
-func LoadTopicsConfig(filename string) (*kafkasync.Config, error) {
+// loadTopicsConfig loads a kafkasync configuration from a file
+func loadTopicsConfig(filename string) (*kafkasync.Config, error) {
 	return kafkasync.LoadConfigFromFile(filename)
 }
 
-// CreateDefaultTopicsConfig creates a default topics configuration
-func CreateDefaultTopicsConfig(topics []kafkasync.Topic) *kafkasync.Config {
+// createDefaultTopicsConfig creates a default topics configuration
+func createDefaultTopicsConfig(topics []kafkasync.Topic) *kafkasync.Config {
 	return &kafkasync.Config{
 		Defaults: kafkasync.Defaults{
 			PartitionCount:    16,

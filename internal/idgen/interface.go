@@ -16,6 +16,6 @@ package idgen
 
 import "time"
 
-type IDGenerator interface {
+type idGenerator interface {
 	Make(now time.Time) string
 }

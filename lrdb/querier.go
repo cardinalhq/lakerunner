@@ -15,14 +15,6 @@ import (
 type Querier interface {
 	BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMetricSegsParams) *BatchDeleteMetricSegsBatchResults
 	BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMarkMetricSegsRolledupParams) *BatchMarkMetricSegsRolledupBatchResults
-	// This will upsert a new log exemplar. Exemplar and updated_at are always updated
-	// to the provided values. If old_fingerprint is not 0, it is added to the list of related
-	// fingerprints. This means the "old" fingerprint should be fingerprint, so it always updates
-	// an existing record, not changing it to the new one.
-	// The return value is a boolean indicating if the record is new.
-	BatchUpsertExemplarLogs(ctx context.Context, arg []BatchUpsertExemplarLogsParams) *BatchUpsertExemplarLogsBatchResults
-	BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUpsertExemplarMetricsParams) *BatchUpsertExemplarMetricsBatchResults
-	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
 	CallExpirePublishedByIngestCutoff(ctx context.Context, arg CallExpirePublishedByIngestCutoffParams) (int64, error)
 	CallFindOrgPartition(ctx context.Context, arg CallFindOrgPartitionParams) (string, error)
 	CleanupKafkaOffsets(ctx context.Context, arg CleanupKafkaOffsetsParams) (int64, error)
@@ -31,9 +23,6 @@ type Querier interface {
 	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
 	// Retrieves all existing pack estimates for EWMA calculations across all signals
 	GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error)
-	// Fetches log exemplars for a set of fingerprints within an organization.
-	// Returns the exemplar data along with service identifier information.
-	GetExemplarLogsByFingerprints(ctx context.Context, arg GetExemplarLogsByFingerprintsParams) ([]GetExemplarLogsByFingerprintsRow, error)
 	GetLabelNameMaps(ctx context.Context, arg GetLabelNameMapsParams) ([]GetLabelNameMapsRow, error)
 	GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error)
 	GetLogSegmentsForDownload(ctx context.Context, arg GetLogSegmentsForDownloadParams) ([]LogSeg, error)
@@ -49,7 +38,9 @@ type Querier interface {
 	GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error)
 	GetMetricSegmentsForDownload(ctx context.Context, arg GetMetricSegmentsForDownloadParams) ([]MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
-	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
+	// Returns the metric type for a specific metric name from segment metadata
+	// Uses array_position to find the metric name index and get corresponding type
+	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (int16, error)
 	GetTraceLabelNameMaps(ctx context.Context, arg GetTraceLabelNameMapsParams) ([]GetTraceLabelNameMapsRow, error)
 	GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (TraceSeg, error)
 	GetTraceSegmentsForDownload(ctx context.Context, arg GetTraceSegmentsForDownloadParams) ([]TraceSeg, error)
@@ -83,8 +74,6 @@ type Querier interface {
 	// Legacy API uses denormalizer to convert to dotted names
 	// Includes today's and yesterday's dateint for partition pruning
 	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error)
-	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
-	ListServiceMetrics(ctx context.Context, arg ListServiceMetricsParams) ([]string, error)
 	ListServiceNames(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	// Extract tag keys from label_name_map in trace_seg table
 	// Returns all keys from label_name_map (for v2 APIs)

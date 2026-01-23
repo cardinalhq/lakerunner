@@ -232,7 +232,7 @@ jobs:
           echo "Creating GitHub release for ${{ needs.validate.outputs.final_version }}"
 
           # Generate release notes from commits since last release
-          LAST_RELEASE=$(gh release list --limit 1 --exclude-pre-releases --json tagName --jq '.[0].tagName' || echo "")
+          LAST_RELEASE=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --exclude-pre-releases --json tagName --jq '.[0].tagName' || echo "")
 
           if [ -n "$LAST_RELEASE" ]; then
             RELEASE_NOTES="## Changes since $LAST_RELEASE"$'\n\n'
@@ -243,7 +243,7 @@ jobs:
           fi
 
           # Create the release
-          gh release create ${{ needs.validate.outputs.final_version }} \
+          gh release create --repo "$GITHUB_REPOSITORY" ${{ needs.validate.outputs.final_version }} \
             --title "Release ${{ needs.validate.outputs.final_version }}" \
             --notes "$RELEASE_NOTES" \
             --latest

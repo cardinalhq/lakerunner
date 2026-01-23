@@ -29,25 +29,16 @@ import (
 type Store struct {
 	*Queries
 	connPool  *pgxpool.Pool
-	estimator MetricEstimator
+	estimator metricEstimator
 }
 
 // NewStore creates a new Store
 func NewStore(connPool *pgxpool.Pool) *Store {
 	queries := New(connPool)
-	estimator := NewMetricPackEstimator(queries)
+	estimator := newMetricPackEstimator(queries)
 	return &Store{
 		connPool:  connPool,
 		Queries:   queries,
-		estimator: estimator,
-	}
-}
-
-// NewStoreWithEstimator creates a Store with a custom estimator (for testing)
-func NewStoreWithEstimator(connPool *pgxpool.Pool, estimator MetricEstimator) *Store {
-	return &Store{
-		connPool:  connPool,
-		Queries:   New(connPool),
 		estimator: estimator,
 	}
 }
@@ -65,22 +56,22 @@ func (store *Store) GetMetricEstimate(ctx context.Context, orgID uuid.UUID, freq
 // GetLogEstimate returns the estimated target records for an organization for logs.
 // If no estimate is found, it returns a default value, so this value can be used directly.
 func (store *Store) GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64 {
-	if logEstimator, ok := store.estimator.(LogEstimator); ok {
-		return logEstimator.GetLog(ctx, orgID)
+	if le, ok := store.estimator.(logEstimator); ok {
+		return le.GetLog(ctx, orgID)
 	}
-	return store.estimator.(*PackEstimator).GetLog(ctx, orgID)
+	return store.estimator.(*packEstimator).GetLog(ctx, orgID)
 }
 
 func (store *Store) GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64 {
-	if traceEstimator, ok := store.estimator.(TraceEstimator); ok {
-		return traceEstimator.GetTrace(ctx, orgID)
+	if te, ok := store.estimator.(traceEstimator); ok {
+		return te.GetTrace(ctx, orgID)
 	}
-	return store.estimator.(*PackEstimator).GetTrace(ctx, orgID)
+	return store.estimator.(*packEstimator).GetTrace(ctx, orgID)
 }
 
 // Close stops the background goroutines, closes the connection pool, and cleans up resources.
 func (store *Store) Close() {
-	if estimator, ok := store.estimator.(*MetricPackEstimator); ok {
+	if estimator, ok := store.estimator.(*packEstimator); ok {
 		estimator.Stop()
 	}
 	if store.connPool != nil {

@@ -252,8 +252,11 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	mt, err := q.mdb.GetMetricType(ctx, lrdb.GetMetricTypeParams{
+	// Get the metric type from segment metadata
+	metricType, err := q.mdb.GetMetricType(ctx, lrdb.GetMetricTypeParams{
 		OrganizationID: orgUUID,
+		StartDateint:   startDateint,
+		EndDateint:     endDateint,
 		MetricName:     metric,
 	})
 	if err != nil {
@@ -282,7 +285,7 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 	}
 
 	resp := promTagsForMetricResp{
-		Metric: metricItem{Name: metric, Type: mt},
+		Metric: metricItem{Name: metric, Type: lrdb.MetricTypeToString(metricType)},
 		Tags:   tags,
 	}
 	w.Header().Set("Content-Type", "application/json")

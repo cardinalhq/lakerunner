@@ -30,7 +30,6 @@ import (
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/configservice"
-	"github.com/cardinalhq/lakerunner/internal/ddcache"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
@@ -49,7 +48,6 @@ func init() {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			ddcache.Init(cfg.Metrics.DDCache.MaxSizeBytes)
 			helpers.SetupTempDir()
 
 			servicename := "lakerunner-ingest-metrics"

@@ -27,7 +27,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sleep 20 # wait for GitHub to register the PR
-          if gh pr list --head "$GITHUB_REF_NAME" --state open --json number | jq -e '. | length > 0' > /dev/null; then
+          if gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --state open --json number | jq -e '. | length > 0' > /dev/null; then
             echo "has-pr=true" >> $GITHUB_OUTPUT
           else
             echo "has-pr=false" >> $GITHUB_OUTPUT
@@ -83,7 +83,7 @@ jobs:
           echo "sha_short=$sha_short" >> $GITHUB_ENV
 
           # Get PR number for better tag naming
-          PR_NUMBER=$(gh pr list --head "$GITHUB_REF_NAME" --state open --json number --jq '.[0].number')
+          PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --state open --json number --jq '.[0].number')
           if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
             echo "GORELEASER_CURRENT_TAG=v0.0.0-pr$PR_NUMBER-$sha_short" >> $GITHUB_ENV
           else
@@ -183,7 +183,7 @@ jobs:
           echo "sha_short=$sha_short" >> $GITHUB_ENV
 
           # Get PR number for better tag naming
-          PR_NUMBER=$(gh pr list --head "$GITHUB_REF_NAME" --state open --json number --jq '.[0].number')
+          PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --state open --json number --jq '.[0].number')
           if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
             echo "GORELEASER_CURRENT_TAG=v0.0.0-pr$PR_NUMBER-$sha_short" >> $GITHUB_ENV
           else

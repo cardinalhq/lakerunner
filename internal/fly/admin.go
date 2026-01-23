@@ -249,18 +249,18 @@ func (a *AdminClient) TopicExists(ctx context.Context, topic string) (bool, erro
 	return false, nil
 }
 
-// TopicPartitionInfo holds partition information for a topic
-type TopicPartitionInfo struct {
+// topicPartitionInfo holds partition information for a topic
+type topicPartitionInfo struct {
 	Topic      string
 	Partitions []int
 }
 
-// HighWaterMarkMap maps topic -> partition -> high water mark
-type HighWaterMarkMap map[string]map[int]int64
+// highWaterMarkMap maps topic -> partition -> high water mark
+type highWaterMarkMap map[string]map[int]int64
 
 // fetchTopicMetadata retrieves topic metadata and partition information
-func (a *AdminClient) fetchTopicMetadata(ctx context.Context, client *kafka.Client, topics []string) ([]TopicPartitionInfo, map[string][]kafka.OffsetRequest, error) {
-	var topicInfo []TopicPartitionInfo
+func (a *AdminClient) fetchTopicMetadata(ctx context.Context, client *kafka.Client, topics []string) ([]topicPartitionInfo, map[string][]kafka.OffsetRequest, error) {
+	var topicInfo []topicPartitionInfo
 	listOffsetReqs := make(map[string][]kafka.OffsetRequest)
 
 	for _, topic := range topics {
@@ -285,7 +285,7 @@ func (a *AdminClient) fetchTopicMetadata(ctx context.Context, client *kafka.Clie
 					offsetReqs = append(offsetReqs, kafka.LastOffsetOf(p.ID))
 				}
 
-				topicInfo = append(topicInfo, TopicPartitionInfo{
+				topicInfo = append(topicInfo, topicPartitionInfo{
 					Topic:      topic,
 					Partitions: partitions,
 				})
@@ -304,8 +304,8 @@ func (a *AdminClient) fetchTopicMetadata(ctx context.Context, client *kafka.Clie
 }
 
 // fetchHighWaterMarks retrieves high water marks for all topic partitions
-func (a *AdminClient) fetchHighWaterMarks(ctx context.Context, client *kafka.Client, listOffsetReqs map[string][]kafka.OffsetRequest) (HighWaterMarkMap, error) {
-	highWaterMarks := make(HighWaterMarkMap)
+func (a *AdminClient) fetchHighWaterMarks(ctx context.Context, client *kafka.Client, listOffsetReqs map[string][]kafka.OffsetRequest) (highWaterMarkMap, error) {
+	highWaterMarks := make(highWaterMarkMap)
 
 	if len(listOffsetReqs) == 0 {
 		return highWaterMarks, nil
@@ -334,7 +334,7 @@ func (a *AdminClient) fetchHighWaterMarks(ctx context.Context, client *kafka.Cli
 }
 
 // fetchConsumerGroupOffsets retrieves committed offsets for a single consumer group
-func (a *AdminClient) fetchConsumerGroupOffsets(ctx context.Context, client *kafka.Client, groupID string, topicInfo []TopicPartitionInfo) (map[string][]kafka.OffsetFetchPartition, error) {
+func (a *AdminClient) fetchConsumerGroupOffsets(ctx context.Context, client *kafka.Client, groupID string, topicInfo []topicPartitionInfo) (map[string][]kafka.OffsetFetchPartition, error) {
 	// Build request for all topics and partitions for this group
 	offsetFetchTopics := make(map[string][]int)
 	for _, info := range topicInfo {
@@ -367,7 +367,7 @@ func calculateLag(committedOffset, highWaterMark int64) int64 {
 }
 
 // processConsumerGroupLags processes offset responses and creates ConsumerGroupInfo records
-func (a *AdminClient) processConsumerGroupLags(groupID string, offsetTopics map[string][]kafka.OffsetFetchPartition, highWaterMarks HighWaterMarkMap) []ConsumerGroupInfo {
+func (a *AdminClient) processConsumerGroupLags(groupID string, offsetTopics map[string][]kafka.OffsetFetchPartition, highWaterMarks highWaterMarkMap) []ConsumerGroupInfo {
 	var result []ConsumerGroupInfo
 
 	for topic, partitionOffsets := range offsetTopics {
@@ -445,14 +445,14 @@ func (a *AdminClient) GetAllConsumerGroupLags(ctx context.Context, topics []stri
 	return result, nil
 }
 
-// PartitionOffset represents an offset for a specific partition
-type PartitionOffset struct {
+// partitionOffset represents an offset for a specific partition
+type partitionOffset struct {
 	Partition int
 	Offset    int64
 }
 
 // CommitConsumerGroupOffsets commits offsets for a consumer group
-func (a *AdminClient) CommitConsumerGroupOffsets(ctx context.Context, groupID, topic string, offsets []PartitionOffset) error {
+func (a *AdminClient) CommitConsumerGroupOffsets(ctx context.Context, groupID, topic string, offsets []partitionOffset) error {
 	if len(offsets) == 0 {
 		return nil
 	}

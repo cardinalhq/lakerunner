@@ -11,27 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const getMetricType = `-- name: GetMetricType :one
-SELECT metric_type
-FROM lrdb_exemplar_metrics
-WHERE organization_id = $1
-  AND metric_name = $2
-ORDER BY 1
-LIMIT 1
-`
-
-type GetMetricTypeParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	MetricName     string    `json:"metric_name"`
-}
-
-func (q *Queries) GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error) {
-	row := q.db.QueryRow(ctx, getMetricType, arg.OrganizationID, arg.MetricName)
-	var metric_type string
-	err := row.Scan(&metric_type)
-	return metric_type, err
-}
-
 const listPromMetricTags = `-- name: ListPromMetricTags :many
 SELECT DISTINCT key::text AS tag_key
 FROM metric_seg,
@@ -74,40 +53,6 @@ func (q *Queries) ListPromMetricTags(ctx context.Context, arg ListPromMetricTags
 			return nil, err
 		}
 		items = append(items, tag_key)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listPromMetrics = `-- name: ListPromMetrics :many
-SELECT DISTINCT
-  metric_name,
-  metric_type
-FROM lrdb_exemplar_metrics
-WHERE organization_id = $1
-ORDER BY metric_name
-`
-
-type ListPromMetricsRow struct {
-	MetricName string `json:"metric_name"`
-	MetricType string `json:"metric_type"`
-}
-
-func (q *Queries) ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error) {
-	rows, err := q.db.Query(ctx, listPromMetrics, organizationID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListPromMetricsRow
-	for rows.Next() {
-		var i ListPromMetricsRow
-		if err := rows.Scan(&i.MetricName, &i.MetricType); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

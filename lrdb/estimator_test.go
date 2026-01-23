@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockEstimatorStore implements EstimatorStore for testing
+// MockEstimatorStore implements estimatorStore for testing
 type MockEstimatorStore struct {
 	mock.Mock
 }
@@ -49,7 +49,7 @@ func (m *MockEstimatorStore) GetMetricPackEstimates(ctx context.Context) ([]GetM
 
 func TestNewMetricPackEstimator(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 
 	assert.NotNil(t, estimator)
 	assert.NotNil(t, estimator.cache)
@@ -61,7 +61,7 @@ func TestNewMetricPackEstimator(t *testing.T) {
 
 func TestMetricPackEstimator_Get_HardcodedFallback(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	// Setup mock to return error
@@ -77,7 +77,7 @@ func TestMetricPackEstimator_Get_HardcodedFallback(t *testing.T) {
 
 func TestMetricPackEstimator_Get_OrganizationSpecificEstimate(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	orgID := uuid.New()
@@ -103,7 +103,7 @@ func TestMetricPackEstimator_Get_OrganizationSpecificEstimate(t *testing.T) {
 
 func TestMetricPackEstimator_Get_UUIDZeroFallback(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	orgID := uuid.New()
@@ -130,7 +130,7 @@ func TestMetricPackEstimator_Get_UUIDZeroFallback(t *testing.T) {
 
 func TestMetricPackEstimator_Get_UltimateFallback(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	orgID := uuid.New()
@@ -156,7 +156,7 @@ func TestMetricPackEstimator_Get_UltimateFallback(t *testing.T) {
 
 func TestMetricPackEstimator_Get_NilTargetRecords(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	orgID := uuid.New()
@@ -182,7 +182,7 @@ func TestMetricPackEstimator_Get_NilTargetRecords(t *testing.T) {
 
 func TestMetricPackEstimator_Caching(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	orgID := uuid.New()
@@ -214,7 +214,7 @@ func TestMetricPackEstimator_Caching(t *testing.T) {
 
 func TestMetricPackEstimator_CachingMultipleOrganizations(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	org1 := uuid.New()
@@ -271,7 +271,7 @@ func TestMetricPackEstimator_CachingMultipleOrganizations(t *testing.T) {
 
 func TestMetricPackEstimator_ConcurrentAccess(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	orgID := uuid.New()
@@ -315,7 +315,7 @@ func TestMetricPackEstimator_ConcurrentAccess(t *testing.T) {
 
 func TestMetricPackEstimator_ClearCache(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	orgID := uuid.New()
@@ -350,7 +350,7 @@ func TestMetricPackEstimator_ClearCache(t *testing.T) {
 
 func TestMetricPackEstimator_TTLExpiration(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	orgID := uuid.New()
@@ -385,7 +385,7 @@ func TestMetricPackEstimator_TTLExpiration(t *testing.T) {
 
 func TestMetricPackEstimator_MultipleFrequencies(t *testing.T) {
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
 	orgID := uuid.New()
@@ -424,13 +424,13 @@ func TestMetricPackEstimator_MultipleFrequencies(t *testing.T) {
 }
 
 func TestMetricPackEstimator_InterfaceCompliance(t *testing.T) {
-	// Test that MetricPackEstimator implements MetricEstimator interface
+	// Test that packEstimator implements metricEstimator interface
 	mockStore := &MockEstimatorStore{}
-	estimator := NewMetricPackEstimator(mockStore)
+	estimator := newMetricPackEstimator(mockStore)
 	defer estimator.Stop()
 
-	var _ MetricEstimator = estimator // Compile-time interface check
+	var _ metricEstimator = estimator // Compile-time interface check
 
 	// Runtime interface check
-	require.Implements(t, (*MetricEstimator)(nil), estimator)
+	require.Implements(t, (*metricEstimator)(nil), estimator)
 }

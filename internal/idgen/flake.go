@@ -28,7 +28,7 @@ import (
 	"github.com/sony/sonyflake"
 )
 
-var DefaultFlakeGenerator *SonyFlakeGenerator
+var DefaultFlakeGenerator *sonyFlakeGenerator
 
 func init() {
 	var err error
@@ -38,7 +38,7 @@ func init() {
 	}
 }
 
-type SonyFlakeGenerator struct {
+type sonyFlakeGenerator struct {
 	sf *sonyflake.Sonyflake
 }
 
@@ -67,8 +67,8 @@ func machineID() (uint16, error) {
 	return id, nil
 }
 
-// newFlakeGenerator creates a SonyFlakeGenerator.
-func newFlakeGenerator() (*SonyFlakeGenerator, error) {
+// newFlakeGenerator creates a sonyFlakeGenerator.
+func newFlakeGenerator() (*sonyFlakeGenerator, error) {
 	settings := sonyflake.Settings{
 		StartTime: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 		MachineID: machineID,
@@ -81,11 +81,11 @@ func newFlakeGenerator() (*SonyFlakeGenerator, error) {
 	if sf == nil {
 		return nil, errors.New("failed to create Sonyflake instance")
 	}
-	return &SonyFlakeGenerator{sf: sf}, nil
+	return &sonyFlakeGenerator{sf: sf}, nil
 }
 
 // NextID returns a positive int64 that'll increase roughly in time order.
-func (sf *SonyFlakeGenerator) NextID() int64 {
+func (sf *sonyFlakeGenerator) NextID() int64 {
 	v, err := sf.sf.NextID()
 	if err != nil {
 		return rand.Int64()
@@ -94,7 +94,7 @@ func (sf *SonyFlakeGenerator) NextID() int64 {
 }
 
 // NextBase32ID generates a flake ID and encodes it as base32, removing any padding.
-func (sf *SonyFlakeGenerator) NextBase32ID() string {
+func (sf *sonyFlakeGenerator) NextBase32ID() string {
 	id := sf.NextID()
 
 	// Convert int64 to bytes (big endian)
@@ -111,11 +111,6 @@ func NextBase32ID() string {
 	return DefaultFlakeGenerator.NextBase32ID()
 }
 
-// GenerateID is a convenience function that uses the default generator to create int64 IDs.
-func GenerateID() int64 {
-	return DefaultFlakeGenerator.NextID()
-}
-
 // GenerateBatchIDs generates a batch of unique int64 IDs with collision detection.
 // This ensures uniqueness within the batch, which is critical for database operations
 // where multiple segments are created in the same transaction.
@@ -124,7 +119,7 @@ func GenerateBatchIDs(count int) []int64 {
 }
 
 // NextBatchIDs generates a batch of unique IDs with collision detection
-func (sf *SonyFlakeGenerator) NextBatchIDs(count int) []int64 {
+func (sf *sonyFlakeGenerator) NextBatchIDs(count int) []int64 {
 	if count <= 0 {
 		return nil
 	}

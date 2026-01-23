@@ -32,7 +32,7 @@ func ConnectToConfigDB(ctx context.Context, opts ...dbopen.Options) (*pgxpool.Po
 		return nil, errors.Join(dbopen.ErrDatabaseNotConfigured, fmt.Errorf("failed to get CONFIGDB connection string: %w", err))
 	}
 
-	pool, err := NewConnectionPool(ctx, connectionString)
+	pool, err := newConnectionPool(ctx, connectionString)
 	if err != nil {
 		return nil, err
 	}

@@ -22,10 +22,10 @@ import (
 	"github.com/pgx-contrib/pgxotel"
 )
 
-// NewMetadataConnectionPool creates a new connection pool
+// newConnectionPool creates a new connection pool
 // using the PostgreSQL connection string provided, and
 // using pgx v5.
-func NewConnectionPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
+func newConnectionPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, err

@@ -164,7 +164,7 @@ operationTimeout: 45s
 	require.NoError(t, err, "Failed to write test config file")
 
 	// Load configuration
-	config, err := LoadTopicsConfig(configFile)
+	config, err := loadTopicsConfig(configFile)
 	require.NoError(t, err, "Failed to load topics config from file")
 
 	// Verify defaults
@@ -222,7 +222,7 @@ func TestCreateDefaultTopicsConfig(t *testing.T) {
 	}
 
 	// Create default config
-	config := CreateDefaultTopicsConfig(topics)
+	config := createDefaultTopicsConfig(topics)
 
 	// Verify defaults
 	assert.Equal(t, 16, config.Defaults.PartitionCount, "Default should be 16 partitions")
@@ -244,7 +244,7 @@ func TestCreateDefaultTopicsConfig(t *testing.T) {
 
 func TestLoadTopicsConfigNonexistentFile(t *testing.T) {
 	// Try to load from a file that doesn't exist
-	_, err := LoadTopicsConfig("/nonexistent/path/kafka_topics.yaml")
+	_, err := loadTopicsConfig("/nonexistent/path/kafka_topics.yaml")
 	assert.Error(t, err, "Should fail when file doesn't exist")
 	assert.Contains(t, err.Error(), "no such file or directory", "Error should mention file not found")
 }
@@ -266,6 +266,6 @@ topics:
 	require.NoError(t, err, "Failed to write invalid config file")
 
 	// Try to load invalid configuration
-	_, err = LoadTopicsConfig(configFile)
+	_, err = loadTopicsConfig(configFile)
 	assert.Error(t, err, "Should fail when YAML is invalid")
 }

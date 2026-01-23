@@ -27,83 +27,83 @@ const (
 	defaultEstimateTTL = 5 * time.Minute
 )
 
-// EstimateKey represents a cache key for pack estimates
-type EstimateKey struct {
+// estimateKey represents a cache key for pack estimates
+type estimateKey struct {
 	OrganizationID uuid.UUID
 	FrequencyMs    int32
 	Signal         string
 }
 
-// PackEstimator provides cached access to pack estimates for all signal types
-type PackEstimator struct {
-	db    EstimatorStore
-	cache *ttlcache.Cache[EstimateKey, int64]
+// packEstimator provides cached access to pack estimates for all signal types
+type packEstimator struct {
+	db    estimatorStore
+	cache *ttlcache.Cache[estimateKey, int64]
 }
 
-// MetricEstimator provides access to metric pack estimates (backward compatibility)
-type MetricEstimator interface {
+// metricEstimator provides access to metric pack estimates (backward compatibility)
+type metricEstimator interface {
 	Get(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 }
 
-// LogEstimator provides access to log pack estimates
-type LogEstimator interface {
+// logEstimator provides access to log pack estimates
+type logEstimator interface {
 	GetLog(ctx context.Context, orgID uuid.UUID) int64
 }
 
-// TraceEstimator provides access to trace pack estimates
-type TraceEstimator interface {
+// traceEstimator provides access to trace pack estimates
+type traceEstimator interface {
 	GetTrace(ctx context.Context, orgID uuid.UUID) int64
 }
 
-// SignalEstimator provides access to pack estimates for any signal type
-type SignalEstimator interface {
+// signalEstimator provides access to pack estimates for any signal type
+type signalEstimator interface {
 	GetSignal(ctx context.Context, orgID uuid.UUID, frequencyMs int32, signal string) int64
 }
 
-// EstimatorStore defines the interface for database operations
-type EstimatorStore interface {
+// estimatorStore defines the interface for database operations
+type estimatorStore interface {
 	GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error)
 	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
 	GetMetricPackEstimates(ctx context.Context) ([]GetMetricPackEstimatesRow, error) // Backward compatibility
 }
 
-// NewPackEstimator creates a new estimator with TTL cache for all signal types
-func NewPackEstimator(db EstimatorStore) *PackEstimator {
+// newPackEstimator creates a new estimator with TTL cache for all signal types
+func newPackEstimator(db estimatorStore) *packEstimator {
 	cache := ttlcache.New(
-		ttlcache.WithTTL[EstimateKey, int64](defaultEstimateTTL),
+		ttlcache.WithTTL[estimateKey, int64](defaultEstimateTTL),
 	)
 	go cache.Start()
 
-	return &PackEstimator{
+	return &packEstimator{
 		db:    db,
 		cache: cache,
 	}
 }
 
-// NewMetricPackEstimator creates a new estimator with TTL cache (backward compatibility)
-func NewMetricPackEstimator(db EstimatorStore) *PackEstimator {
-	return NewPackEstimator(db)
+// newMetricPackEstimator creates a new estimator with TTL cache (backward compatibility)
+func newMetricPackEstimator(db estimatorStore) *packEstimator {
+	return newPackEstimator(db)
 }
 
 // Get retrieves the target records estimate for the given org and frequency for metrics
 // Falls back to defaults using UUID zero if no org-specific estimate exists
-// This method implements the MetricEstimator interface and handles errors internally
-func (e *PackEstimator) Get(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64 {
+// This method implements the metricEstimator interface and handles errors internally
+func (e *packEstimator) Get(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64 {
 	return e.GetSignal(ctx, orgID, frequencyMs, "metrics")
 }
 
 // GetLog retrieves the target records estimate for logs
-func (e *PackEstimator) GetLog(ctx context.Context, orgID uuid.UUID) int64 {
+func (e *packEstimator) GetLog(ctx context.Context, orgID uuid.UUID) int64 {
 	return e.GetSignal(ctx, orgID, -1, "logs")
 }
 
 // GetTrace retrieves the target records estimate for traces
-func (e *PackEstimator) GetTrace(ctx context.Context, orgID uuid.UUID) int64 {
+func (e *packEstimator) GetTrace(ctx context.Context, orgID uuid.UUID) int64 {
 	return e.GetSignal(ctx, orgID, -1, "traces")
 }
 
 // GetSignal retrieves the target records estimate for any signal type
-func (e *PackEstimator) GetSignal(ctx context.Context, orgID uuid.UUID, frequencyMs int32, signal string) int64 {
+func (e *packEstimator) GetSignal(ctx context.Context, orgID uuid.UUID, frequencyMs int32, signal string) int64 {
 	estimate, err := e.getEstimate(ctx, orgID, frequencyMs, signal)
 	if err != nil {
 		// Log error and return a reasonable default
@@ -114,8 +114,8 @@ func (e *PackEstimator) GetSignal(ctx context.Context, orgID uuid.UUID, frequenc
 }
 
 // getEstimate is the internal method that can return errors
-func (e *PackEstimator) getEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32, signal string) (int64, error) {
-	key := EstimateKey{OrganizationID: orgID, FrequencyMs: frequencyMs, Signal: signal}
+func (e *packEstimator) getEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32, signal string) (int64, error) {
+	key := estimateKey{OrganizationID: orgID, FrequencyMs: frequencyMs, Signal: signal}
 
 	// Try cache first
 	if item := e.cache.Get(key); item != nil {
@@ -135,7 +135,7 @@ func (e *PackEstimator) getEstimate(ctx context.Context, orgID uuid.UUID, freque
 }
 
 // getHardcodedDefault returns a hardcoded default for a signal type
-func (e *PackEstimator) getHardcodedDefault(signal string) int64 {
+func (e *packEstimator) getHardcodedDefault(signal string) int64 {
 	switch signal {
 	case "metrics":
 		return 40000 // Ultimate fallback: 40K records
@@ -150,7 +150,7 @@ func (e *PackEstimator) getHardcodedDefault(signal string) int64 {
 
 // loadEstimate loads estimate from database with fallback logic
 // Optimized to cache estimates for a specific signal type only (per-signal caching)
-func (e *PackEstimator) loadEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32, signal string) (int64, error) {
+func (e *packEstimator) loadEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32, signal string) (int64, error) {
 	// Load estimates for this specific signal type only (much more efficient)
 	estimates, err := e.db.GetAllBySignal(ctx, signal)
 	if err != nil {
@@ -165,7 +165,7 @@ func (e *PackEstimator) loadEstimate(ctx context.Context, orgID uuid.UUID, frequ
 		if est.TargetRecords != nil {
 			value := *est.TargetRecords
 			// Cache this estimate
-			key := EstimateKey{OrganizationID: est.OrganizationID, FrequencyMs: est.FrequencyMs, Signal: signal}
+			key := estimateKey{OrganizationID: est.OrganizationID, FrequencyMs: est.FrequencyMs, Signal: signal}
 			e.cache.Set(key, value, ttlcache.DefaultTTL)
 
 			// Track specific values we need for immediate return
@@ -192,22 +192,19 @@ func (e *PackEstimator) loadEstimate(ctx context.Context, orgID uuid.UUID, frequ
 }
 
 // ClearCache clears the entire cache
-func (e *PackEstimator) ClearCache() {
+func (e *packEstimator) ClearCache() {
 	e.cache.DeleteAll()
 }
 
 // Stop stops the cache's background goroutine
-func (e *PackEstimator) Stop() {
+func (e *packEstimator) Stop() {
 	e.cache.Stop()
 }
 
-// Type aliases for backward compatibility and convenience
-type MetricPackEstimator = PackEstimator
-
 // Interface implementations
 var (
-	_ MetricEstimator = (*PackEstimator)(nil)
-	_ LogEstimator    = (*PackEstimator)(nil)
-	_ TraceEstimator  = (*PackEstimator)(nil)
-	_ SignalEstimator = (*PackEstimator)(nil)
+	_ metricEstimator = (*packEstimator)(nil)
+	_ logEstimator    = (*packEstimator)(nil)
+	_ traceEstimator  = (*packEstimator)(nil)
+	_ signalEstimator = (*packEstimator)(nil)
 )
