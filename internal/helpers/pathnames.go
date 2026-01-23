@@ -18,12 +18,11 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"strings"
 
 	"github.com/google/uuid"
 )
 
-const DBPrefix = "db"
+const dbPrefix = "db"
 
 func MakeDBObjectID(
 	orgID uuid.UUID,
@@ -34,7 +33,7 @@ func MakeDBObjectID(
 	ttype string,
 ) string {
 	return path.Join(
-		DBPrefix,
+		dbPrefix,
 		orgID.String(),
 		collectorName,
 		strconv.Itoa(int(dateint)),
@@ -55,7 +54,7 @@ func MakeAggDBObjectID(
 	ttype string,
 ) string {
 	return path.Join(
-		DBPrefix,
+		dbPrefix,
 		orgID.String(),
 		collectorName,
 		strconv.Itoa(int(dateint)),
@@ -63,37 +62,4 @@ func MakeAggDBObjectID(
 		fmt.Sprintf("%02d", hour),
 		fmt.Sprintf("agg_%d.parquet", segmentID),
 	)
-}
-
-func MakeDBObjectIDbad(
-	orgID uuid.UUID,
-	dateint int32,
-	hour int16,
-	segmentID int64,
-	ttype string,
-) string {
-	return path.Join(
-		DBPrefix,
-		orgID.String(),
-		"default",
-		strconv.Itoa(int(dateint)),
-		ttype,
-		fmt.Sprintf("%d", hour),
-		fmt.Sprintf("tbl_%d.parquet", segmentID),
-	)
-}
-
-// ExtractCollectorName extracts the collector name from the object path
-// Expected format: otel-raw/{organization_id}/{collector_name}/...
-func ExtractCollectorName(objectID string) string {
-	if !strings.HasPrefix(objectID, "otel-raw/") {
-		return ""
-	}
-
-	parts := strings.Split(objectID, "/")
-	if len(parts) < 3 {
-		return ""
-	}
-
-	return parts[2]
 }

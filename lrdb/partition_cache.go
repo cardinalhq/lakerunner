@@ -24,20 +24,6 @@ const (
 	defaultTTLDuration = 30 * time.Minute
 )
 
-type flushFunction func()
-
-var flushFunctions []flushFunction
-
-func AddFlushFunction(f flushFunction) {
-	flushFunctions = append(flushFunctions, f)
-}
-
-func FlushCaches() {
-	for _, f := range flushFunctions {
-		f()
-	}
-}
-
 var (
 	partitionTableCache = ttlcache.New(
 		ttlcache.WithTTL[string, struct{}](defaultTTLDuration),
@@ -48,7 +34,6 @@ var (
 
 func init() {
 	go partitionTableCache.Start()
-	AddFlushFunction(partitionTableCache.DeleteAll)
 }
 
 func RememberPartitionTable(tableName string) {

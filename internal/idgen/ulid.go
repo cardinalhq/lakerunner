@@ -15,32 +15,15 @@
 package idgen
 
 import (
-	crand "crypto/rand"
 	"time"
 
 	"github.com/oklog/ulid/v2"
 )
 
-type InlineULIDGenerator struct{}
+type inlineULIDGenerator struct{}
 
-var _ IDGenerator = &InlineULIDGenerator{}
+var _ idGenerator = &inlineULIDGenerator{}
 
-func (i *InlineULIDGenerator) Make(_ time.Time) string {
+func (i *inlineULIDGenerator) Make(_ time.Time) string {
 	return ulid.Make().String()
-}
-
-type ULIDGenerator struct {
-	entropy *ulid.MonotonicEntropy
-}
-
-var _ IDGenerator = &ULIDGenerator{}
-
-func NewULIDGenerator() *ULIDGenerator {
-	return &ULIDGenerator{
-		entropy: ulid.Monotonic(crand.Reader, 0),
-	}
-}
-
-func (u *ULIDGenerator) Make(t time.Time) string {
-	return ulid.MustNew(ulid.Timestamp(t), u.entropy).String()
 }
