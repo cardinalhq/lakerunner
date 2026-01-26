@@ -2,7 +2,7 @@ header:
   license:
     spdx-id: AGPL-3.0-only
     copyright-owner: CardinalHQ, Inc
-    copyright-year: 2025
+    copyright-year: 2025-2026
 
   paths-ignore:
     - 'bin'
