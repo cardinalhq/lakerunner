@@ -556,6 +556,17 @@ func (q *QuerierService) handleSpansQuery(w http.ResponseWriter, r *http.Request
 	}
 }
 
+func (q *QuerierService) handlePing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "only GET method is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 func (q *QuerierService) handleListServices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "only GET method is allowed", http.StatusMethodNotAllowed)
@@ -585,6 +596,7 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/api/v1/ping", q.apiKeyMiddleware(q.handlePing))
 	mux.HandleFunc("/api/v1/services", q.apiKeyMiddleware(q.handleListServices))
 
 	mux.HandleFunc("/api/v1/metrics/metadata", q.apiKeyMiddleware(q.handleListPromQLMetricsMetadata))
