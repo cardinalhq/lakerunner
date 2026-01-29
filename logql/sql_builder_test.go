@@ -1926,15 +1926,15 @@ func TestToWorkerSQLForTagNames_Basic(t *testing.T) {
 
 	rows := queryAll(t, db, sql)
 
-	// Should return user columns only (log_level, service, pod, region)
-	// System columns (chq_timestamp, chq_id, chq_fingerprint, log_message) should be excluded
+	// Should return user columns (log_message, log_level, service, pod, region)
+	// System columns (chq_timestamp, chq_id, chq_fingerprint) should be excluded
 	got := make(map[string]bool)
 	for _, r := range rows {
 		got[getString(r["tag_value"])] = true
 	}
 
 	// Verify expected columns are present
-	expected := []string{"log_level", "service", "pod", "region"}
+	expected := []string{"log_message", "log_level", "service", "pod", "region"}
 	for _, col := range expected {
 		if !got[col] {
 			t.Errorf("expected tag name %q not found in results: %v", col, got)
@@ -1942,7 +1942,7 @@ func TestToWorkerSQLForTagNames_Basic(t *testing.T) {
 	}
 
 	// Verify system columns are NOT present
-	excluded := []string{"chq_timestamp", "chq_id", "chq_fingerprint", "log_message"}
+	excluded := []string{"chq_timestamp", "chq_id", "chq_fingerprint"}
 	for _, col := range excluded {
 		if got[col] {
 			t.Errorf("system column %q should be excluded but was found in results", col)
