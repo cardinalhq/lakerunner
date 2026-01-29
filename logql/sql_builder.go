@@ -126,7 +126,6 @@ func (be *LogLeaf) ToWorkerSQLForTagNames() string {
 		"chq_timestamp",
 		"chq_id",
 		"chq_fingerprint",
-		"log_message",
 	}
 
 	var whereConds []string
