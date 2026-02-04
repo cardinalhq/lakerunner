@@ -662,7 +662,10 @@ func minMaxTimestamp(ctx context.Context, db *sql.DB, table string) (int64, int6
 }
 
 func replacePlaceholders(sqlText, table string, start, end int64) string {
-	sqlText = strings.ReplaceAll(sqlText, "{table}", table)
+	// Wrap table with subquery that aliases chq_timestamp as chq_tsns
+	// (exemplar data timestamps are already in nanoseconds)
+	tableSubquery := fmt.Sprintf(`(SELECT *, "chq_timestamp" AS "chq_tsns" FROM %s)`, table)
+	sqlText = strings.ReplaceAll(sqlText, "{table}", tableSubquery)
 	sqlText = strings.ReplaceAll(sqlText, "{start}", fmt.Sprintf("%d", start))
 	sqlText = strings.ReplaceAll(sqlText, "{end}", fmt.Sprintf("%d", end))
 	return sqlText

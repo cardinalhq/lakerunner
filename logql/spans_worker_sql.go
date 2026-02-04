@@ -22,7 +22,7 @@ import (
 func (be *LogLeaf) ToSpansWorkerSQL(limit int, order string, fields []string) string {
 	const baseRel = "{table}"
 	const spansNameCol = "\"span_name\""
-	const tsCol = "\"chq_timestamp\""
+	const tsCol = "\"chq_tsns\""
 
 	// 1) Prepare sets: group keys, parser-created, feature flags
 	groupKeys := dedupeStrings(be.OutBy)

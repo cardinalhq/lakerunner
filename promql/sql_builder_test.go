@@ -139,7 +139,8 @@ func getFloat(v any) float64 {
 
 func replaceTableMetrics(sql string) string {
 	// Simple passthrough subquery keeps the builder's aliases intact.
-	base := `(SELECT * FROM metrics) AS _t`
+	// Add computed chq_tsns (nanoseconds) from chq_timestamp (milliseconds)
+	base := `(SELECT *, "chq_timestamp" * 1000000 AS "chq_tsns" FROM metrics) AS _t`
 	return strings.ReplaceAll(sql, "{table}", base)
 }
 
@@ -201,7 +202,7 @@ func TestBuildStepAgg_Sum_NoGroup_GappySeries(t *testing.T) {
 	if !strings.Contains(sql, `"metric_name" = 'm'`) || !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected metric filter + AND true, got:\n%s", sql)
 	}
-	sql = replaceStartEnd(replaceTableMetrics(sql), 0, 50000)
+	sql = replaceStartEnd(replaceTableMetrics(sql), 0, 50000000000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 3 {
@@ -242,7 +243,7 @@ func TestBuildStepAgg_Sum_GroupBy_Isolation(t *testing.T) {
 		Range:    "30s", // worker ignores windowing
 		GroupBy:  []string{"pod"},
 	}
-	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 50000)
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 50000000000)
 
 	rows := queryAll(t, db, sql)
 	// Existing buckets only: a@0, a@10, a@40, b@10
@@ -291,7 +292,7 @@ func TestBuildStepAgg_Avg_UsesSumOfRollupCount_PerBucket(t *testing.T) {
 		FuncName: "avg_over_time",
 		Range:    "30s", // worker returns raw per-bucket sum & count
 	}
-	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 20000)
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 20000000000)
 	rows := queryAll(t, db, sql)
 
 	if len(rows) != 2 {
@@ -330,7 +331,7 @@ func TestBuildStepAgg_Max_NoGroup(t *testing.T) {
 		FuncName: "max_over_time",
 		Range:    "30s", // ignored by worker; API windows later
 	}
-	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 50000)
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 50000000000)
 	rows := queryAll(t, db, sql)
 
 	if len(rows) != 3 {
@@ -362,7 +363,7 @@ func TestBuildStepAgg_RespectsMetricFilter_IgnoresOtherMetrics(t *testing.T) {
 		FuncName: "sum_over_time",
 		Range:    "20s",
 	}
-	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 20000)
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 20000000000)
 	if !strings.Contains(sql, `"metric_name" = 'm'`) {
 		t.Fatalf("missing metric WHERE in SQL:\n%s", sql)
 	}
@@ -397,7 +398,7 @@ func TestToWorkerSQLForTagValues(t *testing.T) {
 	be := &BaseExpr{
 		Metric: "cpu_usage",
 	}
-	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -452,7 +453,7 @@ func TestToWorkerSQLForTagValues_WithMatchers(t *testing.T) {
 			{Label: "region", Op: MatchEq, Value: "us-east-1"},
 		},
 	}
-	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -483,7 +484,8 @@ func createLogsTable(t *testing.T, db *sql.DB) {
 }
 
 func replaceTableLogs(sql string) string {
-	return strings.ReplaceAll(sql, "{table}", `(SELECT * FROM logs) AS _t`)
+	// Add computed chq_tsns (nanoseconds) from chq_timestamp (milliseconds)
+	return strings.ReplaceAll(sql, "{table}", `(SELECT *, "chq_timestamp" * 1000000 AS "chq_tsns" FROM logs) AS _t`)
 }
 
 // TestBuildSimpleLogAggSQL_CountByLogLevel verifies the optimized flat SQL path
@@ -541,7 +543,7 @@ func TestBuildSimpleLogAggSQL_CountByLogLevel(t *testing.T) {
 		t.Fatalf("expected GROUP BY in SQL, got:\n%s", sql)
 	}
 
-	sql = replaceStartEnd(replaceTableLogs(sql), 0, 20000)
+	sql = replaceStartEnd(replaceTableLogs(sql), 0, 20000000000)
 	rows := queryAll(t, db, sql)
 
 	// Should have 4 rows: INFO@0, ERROR@0, INFO@10000, ERROR@10000
@@ -635,7 +637,7 @@ func TestBuildSimpleLogAggSQL_NoMatchers(t *testing.T) {
 		t.Fatalf("expected flat SQL for simple aggregation, got:\n%s", sql)
 	}
 
-	sql = replaceStartEnd(replaceTableLogs(sql), 0, 10000)
+	sql = replaceStartEnd(replaceTableLogs(sql), 0, 10000000000)
 	rows := queryAll(t, db, sql)
 
 	if len(rows) != 2 {
@@ -778,7 +780,8 @@ func createAggTable(t *testing.T, db *sql.DB, streamFieldName string) {
 }
 
 func replaceTableAgg(sql string) string {
-	return strings.ReplaceAll(sql, "{table}", `(SELECT * FROM agg_logs) AS _t`)
+	// Add computed chq_tsns (nanoseconds) from bucket_ts (milliseconds)
+	return strings.ReplaceAll(sql, "{table}", `(SELECT *, "bucket_ts" * 1000000 AS "chq_tsns" FROM agg_logs) AS _t`)
 }
 
 func TestBuildAggFileSQL_ReaggregateToLargerStep(t *testing.T) {
@@ -812,7 +815,7 @@ func TestBuildAggFileSQL_ReaggregateToLargerStep(t *testing.T) {
 		t.Fatalf("expected flat SQL, got:\n%s", sql)
 	}
 
-	sql = replaceStartEnd(replaceTableAgg(sql), 0, 60000)
+	sql = replaceStartEnd(replaceTableAgg(sql), 0, 60000000000)
 	rows := queryAll(t, db, sql)
 
 	// Should have 2 rows: INFO and ERROR both in bucket 0 (0-59999 → 0)
@@ -860,7 +863,7 @@ func TestBuildAggFileSQL_NoGroupBy(t *testing.T) {
 	}
 
 	sql := BuildAggFileSQL(be, 10*time.Second)
-	sql = replaceStartEnd(replaceTableAgg(sql), 0, 20000)
+	sql = replaceStartEnd(replaceTableAgg(sql), 0, 20000000000)
 	rows := queryAll(t, db, sql)
 
 	// Two time buckets, each summed across all levels
@@ -898,7 +901,7 @@ func TestBuildAggFileSQL_GroupByStreamField(t *testing.T) {
 	}
 
 	sql := BuildAggFileSQL(be, 10*time.Second)
-	sql = replaceStartEnd(replaceTableAgg(sql), 0, 20000)
+	sql = replaceStartEnd(replaceTableAgg(sql), 0, 20000000000)
 	rows := queryAll(t, db, sql)
 
 	// Should have 4 rows: 2 services × 2 time buckets
@@ -965,7 +968,7 @@ func TestBuildAggFileSQL_WithMatchers(t *testing.T) {
 		t.Fatalf("expected matcher in WHERE clause, got:\n%s", sql)
 	}
 
-	sql = replaceStartEnd(replaceTableAgg(sql), 0, 20000)
+	sql = replaceStartEnd(replaceTableAgg(sql), 0, 20000000000)
 	rows := queryAll(t, db, sql)
 
 	// Should have 3 rows for service-a only: INFO@0, ERROR@0, INFO@10000
@@ -1025,7 +1028,7 @@ func TestBuildAggFileSQL_WithNegativeMatcher(t *testing.T) {
 		t.Fatalf("expected negative matcher in WHERE clause, got:\n%s", sql)
 	}
 
-	sql = replaceStartEnd(replaceTableAgg(sql), 0, 10000)
+	sql = replaceStartEnd(replaceTableAgg(sql), 0, 10000000000)
 	rows := queryAll(t, db, sql)
 
 	// Should have 2 rows: service-b and service-c

@@ -118,6 +118,7 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 func buildSimpleLogAggSQL(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
 
+	// Use chq_timestamp (ms) for bucket calculation to maintain compatibility with evaluation code
 	bucketExpr := fmt.Sprintf(
 		"(CAST(\"chq_timestamp\" AS BIGINT) - (CAST(\"chq_timestamp\" AS BIGINT) %% %d))",
 		stepMs,
@@ -201,6 +202,7 @@ func buildComplexLogAggSQL(be *BaseExpr, step time.Duration) string {
 
 	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, "", nil))
 
+	// Use chq_timestamp (ms) for bucket calculation to maintain compatibility with evaluation code
 	bucketExpr := fmt.Sprintf(
 		"(CAST(%s AS BIGINT) - (CAST(%s AS BIGINT) %% %d))",
 		tsCol, tsCol, stepMs,
@@ -323,9 +325,9 @@ func BuildAggFileSQL(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
 
 	// Re-bucket from 10s buckets to query step size
-	// bucket_ts is already floored to 10s boundaries, re-floor to step
+	// Use bucket_ts (ms) directly for the rebucket calculation to maintain compatibility with evaluation code
 	rebucketExpr := fmt.Sprintf(
-		"(bucket_ts - (bucket_ts %% %d))",
+		"(\"bucket_ts\" - (\"bucket_ts\" %% %d))",
 		stepMs,
 	)
 
@@ -340,10 +342,10 @@ func BuildAggFileSQL(be *BaseExpr, step time.Duration) string {
 	// SUM the pre-aggregated counts
 	cols = append(cols, `SUM("count") AS count`)
 
-	// Build WHERE with time predicate using bucket_ts
+	// Build WHERE with time predicate using chq_tsns (nanoseconds)
 	whereParts := []string{
-		"bucket_ts >= {start}",
-		"bucket_ts < {end}",
+		"\"chq_tsns\" >= {start}",
+		"\"chq_tsns\" < {end}",
 	}
 
 	// Add matchers from LogLeaf as WHERE filters
@@ -407,7 +409,7 @@ func (be *BaseExpr) ToWorkerSQLForTagNames() string {
 	// Metrics tables don't have chq_fingerprint or chq_id - those are only in logs.
 	// The COLUMNS(*)::VARCHAR cast handles type conversion for any BIGINT columns.
 	excludeCols := []string{
-		"chq_timestamp",
+		"chq_tsns",
 		"chq_rollup_sum",
 		"chq_rollup_count",
 		"chq_rollup_min",
@@ -440,6 +442,7 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	where := withTime(whereFor(be))
 
+	// Use chq_timestamp (ms) for bucket calculation to maintain compatibility with evaluation code
 	bucketExpr := fmt.Sprintf(
 		"(CAST(\"chq_timestamp\" AS BIGINT) - (CAST(\"chq_timestamp\" AS BIGINT) %% %d))",
 		stepMs,
@@ -489,15 +492,17 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 // buildDDS: bucket timestamps, project group-by labels + sketch
 func buildDDS(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
+	stepNs := step.Nanoseconds()
+	// Use chq_timestamp (ms) for bucket calculation to maintain compatibility with evaluation code
 	bucket := fmt.Sprintf("(\"chq_timestamp\" - (\"chq_timestamp\" %% %d))", stepMs)
 
-	// Use aligned, end-exclusive time like the numeric paths
-	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
-	alignedEndEx := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d) + %d)", stepMs, stepMs)
+	// Use aligned, end-exclusive time like the numeric paths (in nanoseconds for filtering)
+	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepNs)
+	alignedEndEx := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d) + %d)", stepNs, stepNs)
 
 	base := whereFor(be)
 	timeWhere := func() string {
-		tc := fmt.Sprintf("\"chq_timestamp\" >= %s AND \"chq_timestamp\" < %s", alignedStart, alignedEndEx)
+		tc := fmt.Sprintf("\"chq_tsns\" >= %s AND \"chq_tsns\" < %s", alignedStart, alignedEndEx)
 		if base == "" {
 			return " WHERE " + tc
 		}
@@ -529,20 +534,22 @@ type need struct {
 }
 
 const (
-	timePredicate = "\"chq_timestamp\" >= {start} AND \"chq_timestamp\" < {end}"
+	timePredicate = "\"chq_tsns\" >= {start} AND \"chq_tsns\" < {end}"
 )
 
 func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	stepMs := step.Milliseconds()
+	// Use chq_timestamp (ms) for bucket calculation to maintain compatibility with evaluation code
 	bucketExpr := fmt.Sprintf("(\"chq_timestamp\" - (\"chq_timestamp\" %% %d))", stepMs)
 
 	where := withTime(whereFor(be))
 
-	// Align [start, end) to step boundaries.
-	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
-	alignedEndExclusive := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d) + %d)", stepMs, stepMs)
+	// Align [start, end) to step boundaries (convert from ns to ms).
+	// {start} and {end} are in nanoseconds, convert to milliseconds for bucket calculation
+	alignedStart := fmt.Sprintf("(CAST({start}/1000000 AS BIGINT) - (CAST({start}/1000000 AS BIGINT) %% %d))", stepMs)
+	alignedEndExclusive := fmt.Sprintf("((CAST({end}/1000000 AS BIGINT) - 1) - ((CAST({end}/1000000 AS BIGINT) - 1) %% %d) + %d)", stepMs, stepMs)
 
-	// Buckets CTE: dense time grid.
+	// Buckets CTE: dense time grid (in milliseconds).
 	buckets := fmt.Sprintf(
 		"buckets AS (SELECT range AS bucket_ts FROM range(%s, %s, %d))",
 		alignedStart, alignedEndExclusive, stepMs,

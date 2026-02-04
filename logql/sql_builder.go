@@ -33,7 +33,7 @@ func (be *LogLeaf) ToWorkerSQLWithLimit(limit int, order string, fields []string
 func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
 	const baseRel = "{table}"       // replace upstream
 	const bodyCol = `"log_message"` // quoted column for message text
-	const tsCol = `"chq_timestamp"` // quoted column for event timestamp
+	const tsCol = `"chq_tsns"`      // quoted column for event timestamp (nanoseconds)
 
 	// Check if the tagName is created by any parser
 	tagCreatedByParser := false
@@ -117,13 +117,14 @@ func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
 func (be *LogLeaf) ToWorkerSQLForTagNames() string {
 	const baseRel = "{table}"
 	const bodyCol = `"log_message"`
-	const tsCol = `"chq_timestamp"`
+	const tsCol = `"chq_tsns"`
 
 	// System columns to exclude from tag names - these are not user-facing tags
 	// Note: We only exclude columns that are guaranteed to exist in all log tables.
 	// The COLUMNS(*)::VARCHAR cast handles type conversion for any BIGINT columns.
 	excludeCols := []string{
 		"chq_timestamp",
+		"chq_tsns",
 		"chq_id",
 		"chq_fingerprint",
 	}
@@ -194,12 +195,13 @@ func (be *LogLeaf) ToWorkerSQLForTagNames() string {
 // for spans/traces. This is separate from logs because spans don't have log_message column.
 func (be *LogLeaf) ToSpansWorkerSQLForTagNames() string {
 	const baseRel = "{table}"
-	const tsCol = `"chq_timestamp"`
+	const tsCol = `"chq_tsns"`
 
 	// System columns to exclude from tag names - these are not user-facing tags
 	// Note: Spans don't have log_message, so we exclude different columns than logs.
 	excludeCols := []string{
 		"chq_timestamp",
+		"chq_tsns",
 		"chq_id",
 	}
 
@@ -255,7 +257,7 @@ func (be *LogLeaf) ToSpansWorkerSQLForTagNames() string {
 func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
 	const baseRel = "{table}"         // replace upstream
 	const bodyCol = "\"log_message\"" // quoted column for message text
-	const tsCol = "\"chq_timestamp\"" // quoted column for event timestamp
+	const tsCol = "\"chq_tsns\""      // quoted column for event timestamp (nanoseconds)
 
 	type layer struct {
 		name string

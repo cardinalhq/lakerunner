@@ -24,7 +24,7 @@ import (
 func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string {
 	const baseRel = "{table}"
 	const bodyCol = "\"log_message\""
-	const tsCol = "\"chq_timestamp\""
+	const tsCol = "\"chq_tsns\""
 
 	// 1) Prepare sets: group keys, parser-created, feature flags
 	groupKeys := dedupeStrings(be.OutBy)
@@ -318,7 +318,7 @@ func emitParsersWithPostLineFilters(
 	}
 
 	// base cols
-	addPresent("log_message", "chq_timestamp", "chq_id", "log_level", "chq_fingerprint")
+	addPresent("log_message", "chq_tsns", "chq_id", "log_level", "chq_fingerprint")
 	// matchers
 	for _, m := range be.Matchers {
 		addPresent(m.Label)

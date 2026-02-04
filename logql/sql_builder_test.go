@@ -79,7 +79,8 @@ func queryAll(t *testing.T, db *sql.DB, q string) []rowmap {
 }
 
 func replaceTable(sql string) string {
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	// Wrap the logs table with a subquery that adds chq_tsns computed from chq_timestamp (ms -> ns)
+	sql = strings.ReplaceAll(sql, "{table}", "(SELECT *, \"chq_timestamp\" * 1000000 AS \"chq_tsns\" FROM logs)")
 	return sql
 }
 
@@ -114,8 +115,8 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 
 	leaf := LogLeaf{} // no parsers/filters; just pass-through with defaults
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	// Should include the sentinel so CacheManager can splice segment filter.
 	if !strings.Contains(sql, "AND true") {
@@ -152,8 +153,8 @@ func TestToWorkerSQL_Fingerprint_AsString(t *testing.T) {
 
 	leaf := LogLeaf{}
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 2 {
@@ -236,8 +237,8 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 	}
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	// Should include the sentinel so CacheManager can splice segment filter.
 	if !strings.Contains(sql, "AND true") {
@@ -302,8 +303,8 @@ func TestToWorkerSQL_Regexp_Kafka_DurationExtract(t *testing.T) {
 	}
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 10_000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 10_000_000_000)
 
 	// Sanity: time-window sentinel present so segment filters can be spliced.
 	if !strings.Contains(sql, "AND true") {
@@ -368,8 +369,8 @@ func TestToWorkerSQL_Regexp_NumericCompare_EmulateGTZero(t *testing.T) {
 	}
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 10_000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 10_000_000_000)
 
 	if !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
@@ -424,8 +425,8 @@ func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 	}
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 1 {
@@ -463,8 +464,8 @@ func TestToWorkerSQL_JSON_WithNOFilters(t *testing.T) {
 	}
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -506,8 +507,8 @@ func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 	}
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -545,8 +546,8 @@ func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 	}
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	if !strings.Contains(sql, "job = 'my-app'") {
 		t.Fatalf("generated SQL missing matcher WHERE: \n%s", sql)
@@ -598,8 +599,8 @@ func TestToWorkerSQL_MatchersThenJSON_FilterApplied_FromLogQL(t *testing.T) {
 	leaf := plan.Leaves[0]
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	if !strings.Contains(sql, "job = 'my-app'") {
 		t.Fatalf("generated SQL missing matcher WHERE:\n%s", sql)
@@ -657,8 +658,8 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 	leaf := plan.Leaves[0]
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	if !strings.Contains(sql, `job = 'my-app'`) {
 		t.Fatalf("generated SQL missing selector matcher WHERE clause:\n%s", sql)
@@ -713,7 +714,7 @@ func TestToWorkerSQLForTagValues_Basic(t *testing.T) {
 
 	// Test basic tag values query
 	be := &LogLeaf{}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -756,7 +757,7 @@ func TestToWorkerSQLForTagValues_WithMatchers(t *testing.T) {
 			{Label: "service", Op: MatchEq, Value: "api"},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -799,7 +800,7 @@ func TestToWorkerSQLForTagValues_WithLineFilters(t *testing.T) {
 			{Op: LineContains, Match: "error"},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -842,7 +843,7 @@ func TestToWorkerSQLForTagValues_WithLabelFilters(t *testing.T) {
 			{Label: "level", Op: MatchEq, Value: "info"},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -890,7 +891,7 @@ func TestToWorkerSQLForTagValues_WithRegexpParser(t *testing.T) {
 			},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -938,7 +939,7 @@ func TestToWorkerSQLForTagValues_WithJSONParser(t *testing.T) {
 			},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -986,7 +987,7 @@ func TestToWorkerSQLForTagValues_WithLogfmtParser(t *testing.T) {
 			},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1043,7 +1044,7 @@ func TestToWorkerSQLForTagValues_ComplexQuery(t *testing.T) {
 			{Label: "level", Op: MatchEq, Value: "info"},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1105,8 +1106,8 @@ func TestToWorkerSQLWithLimit_Fields_Basic(t *testing.T) {
 	fields := []string{"service", "pod", "user"}
 
 	sql := be.ToWorkerSQLWithLimit(0, "desc", fields)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1178,8 +1179,8 @@ func TestToWorkerSQLWithLimit_Fields_WithRegexpParser(t *testing.T) {
 	fields := []string{"user", "action", "status"}
 
 	sql := be.ToWorkerSQLWithLimit(0, "desc", fields)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1239,8 +1240,8 @@ func TestToWorkerSQLWithLimit_Fields_EmptyFields(t *testing.T) {
 	fields := []string{}
 
 	sql := be.ToWorkerSQLWithLimit(0, "desc", fields)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1286,8 +1287,8 @@ func TestToWorkerSQLWithLimit_Fields_NonExistentFields_NoOp(t *testing.T) {
 	fields := []string{"nonexistent_field1", "nonexistent_field2"}
 
 	sql := be.ToWorkerSQLWithLimit(0, "desc", fields)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1345,8 +1346,8 @@ func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
 	fields := []string{"service", "pod"}
 
 	sql := be.ToWorkerSQLWithLimit(2, "desc", fields)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 5000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1406,8 +1407,8 @@ func TestToWorkerSQL_LineFormat_JSONToMessage(t *testing.T) {
 	leaf := plan.Leaves[0]
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 10_000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 10_000_000_000)
 
 	// sanity checks (optional)
 	if !strings.Contains(sql, "app = 'web'") {
@@ -1470,8 +1471,8 @@ func TestToWorkerSQL_LineFormat_IndexBaseField(t *testing.T) {
 	leaf := plan.Leaves[0]
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 10_000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 10_000_000_000)
 
 	// Sanity checks
 	if !strings.Contains(sql, `resource_service_name = 'accounting'`) {
@@ -1532,8 +1533,8 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField(t *testing.T) {
 	leaf := plan.Leaves[0]
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 10_000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 10_000_000_000)
 
 	if !strings.Contains(sql, `resource_service_name = 'accounting'`) { // case-sensitive helper is fine here
 		t.Fatalf("missing selector on resource_service_name:\n%s", sql)
@@ -1594,8 +1595,8 @@ func TestToWorkerSQL_LineFormat_DirectIndexBaseField_UnderscoreCompat(t *testing
 	leaf := plan.Leaves[0]
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 10_000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 10_000_000_000)
 
 	if !strings.Contains(sql, `"log_@OrderResult"`) {
 		t.Fatalf("expected hoisted base column \"log_@OrderResult\" in SQL:\n%s", sql)
@@ -1653,8 +1654,8 @@ func TestToWorkerSQL_LineFormat_IndexThenJSON_TwoStage(t *testing.T) {
 	leaf := plan.Leaves[0]
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 10_000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 10_000_000_000)
 
 	if !strings.Contains(sql, `resource_service_name = 'accounting'`) {
 		t.Fatalf("missing selector on resource_service_name:\n%s", sql)
@@ -1762,8 +1763,8 @@ func TestToWorkerSQL_LineFormat_JSON_LabelFormat_ItemCount_WithFingerprint(t *te
 
 	// Use the real base table (no replaceTable), and plug in a wide time range.
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 10_000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 10_000_000_000)
 
 	// Sanity checks on generated SQL.
 	if !strings.Contains(sql, `resource_service_name = 'accounting'`) {
@@ -1863,8 +1864,8 @@ func TestToWorkerSQL_CustomerIssue_ResourceFileTypeFilter(t *testing.T) {
 	leaf := plan.Leaves[0]
 
 	sql := leaf.ToWorkerSQLWithLimit(0, "desc", nil)
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
-	sql = replaceStartEnd(sql, 0, 10_000)
+	sql = replaceTable(sql)
+	sql = replaceStartEnd(sql, 0, 10_000_000_000)
 
 	t.Logf("Generated SQL:\n%s", sql)
 
@@ -1922,7 +1923,7 @@ func TestToWorkerSQLForTagNames_Basic(t *testing.T) {
 		(1000, 'id2', 456, 'another message', 'error', 'web', 'pod2', 'us-west-2')`)
 
 	be := &LogLeaf{}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -1970,7 +1971,7 @@ func TestToWorkerSQLForTagNames_ExcludesNullColumns(t *testing.T) {
 		(1000, 'id2', 456, 'another message', 'error', 'web', 'pod2', NULL)`)
 
 	be := &LogLeaf{}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -2017,7 +2018,7 @@ func TestToWorkerSQLForTagNames_WithMatchers(t *testing.T) {
 			{Label: "service", Op: MatchEq, Value: "api"},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -2056,7 +2057,7 @@ func TestToWorkerSQLForTagNames_WithLineFilters(t *testing.T) {
 			{Op: LineContains, Match: "error"},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagNames()), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 

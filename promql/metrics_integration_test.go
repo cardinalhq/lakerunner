@@ -28,7 +28,8 @@ import (
 )
 
 func replaceWorkerPlaceholders(sql string, start, end int64) string {
-	sql = strings.ReplaceAll(sql, "{table}", "logs")
+	// Wrap table with subquery that computes chq_tsns (nanoseconds) from chq_timestamp (milliseconds)
+	sql = strings.ReplaceAll(sql, "{table}", `(SELECT *, "chq_timestamp" * 1000000 AS "chq_tsns" FROM logs) AS _t`)
 	sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", start))
 	sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", end))
 	return sql
@@ -128,7 +129,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 
 	// Build the worker SQL once.
 	step := time.Minute
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
 
 	// Run the leaf SQL on both workers.
 	rows1 := queryAll(t, db1, workerSQL)
@@ -265,7 +266,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	leaf := plan.Leaves[0]
 
 	step := time.Minute
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
 
 	// Run leaf on both workers
 	rows1 := queryAll(t, db1, workerSQL)
@@ -384,7 +385,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	leaf := plan.Leaves[0]
 
 	step := time.Minute
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
 
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
@@ -507,7 +508,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	leaf := plan.Leaves[0]
 
 	step := time.Minute
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
 
 	// Run leaf SQL on both workers.
 	rows1 := queryAll(t, db1, workerSQL)
@@ -645,7 +646,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	leaf := plan.Leaves[0]
 
 	// Execute worker SQL on both workers for 1m steps over [0, 120s).
-	sql := replaceWorkerPlaceholders(leaf.ToWorkerSQL(time.Minute), 0, 120*1000)
+	sql := replaceWorkerPlaceholders(leaf.ToWorkerSQL(time.Minute), 0, 120*1000*1000000)
 	rows1 := queryAll(t, db1, sql)
 	rows2 := queryAll(t, db2, sql)
 	if len(rows1) == 0 && len(rows2) == 0 {
@@ -750,7 +751,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	leaf := plan.Leaves[0]
 
 	step := 30 * time.Second // 30s step so second bucket fully covers 1m window
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
 
 	// Run on both workers
 	rows1 := queryAll(t, db1, workerSQL)
@@ -878,7 +879,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 		}
 		leaf := plan.Leaves[0]
 
-		workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+		workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
 		rows1 := queryAll(t, db1, workerSQL)
 		rows2 := queryAll(t, db2, workerSQL)
 
@@ -1016,7 +1017,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	}
 	leaf := plan.Leaves[0]
 
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
 	if len(rows1) == 0 && len(rows2) == 0 {
@@ -1127,7 +1128,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	}
 	leaf := plan.Leaves[0]
 
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
 	if len(rows1) == 0 && len(rows2) == 0 {
@@ -1240,7 +1241,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	}
 	leaf := plan.Leaves[0]
 
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
 	if len(rows1) == 0 && len(rows2) == 0 {
@@ -1351,7 +1352,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	}
 	leaf := plan.Leaves[0]
 
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
 	if len(rows1) == 0 && len(rows2) == 0 {
