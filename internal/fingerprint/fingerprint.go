@@ -58,6 +58,7 @@ func (f IndexFlags) HasTrigram() bool {
 var IndexedDimensions = map[string]IndexFlags{
 	"chq_telemetry_type":          IndexTrigramExact,
 	"log_level":                   IndexExact,
+	"log_message":                 IndexTrigramExact,
 	"metric_name":                 IndexExact,
 	"resource_customer_domain":    IndexTrigramExact,
 	"resource_file":               IndexExact,
