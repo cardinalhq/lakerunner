@@ -292,16 +292,16 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	// Test the built-in TimestampSort function
 	inputRows := []pipeline.Row{
 		{
-			wkk.RowKeyCName:      "memory.usage", // Different names, but should sort by timestamp
-			wkk.RowKeyCTimestamp: int64(30000),
+			wkk.RowKeyCName: "memory.usage", // Different names, but should sort by timestamp
+			wkk.RowKeyCTsns: int64(30000),
 		},
 		{
-			wkk.RowKeyCName:      "cpu.usage",
-			wkk.RowKeyCTimestamp: int64(10000), // Should come first
+			wkk.RowKeyCName: "cpu.usage",
+			wkk.RowKeyCTsns: int64(10000), // Should come first
 		},
 		{
-			wkk.RowKeyCName:      "disk.usage",
-			wkk.RowKeyCTimestamp: int64(20000),
+			wkk.RowKeyCName: "disk.usage",
+			wkk.RowKeyCTsns: int64(20000),
 		},
 	}
 
@@ -327,7 +327,7 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	require.Len(t, allRows, 3)
 
 	// Verify timestamp ordering: 10000, 20000, 30000
-	assert.Equal(t, int64(10000), allRows[0][wkk.RowKeyCTimestamp])
-	assert.Equal(t, int64(20000), allRows[1][wkk.RowKeyCTimestamp])
-	assert.Equal(t, int64(30000), allRows[2][wkk.RowKeyCTimestamp])
+	assert.Equal(t, int64(10000), allRows[0][wkk.RowKeyCTsns])
+	assert.Equal(t, int64(20000), allRows[1][wkk.RowKeyCTsns])
+	assert.Equal(t, int64(30000), allRows[2][wkk.RowKeyCTsns])
 }

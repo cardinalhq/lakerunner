@@ -88,8 +88,8 @@ func TestBuildTraceOrderByClause(t *testing.T) {
 	}{
 		{
 			name:      "all columns present",
-			schema:    []string{"trace_id", "chq_timestamp", "span_id"},
-			wantOrder: `"trace_id", "chq_timestamp"`,
+			schema:    []string{"trace_id", "chq_tsns", "span_id"},
+			wantOrder: `"trace_id", "chq_tsns"`,
 		},
 		{
 			name:      "only trace_id",
@@ -98,8 +98,8 @@ func TestBuildTraceOrderByClause(t *testing.T) {
 		},
 		{
 			name:      "only timestamp",
-			schema:    []string{"chq_timestamp", "span_id"},
-			wantOrder: `"chq_timestamp"`,
+			schema:    []string{"chq_tsns", "span_id"},
+			wantOrder: `"chq_tsns"`,
 		},
 		{
 			name:      "neither column present",

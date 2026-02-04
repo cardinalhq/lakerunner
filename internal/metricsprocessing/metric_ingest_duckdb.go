@@ -387,7 +387,7 @@ func exportPartitionToParquet(
 		COPY (
 			SELECT * EXCLUDE (chq_stats), %s
 			FROM (%s) AS aggregated
-			ORDER BY "metric_name", "chq_tid", "chq_timestamp"
+			ORDER BY "metric_name", "chq_tid", "chq_tsns"
 		) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)`,
 		strings.Join(rollupExtraction, ", "),
 		innerQuery,

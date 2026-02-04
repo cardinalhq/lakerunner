@@ -22,11 +22,12 @@ import (
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
-// LogSortKey represents the sort key for logs: [service_identifier, timestamp]
+// LogSortKey represents the sort key for logs: [service_identifier, timestamp_ns]
 // where service_identifier is resource_customer_domain if set, otherwise resource_service_name
+// Timestamp is in nanoseconds for ordering precision.
 type LogSortKey struct {
 	ServiceIdentifier string
-	Timestamp         int64
+	TimestampNs       int64
 	ServiceOk         bool
 	TsOk              bool
 }
@@ -57,7 +58,7 @@ func (k *LogSortKey) Compare(other SortKey) int {
 	if cmp := compareOptional(k.ServiceIdentifier, k.ServiceOk, o.ServiceIdentifier, o.ServiceOk); cmp != 0 {
 		return cmp
 	}
-	return compareOptional(k.Timestamp, k.TsOk, o.Timestamp, o.TsOk)
+	return compareOptional(k.TimestampNs, k.TsOk, o.TimestampNs, o.TsOk)
 }
 
 // Release returns the LogSortKey to the pool for reuse
@@ -100,7 +101,7 @@ func NewLogSortKeyProvider(streamField string) *LogSortKeyProvider {
 func (p *LogSortKeyProvider) MakeKey(row pipeline.Row) SortKey {
 	key := getLogSortKey()
 	key.ServiceIdentifier, key.ServiceOk = p.getServiceIdentifier(row)
-	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
+	key.TimestampNs, key.TsOk = row[wkk.RowKeyCTsns].(int64)
 	return key
 }
 
