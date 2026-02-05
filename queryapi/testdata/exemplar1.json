@@ -1,5 +1,6 @@
 {
-  "chq_timestamp": 1736478490594608281,
+  "chq_tsns": 1736478490594608281,
+  "chq_timestamp": 1736478490594,
   "chq_fingerprint": -1205034819632174695,
   "resource_service_name": "lakerunner-ingest-logs",
   "log_message": "traces export: failed to send to https://customer-intake-otelhttp.us-east-2.aws.test.cardinalhq.net/v1/traces: 401 Unauthorized",

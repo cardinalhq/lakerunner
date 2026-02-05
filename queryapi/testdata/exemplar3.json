@@ -1,5 +1,6 @@
 {
-  "chq_timestamp": 1736478490594608281,
+  "chq_tsns": 1736478490594608281,
+  "chq_timestamp": 1736478490594,
   "chq_fingerprint": "-1205034819632174695",
   "resource_service_name": "segment",
   "log_message": "{\"type\":\"track\",\"userId\":\"ef4412af-b7a4-42dd-a0e2-2aa36b86a5b3\",\"event\":\"Order Completed\",\"properties\":{\"currency\":\"USD\",\"revenue\":111.67,\"cardType\":\"AMEX\"}}",

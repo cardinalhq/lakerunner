@@ -27,6 +27,7 @@ import (
 func replaceSpansTable(sql string) string {
 	base := `(SELECT *,
   0::BIGINT   AS "chq_timestamp",
+  0::BIGINT   AS "chq_tsns",
   ''::VARCHAR AS "chq_id",
   -4446492996171837732::BIGINT   AS "chq_fingerprint",
   ''::VARCHAR AS "span_name",
@@ -69,6 +70,7 @@ func createSpansTable(t *testing.T, db *sql.DB) {
 
 	mustExecSpans(t, db, `CREATE TABLE spans(
   "chq_timestamp" BIGINT,
+  "chq_tsns" BIGINT,
   "chq_id" VARCHAR,
   "chq_fingerprint" BIGINT,
   "span_name" VARCHAR,
@@ -88,12 +90,12 @@ func TestToSpansWorkerSQL_BasicFields(t *testing.T) {
 
 	// Insert test data
 	mustExecSpans(t, db, `INSERT INTO spans VALUES
-	 (1000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
-	 (2000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
-	 (3000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
+	 (1000, 1000000000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
+	 (2000, 2000000000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
+	 (3000, 3000000000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
 
 	leaf := LogLeaf{} // no parsers/filters; just pass-through with defaults
-	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000000000)
 
 	// Should include the sentinel so CacheManager can splice segment filter.
 	if !strings.Contains(sql, "AND true") {
@@ -124,16 +126,16 @@ func TestToSpansWorkerSQL_WithCardinalhqNameMatcher(t *testing.T) {
 
 	// Insert test data
 	mustExecSpans(t, db, `INSERT INTO spans VALUES
-	 (1000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
-	 (2000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
-	 (3000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
+	 (1000, 1000000000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
+	 (2000, 2000000000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
+	 (3000, 3000000000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
 			{Label: "span_name", Op: MatchEq, Value: "GET /api/users"},
 		},
 	}
-	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 1 {
@@ -155,16 +157,16 @@ func TestToSpansWorkerSQL_WithCardinalhqKindMatcher(t *testing.T) {
 
 	// Insert test data
 	mustExecSpans(t, db, `INSERT INTO spans VALUES
-	 (1000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
-	 (2000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
-	 (3000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
+	 (1000, 1000000000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
+	 (2000, 2000000000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
+	 (3000, 3000000000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
 			{Label: "span_kind", Op: MatchEq, Value: "server"},
 		},
 	}
-	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 2 {
@@ -186,9 +188,9 @@ func TestToSpansWorkerSQL_WithMultipleMatchers(t *testing.T) {
 
 	// Insert test data
 	mustExecSpans(t, db, `INSERT INTO spans VALUES
-	 (1000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
-	 (2000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
-	 (3000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
+	 (1000, 1000000000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
+	 (2000, 2000000000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
+	 (3000, 3000000000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
@@ -196,7 +198,7 @@ func TestToSpansWorkerSQL_WithMultipleMatchers(t *testing.T) {
 			{Label: "span_kind", Op: MatchEq, Value: "server"},
 		},
 	}
-	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 2 {
@@ -219,9 +221,9 @@ func TestToSpansWorkerSQL_WithFieldsParameter(t *testing.T) {
 
 	// Insert test data
 	mustExecSpans(t, db, `INSERT INTO spans VALUES
-	 (1000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
-	 (2000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
-	 (3000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
+	 (1000, 1000000000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
+	 (2000, 2000000000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
+	 (3000, 3000000000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
 
 	// Test with fields parameter
 	leaf := LogLeaf{
@@ -230,7 +232,7 @@ func TestToSpansWorkerSQL_WithFieldsParameter(t *testing.T) {
 		},
 	}
 	fields := []string{"span_name", "span_kind", "service_name"}
-	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
+	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", fields)), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 
@@ -269,16 +271,16 @@ func TestToSpansWorkerSQL_WithRegexMatcher(t *testing.T) {
 
 	// Insert test data
 	mustExecSpans(t, db, `INSERT INTO spans VALUES
-	 (1000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
-	 (2000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
-	 (3000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
+	 (1000, 1000000000, 'id1', -4446492996171837732, 'GET /api/users', 'server', 'span1', 'trace1', 'OK', 150000000, 'my-service', 'v1.0'),
+	 (2000, 2000000000, 'id2', -4446492996171837732, 'POST /api/orders', 'client', 'span2', 'trace2', 'ERROR', 250000000, 'other-service', 'v2.0'),
+	 (3000, 3000000000, 'id3', -4446492996171837732, 'GET /api/products', 'server', 'span3', 'trace3', 'OK', 100000000, 'my-service', 'v1.1')`)
 
 	leaf := LogLeaf{
 		Matchers: []LabelMatch{
 			{Label: "span_name", Op: MatchRe, Value: "GET.*"},
 		},
 	}
-	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	sql := replaceStartEnd(replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil)), 0, 5000000000)
 
 	rows := queryAll(t, db, sql)
 	if len(rows) != 2 {

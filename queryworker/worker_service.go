@@ -320,16 +320,25 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 	tags := make(map[string]any, len(cols))
 	exemplar := promql.Exemplar{}
 	vals := buf.vals
+	hasTimestamp := false
 
 	for i, col := range cols {
 		switch col {
 		case "chq_timestamp":
 			exemplar.Timestamp = vals[i].(int64)
+			hasTimestamp = true
+		case "chq_tsns":
+			exemplar.TimestampNs = vals[i].(int64)
 		default:
 			if vals[i] != nil {
 				tags[col] = vals[i]
 			}
 		}
+	}
+
+	// Derive timestamp from chq_tsns if chq_timestamp wasn't present
+	if !hasTimestamp && exemplar.TimestampNs != 0 {
+		exemplar.Timestamp = exemplar.TimestampNs / 1_000_000
 	}
 
 	exemplar.Tags = tags

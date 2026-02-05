@@ -67,7 +67,7 @@ type traceDownloadResult struct {
 // processTracesWithDuckDB performs trace compaction using DuckDB:
 // 1. Download parquet files from S3 to local disk
 // 2. Load all files into a DuckDB table with union_by_name for schema merging
-// 3. Sort by [trace_id, chq_timestamp]
+// 3. Sort by [trace_id, chq_tsns]
 // 4. Export sorted result to parquet
 // 5. Merge metadata from input segments (timestamps, fingerprints, label name map)
 func processTracesWithDuckDB(ctx context.Context, params traceProcessingParams) (*traceProcessingResult, error) {
@@ -265,7 +265,7 @@ func executeTraceCompaction(ctx context.Context, conn *sql.Conn, inputFiles []st
 }
 
 // buildTraceOrderByClause constructs the ORDER BY clause for trace sorting.
-// Sort order: [trace_id, chq_timestamp]
+// Sort order: [trace_id, chq_tsns]
 func buildTraceOrderByClause(schema []string) string {
 	schemaSet := mapset.NewSet[string]()
 	for _, col := range schema {
@@ -279,9 +279,9 @@ func buildTraceOrderByClause(schema []string) string {
 		orderParts = append(orderParts, pq.QuoteIdentifier("trace_id"))
 	}
 
-	// Add chq_timestamp if present
-	if schemaSet.Contains("chq_timestamp") {
-		orderParts = append(orderParts, pq.QuoteIdentifier("chq_timestamp"))
+	// Add chq_tsns if present (nanosecond timestamp for ordering precision)
+	if schemaSet.Contains("chq_tsns") {
+		orderParts = append(orderParts, pq.QuoteIdentifier("chq_tsns"))
 	}
 
 	if len(orderParts) == 0 {

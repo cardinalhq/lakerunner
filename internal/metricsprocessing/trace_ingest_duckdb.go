@@ -64,7 +64,7 @@ type TraceFileMetadata struct {
 
 // processTraceIngestWithDuckDB processes trace binpb files using pure DuckDB SQL.
 // This loads all files into a table, partitions by dateint, and exports each
-// partition to a separate parquet file sorted by [span_trace_id, chq_timestamp].
+// partition to a separate parquet file sorted by [span_trace_id, chq_tsns].
 func processTraceIngestWithDuckDB(
 	ctx context.Context,
 	binpbFiles []string,
@@ -394,7 +394,7 @@ func processTraceDateintPartition(
 	// Output file path
 	outputFile := filepath.Join(tmpDir, fmt.Sprintf("traces_%d.parquet", dateint))
 
-	// Export partition to parquet (no aggregation, just sort by trace_id, timestamp)
+	// Export partition to parquet (no aggregation, just sort by trace_id, timestamp_ns)
 	if err := exportTracePartitionToParquet(ctx, conn, startMs, endMs, schema, outputFile); err != nil {
 		return nil, fmt.Errorf("export trace partition: %w", err)
 	}
@@ -429,7 +429,7 @@ func processTraceDateintPartition(
 }
 
 // exportTracePartitionToParquet exports a trace dateint partition to a parquet file.
-// Traces are not aggregated like metrics - just sorted by [span_trace_id, chq_timestamp].
+// Traces are not aggregated like metrics - just sorted by [span_trace_id, chq_tsns].
 func exportTracePartitionToParquet(
 	ctx context.Context,
 	conn *sql.Conn,
@@ -448,7 +448,7 @@ func exportTracePartitionToParquet(
 			SELECT %s
 			FROM traces_raw
 			WHERE chq_timestamp >= %d AND chq_timestamp < %d
-			ORDER BY "span_trace_id", "chq_timestamp"
+			ORDER BY "span_trace_id", "chq_tsns"
 		) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)`,
 		strings.Join(quotedCols, ", "),
 		startMs, endMs,

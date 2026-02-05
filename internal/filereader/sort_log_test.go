@@ -35,56 +35,56 @@ func TestLogSortKey_Compare(t *testing.T) {
 	}{
 		{
 			name:     "same keys",
-			key1:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, Timestamp: 1000, TsOk: true},
-			key2:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, Timestamp: 1000, TsOk: true},
+			key1:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, TimestampNs: 1000, TsOk: true},
+			key2:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, TimestampNs: 1000, TsOk: true},
 			expected: 0,
 		},
 		{
 			name:     "service identifier less than (primary sort)",
-			key1:     LogSortKey{ServiceIdentifier: "aaa", ServiceOk: true, Timestamp: 1000, TsOk: true},
-			key2:     LogSortKey{ServiceIdentifier: "zzz", ServiceOk: true, Timestamp: 1000, TsOk: true},
+			key1:     LogSortKey{ServiceIdentifier: "aaa", ServiceOk: true, TimestampNs: 1000, TsOk: true},
+			key2:     LogSortKey{ServiceIdentifier: "zzz", ServiceOk: true, TimestampNs: 1000, TsOk: true},
 			expected: -1,
 		},
 		{
 			name:     "service identifier greater than (primary sort)",
-			key1:     LogSortKey{ServiceIdentifier: "zzz", ServiceOk: true, Timestamp: 1000, TsOk: true},
-			key2:     LogSortKey{ServiceIdentifier: "aaa", ServiceOk: true, Timestamp: 1000, TsOk: true},
+			key1:     LogSortKey{ServiceIdentifier: "zzz", ServiceOk: true, TimestampNs: 1000, TsOk: true},
+			key2:     LogSortKey{ServiceIdentifier: "aaa", ServiceOk: true, TimestampNs: 1000, TsOk: true},
 			expected: 1,
 		},
 		{
 			name:     "timestamp less than (secondary sort)",
-			key1:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, Timestamp: 500, TsOk: true},
-			key2:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, Timestamp: 1000, TsOk: true},
+			key1:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, TimestampNs: 500, TsOk: true},
+			key2:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, TimestampNs: 1000, TsOk: true},
 			expected: -1,
 		},
 		{
 			name:     "timestamp greater than (secondary sort)",
-			key1:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, Timestamp: 1000, TsOk: true},
-			key2:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, Timestamp: 500, TsOk: true},
+			key1:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, TimestampNs: 1000, TsOk: true},
+			key2:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, TimestampNs: 500, TsOk: true},
 			expected: 1,
 		},
 		{
 			name:     "missing service identifier sorts after",
-			key1:     LogSortKey{ServiceIdentifier: "", ServiceOk: false, Timestamp: 1000, TsOk: true},
-			key2:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, Timestamp: 1000, TsOk: true},
+			key1:     LogSortKey{ServiceIdentifier: "", ServiceOk: false, TimestampNs: 1000, TsOk: true},
+			key2:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, TimestampNs: 1000, TsOk: true},
 			expected: 1,
 		},
 		{
 			name:     "both missing service - compare by timestamp",
-			key1:     LogSortKey{ServiceIdentifier: "", ServiceOk: false, Timestamp: 500, TsOk: true},
-			key2:     LogSortKey{ServiceIdentifier: "", ServiceOk: false, Timestamp: 1000, TsOk: true},
+			key1:     LogSortKey{ServiceIdentifier: "", ServiceOk: false, TimestampNs: 500, TsOk: true},
+			key2:     LogSortKey{ServiceIdentifier: "", ServiceOk: false, TimestampNs: 1000, TsOk: true},
 			expected: -1,
 		},
 		{
 			name:     "empty service identifier is valid (default case)",
-			key1:     LogSortKey{ServiceIdentifier: "", ServiceOk: true, Timestamp: 1000, TsOk: true},
-			key2:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, Timestamp: 1000, TsOk: true},
+			key1:     LogSortKey{ServiceIdentifier: "", ServiceOk: true, TimestampNs: 1000, TsOk: true},
+			key2:     LogSortKey{ServiceIdentifier: "svc1", ServiceOk: true, TimestampNs: 1000, TsOk: true},
 			expected: -1, // empty string sorts before non-empty
 		},
 		{
 			name:     "service identifier takes priority over timestamp",
-			key1:     LogSortKey{ServiceIdentifier: "aaa", ServiceOk: true, Timestamp: 9999, TsOk: true},
-			key2:     LogSortKey{ServiceIdentifier: "zzz", ServiceOk: true, Timestamp: 1, TsOk: true},
+			key1:     LogSortKey{ServiceIdentifier: "aaa", ServiceOk: true, TimestampNs: 9999, TsOk: true},
+			key2:     LogSortKey{ServiceIdentifier: "zzz", ServiceOk: true, TimestampNs: 1, TsOk: true},
 			expected: -1, // aaa < zzz, even though 9999 > 1
 		},
 	}
@@ -102,7 +102,7 @@ func TestLogSortKey_PoolingWorks(t *testing.T) {
 	key1 := getLogSortKey()
 	key1.ServiceIdentifier = "test-service"
 	key1.ServiceOk = true
-	key1.Timestamp = 1000
+	key1.TimestampNs = 1000
 	key1.TsOk = true
 
 	// Release and get again
@@ -112,7 +112,7 @@ func TestLogSortKey_PoolingWorks(t *testing.T) {
 	// After release and get, the key should be reset
 	assert.Equal(t, "", key2.ServiceIdentifier)
 	assert.False(t, key2.ServiceOk)
-	assert.Equal(t, int64(0), key2.Timestamp)
+	assert.Equal(t, int64(0), key2.TimestampNs)
 	assert.False(t, key2.TsOk)
 
 	putLogSortKey(key2)
@@ -124,7 +124,7 @@ func TestLogSortKeyProvider_MakeKey(t *testing.T) {
 		row                       pipeline.Row
 		expectedServiceIdentifier string
 		expectedServiceOk         bool
-		expectedTimestamp         int64
+		expectedTimestampNs       int64
 		expectedTsOk              bool
 	}{
 		{
@@ -132,11 +132,11 @@ func TestLogSortKeyProvider_MakeKey(t *testing.T) {
 			row: pipeline.Row{
 				wkk.RowKeyResourceCustomerDomain: "customer.example.com",
 				wkk.RowKeyResourceServiceName:    "backend-service",
-				wkk.RowKeyCTimestamp:             int64(1000),
+				wkk.RowKeyCTsns:                  int64(1000),
 			},
 			expectedServiceIdentifier: "customer.example.com", // customer_domain takes priority
 			expectedServiceOk:         true,
-			expectedTimestamp:         1000,
+			expectedTimestampNs:       1000,
 			expectedTsOk:              true,
 		},
 		{
@@ -144,32 +144,32 @@ func TestLogSortKeyProvider_MakeKey(t *testing.T) {
 			row: pipeline.Row{
 				wkk.RowKeyResourceCustomerDomain: "",
 				wkk.RowKeyResourceServiceName:    "backend-service",
-				wkk.RowKeyCTimestamp:             int64(1000),
+				wkk.RowKeyCTsns:                  int64(1000),
 			},
 			expectedServiceIdentifier: "backend-service",
 			expectedServiceOk:         true,
-			expectedTimestamp:         1000,
+			expectedTimestampNs:       1000,
 			expectedTsOk:              true,
 		},
 		{
 			name: "only service_name present",
 			row: pipeline.Row{
 				wkk.RowKeyResourceServiceName: "backend-service",
-				wkk.RowKeyCTimestamp:          int64(1000),
+				wkk.RowKeyCTsns:               int64(1000),
 			},
 			expectedServiceIdentifier: "backend-service",
 			expectedServiceOk:         true,
-			expectedTimestamp:         1000,
+			expectedTimestampNs:       1000,
 			expectedTsOk:              true,
 		},
 		{
 			name: "neither customer_domain nor service_name - uses empty string",
 			row: pipeline.Row{
-				wkk.RowKeyCTimestamp: int64(1000),
+				wkk.RowKeyCTsns: int64(1000),
 			},
 			expectedServiceIdentifier: "",
 			expectedServiceOk:         true, // empty string is valid default
-			expectedTimestamp:         1000,
+			expectedTimestampNs:       1000,
 			expectedTsOk:              true,
 		},
 		{
@@ -179,7 +179,7 @@ func TestLogSortKeyProvider_MakeKey(t *testing.T) {
 			},
 			expectedServiceIdentifier: "backend-service",
 			expectedServiceOk:         true,
-			expectedTimestamp:         0,
+			expectedTimestampNs:       0,
 			expectedTsOk:              false,
 		},
 	}
@@ -194,7 +194,7 @@ func TestLogSortKeyProvider_MakeKey(t *testing.T) {
 
 			assert.Equal(t, tt.expectedServiceIdentifier, logKey.ServiceIdentifier)
 			assert.Equal(t, tt.expectedServiceOk, logKey.ServiceOk)
-			assert.Equal(t, tt.expectedTimestamp, logKey.Timestamp)
+			assert.Equal(t, tt.expectedTimestampNs, logKey.TimestampNs)
 			assert.Equal(t, tt.expectedTsOk, logKey.TsOk)
 
 			key.Release()
@@ -208,19 +208,19 @@ func TestMemorySortingReader_LogSortKey(t *testing.T) {
 	inputRows := []pipeline.Row{
 		{
 			wkk.RowKeyResourceServiceName: "service-b", // service-b comes after service-a
-			wkk.RowKeyCTimestamp:          int64(1000),
+			wkk.RowKeyCTsns:               int64(1000),
 		},
 		{
 			wkk.RowKeyResourceServiceName: "service-a",
-			wkk.RowKeyCTimestamp:          int64(2000),
+			wkk.RowKeyCTsns:               int64(2000),
 		},
 		{
 			wkk.RowKeyResourceServiceName: "service-a",
-			wkk.RowKeyCTimestamp:          int64(1000), // Same service, earlier timestamp
+			wkk.RowKeyCTsns:               int64(1000), // Same service, earlier timestamp
 		},
 		{
 			wkk.RowKeyResourceServiceName: "service-b",
-			wkk.RowKeyCTimestamp:          int64(500), // service-b, earlier timestamp
+			wkk.RowKeyCTsns:               int64(500), // service-b, earlier timestamp
 		},
 	}
 
@@ -259,7 +259,7 @@ func TestMemorySortingReader_LogSortKey(t *testing.T) {
 
 	for i, expected := range expectedOrder {
 		assert.Equal(t, expected.service, allRows[i][wkk.RowKeyResourceServiceName], "Row %d service mismatch", i)
-		assert.Equal(t, expected.timestamp, allRows[i][wkk.RowKeyCTimestamp], "Row %d timestamp mismatch", i)
+		assert.Equal(t, expected.timestamp, allRows[i][wkk.RowKeyCTsns], "Row %d timestamp mismatch", i)
 	}
 }
 
@@ -269,12 +269,12 @@ func TestLogSortKey_CustomerDomainPriority(t *testing.T) {
 		{
 			wkk.RowKeyResourceCustomerDomain: "zzz.example.com", // customer_domain present, should be used
 			wkk.RowKeyResourceServiceName:    "aaa-service",     // ignored because customer_domain is set
-			wkk.RowKeyCTimestamp:             int64(1000),
+			wkk.RowKeyCTsns:                  int64(1000),
 		},
 		{
 			wkk.RowKeyResourceCustomerDomain: "aaa.example.com", // comes before zzz
 			wkk.RowKeyResourceServiceName:    "zzz-service",     // ignored
-			wkk.RowKeyCTimestamp:             int64(1000),
+			wkk.RowKeyCTsns:                  int64(1000),
 		},
 	}
 

@@ -66,7 +66,7 @@ type LogFileMetadata struct {
 
 // processLogIngestWithDuckDB processes log binpb files using pure DuckDB SQL.
 // This loads all files into a table, partitions by dateint, and exports each
-// partition to a separate parquet file sorted by [service_identifier, chq_fingerprint, chq_timestamp].
+// partition to a separate parquet file sorted by [service_identifier, chq_fingerprint, chq_tsns].
 func processLogIngestWithDuckDB(
 	ctx context.Context,
 	binpbFiles []string,
@@ -405,7 +405,7 @@ func processLogDateintPartition(
 	// Determine service identifier field for sorting
 	serviceIdField := getLogServiceIdentifierField(schema, streamField)
 
-	// Export partition to parquet (sorted by service_identifier, fingerprint, timestamp)
+	// Export partition to parquet (sorted by service_identifier, fingerprint, timestamp_ns)
 	if err := exportLogPartitionToParquet(ctx, conn, startMs, endMs, schema, outputFile, serviceIdField); err != nil {
 		return nil, fmt.Errorf("export log partition: %w", err)
 	}
@@ -460,7 +460,7 @@ func getLogServiceIdentifierField(schema []string, streamField string) string {
 }
 
 // exportLogPartitionToParquet exports a log dateint partition to a parquet file.
-// Logs are sorted by [service_identifier, chq_fingerprint, chq_timestamp].
+// Logs are sorted by [service_identifier, chq_fingerprint, chq_tsns].
 func exportLogPartitionToParquet(
 	ctx context.Context,
 	conn *sql.Conn,
@@ -481,7 +481,8 @@ func exportLogPartitionToParquet(
 		orderByCols = append(orderByCols, pq.QuoteIdentifier(serviceIdField))
 	}
 	// chq_fingerprint is provided by the extension for log semantic grouping
-	orderByCols = append(orderByCols, `"chq_fingerprint"`, `"chq_timestamp"`)
+	// chq_tsns provides nanosecond precision for ordering within groups
+	orderByCols = append(orderByCols, `"chq_fingerprint"`, `"chq_tsns"`)
 
 	copyQuery := fmt.Sprintf(`
 		COPY (

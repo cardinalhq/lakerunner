@@ -219,21 +219,21 @@ func TestSpansQueryWithTimeRange(t *testing.T) {
 		},
 	}
 
-	// Query with time range 1500-3500 (should return span 3 - GET /api/products)
+	// Query with time range 1500ms-3500ms in milliseconds (should return span 3 - GET /api/products)
 	sql := replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil))
-	sql = strings.ReplaceAll(sql, "{start}", "1500")
-	sql = strings.ReplaceAll(sql, "{end}", "3500")
+	sql = strings.ReplaceAll(sql, "{start}", "1500") // 1500ms
+	sql = strings.ReplaceAll(sql, "{end}", "3500")   // 3500ms
 
 	rows := queryAllSpans(t, db, sql)
 	if len(rows) != 1 {
-		t.Fatalf("expected 1 row in time range [1500, 3500) matching GET.*, got %d\nsql:\n%s", len(rows), sql)
+		t.Fatalf("expected 1 row in time range [1500ms, 3500ms) matching GET.*, got %d\nsql:\n%s", len(rows), sql)
 	}
 
-	// Verify the returned spans are within the time range
+	// Verify the returned spans are within the time range (chq_timestamp is in milliseconds)
 	for _, row := range rows {
 		timestamp := getInt64(row["chq_timestamp"])
 		if timestamp < 1500 || timestamp >= 3500 {
-			t.Fatalf("expected timestamp in range [1500, 3500), got %d", timestamp)
+			t.Fatalf("expected timestamp in range [1500ms, 3500ms), got %dms", timestamp)
 		}
 	}
 }
@@ -246,6 +246,7 @@ func mustExecSpans(t *testing.T, db *sql.DB, query string) {
 }
 
 func replaceSpansTable(sql string) string {
+	// Compute chq_tsns (nanoseconds) from chq_timestamp (milliseconds)
 	base := `(SELECT *,
   COALESCE("chq_id", ''::VARCHAR) AS "chq_id",
   COALESCE("span_kind", ''::VARCHAR) AS "span_kind",
@@ -255,6 +256,7 @@ func replaceSpansTable(sql string) string {
   COALESCE("span_status_code", ''::VARCHAR) AS "span_status_code",
   COALESCE("span_duration", 0::BIGINT) AS "span_duration",
   COALESCE("chq_timestamp", 0::BIGINT) AS "chq_timestamp",
+  COALESCE("chq_timestamp", 0::BIGINT) * 1000000 AS "chq_tsns",
   COALESCE("chq_fingerprint", -4446492996171837732::BIGINT) AS "chq_fingerprint",
   COALESCE("service_name", ''::VARCHAR) AS "service_name",
   COALESCE("service_version", ''::VARCHAR) AS "service_version"
@@ -280,6 +282,7 @@ func getInt64(v any) int64 {
 
 // Helper functions from ddb_harness_test.go
 func replaceStartEnd(sql string) string {
+	// Use millisecond values (filtering uses chq_timestamp in ms)
 	sql = strings.ReplaceAll(sql, "{start}", "500")
 	sql = strings.ReplaceAll(sql, "{end}", "5000")
 	return sql

@@ -34,19 +34,19 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 		{
 			wkk.RowKeyCName:        "metric_z",
 			wkk.RowKeyCTID:         int64(200),
-			wkk.RowKeyCTimestamp:   int64(3000),
+			wkk.RowKeyCTsns:        int64(3000),
 			wkk.NewRowKey("value"): float64(1.0),
 		},
 		{
 			wkk.RowKeyCName:        "metric_a",
 			wkk.RowKeyCTID:         int64(100),
-			wkk.RowKeyCTimestamp:   int64(1000),
+			wkk.RowKeyCTsns:        int64(1000),
 			wkk.NewRowKey("value"): float64(2.0),
 		},
 		{
 			wkk.RowKeyCName:        "metric_a",
 			wkk.RowKeyCTID:         int64(100),
-			wkk.RowKeyCTimestamp:   int64(2000),
+			wkk.RowKeyCTsns:        int64(2000),
 			wkk.NewRowKey("value"): float64(3.0),
 		},
 	}
@@ -75,14 +75,14 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 
 	// First two rows should be metric_a, sorted by timestamp
 	assert.Equal(t, "metric_a", allRows[0][wkk.RowKeyCName])
-	assert.Equal(t, int64(1000), allRows[0][wkk.RowKeyCTimestamp])
+	assert.Equal(t, int64(1000), allRows[0][wkk.RowKeyCTsns])
 
 	assert.Equal(t, "metric_a", allRows[1][wkk.RowKeyCName])
-	assert.Equal(t, int64(2000), allRows[1][wkk.RowKeyCTimestamp])
+	assert.Equal(t, int64(2000), allRows[1][wkk.RowKeyCTsns])
 
 	// Last row should be metric_z
 	assert.Equal(t, "metric_z", allRows[2][wkk.RowKeyCName])
-	assert.Equal(t, int64(3000), allRows[2][wkk.RowKeyCTimestamp])
+	assert.Equal(t, int64(3000), allRows[2][wkk.RowKeyCTsns])
 }
 
 func TestDiskSortingReader_TypePreservation(t *testing.T) {

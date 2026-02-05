@@ -278,6 +278,15 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 	// Step 3: Build aggregation clauses using shared function
 	selectClauses, groupByClauses := buildAggregationClauses(schema, int64(frequencyMs))
 
+	// Determine timestamp column for ordering - use chq_tsns if available, otherwise chq_timestamp
+	tsCol := "chq_timestamp"
+	for _, col := range schema {
+		if col == "chq_tsns" {
+			tsCol = "chq_tsns"
+			break
+		}
+	}
+
 	// Step 4: Build and execute COPY query (same pattern as metric ingest)
 	rollupExtraction := []string{
 		"chq_stats.sketch AS chq_sketch",
@@ -305,10 +314,11 @@ func executeAggregationConn(ctx context.Context, conn *sql.Conn, inputFiles []st
 		COPY (
 			SELECT * EXCLUDE (chq_stats), %s
 			FROM (%s) AS aggregated
-			ORDER BY "metric_name", "chq_tid", "chq_timestamp"
+			ORDER BY "metric_name", "chq_tid", "%s"
 		) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)`,
 		strings.Join(rollupExtraction, ", "),
 		innerQuery,
+		tsCol,
 		escapeSingleQuote(outputFile))
 
 	if _, err := conn.ExecContext(ctx, copyQuery); err != nil {

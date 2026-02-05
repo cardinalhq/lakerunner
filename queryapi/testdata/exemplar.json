@@ -1,5 +1,6 @@
 {
-  "chq_timestamp": 1736478490594608281,
+  "chq_tsns": 1736478490594608281,
+  "chq_timestamp": 1736478490594,
   "chq_fingerprint": -1205034819632174695,
   "resource_k8s_namespace_name": "default",
   "attr_resource_name": "events",
