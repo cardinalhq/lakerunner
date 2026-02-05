@@ -358,6 +358,15 @@ func exportPartitionToParquet(
 	// Build aggregation query similar to writer_metrics_duckdb.go
 	selectClauses, groupByClauses := buildAggregationClauses(schema, aggregationWindowMs)
 
+	// Determine timestamp column for ordering - use chq_tsns if available, otherwise chq_timestamp
+	tsCol := "chq_timestamp"
+	for _, col := range schema {
+		if col == "chq_tsns" {
+			tsCol = "chq_tsns"
+			break
+		}
+	}
+
 	// Rollup extraction from ddsketch_stats_agg result
 	rollupExtraction := []string{
 		"chq_stats.sketch AS chq_sketch",
@@ -387,10 +396,11 @@ func exportPartitionToParquet(
 		COPY (
 			SELECT * EXCLUDE (chq_stats), %s
 			FROM (%s) AS aggregated
-			ORDER BY "metric_name", "chq_tid", "chq_tsns"
+			ORDER BY "metric_name", "chq_tid", "%s"
 		) TO '%s' (FORMAT PARQUET, COMPRESSION ZSTD)`,
 		strings.Join(rollupExtraction, ", "),
 		innerQuery,
+		tsCol,
 		escapeSingleQuote(outputFile))
 
 	_, err := conn.ExecContext(ctx, copyQuery)
