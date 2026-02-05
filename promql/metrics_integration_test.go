@@ -28,8 +28,8 @@ import (
 )
 
 func replaceWorkerPlaceholders(sql string, start, end int64) string {
-	// Wrap table with subquery that computes chq_tsns (nanoseconds) from chq_timestamp (milliseconds)
-	sql = strings.ReplaceAll(sql, "{table}", `(SELECT *, "chq_timestamp" * 1000000 AS "chq_tsns" FROM logs) AS _t`)
+	// Test tables include both chq_timestamp (ms) and chq_tsns (ns) columns
+	sql = strings.ReplaceAll(sql, "{table}", "logs")
 	sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", start))
 	sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", end))
 	return sql
@@ -67,12 +67,13 @@ func s(v any) string {
 	}
 }
 
-// Make a minimal “metrics” table that the prom SQL builder expects.
+// Make a minimal "metrics" table that the prom SQL builder expects.
 // We intentionally call it `logs` so the same placeholder helper works.
 func createTempTable(t *testing.T, db *sql.DB) {
 	mustExec(t, db, `
 CREATE TABLE logs(
   "chq_timestamp"   BIGINT,
+  "chq_tsns"        BIGINT,
   "metric_name"        TEXT,
   "resource_service_name"   TEXT,
   "resource_k8s_pod_name"   TEXT,
@@ -89,24 +90,24 @@ func TestProm_CountPods_Global_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
-(10*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
-(20*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
+(10*1000,  10000000000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
+(20*1000,  20000000000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
 -- bucket 1
-(70*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
-(80*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1);
+(70*1000,  70000000000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
+(80*1000,  80000000000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1);
 `)
 
 	// --- Worker 2: only api-9x ------------------------------------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
-(40*1000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1),
+(40*1000,  40000000000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1),
 -- bucket 1
-(100*1000, 'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1);
+(100*1000, 100000000000, 'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1);
 `)
 
 	// Expression: count( count by (pod) ( rate({__name__="req_total"}[5m]) ) )
@@ -129,7 +130,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 
 	// Build the worker SQL once.
 	step := time.Minute
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 
 	// Run the leaf SQL on both workers.
 	rows1 := queryAll(t, db1, workerSQL)
@@ -227,23 +228,23 @@ func TestProm_CountPods_Global_TwoWorkers_SamePod_Dedup_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
-(10*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
-(20*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
+(10*1000,  10000000000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
+(20*1000,  20000000000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
 -- bucket 1
-(70*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1);
+(70*1000,  70000000000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1);
 `)
 
 	// --- Worker 2: the SAME pod 'api-7f' in the SAME buckets ------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
-(15*1000,  'req_total', 'api-gateway', 'api-7f', 'c', 1, 10, 1, 1),
+(15*1000,  15000000000,  'req_total', 'api-gateway', 'api-7f', 'c', 1, 10, 1, 1),
 -- bucket 1
-(80*1000,  'req_total', 'api-gateway', 'api-7f', 'd', 1, 10, 1, 1);
+(80*1000,  80000000000,  'req_total', 'api-gateway', 'api-7f', 'd', 1, 10, 1, 1);
 `)
 
 	// PromQL: global count of pods (no "by")
@@ -266,7 +267,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	leaf := plan.Leaves[0]
 
 	step := time.Minute
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 
 	// Run leaf on both workers
 	rows1 := queryAll(t, db1, workerSQL)
@@ -348,21 +349,21 @@ func TestProm_CountByPod_Rate_FastPath_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
-(10*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
-(20*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
-(70*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
-(80*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
-(90*1000,  'req_total', 'api-gateway', 'api-7f', 'c', 1, 10, 1, 1);
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+(10*1000,  10000000000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
+(20*1000,  20000000000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
+(70*1000,  70000000000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
+(80*1000,  80000000000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
+(90*1000,  90000000000,  'req_total', 'api-gateway', 'api-7f', 'c', 1, 10, 1, 1);
 `)
 
 	// --- Worker 2: api-9x only ------------------------------------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
-(40*1000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1),
-(100*1000, 'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1);
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+(40*1000,  40000000000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1),
+(100*1000, 100000000000, 'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1);
 `)
 
 	// We deliberately use SUM of inner COUNT so the parent consumes the leaf fast-path
@@ -385,7 +386,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	leaf := plan.Leaves[0]
 
 	step := time.Minute
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
@@ -461,27 +462,27 @@ func TestProm_CountPodsPerService_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (api-gateway)
-(10*1000,  'req_total', 'api-gateway', 'api-7f',  'a', 1, 10, 1, 1),
-(20*1000,  'req_total', 'api-gateway', 'api-7f',  'b', 1, 10, 1, 1),
-(40*1000,  'req_total', 'api-gateway', 'api-9x',  'a', 1, 10, 1, 1),
+(10*1000,  10000000000,  'req_total', 'api-gateway', 'api-7f',  'a', 1, 10, 1, 1),
+(20*1000,  20000000000,  'req_total', 'api-gateway', 'api-7f',  'b', 1, 10, 1, 1),
+(40*1000,  40000000000,  'req_total', 'api-gateway', 'api-9x',  'a', 1, 10, 1, 1),
 -- bucket 1 (api-gateway)
-(70*1000,  'req_total', 'api-gateway', 'api-7f',  'a', 1, 10, 1, 1),
-(80*1000,  'req_total', 'api-gateway', 'api-7f',  'c', 1, 10, 1, 1),
-(100*1000, 'req_total', 'api-gateway', 'api-9x',  'a', 1, 10, 1, 1);
+(70*1000,  70000000000,  'req_total', 'api-gateway', 'api-7f',  'a', 1, 10, 1, 1),
+(80*1000,  80000000000,  'req_total', 'api-gateway', 'api-7f',  'c', 1, 10, 1, 1),
+(100*1000, 100000000000, 'req_total', 'api-gateway', 'api-9x',  'a', 1, 10, 1, 1);
 `)
 
 	// --- Worker 2: auth rows (auth-1a, auth-2b) -------------------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (auth)
-(50*1000,  'req_total', 'auth',        'auth-1a', 'a', 1, 10, 1, 1),
+(50*1000,  50000000000,  'req_total', 'auth',        'auth-1a', 'a', 1, 10, 1, 1),
 -- bucket 1 (auth)
-(110*1000, 'req_total', 'auth',        'auth-1a', 'b', 1, 10, 1, 1),
-(115*1000, 'req_total', 'auth',        'auth-2b', 'a', 1, 10, 1, 1);
+(110*1000, 110000000000, 'req_total', 'auth',        'auth-1a', 'b', 1, 10, 1, 1),
+(115*1000, 115000000000, 'req_total', 'auth',        'auth-2b', 'a', 1, 10, 1, 1);
 `)
 
 	// PromQL: count by (service) of distinct pods per service:
@@ -508,7 +509,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	leaf := plan.Leaves[0]
 
 	step := time.Minute
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 
 	// Run leaf SQL on both workers.
 	rows1 := queryAll(t, db1, workerSQL)
@@ -604,27 +605,27 @@ func TestProm_CountPodsPerService_FromSumByPodService_TwoWorkers(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (api-gateway)
-(10*1000,  'req_total', 'api-gateway', 'api-7f',   'a', 1, 10, 1, 1),
-(20*1000,  'req_total', 'api-gateway', 'api-7f',   'b', 1, 10, 1, 1),
-(40*1000,  'req_total', 'api-gateway', 'api-9x',   'a', 1, 10, 1, 1),
+(10*1000,  10000000000,  'req_total', 'api-gateway', 'api-7f',   'a', 1, 10, 1, 1),
+(20*1000,  20000000000,  'req_total', 'api-gateway', 'api-7f',   'b', 1, 10, 1, 1),
+(40*1000,  40000000000,  'req_total', 'api-gateway', 'api-9x',   'a', 1, 10, 1, 1),
 -- bucket 1 (api-gateway)
-(70*1000,  'req_total', 'api-gateway', 'api-7f',   'a', 1, 10, 1, 1),
-(80*1000,  'req_total', 'api-gateway', 'api-7f',   'c', 1, 10, 1, 1),
-(100*1000, 'req_total', 'api-gateway', 'api-9x',   'a', 1, 10, 1, 1);
+(70*1000,  70000000000,  'req_total', 'api-gateway', 'api-7f',   'a', 1, 10, 1, 1),
+(80*1000,  80000000000,  'req_total', 'api-gateway', 'api-7f',   'c', 1, 10, 1, 1),
+(100*1000, 100000000000, 'req_total', 'api-gateway', 'api-9x',   'a', 1, 10, 1, 1);
 `)
 
 	// --- Worker 2: auth rows (auth-1a, auth-2b) -------------------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (auth)
-(50*1000,  'req_total', 'auth',        'auth-1a',  'a', 1, 10, 1, 1),
+(50*1000,  50000000000,  'req_total', 'auth',        'auth-1a',  'a', 1, 10, 1, 1),
 -- bucket 1 (auth)
-(110*1000, 'req_total', 'auth',        'auth-1a',  'b', 1, 10, 1, 1),
-(115*1000, 'req_total', 'auth',        'auth-2b',  'a', 1, 10, 1, 1);
+(110*1000, 110000000000, 'req_total', 'auth',        'auth-1a',  'b', 1, 10, 1, 1),
+(115*1000, 115000000000, 'req_total', 'auth',        'auth-2b',  'a', 1, 10, 1, 1);
 `)
 
 	// Worker query: sum by (pod,service)(rate(...)).
@@ -646,7 +647,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	leaf := plan.Leaves[0]
 
 	// Execute worker SQL on both workers for 1m steps over [0, 120s).
-	sql := replaceWorkerPlaceholders(leaf.ToWorkerSQL(time.Minute), 0, 120*1000*1000000)
+	sql := replaceWorkerPlaceholders(leaf.ToWorkerSQL(time.Minute), 0, 120*1000)
 	rows1 := queryAll(t, db1, sql)
 	rows2 := queryAll(t, db2, sql)
 	if len(rows1) == 0 && len(rows2) == 0 {
@@ -712,26 +713,26 @@ func TestProm_Rate_1m_RangeCoverage_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket [0s..30s)
-(10*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
-(20*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
+(10*1000,  10000000000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
+(20*1000,  20000000000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
 -- bucket [60s..90s)
-(70*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
-(80*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
+(70*1000,  70000000000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
+(80*1000,  80000000000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
 -- bucket [90s..120s)
-(90*1000,  'req_total', 'api-gateway', 'api-7f', 'c', 1, 1, 1, 1);
+(90*1000,  90000000000,  'req_total', 'api-gateway', 'api-7f', 'c', 1, 1, 1, 1);
 `)
 
 	// --- Worker 2: api-9x -----------------------------------------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket [30s..60s)
-(40*1000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
+(40*1000,  40000000000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
 -- bucket [90s..120s)
-(100*1000, 'req_total', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1);
+(100*1000, 100000000000, 'req_total', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1);
 `)
 
 	// PromQL: rate over 1m, parent sums by pod (so we keep pod identity).
@@ -751,7 +752,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	leaf := plan.Leaves[0]
 
 	step := 30 * time.Second // 30s step so second bucket fully covers 1m window
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 
 	// Run on both workers
 	rows1 := queryAll(t, db1, workerSQL)
@@ -841,25 +842,25 @@ func TestProm_SumOfCount_vs_CountOfCount_TwoWorkers_Eval(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
-(10*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
-(20*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
+(10*1000,  10000000000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
+(20*1000,  20000000000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
 -- bucket 1
-(70*1000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
-(80*1000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
-(90*1000,  'req_total', 'api-gateway', 'api-7f', 'c', 1, 10, 1, 1);
+(70*1000,  70000000000,  'req_total', 'api-gateway', 'api-7f', 'a', 1, 10, 1, 1),
+(80*1000,  80000000000,  'req_total', 'api-gateway', 'api-7f', 'b', 1, 10, 1, 1),
+(90*1000,  90000000000,  'req_total', 'api-gateway', 'api-7f', 'c', 1, 10, 1, 1);
 `)
 
 	// --- Worker 2: api-9x with 1 series per bucket ----------------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
-(40*1000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1),
+(40*1000,  40000000000,  'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1),
 -- bucket 1
-(100*1000, 'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1);
+(100*1000, 100000000000, 'req_total', 'api-gateway', 'api-9x', 'a', 1, 10, 1, 1);
 `)
 
 	step := time.Minute
@@ -879,7 +880,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 		}
 		leaf := plan.Leaves[0]
 
-		workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
+		workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 		rows1 := queryAll(t, db1, workerSQL)
 		rows2 := queryAll(t, db2, workerSQL)
 
@@ -980,25 +981,25 @@ func TestProm_CountByPod_InstantVector(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
-(10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
-(20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
+(10*1000,  10000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
+(20*1000,  20000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
 -- bucket 1
-(70*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
-(80*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
-(90*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'c', 1, 1, 1, 1);
+(70*1000,  70000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
+(80*1000,  80000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
+(90*1000,  90000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'c', 1, 1, 1, 1);
 `)
 
 	// --- Worker 2 -------------------------------------------------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
-(40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
+(40*1000,  40000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
 -- bucket 1
-(100*1000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1);
+(100*1000, 100000000000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1);
 `)
 
 	step := time.Minute
@@ -1017,7 +1018,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	}
 	leaf := plan.Leaves[0]
 
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
 	if len(rows1) == 0 && len(rows2) == 0 {
@@ -1091,25 +1092,25 @@ func TestProm_CountOfPods_InstantVector(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
-(10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
-(20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
+(10*1000,  10000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
+(20*1000,  20000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
 -- bucket 1
-(70*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
-(80*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
-(90*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'c', 1, 1, 1, 1);
+(70*1000,  70000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
+(80*1000,  80000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
+(90*1000,  90000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'c', 1, 1, 1, 1);
 `)
 
 	// --- Worker 2 -------------------------------------------------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0
-(40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
+(40*1000,  40000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
 -- bucket 1
-(100*1000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1);
+(100*1000, 100000000000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1);
 `)
 
 	step := time.Minute
@@ -1128,7 +1129,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	}
 	leaf := plan.Leaves[0]
 
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
 	if len(rows1) == 0 && len(rows2) == 0 {
@@ -1205,24 +1206,24 @@ func TestProm_Max_GT_Scalar_Integration(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (all <= 0.9)
-(10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.80, 1, 0.80, 0.80),
-(20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.70, 1, 0.70, 0.70),
+(10*1000,  10000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.80, 1, 0.80, 0.80),
+(20*1000,  20000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.70, 1, 0.70, 0.70),
 -- bucket 1 (includes > 0.9)
-(70*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.95, 1, 0.95, 0.95),
-(80*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.65, 1, 0.65, 0.65);
+(70*1000,  70000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.95, 1, 0.95, 0.95),
+(80*1000,  80000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.65, 1, 0.65, 0.65);
 `)
 
 	// --- Worker 2 -------------------------------------------------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (still <= 0.9 globally)
-(40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.85, 1, 0.85, 0.85),
+(40*1000,  40000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.85, 1, 0.85, 0.85),
 -- bucket 1 (also > 0.9)
-(100*1000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.91, 1, 0.91, 0.91);
+(100*1000, 100000000000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.91, 1, 0.91, 0.91);
 `)
 
 	step := time.Minute
@@ -1241,7 +1242,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	}
 	leaf := plan.Leaves[0]
 
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
 	if len(rows1) == 0 && len(rows2) == 0 {
@@ -1316,24 +1317,24 @@ func TestProm_Max_GT_Scalar_Filter_Integration(t *testing.T) {
 	db1 := openDuckDB(t)
 	createTempTable(t, db1)
 	mustExec(t, db1, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (all <= 0.9)
-(10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.80, 1, 0.80, 0.80),
-(20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.70, 1, 0.70, 0.70),
+(10*1000,  10000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.80, 1, 0.80, 0.80),
+(20*1000,  20000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.70, 1, 0.70, 0.70),
 -- bucket 1 (includes > 0.9)
-(70*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.95, 1, 0.95, 0.95),
-(80*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.65, 1, 0.65, 0.65);
+(70*1000,  70000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.95, 1, 0.95, 0.95),
+(80*1000,  80000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.65, 1, 0.65, 0.65);
 `)
 
 	// --- Worker 2 -------------------------------------------------------------
 	db2 := openDuckDB(t)
 	createTempTable(t, db2)
 	mustExec(t, db2, `
-INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
+INSERT INTO logs("chq_timestamp","chq_tsns","metric_name","resource_service_name","resource_k8s_pod_name",instance,chq_rollup_sum,chq_rollup_count,chq_rollup_min,chq_rollup_max) VALUES
 -- bucket 0 (still <= 0.9 globally)
-(40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.85, 1, 0.85, 0.85),
+(40*1000,  40000000000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.85, 1, 0.85, 0.85),
 -- bucket 1 (also > 0.9)
-(100*1000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.91, 1, 0.91, 0.91);
+(100*1000, 100000000000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.91, 1, 0.91, 0.91);
 `)
 
 	step := time.Minute
@@ -1352,7 +1353,7 @@ INSERT INTO logs("chq_timestamp","metric_name","resource_service_name","resource
 	}
 	leaf := plan.Leaves[0]
 
-	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000*1000000)
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
 	if len(rows1) == 0 && len(rows2) == 0 {

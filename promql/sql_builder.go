@@ -342,10 +342,11 @@ func BuildAggFileSQL(be *BaseExpr, step time.Duration) string {
 	// SUM the pre-aggregated counts
 	cols = append(cols, `SUM("count") AS count`)
 
-	// Build WHERE with time predicate using chq_tsns (nanoseconds)
+	// Build WHERE with time predicate using bucket_ts (milliseconds)
+	// Agg files use bucket_ts for time filtering, consistent with API millisecond timestamps
 	whereParts := []string{
-		"\"chq_tsns\" >= {start}",
-		"\"chq_tsns\" < {end}",
+		"\"bucket_ts\" >= {start}",
+		"\"bucket_ts\" < {end}",
 	}
 
 	// Add matchers from LogLeaf as WHERE filters
@@ -535,7 +536,8 @@ type need struct {
 }
 
 const (
-	timePredicate = "\"chq_tsns\" >= {start} AND \"chq_tsns\" < {end}"
+	// Time filtering uses chq_timestamp (milliseconds) for compatibility with API timestamps
+	timePredicate = "\"chq_timestamp\" >= {start} AND \"chq_timestamp\" < {end}"
 )
 
 func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
@@ -545,10 +547,10 @@ func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 
 	where := withTime(whereFor(be))
 
-	// Align [start, end) to step boundaries (convert from ns to ms).
-	// {start} and {end} are in nanoseconds, convert to milliseconds for bucket calculation
-	alignedStart := fmt.Sprintf("(CAST({start}/1000000 AS BIGINT) - (CAST({start}/1000000 AS BIGINT) %% %d))", stepMs)
-	alignedEndExclusive := fmt.Sprintf("((CAST({end}/1000000 AS BIGINT) - 1) - ((CAST({end}/1000000 AS BIGINT) - 1) %% %d) + %d)", stepMs, stepMs)
+	// Align [start, end) to step boundaries.
+	// {start} and {end} are in milliseconds, matching chq_timestamp
+	alignedStart := fmt.Sprintf("(CAST({start} AS BIGINT) - (CAST({start} AS BIGINT) %% %d))", stepMs)
+	alignedEndExclusive := fmt.Sprintf("((CAST({end} AS BIGINT) - 1) - ((CAST({end} AS BIGINT) - 1) %% %d) + %d)", stepMs, stepMs)
 
 	// Buckets CTE: dense time grid (in milliseconds).
 	buckets := fmt.Sprintf(
