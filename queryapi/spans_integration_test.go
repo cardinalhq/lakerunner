@@ -219,10 +219,10 @@ func TestSpansQueryWithTimeRange(t *testing.T) {
 		},
 	}
 
-	// Query with time range 1500ms-3500ms in nanoseconds (should return span 3 - GET /api/products)
+	// Query with time range 1500ms-3500ms in milliseconds (should return span 3 - GET /api/products)
 	sql := replaceSpansTable(leaf.ToSpansWorkerSQLWithLimit(0, "desc", nil))
-	sql = strings.ReplaceAll(sql, "{start}", "1500000000") // 1500ms in nanoseconds
-	sql = strings.ReplaceAll(sql, "{end}", "3500000000")   // 3500ms in nanoseconds
+	sql = strings.ReplaceAll(sql, "{start}", "1500") // 1500ms
+	sql = strings.ReplaceAll(sql, "{end}", "3500")   // 3500ms
 
 	rows := queryAllSpans(t, db, sql)
 	if len(rows) != 1 {
@@ -282,9 +282,9 @@ func getInt64(v any) int64 {
 
 // Helper functions from ddb_harness_test.go
 func replaceStartEnd(sql string) string {
-	// Use nanosecond values (multiply ms by 1000000)
-	sql = strings.ReplaceAll(sql, "{start}", "500000000")
-	sql = strings.ReplaceAll(sql, "{end}", "5000000000")
+	// Use millisecond values (filtering uses chq_timestamp in ms)
+	sql = strings.ReplaceAll(sql, "{start}", "500")
+	sql = strings.ReplaceAll(sql, "{end}", "5000")
 	return sql
 }
 

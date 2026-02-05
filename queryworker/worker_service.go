@@ -325,6 +325,8 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 		switch col {
 		case "chq_timestamp":
 			exemplar.Timestamp = vals[i].(int64)
+		case "chq_tsns":
+			exemplar.TimestampNs = vals[i].(int64)
 		default:
 			if vals[i] != nil {
 				tags[col] = vals[i]

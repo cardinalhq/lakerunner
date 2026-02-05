@@ -58,8 +58,9 @@ type SketchInput struct {
 }
 
 type Exemplar struct {
-	Timestamp int64          `json:"timestamp"`
-	Tags      map[string]any `json:"tags"`
+	Timestamp   int64          `json:"timestamp"`
+	TimestampNs int64          `json:"timestamp_ns"`
+	Tags        map[string]any `json:"tags"`
 }
 
 type TagValue struct {
