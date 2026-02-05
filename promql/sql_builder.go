@@ -409,6 +409,7 @@ func (be *BaseExpr) ToWorkerSQLForTagNames() string {
 	// Metrics tables don't have chq_fingerprint or chq_id - those are only in logs.
 	// The COLUMNS(*)::VARCHAR cast handles type conversion for any BIGINT columns.
 	excludeCols := []string{
+		"chq_timestamp",
 		"chq_tsns",
 		"chq_rollup_sum",
 		"chq_rollup_count",
