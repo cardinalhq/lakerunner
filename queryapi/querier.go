@@ -621,10 +621,6 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	// Legacy Scala API compatibility endpoints
-	mux.HandleFunc("/api/v1/graph", q.apiKeyMiddleware(q.handleGraphQuery))
-	mux.HandleFunc("/api/v1/tags/logs", q.apiKeyMiddleware(q.handleTagsQuery))
-
 	srv := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
