@@ -482,22 +482,6 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				globSize = ws.LogsGlobSize
 			}
 		}
-	} else if req.LegacyLeaf != nil {
-		// Handle direct legacy AST queries
-		slog.Info("Worker received LegacyLeaf request",
-			slog.Int("segmentCount", len(req.Segments)),
-			slog.Int("limit", req.Limit),
-			slog.String("order", req.ToOrderString()))
-		if req.TagName != "" {
-			workerSql = req.LegacyLeaf.ToWorkerSQLForTagValues(req.TagName)
-			isTagValuesQuery = true
-		} else {
-			workerSql = req.LegacyLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString(), req.Fields)
-		}
-		// Legacy queries are always for logs (not spans/traces)
-		cacheManager = ws.LogsCM
-		globSize = ws.LogsGlobSize
-		slog.Info("Generated SQL for LegacyLeaf", slog.String("sql", workerSql))
 	} else {
 		requestSpan.SetStatus(codes.Error, "no leaf to evaluate")
 		http.Error(w, "no leaf to evaluate", http.StatusBadRequest)
@@ -517,8 +501,6 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		queryType = "spans"
 	case req.LogLeaf != nil:
 		queryType = "logs"
-	case req.LegacyLeaf != nil:
-		queryType = "legacy_logs"
 	default:
 		queryType = "unknown"
 	}
@@ -614,8 +596,8 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ws.processResponse(w, responseChannel, ctx)
 		return
 
-	} else if req.LogLeaf != nil || req.LegacyLeaf != nil {
-		// Handle logs query (both LogLeaf and LegacyLeaf)
+	} else if req.LogLeaf != nil {
+		// Handle logs query
 		exemplarChannel, err := EvaluatePushDown(ctx, cacheManager, req, workerSql, globSize, exemplarMapper)
 		if err != nil {
 			requestSpan.RecordError(err)
@@ -627,15 +609,10 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Convert Exemplar channel to Timestamped channel
 		responseChannel := make(chan promql.Timestamped, 100)
-		rowCount := 0
 		go func() {
 			defer close(responseChannel)
 			for ex := range exemplarChannel {
-				rowCount++
 				responseChannel <- ex
-			}
-			if req.LegacyLeaf != nil {
-				slog.Info("LegacyLeaf query returned rows", slog.Int("rowCount", rowCount))
 			}
 		}()
 
