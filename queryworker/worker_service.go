@@ -330,6 +330,8 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 		case "chq_tsns":
 			exemplar.TimestampNs = vals[i].(int64)
 			tags["chq_tsns"] = vals[i]
+		case "metric_name":
+			// skip: metric_name is junk in log records
 		default:
 			if vals[i] != nil {
 				tags[col] = vals[i]
