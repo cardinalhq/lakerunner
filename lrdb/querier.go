@@ -111,6 +111,9 @@ type Querier interface {
 	// Updates or inserts a single pack estimate for any signal type
 	UpsertPackEstimate(ctx context.Context, arg UpsertPackEstimateParams) error
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
+	// Marks all log segments in the given date range as unpublished.
+	// Used by debug wipe command to remove data from visibility.
+	WipeLogSegsByDateRange(ctx context.Context, arg WipeLogSegsByDateRangeParams) (int64, error)
 	WorkQueueAdd(ctx context.Context, arg WorkQueueAddParams) (WorkQueue, error)
 	WorkQueueClaim(ctx context.Context, arg WorkQueueClaimParams) (WorkQueue, error)
 	WorkQueueCleanup(ctx context.Context, heartbeatTimeout time.Duration) error

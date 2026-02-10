@@ -162,3 +162,12 @@ WHERE organization_id = @organization_id
     OR (@filter_sort_version = true AND sort_version < @min_sort_version)
   )
 ORDER BY upper(ts_range) DESC;
+
+-- name: WipeLogSegsByDateRange :execrows
+-- Marks all log segments in the given date range as unpublished.
+-- Used by debug wipe command to remove data from visibility.
+UPDATE log_seg
+SET published = false
+WHERE dateint >= @start_dateint
+  AND dateint <= @end_dateint
+  AND published = true;

@@ -328,6 +328,29 @@ func (q *Queries) MarkLogSegsCompactedByKeys(ctx context.Context, arg MarkLogSeg
 	return err
 }
 
+const wipeLogSegsByDateRange = `-- name: WipeLogSegsByDateRange :execrows
+UPDATE log_seg
+SET published = false
+WHERE dateint >= $1
+  AND dateint <= $2
+  AND published = true
+`
+
+type WipeLogSegsByDateRangeParams struct {
+	StartDateint int32 `json:"start_dateint"`
+	EndDateint   int32 `json:"end_dateint"`
+}
+
+// Marks all log segments in the given date range as unpublished.
+// Used by debug wipe command to remove data from visibility.
+func (q *Queries) WipeLogSegsByDateRange(ctx context.Context, arg WipeLogSegsByDateRangeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, wipeLogSegsByDateRange, arg.StartDateint, arg.EndDateint)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertLogSegmentDirect = `-- name: insertLogSegmentDirect :exec
 INSERT INTO log_seg (
   organization_id,

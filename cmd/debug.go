@@ -35,4 +35,5 @@ func init() {
 	debugCmd.AddCommand(debugcmd.GetDownloadCmd())
 	debugCmd.AddCommand(debugcmd.GetIngestLogsCmd())
 	debugCmd.AddCommand(debugcmd.GetPubSubCmd())
+	debugCmd.AddCommand(debugcmd.GetUnpublishCmd())
 }
