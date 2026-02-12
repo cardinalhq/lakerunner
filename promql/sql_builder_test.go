@@ -649,6 +649,11 @@ func TestBuildSimpleLogAggSQL_NoMatchers(t *testing.T) {
 // --- Agg file SQL tests ---
 
 func TestCanUseAggFile(t *testing.T) {
+	// Enable agg file queries for this test
+	oldVal := AggFileQueryEnabled
+	AggFileQueryEnabled = true
+	t.Cleanup(func() { AggFileQueryEnabled = oldVal })
+
 	tests := []struct {
 		name          string
 		aggFields     []string
@@ -757,6 +762,38 @@ func TestCanUseAggFile(t *testing.T) {
 					tt.aggFields, tt.groupBy, tt.matcherFields, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestAggFileQueryEnabled_ControlsCanUseAggFile(t *testing.T) {
+	// Test that the feature flag controls CanUseAggFile behavior
+
+	// Save and restore the original value
+	originalValue := AggFileQueryEnabled
+	t.Cleanup(func() { AggFileQueryEnabled = originalValue })
+
+	aggFields := []string{"log_level", "resource_customer_domain"}
+	groupBy := []string{"log_level"}
+	matcherFields := []string{}
+
+	// When disabled (default), CanUseAggFile should return false
+	AggFileQueryEnabled = false
+	result := CanUseAggFile(aggFields, groupBy, matcherFields)
+	if result {
+		t.Fatal("CanUseAggFile returned true when AggFileQueryEnabled=false, expected false")
+	}
+
+	// When enabled, CanUseAggFile should return true for valid inputs
+	AggFileQueryEnabled = true
+	result = CanUseAggFile(aggFields, groupBy, matcherFields)
+	if !result {
+		t.Fatal("CanUseAggFile returned false when AggFileQueryEnabled=true, expected true")
+	}
+
+	// Verify default is false
+	AggFileQueryEnabled = originalValue
+	if AggFileQueryEnabled {
+		t.Fatal("AggFileQueryEnabled default should be false")
 	}
 }
 

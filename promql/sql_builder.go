@@ -37,6 +37,11 @@ func normalizeFieldName(field string) string {
 	return strings.ReplaceAll(field, ".", "_")
 }
 
+// AggFileQueryEnabled controls whether agg_ parquet files are used for query optimization.
+// When false (default), queries always use tbl_ files. When true, eligible queries may use
+// pre-aggregated agg_ files for faster count/summary operations.
+var AggFileQueryEnabled = false
+
 var supportedFuncs = map[string]bool{
 	"sum_over_time":      true,
 	"avg_over_time":      true,
@@ -288,7 +293,11 @@ func buildComplexLogAggSQL(be *BaseExpr, step time.Duration) string {
 // and matcher fields. The query can use the agg_ file if both GROUP BY fields and matcher
 // fields are subsets of agg_fields.
 // The agg_ files use the actual field names as column names (e.g., "resource_customer_domain").
+// Returns false if AggFileQueryEnabled is false.
 func CanUseAggFile(aggFields []string, groupBy []string, matcherFields []string) bool {
+	if !AggFileQueryEnabled {
+		return false
+	}
 	if len(aggFields) == 0 {
 		return false
 	}
