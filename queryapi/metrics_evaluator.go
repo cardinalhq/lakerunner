@@ -583,3 +583,102 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 
 	return allSegments, nil
 }
+
+// seriesStats tracks running statistics for a single series.
+type seriesStats struct {
+	label string
+	tags  map[string]any
+	min   float64
+	max   float64
+	sum   float64
+	count int64
+}
+
+// EvaluateMetricsSummary runs a metrics query and aggregates results into per-series summaries.
+// This reuses the existing streaming infrastructure but collects results instead of streaming them.
+//
+// TODO(optimization): For production, implement divide-and-merge approach where:
+// 1. Workers receive summary requests and use ToSummarySQL() to query rollup columns directly
+// 2. Workers return local SeriesSummary per segment (using chq_rollup_min/max/sum/count/p50/etc.)
+// 3. Query-api merges summaries from all workers (sum counts, min of mins, max of maxes, merge DDSketches for percentiles)
+// This is more efficient because workers can use pre-computed rollups and transfer less data.
+func (q *QuerierService) EvaluateMetricsSummary(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs, endTs int64,
+	queryPlan promql.QueryPlan,
+) ([]SeriesSummary, error) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
+	ctx, evalSpan := tracer.Start(ctx, "query.api.evaluate_metrics_summary")
+	defer evalSpan.End()
+
+	// Run the normal query
+	resultsCh, err := q.EvaluateMetricsQuery(ctx, orgID, startTs, endTs, queryPlan)
+	if err != nil {
+		evalSpan.RecordError(err)
+		evalSpan.SetStatus(codes.Error, "failed to evaluate query")
+		return nil, err
+	}
+
+	// Collect and aggregate results by label
+	statsByLabel := make(map[string]*seriesStats)
+
+	for res := range resultsCh {
+		for _, v := range res {
+			label := queryPlan.Root.Label(v.Tags)
+			if v.Value.Num != v.Value.Num { // NaN check
+				continue
+			}
+
+			stats, exists := statsByLabel[label]
+			if !exists {
+				stats = &seriesStats{
+					label: label,
+					tags:  v.Tags,
+					min:   v.Value.Num,
+					max:   v.Value.Num,
+					sum:   0,
+					count: 0,
+				}
+				statsByLabel[label] = stats
+			}
+
+			// Update running stats
+			if v.Value.Num < stats.min {
+				stats.min = v.Value.Num
+			}
+			if v.Value.Num > stats.max {
+				stats.max = v.Value.Num
+			}
+			stats.sum += v.Value.Num
+			stats.count++
+		}
+	}
+
+	// Convert to SeriesSummary slice
+	summaries := make([]SeriesSummary, 0, len(statsByLabel))
+	for _, stats := range statsByLabel {
+		avg := 0.0
+		if stats.count > 0 {
+			avg = stats.sum / float64(stats.count)
+		}
+		summaries = append(summaries, SeriesSummary{
+			Label: stats.label,
+			Tags:  stats.tags,
+			Min:   stats.min,
+			Max:   stats.max,
+			Avg:   avg,
+			Sum:   stats.sum,
+			Count: stats.count,
+			// Note: P50/P90/P95/P99 would require DDSketch merging;
+			// for MVP we omit these (they'll be zero)
+			P50: 0,
+			P90: 0,
+			P95: 0,
+			P99: 0,
+		})
+	}
+
+	evalSpan.SetAttributes(attribute.Int("series_count", len(summaries)))
+	return summaries, nil
+}

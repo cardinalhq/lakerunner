@@ -43,6 +43,7 @@ type queryPayload struct {
 	Reverse bool     `json:"reverse,omitempty"`
 	Limit   int      `json:"limit,omitempty"`
 	Fields  []string `json:"fields,omitempty"`
+	Summary bool     `json:"summary,omitempty"` // Return per-series aggregate stats instead of time series
 
 	// derived fields
 	OrgUUID uuid.UUID `json:"-"`
@@ -179,6 +180,12 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 	parseSpan.SetAttributes(attribute.Int("leaf_count", len(plan.Leaves)))
 	parseSpan.End()
 
+	// Summary mode: return per-series aggregate stats instead of time series
+	if qPayload.Summary {
+		q.handlePromQuerySummary(ctx, w, qPayload, plan)
+		return
+	}
+
 	resultsCh, err := q.EvaluateMetricsQuery(ctx, qPayload.OrgUUID, qPayload.StartTs, qPayload.EndTs, plan)
 	if err != nil {
 		requestSpan.RecordError(err)
@@ -227,6 +234,48 @@ func (q *QuerierService) sendEvalResults(ctx context.Context, w http.ResponseWri
 
 		}
 	}
+}
+
+// SeriesSummary contains aggregate statistics for a single time series.
+type SeriesSummary struct {
+	Label string         `json:"label"`
+	Tags  map[string]any `json:"tags"`
+	Min   float64        `json:"min"`
+	Max   float64        `json:"max"`
+	Avg   float64        `json:"avg"`
+	Sum   float64        `json:"sum"`
+	Count int64          `json:"count"`
+	P50   float64        `json:"p50"`
+	P90   float64        `json:"p90"`
+	P95   float64        `json:"p95"`
+	P99   float64        `json:"p99"`
+}
+
+func (q *QuerierService) handlePromQuerySummary(ctx context.Context, w http.ResponseWriter, qp *queryPayload, plan promql.QueryPlan) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
+	ctx, summarySpan := tracer.Start(ctx, "query.api.metrics_summary")
+	defer summarySpan.End()
+
+	writeSSE, ok := q.sseWriter(w)
+	if !ok {
+		return
+	}
+
+	summaries, err := q.EvaluateMetricsSummary(ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
+	if err != nil {
+		summarySpan.RecordError(err)
+		summarySpan.SetStatus(codes.Error, "summary evaluation error")
+		_ = writeSSE("error", map[string]string{"message": err.Error()})
+		return
+	}
+
+	for _, s := range summaries {
+		if err := writeSSE("summary", s); err != nil {
+			slog.Error("write SSE summary failed", "error", err)
+			return
+		}
+	}
+	_ = writeSSE("done", map[string]string{"status": "ok"})
 }
 
 type APIErrorCode string
