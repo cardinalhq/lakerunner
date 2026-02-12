@@ -87,7 +87,7 @@ func dateIntHoursRange(startMs, endMs int64, loc *time.Location, reverse bool) [
 		hoursSet = make(map[string]struct{})
 	}
 
-	for t := start; !t.After(end.Add(time.Hour)); t = t.Add(time.Hour) {
+	for t := start; !t.After(end); t = t.Add(time.Hour) {
 		di := toDateInt(t)
 		if curDateInt != 0 && di != curDateInt {
 			flush()
