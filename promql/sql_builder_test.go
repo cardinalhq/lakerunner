@@ -824,11 +824,6 @@ func replaceTableAgg(sql string) string {
 }
 
 func TestBuildAggFileSQL_ReaggregateToLargerStep(t *testing.T) {
-	// Enable agg file queries for this test
-	oldVal := AggFileQueryEnabled
-	AggFileQueryEnabled = true
-	t.Cleanup(func() { AggFileQueryEnabled = oldVal })
-
 	db := openDuckDB(t)
 	createAggTable(t, db, "resource_customer_domain")
 
@@ -894,11 +889,6 @@ func TestBuildAggFileSQL_ReaggregateToLargerStep(t *testing.T) {
 }
 
 func TestBuildAggFileSQL_NoGroupBy(t *testing.T) {
-	// Enable agg file queries for this test
-	oldVal := AggFileQueryEnabled
-	AggFileQueryEnabled = true
-	t.Cleanup(func() { AggFileQueryEnabled = oldVal })
-
 	db := openDuckDB(t)
 	createAggTable(t, db, "resource_customer_domain")
 
@@ -936,11 +926,6 @@ func TestBuildAggFileSQL_NoGroupBy(t *testing.T) {
 }
 
 func TestBuildAggFileSQL_GroupByStreamField(t *testing.T) {
-	// Enable agg file queries for this test
-	oldVal := AggFileQueryEnabled
-	AggFileQueryEnabled = true
-	t.Cleanup(func() { AggFileQueryEnabled = oldVal })
-
 	db := openDuckDB(t)
 	createAggTable(t, db, "resource_service_name")
 
@@ -988,11 +973,6 @@ func TestBuildAggFileSQL_GroupByStreamField(t *testing.T) {
 }
 
 func TestBuildAggFileSQL_WithMatchers(t *testing.T) {
-	// Enable agg file queries for this test
-	oldVal := AggFileQueryEnabled
-	AggFileQueryEnabled = true
-	t.Cleanup(func() { AggFileQueryEnabled = oldVal })
-
 	db := openDuckDB(t)
 	createAggTable(t, db, "resource_service_name")
 
@@ -1060,11 +1040,6 @@ func TestBuildAggFileSQL_WithMatchers(t *testing.T) {
 }
 
 func TestBuildAggFileSQL_WithNegativeMatcher(t *testing.T) {
-	// Enable agg file queries for this test
-	oldVal := AggFileQueryEnabled
-	AggFileQueryEnabled = true
-	t.Cleanup(func() { AggFileQueryEnabled = oldVal })
-
 	db := openDuckDB(t)
 	createAggTable(t, db, "resource_service_name")
 
