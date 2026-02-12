@@ -63,7 +63,7 @@ func getBucketConfigsCmd() *cobra.Command {
 	}
 	createCmd.Flags().StringVar(&cloudProvider, "cloud-provider", "", "Cloud provider (aws/gcp/azure)")
 	createCmd.Flags().StringVar(&region, "region", "", "Region")
-	createCmd.Flags().StringVar(&bcEndpoint, "endpoint", "", "Custom endpoint")
+	createCmd.Flags().StringVar(&bcEndpoint, "storage-endpoint", "", "Custom endpoint")
 	createCmd.Flags().StringVar(&role, "role", "", "IAM role")
 	createCmd.Flags().BoolVar(&usePathStyle, "use-path-style", false, "Use path-style S3 URLs")
 	createCmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false, "Allow insecure TLS connections")
