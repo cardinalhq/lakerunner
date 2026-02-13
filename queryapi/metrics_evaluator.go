@@ -800,6 +800,7 @@ func (q *QuerierService) evaluateMetricsSummaryWithSketches(
 	// Collect sketches from all workers
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	var workerErrors []error
 	sketchesBySeries := make(map[string]*ddsketch.DDSketch)
 	tagsBySeries := make(map[string]map[string]any)
 
@@ -821,6 +822,9 @@ func (q *QuerierService) evaluateMetricsSummaryWithSketches(
 			ch, err := q.summaryPushDown(ctx, worker, req)
 			if err != nil {
 				slog.Error("summary pushdown failed", "worker", worker, "err", err)
+				mu.Lock()
+				workerErrors = append(workerErrors, fmt.Errorf("worker %s:%d: %w", worker.IP, worker.Port, err))
+				mu.Unlock()
 				return
 			}
 
@@ -851,6 +855,11 @@ func (q *QuerierService) evaluateMetricsSummaryWithSketches(
 	}
 
 	wg.Wait()
+
+	// If any workers failed, return error to trigger fallback
+	if len(workerErrors) > 0 {
+		return nil, fmt.Errorf("summary pushdown failed for %d workers: %w", len(workerErrors), workerErrors[0])
+	}
 
 	sketchSpan.SetAttributes(
 		attribute.Int("worker_count", len(workers)),
