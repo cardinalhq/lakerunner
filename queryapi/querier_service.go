@@ -44,6 +44,8 @@ type PushDownRequest struct {
 	TagName  string `json:"tagName"`  // Set this to a tag name to get distinct values for that tag
 	TagNames bool   `json:"tagNames"` // Set this to true to get distinct tag names (column names) instead of values
 	IsSpans  bool   `json:"isSpans"`  // Set this to true for spans queries
+
+	IsSummary bool `json:"isSummary"` // Set this to true for summary queries that return DDSketch per series
 }
 
 func (p *PushDownRequest) ToOrderString() string {

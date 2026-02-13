@@ -19,10 +19,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/DataDog/sketches-go/ddsketch"
+	"github.com/DataDog/sketches-go/ddsketch/mapping"
+	"github.com/DataDog/sketches-go/ddsketch/store"
 	"github.com/google/uuid"
 	"github.com/prometheus/common/model"
 	"go.opentelemetry.io/otel"
@@ -582,4 +587,510 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 	}
 
 	return allSegments, nil
+}
+
+// seriesStats tracks running statistics for a single series.
+type seriesStats struct {
+	label string
+	tags  map[string]any
+	min   float64
+	max   float64
+	sum   float64
+	count int64
+}
+
+// EvaluateMetricsSummary runs a metrics query and aggregates results into per-series summaries.
+// It first tries the optimized DDSketch-based implementation, falling back to the legacy
+// streaming approach if that fails.
+func (q *QuerierService) EvaluateMetricsSummary(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs, endTs int64,
+	queryPlan promql.QueryPlan,
+) ([]SeriesSummary, error) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
+	ctx, evalSpan := tracer.Start(ctx, "query.api.evaluate_metrics_summary")
+	defer evalSpan.End()
+
+	// Try new DDSketch-based implementation
+	summaries, err := q.evaluateMetricsSummaryWithSketches(ctx, orgID, startTs, endTs, queryPlan)
+	if err != nil {
+		slog.Warn("sketch summary failed, falling back to legacy", "error", err)
+		evalSpan.SetAttributes(attribute.Bool("fallback_to_legacy", true))
+		return q.evaluateMetricsSummaryLegacy(ctx, orgID, startTs, endTs, queryPlan)
+	}
+
+	evalSpan.SetAttributes(attribute.Int("series_count", len(summaries)))
+	return summaries, nil
+}
+
+// evaluateMetricsSummaryLegacy is the original streaming-based implementation.
+// It runs a full time-series query and aggregates results client-side.
+func (q *QuerierService) evaluateMetricsSummaryLegacy(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs, endTs int64,
+	queryPlan promql.QueryPlan,
+) ([]SeriesSummary, error) {
+	// Run the normal query
+	resultsCh, err := q.EvaluateMetricsQuery(ctx, orgID, startTs, endTs, queryPlan)
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect and aggregate results by label
+	statsByLabel := make(map[string]*seriesStats)
+
+	for res := range resultsCh {
+		for _, v := range res {
+			label := queryPlan.Root.Label(v.Tags)
+			if v.Value.Num != v.Value.Num { // NaN check
+				continue
+			}
+
+			stats, exists := statsByLabel[label]
+			if !exists {
+				stats = &seriesStats{
+					label: label,
+					tags:  v.Tags,
+					min:   v.Value.Num,
+					max:   v.Value.Num,
+					sum:   0,
+					count: 0,
+				}
+				statsByLabel[label] = stats
+			}
+
+			// Update running stats
+			if v.Value.Num < stats.min {
+				stats.min = v.Value.Num
+			}
+			if v.Value.Num > stats.max {
+				stats.max = v.Value.Num
+			}
+			stats.sum += v.Value.Num
+			stats.count++
+		}
+	}
+
+	// Convert to SeriesSummary slice
+	summaries := make([]SeriesSummary, 0, len(statsByLabel))
+	for _, stats := range statsByLabel {
+		avg := 0.0
+		if stats.count > 0 {
+			avg = stats.sum / float64(stats.count)
+		}
+		summaries = append(summaries, SeriesSummary{
+			Label: stats.label,
+			Tags:  stats.tags,
+			Min:   stats.min,
+			Max:   stats.max,
+			Avg:   avg,
+			Sum:   stats.sum,
+			Count: stats.count,
+		})
+	}
+
+	// Apply comparison filtering for consistency with sketch-based path
+	summaries = applySummaryFilter(summaries, queryPlan.Root)
+
+	return summaries, nil
+}
+
+// canonicalizeTagValue normalizes tag values so that logically equivalent values
+// map to the same representation when building summary keys.
+func canonicalizeTagValue(v any) any {
+	switch x := v.(type) {
+	case []byte:
+		return string(x)
+	default:
+		return v
+	}
+}
+
+// tagsKeyForSummary creates a stable string key from tags map for grouping series.
+// It canonicalizes values (e.g. []byte -> string) to avoid incorrect merging.
+func tagsKeyForSummary(m map[string]any) string {
+	if len(m) == 0 {
+		return ""
+	}
+	ks := slices.Collect(maps.Keys(m))
+	slices.Sort(ks)
+	var b strings.Builder
+	for i, k := range ks {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(k)
+		b.WriteByte('=')
+		_, _ = fmt.Fprint(&b, canonicalizeTagValue(m[k]))
+	}
+	return b.String()
+}
+
+// evaluateMetricsSummaryWithSketches uses workers to return DDSketches per series,
+// merges them, and extracts all statistics including percentiles.
+func (q *QuerierService) evaluateMetricsSummaryWithSketches(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs, endTs int64,
+	queryPlan promql.QueryPlan,
+) ([]SeriesSummary, error) {
+	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
+	ctx, sketchSpan := tracer.Start(ctx, "query.api.evaluate_metrics_summary_sketches")
+	defer sketchSpan.End()
+
+	stepDuration := StepForQueryDuration(startTs, endTs)
+
+	workers, err := q.workerDiscovery.GetAllWorkers()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workers: %w", err)
+	}
+
+	// We only support single-leaf queries for summary
+	if len(queryPlan.Leaves) != 1 {
+		return nil, fmt.Errorf("summary only supports single-leaf queries, got %d leaves", len(queryPlan.Leaves))
+	}
+
+	leaf := queryPlan.Leaves[0]
+
+	// Build segment universe for this query
+	var allSegments []SegmentInfo
+	for _, dih := range dateIntHoursRange(startTs, endTs, time.UTC, false) {
+		segments, err := q.lookupMetricsSegments(ctx, dih, leaf, startTs, endTs, stepDuration, orgID)
+		if err != nil {
+			slog.Error("failed to get segment infos", "dateInt", dih.DateInt, "err", err)
+			continue
+		}
+		allSegments = append(allSegments, segments...)
+	}
+
+	if len(allSegments) == 0 {
+		return []SeriesSummary{}, nil
+	}
+
+	// Map segments to workers
+	segmentIDs := make([]int64, 0, len(allSegments))
+	segmentMap := make(map[int64]SegmentInfo, len(allSegments))
+	for _, s := range allSegments {
+		segmentIDs = append(segmentIDs, s.SegmentID)
+		segmentMap[s.SegmentID] = s
+	}
+
+	mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get worker assignments: %w", err)
+	}
+
+	workerGroups := make(map[Worker][]SegmentInfo)
+	for _, m := range mappings {
+		workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
+	}
+
+	if len(workerGroups) == 0 {
+		return []SeriesSummary{}, nil
+	}
+
+	// Create index mapping for DDSketch decoding
+	indexMapping, err := mapping.NewLogarithmicMapping(0.01)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create index mapping: %w", err)
+	}
+
+	// Collect sketches from all workers
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var workerErrors []error
+	sketchesBySeries := make(map[string]*ddsketch.DDSketch)
+	tagsBySeries := make(map[string]map[string]any)
+
+	for worker, wsegs := range workerGroups {
+		wg.Add(1)
+		go func(worker Worker, wsegs []SegmentInfo) {
+			defer wg.Done()
+
+			req := PushDownRequest{
+				OrganizationID: orgID,
+				BaseExpr:       &leaf,
+				StartTs:        startTs,
+				EndTs:          endTs,
+				Segments:       wsegs,
+				Step:           stepDuration,
+				IsSummary:      true,
+			}
+
+			ch, err := q.summaryPushDown(ctx, worker, req)
+			if err != nil {
+				slog.Error("summary pushdown failed", "worker", worker, "err", err)
+				mu.Lock()
+				workerErrors = append(workerErrors, fmt.Errorf("worker %s:%d: %w", worker.IP, worker.Port, err))
+				mu.Unlock()
+				return
+			}
+
+			for si := range ch {
+				if si.SketchTags.SketchType != promql.SketchDDS || len(si.SketchTags.Bytes) == 0 {
+					continue
+				}
+
+				sketch, err := ddsketch.DecodeDDSketch(si.SketchTags.Bytes, store.DefaultProvider, indexMapping)
+				if err != nil {
+					slog.Warn("failed to decode DDSketch", "error", err)
+					continue
+				}
+
+				key := tagsKeyForSummary(si.SketchTags.Tags)
+				mu.Lock()
+				if existing, ok := sketchesBySeries[key]; ok {
+					if err := existing.MergeWith(sketch); err != nil {
+						slog.Warn("failed to merge DDSketches", "error", err, "key", key)
+					}
+				} else {
+					sketchesBySeries[key] = sketch
+					tagsBySeries[key] = si.SketchTags.Tags
+				}
+				mu.Unlock()
+			}
+		}(worker, wsegs)
+	}
+
+	wg.Wait()
+
+	// If any workers failed, return error to trigger fallback
+	if len(workerErrors) > 0 {
+		return nil, fmt.Errorf("summary pushdown failed for %d workers: %w", len(workerErrors), workerErrors[0])
+	}
+
+	sketchSpan.SetAttributes(
+		attribute.Int("worker_count", len(workers)),
+		attribute.Int("segment_count", len(allSegments)),
+		attribute.Int("series_count", len(sketchesBySeries)),
+	)
+
+	// Extract statistics from merged sketches
+	summaries := make([]SeriesSummary, 0, len(sketchesBySeries))
+	for key, sketch := range sketchesBySeries {
+		tags := tagsBySeries[key]
+		label := queryPlan.Root.Label(tags)
+
+		count := sketch.GetCount()
+		sum := sketch.GetSum()
+		minVal, minErr := sketch.GetMinValue()
+		maxVal, maxErr := sketch.GetMaxValue()
+		if minErr != nil {
+			slog.Warn("failed to get min value from DDSketch", "error", minErr, "key", key)
+		}
+		if maxErr != nil {
+			slog.Warn("failed to get max value from DDSketch", "error", maxErr, "key", key)
+		}
+
+		avg := 0.0
+		if count > 0 {
+			avg = sum / float64(count)
+		}
+
+		summary := SeriesSummary{
+			Label: label,
+			Tags:  tags,
+			Min:   minVal,
+			Max:   maxVal,
+			Avg:   avg,
+			Sum:   sum,
+			Count: int64(count),
+		}
+
+		// Extract percentiles
+		if count > 0 {
+			p50, p50Err := sketch.GetValueAtQuantile(0.50)
+			p90, p90Err := sketch.GetValueAtQuantile(0.90)
+			p95, p95Err := sketch.GetValueAtQuantile(0.95)
+			p99, p99Err := sketch.GetValueAtQuantile(0.99)
+			if p50Err != nil {
+				slog.Warn("failed to get p50 from DDSketch", "error", p50Err, "key", key)
+			} else {
+				summary.P50 = &p50
+			}
+			if p90Err != nil {
+				slog.Warn("failed to get p90 from DDSketch", "error", p90Err, "key", key)
+			} else {
+				summary.P90 = &p90
+			}
+			if p95Err != nil {
+				slog.Warn("failed to get p95 from DDSketch", "error", p95Err, "key", key)
+			} else {
+				summary.P95 = &p95
+			}
+			if p99Err != nil {
+				slog.Warn("failed to get p99 from DDSketch", "error", p99Err, "key", key)
+			} else {
+				summary.P99 = &p99
+			}
+		}
+
+		summaries = append(summaries, summary)
+	}
+
+	// Apply comparison filtering if the query has a comparison operator (e.g., max(...) > 80)
+	summaries = applySummaryFilter(summaries, queryPlan.Root)
+
+	return summaries, nil
+}
+
+// summaryPushDown sends a summary request to a worker and returns a channel of SketchInput with DDSketch bytes.
+func (q *QuerierService) summaryPushDown(
+	ctx context.Context,
+	worker Worker,
+	request PushDownRequest,
+) (<-chan promql.SketchInput, error) {
+	return PushDownStream(ctx, worker, request,
+		func(typ string, data json.RawMessage) (promql.SketchInput, bool, error) {
+			var zero promql.SketchInput
+			if typ != "result" {
+				return zero, false, nil
+			}
+			var si promql.SketchInput
+			if err := json.Unmarshal(data, &si); err != nil {
+				return zero, false, err
+			}
+			return si, true, nil
+		})
+}
+
+// --- Summary comparison filtering ---
+
+// isComparisonOp returns true if the operator is a comparison (not arithmetic).
+func isComparisonOp(op promql.BinOp) bool {
+	switch op {
+	case promql.OpGT, promql.OpGE, promql.OpLT, promql.OpLE, promql.OpEQ, promql.OpNE:
+		return true
+	}
+	return false
+}
+
+// findAggOp traverses the exec node tree to find the nearest aggregation operator.
+// For a query like `max by (service) (cpu) > 80`, it returns AggMax.
+func findAggOp(node promql.ExecNode) (promql.AggOp, bool) {
+	switch n := node.(type) {
+	case *promql.AggNode:
+		return n.Op, true
+	case *promql.BinaryNode:
+		// Check LHS first (most common case: agg(...) > scalar)
+		if op, ok := findAggOp(n.LHS); ok {
+			return op, true
+		}
+		return findAggOp(n.RHS)
+	default:
+		return "", false
+	}
+}
+
+// getStatForAggOp returns the appropriate summary stat value for the given aggregation operator.
+func getStatForAggOp(summary SeriesSummary, op promql.AggOp) (float64, bool) {
+	switch op {
+	case promql.AggMax:
+		return summary.Max, true
+	case promql.AggMin:
+		return summary.Min, true
+	case promql.AggAvg:
+		return summary.Avg, true
+	case promql.AggSum:
+		return summary.Sum, true
+	case promql.AggCount:
+		return float64(summary.Count), true
+	}
+	return 0, false
+}
+
+// applyCmpFloat applies a comparison operator between two float values.
+func applyCmpFloat(a, b float64, op promql.BinOp) bool {
+	switch op {
+	case promql.OpGT:
+		return a > b
+	case promql.OpGE:
+		return a >= b
+	case promql.OpLT:
+		return a < b
+	case promql.OpLE:
+		return a <= b
+	case promql.OpEQ:
+		return a == b
+	case promql.OpNE:
+		return a != b
+	}
+	return false
+}
+
+// applySummaryFilter filters summaries based on a comparison binary expression.
+// For example, `max by (service) (cpu) > 80` filters to only summaries where Max > 80.
+// When the PromQL `bool` modifier is used, we skip filtering since summary stats
+// cannot represent 0/1 boolean values like time series can.
+func applySummaryFilter(summaries []SeriesSummary, root promql.ExecNode) []SeriesSummary {
+	binNode, ok := root.(*promql.BinaryNode)
+	if !ok {
+		return summaries
+	}
+
+	if !isComparisonOp(binNode.Op) {
+		return summaries
+	}
+
+	// When the `bool` modifier is used, skip filtering - summaries can't represent 0/1 values
+	if binNode.ReturnBool {
+		slog.Info("summary filter: skipping filter due to bool modifier")
+		return summaries
+	}
+
+	// Find the scalar threshold value
+	var threshold float64
+	var vectorOnLeft bool
+	if scalar, ok := binNode.RHS.(*promql.ScalarNode); ok {
+		threshold = scalar.Value
+		vectorOnLeft = true
+	} else if scalar, ok := binNode.LHS.(*promql.ScalarNode); ok {
+		threshold = scalar.Value
+		vectorOnLeft = false
+	} else {
+		// No scalar operand - can't filter
+		return summaries
+	}
+
+	// Find the aggregation operator from the vector side
+	vectorNode := binNode.LHS
+	if !vectorOnLeft {
+		vectorNode = binNode.RHS
+	}
+	aggOp, ok := findAggOp(vectorNode)
+	if !ok {
+		slog.Warn("summary filter: could not find aggregation operator, returning all summaries")
+		return summaries
+	}
+
+	// Filter summaries
+	filtered := make([]SeriesSummary, 0, len(summaries))
+	for _, s := range summaries {
+		statVal, ok := getStatForAggOp(s, aggOp)
+		if !ok {
+			continue
+		}
+
+		var passes bool
+		if vectorOnLeft {
+			passes = applyCmpFloat(statVal, threshold, binNode.Op)
+		} else {
+			passes = applyCmpFloat(threshold, statVal, binNode.Op)
+		}
+
+		if passes {
+			filtered = append(filtered, s)
+		}
+	}
+
+	slog.Info("summary filter applied",
+		"aggOp", aggOp,
+		"op", binNode.Op,
+		"threshold", threshold,
+		"before", len(summaries),
+		"after", len(filtered))
+
+	return filtered
 }

@@ -78,6 +78,8 @@ dockers:
       - --pull
       - --no-cache
       - --platform=linux/amd64
+      - --provenance=false
+      - --sbom=false
       - --build-arg=TARGETARCH=amd64
       - --build-arg=DUCKDB_VERSION=v1.3.2
       - --label=org.opencontainers.image.created={{.Date}}
@@ -100,6 +102,8 @@ dockers:
       - --pull
       - --no-cache
       - --platform=linux/arm64
+      - --provenance=false
+      - --sbom=false
       - --build-arg=TARGETARCH=arm64
       - --build-arg=DUCKDB_VERSION=v1.3.2
       - --label=org.opencontainers.image.created={{.Date}}

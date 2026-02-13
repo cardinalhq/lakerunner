@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,8 @@ func getInt64(v any) int64 {
 		return int64(x)
 	case uint64:
 		return int64(x)
+	case *big.Int:
+		return x.Int64()
 	case []byte:
 		var y int64
 		_, _ = fmt.Sscan(string(x), &y)
@@ -1088,6 +1091,225 @@ func TestBuildAggFileSQL_WithNegativeMatcher(t *testing.T) {
 	}
 	if _, exists := got["service-a"]; exists {
 		t.Fatal("service-a should have been excluded by negative matcher")
+	}
+}
+
+// --- ToSummarySQL tests ---
+
+func TestToSummarySQL_NoGroupBy(t *testing.T) {
+	db := openDuckDB(t)
+	createMetricsTable(t, db, false)
+
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (    0,        0, 'm', 10.0, 2, 5.0, 15.0),
+	 (10000, 10000000000, 'm', 20.0, 3, 8.0, 12.0),
+	 (20000, 20000000000, 'm', 30.0, 5, 6.0, 20.0)`)
+
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "sum_over_time",
+	}
+	sql := be.ToSummarySQL()
+	if sql == "" {
+		t.Fatal("empty SQL from ToSummarySQL")
+	}
+
+	// Verify no GROUP BY in output
+	if strings.Contains(sql, "GROUP BY") {
+		t.Fatalf("expected no GROUP BY for query without groupBy, got:\n%s", sql)
+	}
+
+	sql = replaceStartEnd(replaceTableMetrics(sql), 0, 30000)
+	rows := queryAll(t, db, sql)
+
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	row := rows[0]
+	// sum: 10+20+30 = 60
+	if s := getFloat(row["sum"]); math.Abs(s-60.0) > 1e-9 {
+		t.Fatalf("sum got=%v want=60", s)
+	}
+	// count: 2+3+5 = 10
+	if c := getInt64(row["count"]); c != 10 {
+		t.Fatalf("count got=%v want=10", c)
+	}
+	// min: min(5, 8, 6) = 5
+	if m := getFloat(row["min"]); math.Abs(m-5.0) > 1e-9 {
+		t.Fatalf("min got=%v want=5", m)
+	}
+	// max: max(15, 12, 20) = 20
+	if m := getFloat(row["max"]); math.Abs(m-20.0) > 1e-9 {
+		t.Fatalf("max got=%v want=20", m)
+	}
+}
+
+func TestToSummarySQL_WithGroupBy(t *testing.T) {
+	db := openDuckDB(t)
+	createMetricsTable(t, db, true)
+
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (    0,        0, 'm', 10.0, 2, 5.0, 15.0, 'a'),
+	 (10000, 10000000000, 'm', 20.0, 3, 8.0, 12.0, 'a'),
+	 (    0,        1, 'm', 30.0, 5, 6.0, 20.0, 'b'),
+	 (10000, 10000000001, 'm', 40.0, 4, 2.0, 25.0, 'b')`)
+
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "avg_over_time",
+		GroupBy:  []string{"pod"},
+	}
+	sql := be.ToSummarySQL()
+	if sql == "" {
+		t.Fatal("empty SQL from ToSummarySQL")
+	}
+
+	// Verify GROUP BY is present
+	if !strings.Contains(sql, "GROUP BY") {
+		t.Fatalf("expected GROUP BY in SQL, got:\n%s", sql)
+	}
+
+	sql = replaceStartEnd(replaceTableMetrics(sql), 0, 20000)
+	rows := queryAll(t, db, sql)
+
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := map[string]rowmap{}
+	for _, r := range rows {
+		got[asString(r["pod"])] = r
+	}
+
+	// pod 'a': sum=30, count=5, min=5, max=15
+	if s := getFloat(got["a"]["sum"]); math.Abs(s-30.0) > 1e-9 {
+		t.Fatalf("pod a sum got=%v want=30", s)
+	}
+	if c := getInt64(got["a"]["count"]); c != 5 {
+		t.Fatalf("pod a count got=%v want=5", c)
+	}
+	if m := getFloat(got["a"]["min"]); math.Abs(m-5.0) > 1e-9 {
+		t.Fatalf("pod a min got=%v want=5", m)
+	}
+	if m := getFloat(got["a"]["max"]); math.Abs(m-15.0) > 1e-9 {
+		t.Fatalf("pod a max got=%v want=15", m)
+	}
+
+	// pod 'b': sum=70, count=9, min=2, max=25
+	if s := getFloat(got["b"]["sum"]); math.Abs(s-70.0) > 1e-9 {
+		t.Fatalf("pod b sum got=%v want=70", s)
+	}
+	if c := getInt64(got["b"]["count"]); c != 9 {
+		t.Fatalf("pod b count got=%v want=9", c)
+	}
+	if m := getFloat(got["b"]["min"]); math.Abs(m-2.0) > 1e-9 {
+		t.Fatalf("pod b min got=%v want=2", m)
+	}
+	if m := getFloat(got["b"]["max"]); math.Abs(m-25.0) > 1e-9 {
+		t.Fatalf("pod b max got=%v want=25", m)
+	}
+}
+
+// --- ToWorkerSummarySQL tests ---
+
+func TestToWorkerSummarySQL_NoGroupBy(t *testing.T) {
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "sum_over_time",
+	}
+	sql := be.ToWorkerSummarySQL()
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSummarySQL")
+	}
+
+	// Verify no GROUP BY in output (no groupBy specified)
+	if strings.Contains(sql, "GROUP BY") {
+		t.Fatalf("expected no GROUP BY for query without groupBy, got:\n%s", sql)
+	}
+
+	// Verify ddsketch_stats_agg is used
+	if !strings.Contains(sql, "ddsketch_stats_agg(chq_sketch).sketch AS chq_sketch") {
+		t.Fatalf("expected ddsketch_stats_agg in SQL, got:\n%s", sql)
+	}
+
+	// Verify metric filter
+	if !strings.Contains(sql, `"metric_name" = 'm'`) {
+		t.Fatalf("expected metric filter in SQL, got:\n%s", sql)
+	}
+
+	// Verify time filter placeholder
+	if !strings.Contains(sql, "{start}") || !strings.Contains(sql, "{end}") {
+		t.Fatalf("expected time filter placeholders in SQL, got:\n%s", sql)
+	}
+}
+
+func TestToWorkerSummarySQL_WithGroupBy(t *testing.T) {
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "avg_over_time",
+		GroupBy:  []string{"pod", "region"},
+	}
+	sql := be.ToWorkerSummarySQL()
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSummarySQL")
+	}
+
+	// Verify GROUP BY is present
+	if !strings.Contains(sql, "GROUP BY") {
+		t.Fatalf("expected GROUP BY in SQL, got:\n%s", sql)
+	}
+
+	// Verify group-by columns are in SELECT
+	if !strings.Contains(sql, `"pod"`) || !strings.Contains(sql, `"region"`) {
+		t.Fatalf("expected pod and region in SQL, got:\n%s", sql)
+	}
+
+	// Verify ddsketch_stats_agg is used
+	if !strings.Contains(sql, "ddsketch_stats_agg(chq_sketch).sketch AS chq_sketch") {
+		t.Fatalf("expected ddsketch_stats_agg in SQL, got:\n%s", sql)
+	}
+}
+
+func TestToWorkerSummarySQL_WithDottedFieldNames(t *testing.T) {
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "sum_over_time",
+		GroupBy:  []string{"resource.k8s.namespace.name"},
+	}
+	sql := be.ToWorkerSummarySQL()
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSummarySQL")
+	}
+
+	// Verify dotted field name is normalized to underscores
+	if !strings.Contains(sql, `"resource_k8s_namespace_name"`) {
+		t.Fatalf("expected normalized field name in SQL, got:\n%s", sql)
+	}
+}
+
+func TestToWorkerSummarySQL_WithMatchers(t *testing.T) {
+	be := &BaseExpr{
+		Metric:   "cpu_usage",
+		FuncName: "sum_over_time",
+		GroupBy:  []string{"pod"},
+		Matchers: []LabelMatch{
+			{Label: "region", Op: MatchEq, Value: "us-east-1"},
+		},
+	}
+	sql := be.ToWorkerSummarySQL()
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSummarySQL")
+	}
+
+	// Verify matcher is in WHERE clause
+	if !strings.Contains(sql, `"region" = 'us-east-1'`) {
+		t.Fatalf("expected region matcher in SQL, got:\n%s", sql)
+	}
+
+	// Verify metric filter
+	if !strings.Contains(sql, `"metric_name" = 'cpu_usage'`) {
+		t.Fatalf("expected metric filter in SQL, got:\n%s", sql)
 	}
 }
 

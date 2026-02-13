@@ -308,6 +308,60 @@ func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql
 	}, nil
 }
 
+// summarySketchMapper maps rows from summary queries (IsSummary=true) to SketchInput with DDSketch bytes.
+// Summary rows contain group-by columns + merged chq_sketch, no timestamp (it's an aggregation across time).
+func summarySketchMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
+	buf, release := acquireScanBuffers(len(cols))
+	defer release()
+
+	if err := row.Scan(buf.ptrs...); err != nil {
+		slog.Error("failed to scan summary row", "err", err)
+		return promql.SketchInput{}, fmt.Errorf("failed to scan row: %w", err)
+	}
+
+	vals := buf.vals
+	tags := make(map[string]any, len(request.BaseExpr.Matchers)+len(cols)+1)
+
+	tags["name"] = request.BaseExpr.Metric
+	for _, matcher := range request.BaseExpr.Matchers {
+		if matcher.Op == promql.MatchEq {
+			tags[matcher.Label] = matcher.Value
+		}
+	}
+
+	var sketchBytes []byte
+
+	for i, col := range cols {
+		switch col {
+		case "chq_sketch":
+			if vals[i] != nil {
+				switch v := vals[i].(type) {
+				case []byte:
+					sketchBytes = v
+				default:
+					slog.Warn("unexpected type for chq_sketch", "type", fmt.Sprintf("%T", vals[i]))
+				}
+			}
+		default:
+			if vals[i] != nil {
+				tags[col] = vals[i]
+			}
+		}
+	}
+
+	return promql.SketchInput{
+		ExprID:         request.BaseExpr.ID,
+		OrganizationID: request.OrganizationID.String(),
+		Timestamp:      0, // Summary has no timestamp; it aggregates across all time
+		Frequency:      int64(request.Step.Seconds()),
+		SketchTags: promql.SketchTags{
+			Tags:       tags,
+			SketchType: promql.SketchDDS,
+			Bytes:      sketchBytes,
+		},
+	}, nil
+}
+
 func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
 	buf, release := acquireScanBuffers(len(cols))
 	defer release()
@@ -422,6 +476,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var globSize int
 	var isTagValuesQuery = false
 	var isSimpleLogAgg = false // true when agg_ files can be used
+	var isSummaryQuery = false // true for summary queries that return DDSketch per series
 
 	if req.BaseExpr != nil {
 		if req.TagNames {
@@ -435,6 +490,12 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			cacheManager = ws.MetricsCM
 			globSize = ws.MetricsGlobSize
 			isTagValuesQuery = true
+		} else if req.IsSummary {
+			// Summary query: return merged DDSketch per series
+			workerSql = req.BaseExpr.ToWorkerSummarySQL()
+			cacheManager = ws.MetricsCM
+			globSize = ws.MetricsGlobSize
+			isSummaryQuery = true
 		} else {
 			workerSql = req.BaseExpr.ToWorkerSQL(req.Step)
 			if req.BaseExpr.LogLeaf != nil {
@@ -496,6 +557,8 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case isTagValuesQuery:
 		queryType = "tag_values"
+	case isSummaryQuery:
+		queryType = "metrics_summary"
 	case req.BaseExpr != nil && req.BaseExpr.LogLeaf != nil:
 		queryType = "metrics_over_logs"
 	case req.BaseExpr != nil:
@@ -552,6 +615,30 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			defer close(responseChannel)
 			for tv := range tagValuesChannel {
 				responseChannel <- tv
+			}
+		}()
+
+		// Process the response
+		ws.processResponse(w, responseChannel, ctx)
+		return
+
+	} else if isSummaryQuery {
+		// Handle summary query (DDSketch per series)
+		sketchChannel, err := EvaluatePushDown(ctx, cacheManager, req, workerSql, globSize, summarySketchMapper)
+		if err != nil {
+			requestSpan.RecordError(err)
+			requestSpan.SetStatus(codes.Error, "summary query failed")
+			slog.Error("failed to query cache for summary", "error", err)
+			http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Convert SketchInput channel to Timestamped channel
+		responseChannel := make(chan promql.Timestamped, 100)
+		go func() {
+			defer close(responseChannel)
+			for si := range sketchChannel {
+				responseChannel <- si
 			}
 		}()
 

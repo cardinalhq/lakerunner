@@ -106,6 +106,83 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	}
 }
 
+// ToSummarySQL builds a SQL query that returns aggregate stats across the entire time range.
+// Used for summary queries that return min/max/avg/sum/count per series instead of time series data.
+// Note: This is the legacy SQL builder for summaries. For percentile support (p50/p90/p95/p99),
+// use ToWorkerSummarySQL which returns DDSketches for server-side merging.
+func (be *BaseExpr) ToSummarySQL() string {
+	where := withTime(whereFor(be))
+
+	// Quote group-by columns (these define the series identity)
+	var gbq []string
+	if len(be.GroupBy) > 0 {
+		gbq = make([]string, 0, len(be.GroupBy))
+		for _, f := range be.GroupBy {
+			fieldName := normalizeFieldName(f)
+			gbq = append(gbq, fmt.Sprintf("\"%s\"", fieldName))
+		}
+	}
+
+	// Select all aggregate stats
+	cols := []string{
+		"SUM(chq_rollup_sum) AS sum",
+		"SUM(COALESCE(chq_rollup_count, 0)) AS count",
+		"MIN(chq_rollup_min) AS min",
+		"MAX(chq_rollup_max) AS max",
+	}
+	// Add group-by columns to SELECT
+	if len(gbq) > 0 {
+		cols = append(cols, gbq...)
+	}
+
+	var sql string
+	if len(gbq) > 0 {
+		sql = "SELECT " + strings.Join(cols, ", ") +
+			" FROM {table}" + where +
+			" GROUP BY " + strings.Join(gbq, ", ")
+	} else {
+		sql = "SELECT " + strings.Join(cols, ", ") +
+			" FROM {table}" + where
+	}
+	return sql
+}
+
+// ToWorkerSummarySQL builds a SQL query that returns merged DDSketches per series across the entire time range.
+// This is used for summary queries where workers merge DDSketches and return them for further aggregation.
+// The returned sketches can be used to extract all stats: count, sum, min, max, and percentiles.
+func (be *BaseExpr) ToWorkerSummarySQL() string {
+	where := withTime(whereFor(be))
+
+	// Quote group-by columns (these define the series identity)
+	var gbq []string
+	if len(be.GroupBy) > 0 {
+		gbq = make([]string, 0, len(be.GroupBy))
+		for _, f := range be.GroupBy {
+			fieldName := normalizeFieldName(f)
+			gbq = append(gbq, fmt.Sprintf("\"%s\"", fieldName))
+		}
+	}
+
+	// Select group-by columns and merged sketch
+	// ddsketch_stats_agg merges sketches and returns a composite; we extract the sketch bytes
+	cols := make([]string, 0, len(gbq)+1)
+	if len(gbq) > 0 {
+		cols = append(cols, gbq...)
+	}
+	cols = append(cols, "ddsketch_stats_agg(chq_sketch).sketch AS chq_sketch")
+
+	var sql string
+	if len(gbq) > 0 {
+		sql = "SELECT " + strings.Join(cols, ", ") +
+			" FROM {table}" + where +
+			" GROUP BY " + strings.Join(gbq, ", ")
+	} else {
+		sql = "SELECT " + strings.Join(cols, ", ") +
+			" FROM {table}" + where
+	}
+	return sql
+}
+
 func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	// Fast path: for simple aggregations without parsers/filters, generate flat SQL
 	// that only reads the columns we need. This avoids the SELECT * CTE pipeline.
