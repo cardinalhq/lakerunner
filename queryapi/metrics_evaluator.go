@@ -671,11 +671,7 @@ func (q *QuerierService) EvaluateMetricsSummary(
 			Sum:   stats.sum,
 			Count: stats.count,
 			// Note: P50/P90/P95/P99 would require DDSketch merging;
-			// for MVP we omit these (they'll be zero)
-			P50: 0,
-			P90: 0,
-			P95: 0,
-			P99: 0,
+			// for MVP we leave them nil (omitted from JSON output)
 		})
 	}
 

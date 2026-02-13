@@ -107,7 +107,8 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 }
 
 // ToSummarySQL builds a SQL query that returns aggregate stats across the entire time range.
-// Used for summary queries that return min/max/avg/percentiles per series instead of time series data.
+// Used for summary queries that return min/max/avg/sum/count per series instead of time series data.
+// Note: Percentile support (p50/p90/p95/p99) requires DDSketch merging and is not yet implemented.
 func (be *BaseExpr) ToSummarySQL() string {
 	where := withTime(whereFor(be))
 
@@ -130,7 +131,7 @@ func (be *BaseExpr) ToSummarySQL() string {
 	}
 	// Add group-by columns to SELECT
 	if len(gbq) > 0 {
-		cols = append(cols, strings.Join(gbq, ", "))
+		cols = append(cols, gbq...)
 	}
 
 	var sql string

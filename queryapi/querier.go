@@ -245,10 +245,10 @@ type SeriesSummary struct {
 	Avg   float64        `json:"avg"`
 	Sum   float64        `json:"sum"`
 	Count int64          `json:"count"`
-	P50   float64        `json:"p50"`
-	P90   float64        `json:"p90"`
-	P95   float64        `json:"p95"`
-	P99   float64        `json:"p99"`
+	P50   *float64       `json:"p50,omitempty"`
+	P90   *float64       `json:"p90,omitempty"`
+	P95   *float64       `json:"p95,omitempty"`
+	P99   *float64       `json:"p99,omitempty"`
 }
 
 func (q *QuerierService) handlePromQuerySummary(ctx context.Context, w http.ResponseWriter, qp *queryPayload, plan promql.QueryPlan) {
@@ -265,7 +265,10 @@ func (q *QuerierService) handlePromQuerySummary(ctx context.Context, w http.Resp
 	if err != nil {
 		summarySpan.RecordError(err)
 		summarySpan.SetStatus(codes.Error, "summary evaluation error")
-		_ = writeSSE("error", map[string]string{"message": err.Error()})
+		_ = writeSSE("error", map[string]string{
+			"message": err.Error(),
+			"code":    string(ErrInternalError),
+		})
 		return
 	}
 
