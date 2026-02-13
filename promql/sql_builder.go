@@ -108,7 +108,8 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 
 // ToSummarySQL builds a SQL query that returns aggregate stats across the entire time range.
 // Used for summary queries that return min/max/avg/sum/count per series instead of time series data.
-// Note: Percentile support (p50/p90/p95/p99) requires DDSketch merging and is not yet implemented.
+// Note: This is the legacy SQL builder for summaries. For percentile support (p50/p90/p95/p99),
+// use ToWorkerSummarySQL which returns DDSketches for server-side merging.
 func (be *BaseExpr) ToSummarySQL() string {
 	where := withTime(whereFor(be))
 

@@ -691,10 +691,25 @@ func (q *QuerierService) evaluateMetricsSummaryLegacy(
 		})
 	}
 
+	// Apply comparison filtering for consistency with sketch-based path
+	summaries = applySummaryFilter(summaries, queryPlan.Root)
+
 	return summaries, nil
 }
 
+// canonicalizeTagValue normalizes tag values so that logically equivalent values
+// map to the same representation when building summary keys.
+func canonicalizeTagValue(v any) any {
+	switch x := v.(type) {
+	case []byte:
+		return string(x)
+	default:
+		return v
+	}
+}
+
 // tagsKeyForSummary creates a stable string key from tags map for grouping series.
+// It canonicalizes values (e.g. []byte -> string) to avoid incorrect merging.
 func tagsKeyForSummary(m map[string]any) string {
 	if len(m) == 0 {
 		return ""
@@ -708,7 +723,7 @@ func tagsKeyForSummary(m map[string]any) string {
 		}
 		b.WriteString(k)
 		b.WriteByte('=')
-		b.WriteString(fmt.Sprint(m[k]))
+		_, _ = fmt.Fprint(&b, canonicalizeTagValue(m[k]))
 	}
 	return b.String()
 }
@@ -823,7 +838,9 @@ func (q *QuerierService) evaluateMetricsSummaryWithSketches(
 				key := tagsKeyForSummary(si.SketchTags.Tags)
 				mu.Lock()
 				if existing, ok := sketchesBySeries[key]; ok {
-					_ = existing.MergeWith(sketch)
+					if err := existing.MergeWith(sketch); err != nil {
+						slog.Warn("failed to merge DDSketches", "error", err, "key", key)
+					}
 				} else {
 					sketchesBySeries[key] = sketch
 					tagsBySeries[key] = si.SketchTags.Tags
@@ -849,8 +866,14 @@ func (q *QuerierService) evaluateMetricsSummaryWithSketches(
 
 		count := sketch.GetCount()
 		sum := sketch.GetSum()
-		minVal, _ := sketch.GetMinValue()
-		maxVal, _ := sketch.GetMaxValue()
+		minVal, minErr := sketch.GetMinValue()
+		maxVal, maxErr := sketch.GetMaxValue()
+		if minErr != nil {
+			slog.Warn("failed to get min value from DDSketch", "error", minErr, "key", key)
+		}
+		if maxErr != nil {
+			slog.Warn("failed to get max value from DDSketch", "error", maxErr, "key", key)
+		}
 
 		avg := 0.0
 		if count > 0 {
@@ -869,14 +892,30 @@ func (q *QuerierService) evaluateMetricsSummaryWithSketches(
 
 		// Extract percentiles
 		if count > 0 {
-			p50, _ := sketch.GetValueAtQuantile(0.50)
-			p90, _ := sketch.GetValueAtQuantile(0.90)
-			p95, _ := sketch.GetValueAtQuantile(0.95)
-			p99, _ := sketch.GetValueAtQuantile(0.99)
-			summary.P50 = &p50
-			summary.P90 = &p90
-			summary.P95 = &p95
-			summary.P99 = &p99
+			p50, p50Err := sketch.GetValueAtQuantile(0.50)
+			p90, p90Err := sketch.GetValueAtQuantile(0.90)
+			p95, p95Err := sketch.GetValueAtQuantile(0.95)
+			p99, p99Err := sketch.GetValueAtQuantile(0.99)
+			if p50Err != nil {
+				slog.Warn("failed to get p50 from DDSketch", "error", p50Err, "key", key)
+			} else {
+				summary.P50 = &p50
+			}
+			if p90Err != nil {
+				slog.Warn("failed to get p90 from DDSketch", "error", p90Err, "key", key)
+			} else {
+				summary.P90 = &p90
+			}
+			if p95Err != nil {
+				slog.Warn("failed to get p95 from DDSketch", "error", p95Err, "key", key)
+			} else {
+				summary.P95 = &p95
+			}
+			if p99Err != nil {
+				slog.Warn("failed to get p99 from DDSketch", "error", p99Err, "key", key)
+			} else {
+				summary.P99 = &p99
+			}
 		}
 
 		summaries = append(summaries, summary)
@@ -974,6 +1013,8 @@ func applyCmpFloat(a, b float64, op promql.BinOp) bool {
 
 // applySummaryFilter filters summaries based on a comparison binary expression.
 // For example, `max by (service) (cpu) > 80` filters to only summaries where Max > 80.
+// When the PromQL `bool` modifier is used, we skip filtering since summary stats
+// cannot represent 0/1 boolean values like time series can.
 func applySummaryFilter(summaries []SeriesSummary, root promql.ExecNode) []SeriesSummary {
 	binNode, ok := root.(*promql.BinaryNode)
 	if !ok {
@@ -981,6 +1022,12 @@ func applySummaryFilter(summaries []SeriesSummary, root promql.ExecNode) []Serie
 	}
 
 	if !isComparisonOp(binNode.Op) {
+		return summaries
+	}
+
+	// When the `bool` modifier is used, skip filtering - summaries can't represent 0/1 values
+	if binNode.ReturnBool {
+		slog.Info("summary filter: skipping filter due to bool modifier")
 		return summaries
 	}
 
