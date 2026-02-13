@@ -1211,6 +1211,108 @@ func TestToSummarySQL_WithGroupBy(t *testing.T) {
 	}
 }
 
+// --- ToWorkerSummarySQL tests ---
+
+func TestToWorkerSummarySQL_NoGroupBy(t *testing.T) {
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "sum_over_time",
+	}
+	sql := be.ToWorkerSummarySQL()
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSummarySQL")
+	}
+
+	// Verify no GROUP BY in output (no groupBy specified)
+	if strings.Contains(sql, "GROUP BY") {
+		t.Fatalf("expected no GROUP BY for query without groupBy, got:\n%s", sql)
+	}
+
+	// Verify ddsketch_stats_agg is used
+	if !strings.Contains(sql, "ddsketch_stats_agg(chq_sketch).sketch AS chq_sketch") {
+		t.Fatalf("expected ddsketch_stats_agg in SQL, got:\n%s", sql)
+	}
+
+	// Verify metric filter
+	if !strings.Contains(sql, `"metric_name" = 'm'`) {
+		t.Fatalf("expected metric filter in SQL, got:\n%s", sql)
+	}
+
+	// Verify time filter placeholder
+	if !strings.Contains(sql, "{start}") || !strings.Contains(sql, "{end}") {
+		t.Fatalf("expected time filter placeholders in SQL, got:\n%s", sql)
+	}
+}
+
+func TestToWorkerSummarySQL_WithGroupBy(t *testing.T) {
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "avg_over_time",
+		GroupBy:  []string{"pod", "region"},
+	}
+	sql := be.ToWorkerSummarySQL()
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSummarySQL")
+	}
+
+	// Verify GROUP BY is present
+	if !strings.Contains(sql, "GROUP BY") {
+		t.Fatalf("expected GROUP BY in SQL, got:\n%s", sql)
+	}
+
+	// Verify group-by columns are in SELECT
+	if !strings.Contains(sql, `"pod"`) || !strings.Contains(sql, `"region"`) {
+		t.Fatalf("expected pod and region in SQL, got:\n%s", sql)
+	}
+
+	// Verify ddsketch_stats_agg is used
+	if !strings.Contains(sql, "ddsketch_stats_agg(chq_sketch).sketch AS chq_sketch") {
+		t.Fatalf("expected ddsketch_stats_agg in SQL, got:\n%s", sql)
+	}
+}
+
+func TestToWorkerSummarySQL_WithDottedFieldNames(t *testing.T) {
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "sum_over_time",
+		GroupBy:  []string{"resource.k8s.namespace.name"},
+	}
+	sql := be.ToWorkerSummarySQL()
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSummarySQL")
+	}
+
+	// Verify dotted field name is normalized to underscores
+	if !strings.Contains(sql, `"resource_k8s_namespace_name"`) {
+		t.Fatalf("expected normalized field name in SQL, got:\n%s", sql)
+	}
+}
+
+func TestToWorkerSummarySQL_WithMatchers(t *testing.T) {
+	be := &BaseExpr{
+		Metric:   "cpu_usage",
+		FuncName: "sum_over_time",
+		GroupBy:  []string{"pod"},
+		Matchers: []LabelMatch{
+			{Label: "region", Op: MatchEq, Value: "us-east-1"},
+		},
+	}
+	sql := be.ToWorkerSummarySQL()
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSummarySQL")
+	}
+
+	// Verify matcher is in WHERE clause
+	if !strings.Contains(sql, `"region" = 'us-east-1'`) {
+		t.Fatalf("expected region matcher in SQL, got:\n%s", sql)
+	}
+
+	// Verify metric filter
+	if !strings.Contains(sql, `"metric_name" = 'cpu_usage'`) {
+		t.Fatalf("expected metric filter in SQL, got:\n%s", sql)
+	}
+}
+
 // --- small helpers ---
 
 func asString(v any) string {
