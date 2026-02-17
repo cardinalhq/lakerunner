@@ -488,16 +488,19 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 	// Collect fingerprints for metric name and all label matchers
 	fpsToFetch := make(map[int64]struct{})
 
-	// Add metric_name fingerprint only when a metric name is specified.
-	// When be.Metric is empty (e.g. tag-value queries without a metric filter),
-	// we rely solely on label matcher fingerprints to find relevant segments.
 	if be.Metric != "" {
 		metricFp := fingerprint.ComputeFingerprint("metric_name", be.Metric)
 		fpsToFetch[metricFp] = struct{}{}
+	} else {
+		// No metric specified (e.g. tag-value queries): use metric_name exists fingerprint
+		// to match all metric segments. Metric segments only index metric_name, not label
+		// columns, so we can't narrow by label fingerprints here. DuckDB handles label filtering.
+		existsFp := fingerprint.ComputeFingerprint("metric_name", fingerprint.ExistsRegex)
+		fpsToFetch[existsFp] = struct{}{}
 	}
 
-	// Add fingerprints for label matchers
-	// Priority: exact index > trigram index > exists
+	// Add fingerprints for label matchers (only useful when metric is specified,
+	// since metric segments currently only index metric_name, not label columns)
 	for _, m := range be.Matchers {
 		label, val := m.Label, m.Value
 		if !fingerprint.IsIndexed(label) {
