@@ -25,7 +25,7 @@ import (
 	"github.com/cardinalhq/lakerunner/promql"
 )
 
-var validTagNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.]+$`)
+var validTagNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
 
 // normalizeTagName converts dots to underscores to match Parquet column naming.
 func normalizeTagName(tagName string) string {
