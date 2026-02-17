@@ -18,16 +18,41 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/promql"
 )
 
+var validTagNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
+
+// normalizeTagName converts dots to underscores to match Parquet column naming.
+func normalizeTagName(tagName string) string {
+	return strings.ReplaceAll(tagName, ".", "_")
+}
+
 func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http.Request) {
-	qPayload := readQueryPayload(w, r, false)
+	qPayload := readQueryPayload(w, r, true)
 	if qPayload == nil {
 		return
+	}
+
+	tagName := r.URL.Query().Get("tagName")
+	if tagName == "" {
+		http.Error(w, "missing tagName parameter", http.StatusBadRequest)
+		return
+	}
+	if !validTagNameRe.MatchString(tagName) {
+		http.Error(w, "invalid tagName parameter", http.StatusBadRequest)
+		return
+	}
+
+	columnName := normalizeTagName(tagName)
+
+	if qPayload.Q == "" {
+		// If no query expression, use a default query that does an exists check for the requested tag
+		qPayload.Q = fmt.Sprintf("{%s=~\".+\"}", columnName)
 	}
 
 	promExpr, err := promql.FromPromQL(qPayload.Q)
@@ -40,13 +65,7 @@ func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	tagName := r.URL.Query().Get("tagName")
-	if tagName == "" {
-		http.Error(w, "missing tagName parameter", http.StatusBadRequest)
-		return
-	}
-	plan.TagName = tagName
+	plan.TagName = columnName
 
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
@@ -85,9 +104,20 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 	}
 
 	tagName := r.URL.Query().Get("tagName")
+	if tagName == "" {
+		http.Error(w, "missing tagName parameter", http.StatusBadRequest)
+		return
+	}
+	if !validTagNameRe.MatchString(tagName) {
+		http.Error(w, "invalid tagName parameter", http.StatusBadRequest)
+		return
+	}
+
+	columnName := normalizeTagName(tagName)
+
 	if qp.Q == "" {
 		// If no query expression, use a default query that does an exists check for the requested tag
-		qp.Q = fmt.Sprintf("{%s=~\".+\"}", strings.ReplaceAll(tagName, ".", "_"))
+		qp.Q = fmt.Sprintf("{%s=~\".+\"}", columnName)
 	}
 
 	logAst, err := logql.FromLogQL(qp.Q)
@@ -96,11 +126,11 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 		return
 	}
 	lplan, err := logql.CompileLog(logAst)
-	lplan.TagName = tagName
 	if err != nil {
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	lplan.TagName = columnName
 
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
@@ -139,9 +169,20 @@ func (q *QuerierService) handleGetSpanTagValues(w http.ResponseWriter, r *http.R
 	}
 
 	tagName := r.URL.Query().Get("tagName")
+	if tagName == "" {
+		http.Error(w, "missing tagName parameter", http.StatusBadRequest)
+		return
+	}
+	if !validTagNameRe.MatchString(tagName) {
+		http.Error(w, "invalid tagName parameter", http.StatusBadRequest)
+		return
+	}
+
+	columnName := normalizeTagName(tagName)
+
 	if qp.Q == "" {
 		// If no query expression, use a default query that does an exists check for the requested tag
-		qp.Q = fmt.Sprintf("{%s=~\".+\"}", strings.ReplaceAll(tagName, ".", "_"))
+		qp.Q = fmt.Sprintf("{%s=~\".+\"}", columnName)
 	}
 
 	logAst, err := logql.FromLogQL(qp.Q)
@@ -150,11 +191,11 @@ func (q *QuerierService) handleGetSpanTagValues(w http.ResponseWriter, r *http.R
 		return
 	}
 	lplan, err := logql.CompileLog(logAst)
-	lplan.TagName = tagName
 	if err != nil {
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	lplan.TagName = columnName
 
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
