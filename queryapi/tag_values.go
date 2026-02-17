@@ -25,9 +25,20 @@ import (
 )
 
 func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http.Request) {
-	qPayload := readQueryPayload(w, r, false)
+	qPayload := readQueryPayload(w, r, true)
 	if qPayload == nil {
 		return
+	}
+
+	tagName := r.URL.Query().Get("tagName")
+	if tagName == "" {
+		http.Error(w, "missing tagName parameter", http.StatusBadRequest)
+		return
+	}
+
+	if qPayload.Q == "" {
+		// If no query expression, use a default query that does an exists check for the requested tag
+		qPayload.Q = fmt.Sprintf("{%s=~\".+\"}", strings.ReplaceAll(tagName, ".", "_"))
 	}
 
 	promExpr, err := promql.FromPromQL(qPayload.Q)
@@ -38,12 +49,6 @@ func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http
 	plan, err := promql.Compile(promExpr)
 	if err != nil {
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	tagName := r.URL.Query().Get("tagName")
-	if tagName == "" {
-		http.Error(w, "missing tagName parameter", http.StatusBadRequest)
 		return
 	}
 	plan.TagName = tagName
