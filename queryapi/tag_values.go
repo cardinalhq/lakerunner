@@ -18,11 +18,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/promql"
 )
+
+var validTagNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.]+$`)
 
 func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http.Request) {
 	qPayload := readQueryPayload(w, r, true)
@@ -33,6 +36,10 @@ func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http
 	tagName := r.URL.Query().Get("tagName")
 	if tagName == "" {
 		http.Error(w, "missing tagName parameter", http.StatusBadRequest)
+		return
+	}
+	if !validTagNameRe.MatchString(tagName) {
+		http.Error(w, "invalid tagName parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -90,6 +97,15 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 	}
 
 	tagName := r.URL.Query().Get("tagName")
+	if tagName == "" {
+		http.Error(w, "missing tagName parameter", http.StatusBadRequest)
+		return
+	}
+	if !validTagNameRe.MatchString(tagName) {
+		http.Error(w, "invalid tagName parameter", http.StatusBadRequest)
+		return
+	}
+
 	if qp.Q == "" {
 		// If no query expression, use a default query that does an exists check for the requested tag
 		qp.Q = fmt.Sprintf("{%s=~\".+\"}", strings.ReplaceAll(tagName, ".", "_"))
@@ -101,11 +117,11 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 		return
 	}
 	lplan, err := logql.CompileLog(logAst)
-	lplan.TagName = tagName
 	if err != nil {
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	lplan.TagName = tagName
 
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
@@ -144,6 +160,15 @@ func (q *QuerierService) handleGetSpanTagValues(w http.ResponseWriter, r *http.R
 	}
 
 	tagName := r.URL.Query().Get("tagName")
+	if tagName == "" {
+		http.Error(w, "missing tagName parameter", http.StatusBadRequest)
+		return
+	}
+	if !validTagNameRe.MatchString(tagName) {
+		http.Error(w, "invalid tagName parameter", http.StatusBadRequest)
+		return
+	}
+
 	if qp.Q == "" {
 		// If no query expression, use a default query that does an exists check for the requested tag
 		qp.Q = fmt.Sprintf("{%s=~\".+\"}", strings.ReplaceAll(tagName, ".", "_"))
@@ -155,11 +180,11 @@ func (q *QuerierService) handleGetSpanTagValues(w http.ResponseWriter, r *http.R
 		return
 	}
 	lplan, err := logql.CompileLog(logAst)
-	lplan.TagName = tagName
 	if err != nil {
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	lplan.TagName = tagName
 
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
