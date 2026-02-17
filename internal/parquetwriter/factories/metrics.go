@@ -87,20 +87,24 @@ type MetricsStatsProvider struct{}
 
 func (p *MetricsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &MetricsStatsAccumulator{
-		metricNames:  mapset.NewSet[string](),
-		metricTypes:  make(map[string]int16),
-		labelColumns: mapset.NewSet[string](),
+		metricNames:        mapset.NewSet[string](),
+		metricTypes:        make(map[string]int16),
+		labelColumns:       mapset.NewSet[string](),
+		fingerprints:       mapset.NewSet[int64](),
+		fieldFingerprinter: fingerprint.NewFieldFingerprinter(""),
 	}
 }
 
 // MetricsStatsAccumulator collects metrics-specific statistics.
 type MetricsStatsAccumulator struct {
-	metricNames  mapset.Set[string]
-	metricTypes  map[string]int16 // metric_name -> metric_type (parallel to metricNames)
-	labelColumns mapset.Set[string]
-	firstTS      int64
-	lastTS       int64
-	first        bool
+	metricNames        mapset.Set[string]
+	metricTypes        map[string]int16 // metric_name -> metric_type (parallel to metricNames)
+	labelColumns       mapset.Set[string]
+	fingerprints       mapset.Set[int64]
+	fieldFingerprinter *fingerprint.FieldFingerprinter
+	firstTS            int64
+	lastTS             int64
+	first              bool
 }
 
 func (a *MetricsStatsAccumulator) Add(row pipeline.Row) {
@@ -125,6 +129,9 @@ func (a *MetricsStatsAccumulator) Add(row pipeline.Row) {
 			a.labelColumns.Add(keyStr)
 		}
 	}
+
+	fps := a.fieldFingerprinter.GenerateFingerprints(row)
+	a.fingerprints.Append(fps...)
 
 	// Track timestamp range
 	if ts, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
@@ -153,14 +160,7 @@ func (a *MetricsStatsAccumulator) Add(row pipeline.Row) {
 }
 
 func (a *MetricsStatsAccumulator) Finalize() any {
-	// Create a map with metric names as a set for fingerprinting
-	tagValuesByName := map[string]mapset.Set[string]{
-		"metric_name": a.metricNames,
-	}
-
-	// Generate fingerprints using the same approach
-	fingerprintSet := fingerprint.ToFingerprints(tagValuesByName)
-	fingerprints := fingerprintSet.ToSlice()
+	fingerprints := a.fingerprints.ToSlice()
 	slices.Sort(fingerprints)
 
 	// Build label name map from collected columns
