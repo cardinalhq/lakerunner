@@ -488,9 +488,13 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 	// Collect fingerprints for metric name and all label matchers
 	fpsToFetch := make(map[int64]struct{})
 
-	// Always add metric_name fingerprint
-	metricFp := fingerprint.ComputeFingerprint("metric_name", be.Metric)
-	fpsToFetch[metricFp] = struct{}{}
+	// Add metric_name fingerprint only when a metric name is specified.
+	// When be.Metric is empty (e.g. tag-value queries without a metric filter),
+	// we rely solely on label matcher fingerprints to find relevant segments.
+	if be.Metric != "" {
+		metricFp := fingerprint.ComputeFingerprint("metric_name", be.Metric)
+		fpsToFetch[metricFp] = struct{}{}
+	}
 
 	// Add fingerprints for label matchers
 	// Priority: exact index > trigram index > exists
@@ -528,8 +532,14 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 			} else if fingerprint.HasTrigramIndex(label) {
 				// Use trigram matching for regex patterns
 				_, fpsList := buildLabelTrigram(label, val)
-				for _, fp := range fpsList {
-					fpsToFetch[fp] = struct{}{}
+				if len(fpsList) > 0 {
+					for _, fp := range fpsList {
+						fpsToFetch[fp] = struct{}{}
+					}
+				} else {
+					// Match-all patterns like ".+" produce no trigrams; fall back to exists
+					existsFp := fingerprint.ComputeFingerprint(label, fingerprint.ExistsRegex)
+					fpsToFetch[existsFp] = struct{}{}
 				}
 			} else {
 				// Fall back to exists check
