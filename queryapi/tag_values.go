@@ -27,6 +27,11 @@ import (
 
 var validTagNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.]+$`)
 
+// normalizeTagName converts dots to underscores to match Parquet column naming.
+func normalizeTagName(tagName string) string {
+	return strings.ReplaceAll(tagName, ".", "_")
+}
+
 func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http.Request) {
 	qPayload := readQueryPayload(w, r, true)
 	if qPayload == nil {
@@ -43,9 +48,11 @@ func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http
 		return
 	}
 
+	columnName := normalizeTagName(tagName)
+
 	if qPayload.Q == "" {
 		// If no query expression, use a default query that does an exists check for the requested tag
-		qPayload.Q = fmt.Sprintf("{%s=~\".+\"}", strings.ReplaceAll(tagName, ".", "_"))
+		qPayload.Q = fmt.Sprintf("{%s=~\".+\"}", columnName)
 	}
 
 	promExpr, err := promql.FromPromQL(qPayload.Q)
@@ -58,7 +65,7 @@ func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	plan.TagName = tagName
+	plan.TagName = columnName
 
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
@@ -106,9 +113,11 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	columnName := normalizeTagName(tagName)
+
 	if qp.Q == "" {
 		// If no query expression, use a default query that does an exists check for the requested tag
-		qp.Q = fmt.Sprintf("{%s=~\".+\"}", strings.ReplaceAll(tagName, ".", "_"))
+		qp.Q = fmt.Sprintf("{%s=~\".+\"}", columnName)
 	}
 
 	logAst, err := logql.FromLogQL(qp.Q)
@@ -121,7 +130,7 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	lplan.TagName = tagName
+	lplan.TagName = columnName
 
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
@@ -169,9 +178,11 @@ func (q *QuerierService) handleGetSpanTagValues(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	columnName := normalizeTagName(tagName)
+
 	if qp.Q == "" {
 		// If no query expression, use a default query that does an exists check for the requested tag
-		qp.Q = fmt.Sprintf("{%s=~\".+\"}", strings.ReplaceAll(tagName, ".", "_"))
+		qp.Q = fmt.Sprintf("{%s=~\".+\"}", columnName)
 	}
 
 	logAst, err := logql.FromLogQL(qp.Q)
@@ -184,7 +195,7 @@ func (q *QuerierService) handleGetSpanTagValues(w http.ResponseWriter, r *http.R
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	lplan.TagName = tagName
+	lplan.TagName = columnName
 
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
