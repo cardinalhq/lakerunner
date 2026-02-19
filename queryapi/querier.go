@@ -25,6 +25,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
@@ -130,27 +131,31 @@ func (q *QuerierService) sseWriter(w http.ResponseWriter) (func(event string, v 
 	return write, true
 }
 
-// TagMap is a map[string]any that marshals int64 values directly as JSON
-// integers, avoiding the precision loss that occurs when encoding/json
-// converts int64 → float64 for map[string]any values.
+// TagMap is a map[string]any with a custom JSON marshaler that emits
+// int64 and uint64 values as JSON integers with sorted keys for
+// deterministic output.
 type TagMap map[string]any
 
 func (t TagMap) MarshalJSON() ([]byte, error) {
+	keys := make([]string, 0, len(t))
+	for k := range t {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+
 	var buf bytes.Buffer
 	buf.WriteByte('{')
-	first := true
-	for k, v := range t {
-		if !first {
+	for i, k := range keys {
+		if i > 0 {
 			buf.WriteByte(',')
 		}
-		first = false
 		key, err := json.Marshal(k)
 		if err != nil {
 			return nil, err
 		}
 		buf.Write(key)
 		buf.WriteByte(':')
-		switch val := v.(type) {
+		switch val := t[k].(type) {
 		case int64:
 			fmt.Fprintf(&buf, "%d", val)
 		case uint64:
@@ -165,6 +170,31 @@ func (t TagMap) MarshalJSON() ([]byte, error) {
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil
+}
+
+func (t *TagMap) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var raw map[string]any
+	if err := dec.Decode(&raw); err != nil {
+		return err
+	}
+	result := make(TagMap, len(raw))
+	for k, v := range raw {
+		if n, ok := v.(json.Number); ok {
+			if i, err := n.Int64(); err == nil {
+				result[k] = i
+				continue
+			}
+			if f, err := n.Float64(); err == nil {
+				result[k] = f
+				continue
+			}
+		}
+		result[k] = v
+	}
+	*t = result
+	return nil
 }
 
 type evalData struct {
