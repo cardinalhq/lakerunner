@@ -224,6 +224,29 @@ func TestParser_ReturnBool(t *testing.T) {
 	}
 }
 
+func TestParser_SetOperators(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		op    string
+	}{
+		{"or", `avg(metric_a) or avg(metric_b)`, `"op":"or"`},
+		{"and", `avg(metric_a) and avg(metric_b)`, `"op":"and"`},
+		{"unless", `avg(metric_a) unless avg(metric_b)`, `"op":"unless"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expr, err := FromPromQL(tt.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			js := mustJSON(t, expr)
+			containsAll(t, js, `"kind":"binary"`, tt.op, `"metric":"metric_a"`, `"metric":"metric_b"`)
+		})
+	}
+}
+
 func TestLastOverTime_RangeAndOffset(t *testing.T) {
 	q := `last_over_time(http_request_duration_seconds_sum{job="api"}[24h] offset 1h)`
 	expr, err := FromPromQL(q)

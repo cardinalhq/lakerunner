@@ -143,6 +143,11 @@ const (
 	OpLE BinOp = "<="
 	OpEQ BinOp = "=="
 	OpNE BinOp = "!="
+
+	// set operators
+	OpOr     BinOp = "or"
+	OpAnd    BinOp = "and"
+	OpUnless BinOp = "unless"
 )
 
 type VectorMatch struct {
@@ -575,6 +580,14 @@ func toBinOp(op promparser.ItemType) BinOp {
 		return OpEQ
 	case promparser.NEQ:
 		return OpNE
+
+	// set operators
+	case promparser.LOR:
+		return OpOr
+	case promparser.LAND:
+		return OpAnd
+	case promparser.LUNLESS:
+		return OpUnless
 
 	default:
 		// fallback keeps behavior stable; consider surfacing an explicit error instead

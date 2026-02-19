@@ -16,16 +16,19 @@ package promql
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"time"
 )
 
-// BinaryNode : arithmetic (+ - * /) and comparisons (>,>=,<,<=,==,!=).
+// BinaryNode : arithmetic (+ - * /), comparisons (>,>=,<,<=,==,!=), and
+// set operators (or, and, unless).
 // Vector matching is simplified: we "join" by identical map keys.
 // For scalar–vector or vector–scalar, we apply the scalar to each sample on
 // the vector side. The `ReturnBool` flag implements PromQL `bool` modifier
 // for comparisons (emit 1 when true, 0 when false; otherwise comparisons
 // drop falsy samples).
+// Set operators are vector-vector only and have different empty-side semantics.
 type BinaryNode struct {
 	Op         BinOp
 	LHS        ExecNode
@@ -46,6 +49,18 @@ func (n *BinaryNode) Hints() ExecHints {
 func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult {
 	lmap := n.LHS.Eval(sg, step)
 	rmap := n.RHS.Eval(sg, step)
+
+	// Set operators dispatch first: they have different empty-side semantics
+	// and are vector-vector only.
+	switch n.Op {
+	case OpOr:
+		return n.evalOr(lmap, rmap)
+	case OpAnd:
+		return n.evalAnd(lmap, rmap)
+	case OpUnless:
+		return n.evalUnless(lmap, rmap)
+	}
+
 	if len(lmap) == 0 || len(rmap) == 0 {
 		return map[string]EvalResult{}
 	}
@@ -208,8 +223,51 @@ func (n *BinaryNode) Label(tags map[string]any) string {
 		return fmt.Sprintf("(%s == %s)", leftLabel, rightLabel)
 	case OpNE:
 		return fmt.Sprintf("(%s != %s)", leftLabel, rightLabel)
+	case OpOr:
+		return fmt.Sprintf("(%s or %s)", leftLabel, rightLabel)
+	case OpAnd:
+		return fmt.Sprintf("(%s and %s)", leftLabel, rightLabel)
+	case OpUnless:
+		return fmt.Sprintf("(%s unless %s)", leftLabel, rightLabel)
 	}
 	return "unknown"
+}
+
+// evalOr implements PromQL `or` (union): all LHS entries, plus RHS entries
+// whose keys are not already in LHS.
+func (n *BinaryNode) evalOr(lmap, rmap map[string]EvalResult) map[string]EvalResult {
+	out := make(map[string]EvalResult, len(lmap)+len(rmap))
+	maps.Copy(out, lmap)
+	for k, v := range rmap {
+		if _, ok := out[k]; !ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// evalAnd implements PromQL `and` (intersection): only LHS entries whose
+// key also exists in RHS. LHS values are kept.
+func (n *BinaryNode) evalAnd(lmap, rmap map[string]EvalResult) map[string]EvalResult {
+	out := make(map[string]EvalResult, minVal(len(lmap), len(rmap)))
+	for k, v := range lmap {
+		if _, ok := rmap[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// evalUnless implements PromQL `unless` (complement): only LHS entries whose
+// key does NOT exist in RHS. LHS values are kept.
+func (n *BinaryNode) evalUnless(lmap, rmap map[string]EvalResult) map[string]EvalResult {
+	out := make(map[string]EvalResult, len(lmap))
+	for k, v := range lmap {
+		if _, ok := rmap[k]; !ok {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // ---- helpers ----
@@ -289,9 +347,7 @@ func mergeTagsPreferL(l, r map[string]any) map[string]any {
 	}
 	// copy LHS first, then fill missing from RHS
 	out := make(map[string]any, len(l)+len(r))
-	for k, v := range l {
-		out[k] = v
-	}
+	maps.Copy(out, l)
 	for k, v := range r {
 		if _, ok := out[k]; !ok {
 			out[k] = v

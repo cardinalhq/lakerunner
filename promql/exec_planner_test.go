@@ -933,6 +933,48 @@ func TestCompile_Compare_Max_GT_Scalar(t *testing.T) {
 	}
 }
 
+func TestCompile_SetOperators(t *testing.T) {
+	tests := []struct {
+		name string
+		q    string
+		op   BinOp
+	}{
+		{"or", `sum by (job)(rate(a_metric[5m])) or sum by (job)(rate(b_metric[5m]))`, OpOr},
+		{"and", `sum by (job)(rate(a_metric[5m])) and sum by (job)(rate(b_metric[5m]))`, OpAnd},
+		{"unless", `sum by (job)(rate(a_metric[5m])) unless sum by (job)(rate(b_metric[5m]))`, OpUnless},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := mustParse(t, tt.q)
+			res, err := Compile(root)
+			if err != nil {
+				t.Fatalf("Compile error: %v", err)
+			}
+
+			bin, ok := res.Root.(*BinaryNode)
+			if !ok {
+				t.Fatalf("root not BinaryNode, got %T", res.Root)
+			}
+			if bin.Op != tt.op {
+				t.Fatalf("bin op=%v, want %v", bin.Op, tt.op)
+			}
+
+			// Both sides should be AggNodes
+			if _, ok := bin.LHS.(*AggNode); !ok {
+				t.Fatalf("LHS not AggNode, got %T", bin.LHS)
+			}
+			if _, ok := bin.RHS.(*AggNode); !ok {
+				t.Fatalf("RHS not AggNode, got %T", bin.RHS)
+			}
+
+			if len(res.Leaves) != 2 {
+				t.Fatalf("want 2 leaves, got %d", len(res.Leaves))
+			}
+		})
+	}
+}
+
 func TestCompile_Compare_Max_GT_Scalar_Return_Bool(t *testing.T) {
 	q := `max({__name__="k8s.container.cpu_limit_utilization"}) > bool 0.9`
 	root := mustParse(t, q)
