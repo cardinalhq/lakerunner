@@ -15,6 +15,7 @@
 package queryapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,12 +130,49 @@ func (q *QuerierService) sseWriter(w http.ResponseWriter) (func(event string, v 
 	return write, true
 }
 
+// TagMap is a map[string]any that marshals int64 values directly as JSON
+// integers, avoiding the precision loss that occurs when encoding/json
+// converts int64 → float64 for map[string]any values.
+type TagMap map[string]any
+
+func (t TagMap) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	first := true
+	for k, v := range t {
+		if !first {
+			buf.WriteByte(',')
+		}
+		first = false
+		key, err := json.Marshal(k)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(key)
+		buf.WriteByte(':')
+		switch val := v.(type) {
+		case int64:
+			fmt.Fprintf(&buf, "%d", val)
+		case uint64:
+			fmt.Fprintf(&buf, "%d", val)
+		default:
+			b, err := json.Marshal(val)
+			if err != nil {
+				return nil, err
+			}
+			buf.Write(b)
+		}
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
 type evalData struct {
-	Key       string         `json:"key,omitempty"`
-	Tags      map[string]any `json:"tags"`
-	Value     float64        `json:"value"`
-	Timestamp int64          `json:"timestamp"`
-	Label     string         `json:"label"`
+	Key       string  `json:"key,omitempty"`
+	Tags      TagMap  `json:"tags"`
+	Value     float64 `json:"value"`
+	Timestamp int64   `json:"timestamp"`
+	Label     string  `json:"label"`
 }
 
 func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request) {
@@ -238,17 +276,17 @@ func (q *QuerierService) sendEvalResults(ctx context.Context, w http.ResponseWri
 
 // SeriesSummary contains aggregate statistics for a single time series.
 type SeriesSummary struct {
-	Label string         `json:"label"`
-	Tags  map[string]any `json:"tags"`
-	Min   float64        `json:"min"`
-	Max   float64        `json:"max"`
-	Avg   float64        `json:"avg"`
-	Sum   float64        `json:"sum"`
-	Count int64          `json:"count"`
-	P50   *float64       `json:"p50,omitempty"`
-	P90   *float64       `json:"p90,omitempty"`
-	P95   *float64       `json:"p95,omitempty"`
-	P99   *float64       `json:"p99,omitempty"`
+	Label string   `json:"label"`
+	Tags  TagMap   `json:"tags"`
+	Min   float64  `json:"min"`
+	Max   float64  `json:"max"`
+	Avg   float64  `json:"avg"`
+	Sum   float64  `json:"sum"`
+	Count int64    `json:"count"`
+	P50   *float64 `json:"p50,omitempty"`
+	P90   *float64 `json:"p90,omitempty"`
+	P95   *float64 `json:"p95,omitempty"`
+	P99   *float64 `json:"p99,omitempty"`
 }
 
 func (q *QuerierService) handlePromQuerySummary(ctx context.Context, w http.ResponseWriter, qp *queryPayload, plan promql.QueryPlan) {
