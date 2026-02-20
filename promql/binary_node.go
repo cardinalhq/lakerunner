@@ -18,12 +18,16 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"slices"
+	"strings"
 	"time"
 )
 
 // BinaryNode : arithmetic (+ - * /), comparisons (>,>=,<,<=,==,!=), and
 // set operators (or, and, unless).
-// Vector matching is simplified: we "join" by identical map keys.
+// Vector matching uses matchKey() to join series by label signature,
+// automatically excluding name/__name__ from the match key (Prometheus
+// semantics). on()/ignoring() modifiers control which labels participate.
 // For scalar–vector or vector–scalar, we apply the scalar to each sample on
 // the vector side. The `ReturnBool` flag implements PromQL `bool` modifier
 // for comparisons (emit 1 when true, 0 when false; otherwise comparisons
@@ -33,7 +37,7 @@ type BinaryNode struct {
 	Op         BinOp
 	LHS        ExecNode
 	RHS        ExecNode
-	Match      *VectorMatch // currently unused (on/ignoring not implemented yet)
+	Match      *VectorMatch // on/ignoring vector matching
 	ReturnBool bool         // PromQL `bool` modifier for comparisons
 }
 
@@ -75,10 +79,15 @@ func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 		return n.evalVectorScalar(sg, rmap, sval, false)
 	}
 
-	// vector OP vector — inner join by identical key.
-	out := make(map[string]EvalResult, minVal(len(lmap), len(rmap)))
+	// vector OP vector — join by matchKey (excludes name/__name__).
+	rhsLookup, rhsConflicts := buildMatchLookup(rmap, n.Match)
+	out := make(map[string]EvalResult, minVal(len(lmap), len(rhsLookup)))
 	for lk, l := range lmap {
-		r, ok := rmap[lk]
+		mk := matchKey(l.Tags, n.Match)
+		if rhsConflicts[mk] {
+			continue // many-to-one without group modifier → drop
+		}
+		r, ok := rhsLookup[mk]
 		if !ok {
 			continue // inner join semantics
 		}
@@ -93,27 +102,25 @@ func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 				out[lk] = EvalResult{
 					Timestamp: sg.Timestamp,
 					Value:     Value{Kind: ValScalar, Num: v},
-					Tags:      mergeTagsPreferL(l.Tags, r.Tags),
+					Tags:      dropMetricName(mergeTagsPreferL(l.Tags, r.Tags)),
 				}
 			}
 
 		// Comparisons: keep LHS sample if predicate true; otherwise drop.
-		// With ReturnBool, emit 1 or 0 instead (keeping LHS/RHS tags).
+		// With ReturnBool, emit 1 or 0 instead.
 		case OpGT, OpGE, OpLT, OpLE, OpEQ, OpNE:
 			pred := applyCmp(le, re, n.Op)
 			if n.ReturnBool {
-				// Emit 1 if true, 0 if false; keep LHS tags by convention.
 				out[lk] = EvalResult{
 					Timestamp: sg.Timestamp,
 					Value:     Value{Kind: ValScalar, Num: bool01(pred)},
-					Tags:      mergeTagsPreferL(l.Tags, r.Tags),
+					Tags:      dropMetricName(mergeTagsPreferL(l.Tags, r.Tags)),
 				}
 			} else if pred {
-				// Emit the LHS sample (value as-is).
 				out[lk] = EvalResult{
 					Timestamp: sg.Timestamp,
 					Value:     l.Value,
-					Tags:      l.Tags,
+					Tags:      dropMetricName(l.Tags),
 				}
 			}
 		default:
@@ -129,6 +136,7 @@ func (n *BinaryNode) evalVectorScalar(sg SketchGroup, vec map[string]EvalResult,
 		if e.Value.Kind != ValScalar {
 			continue
 		}
+		tags := dropMetricName(e.Tags)
 		a := e.Value.Num
 		var v float64
 		switch n.Op {
@@ -139,21 +147,21 @@ func (n *BinaryNode) evalVectorScalar(sg SketchGroup, vec map[string]EvalResult,
 			} else {
 				v = scalar + a
 			}
-			out[k] = EvalResult{Timestamp: sg.Timestamp, Value: Value{Kind: ValScalar, Num: v}, Tags: e.Tags}
+			out[k] = EvalResult{Timestamp: sg.Timestamp, Value: Value{Kind: ValScalar, Num: v}, Tags: tags}
 		case OpSub:
 			if leftIsVector {
 				v = a - scalar
 			} else {
 				v = scalar - a
 			}
-			out[k] = EvalResult{Timestamp: sg.Timestamp, Value: Value{Kind: ValScalar, Num: v}, Tags: e.Tags}
+			out[k] = EvalResult{Timestamp: sg.Timestamp, Value: Value{Kind: ValScalar, Num: v}, Tags: tags}
 		case OpMul:
 			if leftIsVector {
 				v = a * scalar
 			} else {
 				v = scalar * a
 			}
-			out[k] = EvalResult{Timestamp: sg.Timestamp, Value: Value{Kind: ValScalar, Num: v}, Tags: e.Tags}
+			out[k] = EvalResult{Timestamp: sg.Timestamp, Value: Value{Kind: ValScalar, Num: v}, Tags: tags}
 		case OpDiv:
 			if leftIsVector {
 				if scalar == 0 {
@@ -167,7 +175,7 @@ func (n *BinaryNode) evalVectorScalar(sg SketchGroup, vec map[string]EvalResult,
 				v = scalar / a
 			}
 			if !math.IsNaN(v) {
-				out[k] = EvalResult{Timestamp: sg.Timestamp, Value: Value{Kind: ValScalar, Num: v}, Tags: e.Tags}
+				out[k] = EvalResult{Timestamp: sg.Timestamp, Value: Value{Kind: ValScalar, Num: v}, Tags: tags}
 			}
 
 		// Comparisons
@@ -182,14 +190,13 @@ func (n *BinaryNode) evalVectorScalar(sg SketchGroup, vec map[string]EvalResult,
 				out[k] = EvalResult{
 					Timestamp: sg.Timestamp,
 					Value:     Value{Kind: ValScalar, Num: bool01(pred)},
-					Tags:      e.Tags,
+					Tags:      tags,
 				}
 			} else if pred {
-				// Keep the vector-side sample
 				out[k] = EvalResult{
 					Timestamp: sg.Timestamp,
 					Value:     e.Value,
-					Tags:      e.Tags,
+					Tags:      tags,
 				}
 			}
 		default:
@@ -234,12 +241,18 @@ func (n *BinaryNode) Label(tags map[string]any) string {
 }
 
 // evalOr implements PromQL `or` (union): all LHS entries, plus RHS entries
-// whose keys are not already in LHS.
+// whose matchKey is not already in LHS. Set ops preserve metric name.
 func (n *BinaryNode) evalOr(lmap, rmap map[string]EvalResult) map[string]EvalResult {
 	out := make(map[string]EvalResult, len(lmap)+len(rmap))
-	maps.Copy(out, lmap)
+	lKeys := make(map[string]bool, len(lmap))
+	for k, v := range lmap {
+		mk := matchKey(v.Tags, n.Match)
+		lKeys[mk] = true
+		out[k] = v
+	}
 	for k, v := range rmap {
-		if _, ok := out[k]; !ok {
+		mk := matchKey(v.Tags, n.Match)
+		if !lKeys[mk] {
 			out[k] = v
 		}
 	}
@@ -247,11 +260,15 @@ func (n *BinaryNode) evalOr(lmap, rmap map[string]EvalResult) map[string]EvalRes
 }
 
 // evalAnd implements PromQL `and` (intersection): only LHS entries whose
-// key also exists in RHS. LHS values are kept.
+// matchKey also exists in RHS. LHS values are kept. Set ops preserve metric name.
 func (n *BinaryNode) evalAnd(lmap, rmap map[string]EvalResult) map[string]EvalResult {
+	rhsKeys := make(map[string]bool, len(rmap))
+	for _, v := range rmap {
+		rhsKeys[matchKey(v.Tags, n.Match)] = true
+	}
 	out := make(map[string]EvalResult, minVal(len(lmap), len(rmap)))
 	for k, v := range lmap {
-		if _, ok := rmap[k]; ok {
+		if rhsKeys[matchKey(v.Tags, n.Match)] {
 			out[k] = v
 		}
 	}
@@ -259,18 +276,114 @@ func (n *BinaryNode) evalAnd(lmap, rmap map[string]EvalResult) map[string]EvalRe
 }
 
 // evalUnless implements PromQL `unless` (complement): only LHS entries whose
-// key does NOT exist in RHS. LHS values are kept.
+// matchKey does NOT exist in RHS. LHS values are kept. Set ops preserve metric name.
 func (n *BinaryNode) evalUnless(lmap, rmap map[string]EvalResult) map[string]EvalResult {
+	rhsKeys := make(map[string]bool, len(rmap))
+	for _, v := range rmap {
+		rhsKeys[matchKey(v.Tags, n.Match)] = true
+	}
 	out := make(map[string]EvalResult, len(lmap))
 	for k, v := range lmap {
-		if _, ok := rmap[k]; !ok {
+		if !rhsKeys[matchKey(v.Tags, n.Match)] {
 			out[k] = v
 		}
 	}
 	return out
 }
 
-// ---- helpers ----
+// ---- matching helpers ----
+
+// matchKey computes a join key from tags, always excluding name/__name__.
+// With on(): only the listed labels (minus name/__name__) are included.
+// With ignoring(): listed labels plus name/__name__ are excluded.
+// Default (no on/ignoring): all labels except name/__name__.
+func matchKey(tags map[string]any, match *VectorMatch) string {
+	if len(tags) == 0 {
+		return ""
+	}
+
+	var include func(string) bool
+	if match != nil && len(match.On) > 0 {
+		onSet := make(map[string]bool, len(match.On))
+		for _, l := range match.On {
+			onSet[l] = true
+		}
+		include = func(k string) bool {
+			return onSet[k] && k != "name" && k != "__name__"
+		}
+	} else if match != nil && len(match.Ignoring) > 0 {
+		ignoreSet := make(map[string]bool, len(match.Ignoring)+2)
+		for _, l := range match.Ignoring {
+			ignoreSet[l] = true
+		}
+		ignoreSet["name"] = true
+		ignoreSet["__name__"] = true
+		include = func(k string) bool {
+			return !ignoreSet[k]
+		}
+	} else {
+		include = func(k string) bool {
+			return k != "name" && k != "__name__"
+		}
+	}
+
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		if include(k) {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
+
+	var sb strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(k)
+		sb.WriteByte('=')
+		fmt.Fprint(&sb, tags[k])
+	}
+	return sb.String()
+}
+
+// dropMetricName returns tags without name/__name__. If neither key is
+// present, the original map is returned (no allocation).
+func dropMetricName(tags map[string]any) map[string]any {
+	_, hasName := tags["name"]
+	_, hasDunder := tags["__name__"]
+	if !hasName && !hasDunder {
+		return tags
+	}
+	out := make(map[string]any, len(tags))
+	for k, v := range tags {
+		if k != "name" && k != "__name__" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// buildMatchLookup builds a map from matchKey → EvalResult for the RHS
+// of a binary operation. If multiple entries share the same matchKey,
+// the key is recorded in the conflicts map and the match is dropped
+// (many-to-one without group modifier).
+func buildMatchLookup(m map[string]EvalResult, match *VectorMatch) (lookup map[string]EvalResult, conflicts map[string]bool) {
+	lookup = make(map[string]EvalResult, len(m))
+	for _, er := range m {
+		mk := matchKey(er.Tags, match)
+		if _, exists := lookup[mk]; exists {
+			if conflicts == nil {
+				conflicts = make(map[string]bool)
+			}
+			conflicts[mk] = true
+		}
+		lookup[mk] = er
+	}
+	return lookup, conflicts
+}
+
+// ---- scalar helpers ----
 
 func asScalar(m map[string]EvalResult) (float64, bool) {
 	if len(m) != 1 {

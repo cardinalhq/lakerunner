@@ -1035,3 +1035,61 @@ func TestCompile_Compare_Max_GT_Scalar_Return_Bool(t *testing.T) {
 		t.Fatalf("want 1 leaf, got %d: %+v", len(plan.Leaves), plan.Leaves)
 	}
 }
+
+func TestCompile_VectorMatchSurvives(t *testing.T) {
+	tests := []struct {
+		name     string
+		q        string
+		wantOn   []string
+		wantIgn  []string
+		wantGrp  string
+		wantLbls []string
+	}{
+		{
+			name:   "on(job)",
+			q:      `sum by (job)(rate(a_metric[5m])) / on(job) sum by (job)(rate(b_metric[5m]))`,
+			wantOn: []string{"job"},
+		},
+		{
+			name:    "ignoring(instance)",
+			q:       `sum(rate(a_metric[5m])) + ignoring(instance) sum(rate(b_metric[5m]))`,
+			wantIgn: []string{"instance"},
+		},
+		{
+			name:     "group_left with labels",
+			q:        `sum by (job)(rate(a_metric[5m])) / on(job) group_left(instance) sum by (job)(rate(b_metric[5m]))`,
+			wantOn:   []string{"job"},
+			wantGrp:  "left",
+			wantLbls: []string{"instance"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := mustParse(t, tt.q)
+			res, err := Compile(root)
+			if err != nil {
+				t.Fatalf("Compile error: %v", err)
+			}
+			bin, ok := res.Root.(*BinaryNode)
+			if !ok {
+				t.Fatalf("root not BinaryNode, got %T", res.Root)
+			}
+			if bin.Match == nil {
+				t.Fatal("bin.Match is nil, expected VectorMatch to survive compilation")
+			}
+			if !reflect.DeepEqual(bin.Match.On, tt.wantOn) {
+				t.Fatalf("Match.On=%v, want %v", bin.Match.On, tt.wantOn)
+			}
+			if !reflect.DeepEqual(bin.Match.Ignoring, tt.wantIgn) {
+				t.Fatalf("Match.Ignoring=%v, want %v", bin.Match.Ignoring, tt.wantIgn)
+			}
+			if bin.Match.Group != tt.wantGrp {
+				t.Fatalf("Match.Group=%q, want %q", bin.Match.Group, tt.wantGrp)
+			}
+			if !reflect.DeepEqual(bin.Match.Labels, tt.wantLbls) {
+				t.Fatalf("Match.Labels=%v, want %v", bin.Match.Labels, tt.wantLbls)
+			}
+		})
+	}
+}
