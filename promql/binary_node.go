@@ -133,11 +133,11 @@ func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 func (n *BinaryNode) evalVectorScalar(sg SketchGroup, vec map[string]EvalResult, scalar float64, leftIsVector bool) map[string]EvalResult {
 	out := make(map[string]EvalResult, len(vec))
 	for k, e := range vec {
-		if e.Value.Kind != ValScalar {
+		a, ok := resolveScalar(e.Value)
+		if !ok {
 			continue
 		}
 		tags := dropMetricName(e.Tags)
-		a := e.Value.Num
 		var v float64
 		switch n.Op {
 		// Arithmetic: apply with proper operand order
@@ -390,24 +390,50 @@ func asScalar(m map[string]EvalResult) (float64, bool) {
 		return 0, false
 	}
 	for k, er := range m {
-		if er.Value.Kind != ValScalar {
+		v, ok := resolveScalar(er.Value)
+		if !ok {
 			return 0, false
 		}
 		// Heuristic: scalar nodes typically have key "default" and/or empty tags.
 		if k == "default" || len(er.Tags) == 0 {
-			return er.Value.Num, true
+			return v, true
 		}
 		// If it's a single-entry map with a scalar, treat as scalar literal anyway.
-		return er.Value.Num, true
+		return v, true
 	}
 	return 0, false
 }
 
+// resolveScalar extracts a float64 from a Value. For ValScalar it returns
+// Num directly. For ValMap (instant selector rollups containing sum/count
+// from LeafNode) it returns sum/count — the actual metric value at that
+// instant, equivalent to what Prometheus returns for a bare selector.
+func resolveScalar(v Value) (float64, bool) {
+	switch v.Kind {
+	case ValScalar:
+		return v.Num, true
+	case ValMap:
+		if v.AggMap == nil {
+			return 0, false
+		}
+		s := v.AggMap[SUM]
+		c := v.AggMap[COUNT]
+		if c == 0 {
+			return math.NaN(), true
+		}
+		return s / c, true
+	default:
+		return 0, false
+	}
+}
+
 func bothScalars(l, r EvalResult) (float64, float64, bool) {
-	if l.Value.Kind != ValScalar || r.Value.Kind != ValScalar {
+	lv, lok := resolveScalar(l.Value)
+	rv, rok := resolveScalar(r.Value)
+	if !lok || !rok {
 		return 0, 0, false
 	}
-	return l.Value.Num, r.Value.Num, true
+	return lv, rv, true
 }
 
 func applyArith(a, b float64, op BinOp) (float64, bool) {

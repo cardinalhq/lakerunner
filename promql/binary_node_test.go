@@ -15,6 +15,7 @@
 package promql
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -766,6 +767,91 @@ func TestEvalSetOp_MatchKeyBasedJoin(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, 10.0, got["l1"].Value.Num)
 	assert.Equal(t, "metric_a", got["l1"].Tags["name"])
+}
+
+// --- ValMap (instant selector) handling tests ---
+
+func mapResult(ts int64, sum, count float64, t map[string]any) EvalResult {
+	return EvalResult{
+		Timestamp: ts,
+		Value:     Value{Kind: ValMap, AggMap: map[string]float64{"sum": sum, "count": count}},
+		Tags:      t,
+	}
+}
+
+func TestResolveScalar(t *testing.T) {
+	t.Run("scalar", func(t *testing.T) {
+		got, ok := resolveScalar(Value{Kind: ValScalar, Num: 42})
+		assert.True(t, ok)
+		assert.InDelta(t, 42.0, got, 1e-9)
+	})
+	t.Run("map sum/count", func(t *testing.T) {
+		got, ok := resolveScalar(Value{Kind: ValMap, AggMap: map[string]float64{"sum": 100, "count": 2}})
+		assert.True(t, ok)
+		assert.InDelta(t, 50.0, got, 1e-9)
+	})
+	t.Run("map zero count returns NaN", func(t *testing.T) {
+		got, ok := resolveScalar(Value{Kind: ValMap, AggMap: map[string]float64{"sum": 100, "count": 0}})
+		assert.True(t, ok)
+		assert.True(t, math.IsNaN(got), "zero count should return NaN")
+	})
+	t.Run("map nil AggMap", func(t *testing.T) {
+		_, ok := resolveScalar(Value{Kind: ValMap})
+		assert.False(t, ok)
+	})
+	t.Run("hll unsupported", func(t *testing.T) {
+		_, ok := resolveScalar(Value{Kind: ValHLL})
+		assert.False(t, ok)
+	})
+}
+
+func TestEvalArithmetic_ValMap(t *testing.T) {
+	sg := SketchGroup{Timestamp: 1000}
+	step := time.Minute
+
+	// Instant selectors produce ValMap with sum/count. Binary ops should
+	// resolve them to sum/count before arithmetic.
+	lhs := map[string]EvalResult{
+		"l1": mapResult(1000, 100, 1, tags("name", "storage_total", "id", "abc")),
+		"l2": mapResult(1000, 200, 1, tags("name", "storage_total", "id", "def")),
+	}
+	rhs := map[string]EvalResult{
+		"r1": mapResult(1000, 40, 1, tags("name", "storage_used", "id", "abc")),
+		"r2": mapResult(1000, 80, 1, tags("name", "storage_used", "id", "def")),
+	}
+
+	n := &BinaryNode{
+		Op:  OpSub,
+		LHS: &staticNode{results: lhs},
+		RHS: &staticNode{results: rhs},
+	}
+	got := n.Eval(sg, step)
+	require.Len(t, got, 2)
+	assert.InDelta(t, 60.0, got["l1"].Value.Num, 1e-9)
+	assert.InDelta(t, 120.0, got["l2"].Value.Num, 1e-9)
+	assert.Equal(t, ValScalar, got["l1"].Value.Kind)
+}
+
+func TestEvalVectorScalar_ValMap(t *testing.T) {
+	sg := SketchGroup{Timestamp: 1000}
+	step := time.Minute
+
+	// Vector side has ValMap, scalar side is a literal.
+	lhs := map[string]EvalResult{
+		"l": mapResult(1000, 50, 1, tags("name", "metric_a", "job", "api")),
+	}
+	rhs := map[string]EvalResult{
+		"default": scalarResult(1000, 10, nil),
+	}
+
+	n := &BinaryNode{
+		Op:  OpMul,
+		LHS: &staticNode{results: lhs},
+		RHS: &staticNode{results: rhs},
+	}
+	got := n.Eval(sg, step)
+	require.Len(t, got, 1)
+	assert.InDelta(t, 500.0, got["l"].Value.Num, 1e-9)
 }
 
 // --- buildMatchLookup tests ---
