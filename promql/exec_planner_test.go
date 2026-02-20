@@ -18,6 +18,9 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func mustParse(t *testing.T, q string) Expr {
@@ -1038,12 +1041,10 @@ func TestCompile_Compare_Max_GT_Scalar_Return_Bool(t *testing.T) {
 
 func TestCompile_VectorMatchSurvives(t *testing.T) {
 	tests := []struct {
-		name     string
-		q        string
-		wantOn   []string
-		wantIgn  []string
-		wantGrp  string
-		wantLbls []string
+		name    string
+		q       string
+		wantOn  []string
+		wantIgn []string
 	}{
 		{
 			name:   "on(job)",
@@ -1054,13 +1055,6 @@ func TestCompile_VectorMatchSurvives(t *testing.T) {
 			name:    "ignoring(instance)",
 			q:       `sum(rate(a_metric[5m])) + ignoring(instance) sum(rate(b_metric[5m]))`,
 			wantIgn: []string{"instance"},
-		},
-		{
-			name:     "group_left with labels",
-			q:        `sum by (job)(rate(a_metric[5m])) / on(job) group_left(instance) sum by (job)(rate(b_metric[5m]))`,
-			wantOn:   []string{"job"},
-			wantGrp:  "left",
-			wantLbls: []string{"instance"},
 		},
 	}
 
@@ -1084,12 +1078,16 @@ func TestCompile_VectorMatchSurvives(t *testing.T) {
 			if !reflect.DeepEqual(bin.Match.Ignoring, tt.wantIgn) {
 				t.Fatalf("Match.Ignoring=%v, want %v", bin.Match.Ignoring, tt.wantIgn)
 			}
-			if bin.Match.Group != tt.wantGrp {
-				t.Fatalf("Match.Group=%q, want %q", bin.Match.Group, tt.wantGrp)
-			}
-			if !reflect.DeepEqual(bin.Match.Labels, tt.wantLbls) {
-				t.Fatalf("Match.Labels=%v, want %v", bin.Match.Labels, tt.wantLbls)
-			}
 		})
 	}
+}
+
+func TestCompile_GroupLeftRightRejected(t *testing.T) {
+	_, err := FromPromQL(`sum(rate(a[1m])) / on(job) group_left sum(rate(b[1m]))`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "group_left is not supported")
+
+	_, err = FromPromQL(`sum(rate(a[1m])) * on(job) group_right sum(rate(b[1m]))`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "group_right is not supported")
 }

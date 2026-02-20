@@ -25,9 +25,11 @@ import (
 
 // BinaryNode : arithmetic (+ - * /), comparisons (>,>=,<,<=,==,!=), and
 // set operators (or, and, unless).
-// Vector matching uses matchKey() to join series by label signature,
-// automatically excluding name/__name__ from the match key (Prometheus
-// semantics). on()/ignoring() modifiers control which labels participate.
+// For arithmetic/comparison ops, matchKey() excludes name/__name__ so
+// cross-metric math works. For set ops, name/__name__ is included so
+// series with different metric names are treated as distinct.
+// on()/ignoring() modifiers control which labels participate.
+// group_left/group_right are rejected at parse time (not supported).
 // For scalar–vector or vector–scalar, we apply the scalar to each sample on
 // the vector side. The `ReturnBool` flag implements PromQL `bool` modifier
 // for comparisons (emit 1 when true, 0 when false; otherwise comparisons
@@ -84,8 +86,8 @@ func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 	out := make(map[string]EvalResult, minVal(len(lmap), len(rhsLookup)))
 	for lk, l := range lmap {
 		mk := matchKey(l.Tags, n.Match, false)
-		if rhsConflicts[mk] && (n.Match == nil || n.Match.Group == "") {
-			continue // many-to-one without group modifier → drop
+		if rhsConflicts[mk] {
+			continue // many-to-one conflict → drop
 		}
 		r, ok := rhsLookup[mk]
 		if !ok {

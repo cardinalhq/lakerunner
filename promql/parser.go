@@ -153,8 +153,6 @@ const (
 type VectorMatch struct {
 	On       []string `json:"on,omitempty"`
 	Ignoring []string `json:"ignoring,omitempty"`
-	Group    string   `json:"group,omitempty"`  // "", "left", "right"
-	Labels   []string `json:"labels,omitempty"` // for group_left/right
 }
 
 // HistogramQuantile Histogram quantile
@@ -456,11 +454,9 @@ func fromNode(n promparser.Node) (Expr, error) {
 			}
 			switch v.VectorMatching.Card {
 			case promparser.CardManyToOne:
-				m.Group = "left"
-				m.Labels = v.VectorMatching.Include
+				return Expr{}, fmt.Errorf("group_left is not supported")
 			case promparser.CardOneToMany:
-				m.Group = "right"
-				m.Labels = v.VectorMatching.Include
+				return Expr{}, fmt.Errorf("group_right is not supported")
 			default:
 			}
 			be.Match = m

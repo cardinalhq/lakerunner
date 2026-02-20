@@ -263,16 +263,6 @@ func TestParser_OnIgnoring(t *testing.T) {
 			q:    `sum(rate(a[1m])) + ignoring(instance) sum(rate(b[1m]))`,
 			subs: []string{`"kind":"binary"`, `"op":"+"`, `"ignoring":["instance"]`},
 		},
-		{
-			name: "group_left",
-			q:    `sum(rate(a[1m])) / on(job) group_left(instance) sum(rate(b[1m]))`,
-			subs: []string{`"kind":"binary"`, `"op":"/"`, `"on":["job"]`, `"group":"left"`, `"labels":["instance"]`},
-		},
-		{
-			name: "group_right",
-			q:    `sum(rate(a[1m])) * on(job) group_right sum(rate(b[1m]))`,
-			subs: []string{`"kind":"binary"`, `"op":"*"`, `"on":["job"]`, `"group":"right"`},
-		},
 	}
 
 	for _, tt := range tests {
