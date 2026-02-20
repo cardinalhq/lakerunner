@@ -202,6 +202,41 @@ func TestFinalGrouping_Binary_PeelsWrappersOnBothSides(t *testing.T) {
 	}
 }
 
+func TestFinalGrouping_SetOp_SameBy(t *testing.T) {
+	q := `sum by (job)(rate(a_metric[5m])) or sum by (job)(rate(b_metric[5m]))`
+	root := mustParse(t, q)
+
+	plan, err := Compile(root)
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+
+	by, wo, ok := FinalGroupingFromPlan(plan)
+	if !ok {
+		t.Fatalf("expected grouping, got none")
+	}
+	if len(wo) != 0 {
+		t.Fatalf("unexpected Without=%v", wo)
+	}
+	if got, want := sorted(by), []string{"job"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("By=%v, want %v", got, want)
+	}
+}
+
+func TestFinalGrouping_SetOp_MismatchedBy(t *testing.T) {
+	q := `sum by (job)(rate(a_metric[5m])) and sum by (instance)(rate(b_metric[5m]))`
+	root := mustParse(t, q)
+
+	plan, err := Compile(root)
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+
+	if by, wo, ok := FinalGroupingFromPlan(plan); ok {
+		t.Fatalf("expected no definitive grouping; got By=%v Without=%v", by, wo)
+	}
+}
+
 func TestFinalGrouping_Binary_DifferentKinds(t *testing.T) {
 	// Left: by(job); Right: global
 	q := `

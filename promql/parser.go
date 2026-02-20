@@ -143,13 +143,16 @@ const (
 	OpLE BinOp = "<="
 	OpEQ BinOp = "=="
 	OpNE BinOp = "!="
+
+	// set operators
+	OpOr     BinOp = "or"
+	OpAnd    BinOp = "and"
+	OpUnless BinOp = "unless"
 )
 
 type VectorMatch struct {
 	On       []string `json:"on,omitempty"`
 	Ignoring []string `json:"ignoring,omitempty"`
-	Group    string   `json:"group,omitempty"`  // "", "left", "right"
-	Labels   []string `json:"labels,omitempty"` // for group_left/right
 }
 
 // HistogramQuantile Histogram quantile
@@ -451,11 +454,9 @@ func fromNode(n promparser.Node) (Expr, error) {
 			}
 			switch v.VectorMatching.Card {
 			case promparser.CardManyToOne:
-				m.Group = "left"
-				m.Labels = v.VectorMatching.Include
+				return Expr{}, fmt.Errorf("group_left is not supported")
 			case promparser.CardOneToMany:
-				m.Group = "right"
-				m.Labels = v.VectorMatching.Include
+				return Expr{}, fmt.Errorf("group_right is not supported")
 			default:
 			}
 			be.Match = m
@@ -575,6 +576,14 @@ func toBinOp(op promparser.ItemType) BinOp {
 		return OpEQ
 	case promparser.NEQ:
 		return OpNE
+
+	// set operators
+	case promparser.LOR:
+		return OpOr
+	case promparser.LAND:
+		return OpAnd
+	case promparser.LUNLESS:
+		return OpUnless
 
 	default:
 		// fallback keeps behavior stable; consider surfacing an explicit error instead

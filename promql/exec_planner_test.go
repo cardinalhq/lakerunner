@@ -18,6 +18,9 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func mustParse(t *testing.T, q string) Expr {
@@ -933,6 +936,48 @@ func TestCompile_Compare_Max_GT_Scalar(t *testing.T) {
 	}
 }
 
+func TestCompile_SetOperators(t *testing.T) {
+	tests := []struct {
+		name string
+		q    string
+		op   BinOp
+	}{
+		{"or", `sum by (job)(rate(a_metric[5m])) or sum by (job)(rate(b_metric[5m]))`, OpOr},
+		{"and", `sum by (job)(rate(a_metric[5m])) and sum by (job)(rate(b_metric[5m]))`, OpAnd},
+		{"unless", `sum by (job)(rate(a_metric[5m])) unless sum by (job)(rate(b_metric[5m]))`, OpUnless},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := mustParse(t, tt.q)
+			res, err := Compile(root)
+			if err != nil {
+				t.Fatalf("Compile error: %v", err)
+			}
+
+			bin, ok := res.Root.(*BinaryNode)
+			if !ok {
+				t.Fatalf("root not BinaryNode, got %T", res.Root)
+			}
+			if bin.Op != tt.op {
+				t.Fatalf("bin op=%v, want %v", bin.Op, tt.op)
+			}
+
+			// Both sides should be AggNodes
+			if _, ok := bin.LHS.(*AggNode); !ok {
+				t.Fatalf("LHS not AggNode, got %T", bin.LHS)
+			}
+			if _, ok := bin.RHS.(*AggNode); !ok {
+				t.Fatalf("RHS not AggNode, got %T", bin.RHS)
+			}
+
+			if len(res.Leaves) != 2 {
+				t.Fatalf("want 2 leaves, got %d", len(res.Leaves))
+			}
+		})
+	}
+}
+
 func TestCompile_Compare_Max_GT_Scalar_Return_Bool(t *testing.T) {
 	q := `max({__name__="k8s.container.cpu_limit_utilization"}) > bool 0.9`
 	root := mustParse(t, q)
@@ -992,4 +1037,57 @@ func TestCompile_Compare_Max_GT_Scalar_Return_Bool(t *testing.T) {
 	if len(plan.Leaves) != 1 {
 		t.Fatalf("want 1 leaf, got %d: %+v", len(plan.Leaves), plan.Leaves)
 	}
+}
+
+func TestCompile_VectorMatchSurvives(t *testing.T) {
+	tests := []struct {
+		name    string
+		q       string
+		wantOn  []string
+		wantIgn []string
+	}{
+		{
+			name:   "on(job)",
+			q:      `sum by (job)(rate(a_metric[5m])) / on(job) sum by (job)(rate(b_metric[5m]))`,
+			wantOn: []string{"job"},
+		},
+		{
+			name:    "ignoring(instance)",
+			q:       `sum(rate(a_metric[5m])) + ignoring(instance) sum(rate(b_metric[5m]))`,
+			wantIgn: []string{"instance"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := mustParse(t, tt.q)
+			res, err := Compile(root)
+			if err != nil {
+				t.Fatalf("Compile error: %v", err)
+			}
+			bin, ok := res.Root.(*BinaryNode)
+			if !ok {
+				t.Fatalf("root not BinaryNode, got %T", res.Root)
+			}
+			if bin.Match == nil {
+				t.Fatal("bin.Match is nil, expected VectorMatch to survive compilation")
+			}
+			if !reflect.DeepEqual(bin.Match.On, tt.wantOn) {
+				t.Fatalf("Match.On=%v, want %v", bin.Match.On, tt.wantOn)
+			}
+			if !reflect.DeepEqual(bin.Match.Ignoring, tt.wantIgn) {
+				t.Fatalf("Match.Ignoring=%v, want %v", bin.Match.Ignoring, tt.wantIgn)
+			}
+		})
+	}
+}
+
+func TestCompile_GroupLeftRightRejected(t *testing.T) {
+	_, err := FromPromQL(`sum(rate(a[1m])) / on(job) group_left sum(rate(b[1m]))`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "group_left is not supported")
+
+	_, err = FromPromQL(`sum(rate(a[1m])) * on(job) group_right sum(rate(b[1m]))`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "group_right is not supported")
 }
