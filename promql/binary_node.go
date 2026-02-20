@@ -252,12 +252,17 @@ func (n *BinaryNode) evalOr(lmap, rmap map[string]EvalResult) map[string]EvalRes
 		lKeys[mk] = true
 		out[k] = v
 	}
+	dedup := 0
 	for k, v := range rmap {
 		mk := matchKey(v.Tags, n.Match, true)
 		if !lKeys[mk] {
 			outKey := k
-			for _, exists := out[outKey]; exists; _, exists = out[outKey] {
-				outKey = outKey + "\x00"
+			for {
+				if _, exists := out[outKey]; !exists {
+					break
+				}
+				dedup++
+				outKey = fmt.Sprintf("%s:%d", k, dedup)
 			}
 			out[outKey] = v
 		}

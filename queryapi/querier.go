@@ -198,7 +198,6 @@ func (t *TagMap) UnmarshalJSON(data []byte) error {
 }
 
 type evalData struct {
-	Key       string  `json:"key,omitempty"`
 	Tags      TagMap  `json:"tags"`
 	Value     float64 `json:"value"`
 	Timestamp int64   `json:"timestamp"`
@@ -282,13 +281,12 @@ func (q *QuerierService) sendEvalResults(ctx context.Context, w http.ResponseWri
 				_ = writeSSE("done", map[string]string{"status": "ok"})
 				return
 			}
-			for k, v := range res {
+			for _, v := range res {
 				label := plan.Root.Label(v.Tags)
 				if math.IsNaN(v.Value.Num) {
 					continue
 				}
 				ed := evalData{
-					Key:       k,
 					Tags:      v.Tags,
 					Value:     v.Value.Num,
 					Timestamp: v.Timestamp,
