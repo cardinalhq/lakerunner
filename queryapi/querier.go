@@ -711,6 +711,28 @@ func (q *QuerierService) handleListServices(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(map[string][]string{"services": services})
 }
 
+type queryAPIFeatures struct {
+	MetricsSummarySSE bool `json:"metricsSummarySSE"`
+}
+
+type queryAPIFeaturesResp struct {
+	Features queryAPIFeatures `json:"features"`
+}
+
+func (q *QuerierService) handleFeatures(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "only GET or POST method is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(queryAPIFeaturesResp{
+		Features: queryAPIFeatures{
+			MetricsSummarySSE: true,
+		},
+	})
+}
+
 func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
@@ -718,6 +740,7 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 
 	mux.HandleFunc("/api/v1/ping", q.apiKeyMiddleware(q.handlePing))
 	mux.HandleFunc("/api/v1/services", q.apiKeyMiddleware(q.handleListServices))
+	mux.HandleFunc("/api/v1/features", q.apiKeyMiddleware(q.handleFeatures))
 
 	mux.HandleFunc("/api/v1/metrics/metadata", q.apiKeyMiddleware(q.handleListPromQLMetricsMetadata))
 	mux.HandleFunc("/api/v1/metrics/tags", q.apiKeyMiddleware(q.handleListPromQLTags))
