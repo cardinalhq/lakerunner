@@ -80,10 +80,10 @@ func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 	}
 
 	// vector OP vector — join by matchKey (excludes name/__name__).
-	rhsLookup, rhsConflicts := buildMatchLookup(rmap, n.Match)
+	rhsLookup, rhsConflicts := buildMatchLookup(rmap, n.Match, false)
 	out := make(map[string]EvalResult, minVal(len(lmap), len(rhsLookup)))
 	for lk, l := range lmap {
-		mk := matchKey(l.Tags, n.Match)
+		mk := matchKey(l.Tags, n.Match, false)
 		if rhsConflicts[mk] && (n.Match == nil || n.Match.Group == "") {
 			continue // many-to-one without group modifier → drop
 		}
@@ -246,12 +246,12 @@ func (n *BinaryNode) evalOr(lmap, rmap map[string]EvalResult) map[string]EvalRes
 	out := make(map[string]EvalResult, len(lmap)+len(rmap))
 	lKeys := make(map[string]bool, len(lmap))
 	for k, v := range lmap {
-		mk := matchKey(v.Tags, n.Match)
+		mk := matchKey(v.Tags, n.Match, true)
 		lKeys[mk] = true
 		out[k] = v
 	}
 	for k, v := range rmap {
-		mk := matchKey(v.Tags, n.Match)
+		mk := matchKey(v.Tags, n.Match, true)
 		if !lKeys[mk] {
 			out[k] = v
 		}
@@ -264,11 +264,11 @@ func (n *BinaryNode) evalOr(lmap, rmap map[string]EvalResult) map[string]EvalRes
 func (n *BinaryNode) evalAnd(lmap, rmap map[string]EvalResult) map[string]EvalResult {
 	rhsKeys := make(map[string]bool, len(rmap))
 	for _, v := range rmap {
-		rhsKeys[matchKey(v.Tags, n.Match)] = true
+		rhsKeys[matchKey(v.Tags, n.Match, true)] = true
 	}
 	out := make(map[string]EvalResult, minVal(len(lmap), len(rmap)))
 	for k, v := range lmap {
-		if rhsKeys[matchKey(v.Tags, n.Match)] {
+		if rhsKeys[matchKey(v.Tags, n.Match, true)] {
 			out[k] = v
 		}
 	}
@@ -280,11 +280,11 @@ func (n *BinaryNode) evalAnd(lmap, rmap map[string]EvalResult) map[string]EvalRe
 func (n *BinaryNode) evalUnless(lmap, rmap map[string]EvalResult) map[string]EvalResult {
 	rhsKeys := make(map[string]bool, len(rmap))
 	for _, v := range rmap {
-		rhsKeys[matchKey(v.Tags, n.Match)] = true
+		rhsKeys[matchKey(v.Tags, n.Match, true)] = true
 	}
 	out := make(map[string]EvalResult, len(lmap))
 	for k, v := range lmap {
-		if !rhsKeys[matchKey(v.Tags, n.Match)] {
+		if !rhsKeys[matchKey(v.Tags, n.Match, true)] {
 			out[k] = v
 		}
 	}
@@ -293,13 +293,18 @@ func (n *BinaryNode) evalUnless(lmap, rmap map[string]EvalResult) map[string]Eva
 
 // ---- matching helpers ----
 
-// matchKey computes a join key from tags, always excluding name/__name__.
-// With on(): only the listed labels (minus name/__name__) are included.
-// With ignoring(): listed labels plus name/__name__ are excluded.
-// Default (no on/ignoring): all labels except name/__name__.
-func matchKey(tags map[string]any, match *VectorMatch) string {
+// matchKey computes a join key from tags. For arithmetic and comparison
+// operators, name/__name__ is excluded (so cross-metric math works). For
+// set operators (or/and/unless), name/__name__ is included so that series
+// with different metric names are treated as distinct (Prometheus semantics).
+// on()/ignoring() modifiers control which labels participate.
+func matchKey(tags map[string]any, match *VectorMatch, includeName bool) string {
 	if len(tags) == 0 {
 		return ""
+	}
+
+	isNameKey := func(k string) bool {
+		return !includeName && (k == "name" || k == "__name__")
 	}
 
 	var include func(string) bool
@@ -309,21 +314,23 @@ func matchKey(tags map[string]any, match *VectorMatch) string {
 			onSet[l] = true
 		}
 		include = func(k string) bool {
-			return onSet[k] && k != "name" && k != "__name__"
+			return onSet[k] && !isNameKey(k)
 		}
 	} else if match != nil && len(match.Ignoring) > 0 {
 		ignoreSet := make(map[string]bool, len(match.Ignoring)+2)
 		for _, l := range match.Ignoring {
 			ignoreSet[l] = true
 		}
-		ignoreSet["name"] = true
-		ignoreSet["__name__"] = true
+		if !includeName {
+			ignoreSet["name"] = true
+			ignoreSet["__name__"] = true
+		}
 		include = func(k string) bool {
 			return !ignoreSet[k]
 		}
 	} else {
 		include = func(k string) bool {
-			return k != "name" && k != "__name__"
+			return !isNameKey(k)
 		}
 	}
 
@@ -368,10 +375,10 @@ func dropMetricName(tags map[string]any) map[string]any {
 // of a binary operation. If multiple entries share the same matchKey,
 // the key is recorded in the conflicts map and the match is dropped
 // (many-to-one without group modifier).
-func buildMatchLookup(m map[string]EvalResult, match *VectorMatch) (lookup map[string]EvalResult, conflicts map[string]bool) {
+func buildMatchLookup(m map[string]EvalResult, match *VectorMatch, includeName bool) (lookup map[string]EvalResult, conflicts map[string]bool) {
 	lookup = make(map[string]EvalResult, len(m))
 	for _, er := range m {
-		mk := matchKey(er.Tags, match)
+		mk := matchKey(er.Tags, match, includeName)
 		if _, exists := lookup[mk]; exists {
 			if conflicts == nil {
 				conflicts = make(map[string]bool)

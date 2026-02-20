@@ -372,69 +372,49 @@ func TestLabel_SetOperators(t *testing.T) {
 // --- matchKey tests ---
 
 func TestMatchKey(t *testing.T) {
-	tests := []struct {
-		name  string
-		tags  map[string]any
-		match *VectorMatch
-		want  string
-	}{
-		{
-			name: "nil tags",
-			tags: nil,
-			want: "",
-		},
-		{
-			name: "strips name",
-			tags: tags("name", "metric_a", "job", "api"),
-			want: "job=api",
-		},
-		{
-			name: "strips __name__",
-			tags: tags("__name__", "metric_a", "job", "api"),
-			want: "job=api",
-		},
-		{
-			name: "strips both name and __name__",
-			tags: tags("name", "metric_a", "__name__", "metric_a", "job", "api"),
-			want: "job=api",
-		},
-		{
-			name:  "on() includes only specified labels",
-			tags:  tags("job", "api", "env", "prod", "region", "us"),
-			match: &VectorMatch{On: []string{"job"}},
-			want:  "job=api",
-		},
-		{
-			name:  "on() excludes name even if listed",
-			tags:  tags("name", "metric_a", "job", "api"),
-			match: &VectorMatch{On: []string{"name", "job"}},
-			want:  "job=api",
-		},
-		{
-			name:  "ignoring() excludes specified labels",
-			tags:  tags("job", "api", "env", "prod", "region", "us"),
-			match: &VectorMatch{Ignoring: []string{"env"}},
-			want:  "job=api,region=us",
-		},
-		{
-			name:  "ignoring() also excludes name automatically",
-			tags:  tags("name", "metric_a", "job", "api", "env", "prod"),
-			match: &VectorMatch{Ignoring: []string{"env"}},
-			want:  "job=api",
-		},
-		{
-			name: "sorted keys",
-			tags: tags("z", "1", "a", "2", "m", "3"),
-			want: "a=2,m=3,z=1",
-		},
-	}
+	t.Run("excludeName", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			tags  map[string]any
+			match *VectorMatch
+			want  string
+		}{
+			{"nil tags", nil, nil, ""},
+			{"strips name", tags("name", "metric_a", "job", "api"), nil, "job=api"},
+			{"strips __name__", tags("__name__", "metric_a", "job", "api"), nil, "job=api"},
+			{"strips both", tags("name", "x", "__name__", "x", "job", "api"), nil, "job=api"},
+			{"on()", tags("job", "api", "env", "prod"), &VectorMatch{On: []string{"job"}}, "job=api"},
+			{"on() excludes name", tags("name", "x", "job", "api"), &VectorMatch{On: []string{"name", "job"}}, "job=api"},
+			{"ignoring()", tags("job", "api", "env", "prod", "region", "us"), &VectorMatch{Ignoring: []string{"env"}}, "job=api,region=us"},
+			{"ignoring() strips name", tags("name", "x", "job", "api", "env", "prod"), &VectorMatch{Ignoring: []string{"env"}}, "job=api"},
+			{"sorted keys", tags("z", "1", "a", "2", "m", "3"), nil, "a=2,m=3,z=1"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				assert.Equal(t, tt.want, matchKey(tt.tags, tt.match, false))
+			})
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := matchKey(tt.tags, tt.match)
-			assert.Equal(t, tt.want, got)
-		})
-	}
+	t.Run("includeName", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			tags  map[string]any
+			match *VectorMatch
+			want  string
+		}{
+			{"includes name", tags("name", "metric_a", "job", "api"), nil, "job=api,name=metric_a"},
+			{"includes __name__", tags("__name__", "metric_a", "job", "api"), nil, "__name__=metric_a,job=api"},
+			{"no name present", tags("job", "api"), nil, "job=api"},
+			{"on() includes name if listed", tags("name", "x", "job", "api"), &VectorMatch{On: []string{"name", "job"}}, "job=api,name=x"},
+			{"ignoring() does not auto-strip name", tags("name", "x", "job", "api", "env", "prod"), &VectorMatch{Ignoring: []string{"env"}}, "job=api,name=x"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				assert.Equal(t, tt.want, matchKey(tt.tags, tt.match, true))
+			})
+		}
+	})
 }
 
 // --- dropMetricName tests ---
@@ -743,11 +723,10 @@ func TestEvalArithmetic_GroupLeftSkipsConflictDrop(t *testing.T) {
 	assert.Contains(t, []float64{13.0, 15.0}, got["l1"].Value.Num)
 }
 
-func TestEvalSetOp_MatchKeyBasedJoin(t *testing.T) {
+func TestEvalSetOp_MatchKeyIncludesName(t *testing.T) {
 	sg := SketchGroup{Timestamp: 1000}
 	step := time.Minute
 
-	// `and` with on(job) — entries match on job alone.
 	lhs := map[string]EvalResult{
 		"l1": scalarResult(1000, 10, tags("name", "metric_a", "job", "api")),
 		"l2": scalarResult(1000, 20, tags("name", "metric_a", "job", "web")),
@@ -756,17 +735,44 @@ func TestEvalSetOp_MatchKeyBasedJoin(t *testing.T) {
 		"r1": scalarResult(1000, 5, tags("name", "metric_b", "job", "api")),
 	}
 
+	// Different name → different matchKey → and returns nothing.
 	n := &BinaryNode{
 		Op:  OpAnd,
 		LHS: &staticNode{results: lhs},
 		RHS: &staticNode{results: rhs},
 	}
 	got := n.Eval(sg, step)
-	// name is excluded from matchKey, so job=api matches.
-	// name is preserved in set op results.
+	assert.Empty(t, got, "different name should not match in set ops")
+
+	// With on(job), name is excluded → match works.
+	n.Match = &VectorMatch{On: []string{"job"}}
+	got = n.Eval(sg, step)
 	require.Len(t, got, 1)
 	assert.Equal(t, 10.0, got["l1"].Value.Num)
 	assert.Equal(t, "metric_a", got["l1"].Tags["name"])
+}
+
+func TestEvalOr_DifferentNames(t *testing.T) {
+	sg := SketchGroup{Timestamp: 1000}
+	step := time.Minute
+
+	// Two series with different names → should both appear in or result.
+	lhs := map[string]EvalResult{
+		"l": scalarResult(1000, 10, tags("name", "storage_used", "id", "abc")),
+	}
+	rhs := map[string]EvalResult{
+		"r": scalarResult(1000, 90, tags("id", "abc")),
+	}
+
+	n := &BinaryNode{
+		Op:  OpOr,
+		LHS: &staticNode{results: lhs},
+		RHS: &staticNode{results: rhs},
+	}
+	got := n.Eval(sg, step)
+	require.Len(t, got, 2, "or should return both series when names differ")
+	assert.Equal(t, 10.0, got["l"].Value.Num)
+	assert.Equal(t, 90.0, got["r"].Value.Num)
 }
 
 // --- ValMap (instant selector) handling tests ---
@@ -862,7 +868,7 @@ func TestBuildMatchLookup(t *testing.T) {
 		"b": scalarResult(1000, 2, tags("job", "web")),
 	}
 
-	lookup, conflicts := buildMatchLookup(m, nil)
+	lookup, conflicts := buildMatchLookup(m, nil, false)
 	assert.Len(t, lookup, 2)
 	assert.Nil(t, conflicts)
 
@@ -871,7 +877,7 @@ func TestBuildMatchLookup(t *testing.T) {
 			"a": scalarResult(1000, 1, tags("job", "api", "instance", "i1")),
 			"b": scalarResult(1000, 2, tags("job", "api", "instance", "i2")),
 		}
-		lookup2, conflicts2 := buildMatchLookup(m2, &VectorMatch{On: []string{"job"}})
+		lookup2, conflicts2 := buildMatchLookup(m2, &VectorMatch{On: []string{"job"}}, false)
 		assert.Len(t, lookup2, 1) // both map to same matchKey
 		assert.True(t, conflicts2["job=api"])
 	})
