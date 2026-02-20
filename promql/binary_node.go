@@ -84,7 +84,7 @@ func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 	out := make(map[string]EvalResult, minVal(len(lmap), len(rhsLookup)))
 	for lk, l := range lmap {
 		mk := matchKey(l.Tags, n.Match)
-		if rhsConflicts[mk] {
+		if rhsConflicts[mk] && (n.Match == nil || n.Match.Group == "") {
 			continue // many-to-one without group modifier → drop
 		}
 		r, ok := rhsLookup[mk]

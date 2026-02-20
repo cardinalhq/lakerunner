@@ -712,6 +712,36 @@ func TestEvalArithmetic_DuplicateMatchKeyConflict(t *testing.T) {
 	assert.InDelta(t, 27.0, got["l2"].Value.Num, 1e-9)
 }
 
+func TestEvalArithmetic_GroupLeftSkipsConflictDrop(t *testing.T) {
+	sg := SketchGroup{Timestamp: 1000}
+	step := time.Minute
+
+	// With group_left, duplicate RHS matchKeys should NOT be dropped.
+	lhs := map[string]EvalResult{
+		"l1": scalarResult(1000, 10, tags("job", "api")),
+		"l2": scalarResult(1000, 20, tags("job", "web")),
+	}
+	rhs := map[string]EvalResult{
+		"r1": scalarResult(1000, 3, tags("job", "api", "instance", "i1")),
+		"r2": scalarResult(1000, 5, tags("job", "api", "instance", "i2")),
+		"r3": scalarResult(1000, 7, tags("job", "web")),
+	}
+
+	n := &BinaryNode{
+		Op:    OpAdd,
+		LHS:   &staticNode{results: lhs},
+		RHS:   &staticNode{results: rhs},
+		Match: &VectorMatch{On: []string{"job"}, Group: "left"},
+	}
+	got := n.Eval(sg, step)
+	// group_left allows many-to-one: "api" should still produce a result
+	// (last-wins from RHS lookup), "web" should also match.
+	require.Len(t, got, 2)
+	assert.InDelta(t, 27.0, got["l2"].Value.Num, 1e-9)
+	// l1 matched one of the RHS "api" entries (last-wins)
+	assert.Contains(t, []float64{13.0, 15.0}, got["l1"].Value.Num)
+}
+
 func TestEvalSetOp_MatchKeyBasedJoin(t *testing.T) {
 	sg := SketchGroup{Timestamp: 1000}
 	step := time.Minute
