@@ -99,4 +99,5 @@ type EvalResult struct {
 	Timestamp int64          `json:"timestamp"`
 	Tags      map[string]any `json:"tags"`
 	Value     Value          `json:"value,omitempty"`
+	Label     string         `json:"label,omitempty"` // set by set ops to identify provenance
 }

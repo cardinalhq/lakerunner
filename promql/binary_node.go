@@ -250,6 +250,7 @@ func (n *BinaryNode) evalOr(lmap, rmap map[string]EvalResult) map[string]EvalRes
 	for k, v := range lmap {
 		mk := matchKey(v.Tags, n.Match, true)
 		lKeys[mk] = true
+		v.Label = n.LHS.Label(v.Tags)
 		out[k] = v
 	}
 	dedup := 0
@@ -264,6 +265,7 @@ func (n *BinaryNode) evalOr(lmap, rmap map[string]EvalResult) map[string]EvalRes
 				dedup++
 				outKey = fmt.Sprintf("%s:%d", k, dedup)
 			}
+			v.Label = n.RHS.Label(v.Tags)
 			out[outKey] = v
 		}
 	}

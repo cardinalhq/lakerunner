@@ -32,6 +32,16 @@ func (s *staticNode) Hints() ExecHints                                          
 func (s *staticNode) Eval(_ SketchGroup, _ time.Duration) map[string]EvalResult { return s.results }
 func (s *staticNode) Label(_ map[string]any) string                             { return "static" }
 
+// labelNode is a test helper that returns a fixed result map with a custom label.
+type labelNode struct {
+	results map[string]EvalResult
+	label   string
+}
+
+func (l *labelNode) Hints() ExecHints                                          { return ExecHints{} }
+func (l *labelNode) Eval(_ SketchGroup, _ time.Duration) map[string]EvalResult { return l.results }
+func (l *labelNode) Label(_ map[string]any) string                             { return l.label }
+
 func scalarResult(ts int64, v float64, tags map[string]any) EvalResult {
 	return EvalResult{
 		Timestamp: ts,
@@ -70,9 +80,9 @@ func TestEvalOr(t *testing.T) {
 				"c":  scalarResult(1000, 3, tags("job", "db")),
 			},
 			expect: map[string]EvalResult{
-				"a": scalarResult(1000, 1, tags("job", "api")),
-				"b": scalarResult(1000, 2, tags("job", "web")),
-				"c": scalarResult(1000, 3, tags("job", "db")),
+				"a": {Timestamp: 1000, Value: Value{Kind: ValScalar, Num: 1}, Tags: tags("job", "api"), Label: "static"},
+				"b": {Timestamp: 1000, Value: Value{Kind: ValScalar, Num: 2}, Tags: tags("job", "web"), Label: "static"},
+				"c": {Timestamp: 1000, Value: Value{Kind: ValScalar, Num: 3}, Tags: tags("job", "db"), Label: "static"},
 			},
 		},
 		{
@@ -82,7 +92,7 @@ func TestEvalOr(t *testing.T) {
 				"a": scalarResult(1000, 1, tags("job", "api")),
 			},
 			expect: map[string]EvalResult{
-				"a": scalarResult(1000, 1, tags("job", "api")),
+				"a": {Timestamp: 1000, Value: Value{Kind: ValScalar, Num: 1}, Tags: tags("job", "api"), Label: "static"},
 			},
 		},
 		{
@@ -91,7 +101,7 @@ func TestEvalOr(t *testing.T) {
 				"a": scalarResult(1000, 1, tags("job", "api")),
 			},
 			rhs:    map[string]EvalResult{},
-			expect: map[string]EvalResult{"a": scalarResult(1000, 1, tags("job", "api"))},
+			expect: map[string]EvalResult{"a": {Timestamp: 1000, Value: Value{Kind: ValScalar, Num: 1}, Tags: tags("job", "api"), Label: "static"}},
 		},
 		{
 			name:   "both empty",
@@ -104,15 +114,15 @@ func TestEvalOr(t *testing.T) {
 			lhs:  map[string]EvalResult{"a": scalarResult(1000, 1, tags("job", "api"))},
 			rhs:  map[string]EvalResult{"b": scalarResult(1000, 2, tags("job", "web"))},
 			expect: map[string]EvalResult{
-				"a": scalarResult(1000, 1, tags("job", "api")),
-				"b": scalarResult(1000, 2, tags("job", "web")),
+				"a": {Timestamp: 1000, Value: Value{Kind: ValScalar, Num: 1}, Tags: tags("job", "api"), Label: "static"},
+				"b": {Timestamp: 1000, Value: Value{Kind: ValScalar, Num: 2}, Tags: tags("job", "web"), Label: "static"},
 			},
 		},
 		{
 			name:   "identical matchKey - LHS wins",
 			lhs:    map[string]EvalResult{"a": scalarResult(1000, 1, tags("job", "api"))},
 			rhs:    map[string]EvalResult{"a2": scalarResult(1000, 99, tags("job", "api"))},
-			expect: map[string]EvalResult{"a": scalarResult(1000, 1, tags("job", "api"))},
+			expect: map[string]EvalResult{"a": {Timestamp: 1000, Value: Value{Kind: ValScalar, Num: 1}, Tags: tags("job", "api"), Label: "static"}},
 		},
 	}
 
@@ -755,6 +765,36 @@ func TestEvalOr_DifferentNames(t *testing.T) {
 	require.Len(t, got, 2, "or should return both series when names differ")
 	assert.Equal(t, 10.0, got["l"].Value.Num)
 	assert.Equal(t, 90.0, got["r"].Value.Num)
+}
+
+func TestEvalOr_LabelProvenance(t *testing.T) {
+	sg := SketchGroup{Timestamp: 1000}
+	step := time.Minute
+
+	lhsNode := &staticNode{results: map[string]EvalResult{
+		"l": scalarResult(1000, 10, tags("name", "used", "id", "abc")),
+	}}
+	rhsNode := &staticNode{results: map[string]EvalResult{
+		"r": scalarResult(1000, 90, tags("name", "free", "id", "abc")),
+	}}
+	// Override Label to distinguish sides.
+	lhsLabeler := &labelNode{results: lhsNode.results, label: "avg(used)"}
+	rhsLabeler := &labelNode{results: rhsNode.results, label: "avg(free)"}
+
+	n := &BinaryNode{
+		Op:  OpOr,
+		LHS: lhsLabeler,
+		RHS: rhsLabeler,
+	}
+	got := n.Eval(sg, step)
+	require.Len(t, got, 2)
+
+	labels := make(map[string]bool)
+	for _, er := range got {
+		labels[er.Label] = true
+	}
+	assert.True(t, labels["avg(used)"], "LHS entry should have LHS label")
+	assert.True(t, labels["avg(free)"], "RHS entry should have RHS label")
 }
 
 func TestEvalOr_SameMapKey(t *testing.T) {

@@ -282,7 +282,10 @@ func (q *QuerierService) sendEvalResults(ctx context.Context, w http.ResponseWri
 				return
 			}
 			for _, v := range res {
-				label := plan.Root.Label(v.Tags)
+				label := v.Label
+				if label == "" {
+					label = plan.Root.Label(v.Tags)
+				}
 				if math.IsNaN(v.Value.Num) {
 					continue
 				}
