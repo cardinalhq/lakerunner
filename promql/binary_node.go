@@ -256,8 +256,8 @@ func (n *BinaryNode) evalOr(lmap, rmap map[string]EvalResult) map[string]EvalRes
 		mk := matchKey(v.Tags, n.Match, true)
 		if !lKeys[mk] {
 			outKey := k
-			if _, exists := out[outKey]; exists {
-				outKey = mk // use matchKey to avoid overwriting
+			for _, exists := out[outKey]; exists; _, exists = out[outKey] {
+				outKey = outKey + "\x00"
 			}
 			out[outKey] = v
 		}
