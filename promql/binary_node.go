@@ -255,7 +255,11 @@ func (n *BinaryNode) evalOr(lmap, rmap map[string]EvalResult) map[string]EvalRes
 	for k, v := range rmap {
 		mk := matchKey(v.Tags, n.Match, true)
 		if !lKeys[mk] {
-			out[k] = v
+			outKey := k
+			if _, exists := out[outKey]; exists {
+				outKey = mk // use matchKey to avoid overwriting
+			}
+			out[outKey] = v
 		}
 	}
 	return out

@@ -757,6 +757,36 @@ func TestEvalOr_DifferentNames(t *testing.T) {
 	assert.Equal(t, 90.0, got["r"].Value.Num)
 }
 
+func TestEvalOr_SameMapKey(t *testing.T) {
+	sg := SketchGroup{Timestamp: 1000}
+	step := time.Minute
+
+	// Both sides produce "default" key (like avg() with no by clause),
+	// but different tags. Or should return both without overwriting.
+	lhs := map[string]EvalResult{
+		"default": scalarResult(1000, 100, tags("name", "used", "id", "abc")),
+	}
+	rhs := map[string]EvalResult{
+		"default": scalarResult(1000, 900, tags("id", "abc")),
+	}
+
+	n := &BinaryNode{
+		Op:  OpOr,
+		LHS: &staticNode{results: lhs},
+		RHS: &staticNode{results: rhs},
+	}
+	got := n.Eval(sg, step)
+	require.Len(t, got, 2, "or should return both even when map keys collide")
+
+	// Verify both values are present
+	var values []float64
+	for _, er := range got {
+		values = append(values, er.Value.Num)
+	}
+	assert.Contains(t, values, 100.0)
+	assert.Contains(t, values, 900.0)
+}
+
 // --- ValMap (instant selector) handling tests ---
 
 func mapResult(ts int64, sum, count float64, t map[string]any) EvalResult {
