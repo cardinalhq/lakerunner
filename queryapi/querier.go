@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
@@ -51,6 +52,12 @@ type queryPayload struct {
 	OrgUUID uuid.UUID `json:"-"`
 	StartTs int64     `json:"-"`
 	EndTs   int64     `json:"-"`
+}
+
+const sseHeartbeatInterval = 15 * time.Second
+
+func writeHeartbeatEvent(writeSSE func(event string, v any) error) error {
+	return writeSSE("heartbeat", map[string]string{"status": "waiting"})
 }
 
 func readQueryPayload(w http.ResponseWriter, r *http.Request, allowEmptyQuery bool) *queryPayload {
@@ -270,12 +277,20 @@ func (q *QuerierService) sendEvalResults(ctx context.Context, w http.ResponseWri
 		return
 	}
 
+	heartbeatTicker := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeatTicker.Stop()
+
 	notify := ctx.Done()
 	for {
 		select {
 		case <-notify:
 			slog.Info("client disconnected; stopping stream")
 			return
+		case <-heartbeatTicker.C:
+			if err := writeHeartbeatEvent(writeSSE); err != nil {
+				slog.Error("write SSE heartbeat failed", "error", err)
+				return
+			}
 		case res, more := <-resultsCh:
 			if !more {
 				_ = writeSSE("done", map[string]string{"status": "ok"})
@@ -535,11 +550,19 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 	}
 
 	notify := ctx.Done()
+	heartbeatTicker := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeatTicker.Stop()
+
 	for {
 		select {
 		case <-notify:
 			slog.Info("client disconnected; stopping log stream")
 			return
+		case <-heartbeatTicker.C:
+			if err := writeHeartbeatEvent(writeSSE); err != nil {
+				slog.Error("write SSE heartbeat failed", "error", err)
+				return
+			}
 		case res, more := <-resultsCh:
 			if !more {
 				_ = writeSSE("done", map[string]string{"status": "ok"})
@@ -659,11 +682,19 @@ func (q *QuerierService) handleSpansQuery(w http.ResponseWriter, r *http.Request
 	}
 
 	notify := ctx.Done()
+	heartbeatTicker := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeatTicker.Stop()
+
 	for {
 		select {
 		case <-notify:
 			slog.Info("client disconnected; stopping spans stream")
 			return
+		case <-heartbeatTicker.C:
+			if err := writeHeartbeatEvent(writeSSE); err != nil {
+				slog.Error("write SSE heartbeat failed", "error", err)
+				return
+			}
 		case res, more := <-resultsCh:
 			if !more {
 				_ = writeSSE("done", map[string]string{"status": "ok"})
