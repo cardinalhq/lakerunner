@@ -180,7 +180,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 					if !unlimited {
 						mergeLimit = remaining
 					}
-					mergedGroup := promql.MergeSorted(ctxAll, 1024, reverse, mergeLimit, groupLeafChans...)
+					mergedGroup := promql.MergeSorted(ctxAll, nil, 1024, reverse, mergeLimit, groupLeafChans...)
 
 					// Forward results (and stop globally when limit hit)
 					for {
