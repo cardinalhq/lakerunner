@@ -21,6 +21,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -153,7 +154,17 @@ func (s *Service) startGRPCServer(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
-		grpcServer.GracefulStop()
+		done := make(chan struct{})
+		go func() {
+			grpcServer.GracefulStop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			ll.Warn("Graceful stop timed out, forcing gRPC server stop")
+			grpcServer.Stop()
+		}
 	}()
 
 	ll.Info("Starting gRPC server", "port", s.grpcPort)

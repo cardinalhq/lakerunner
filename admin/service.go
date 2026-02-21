@@ -121,7 +121,17 @@ func (s *Service) Run(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		slog.Info("Shutting down admin service")
-		s.server.GracefulStop()
+		done := make(chan struct{})
+		go func() {
+			s.server.GracefulStop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			slog.Warn("Graceful stop timed out, forcing admin service stop")
+			s.server.Stop()
+		}
 		return nil
 	case err := <-errChan:
 		return err

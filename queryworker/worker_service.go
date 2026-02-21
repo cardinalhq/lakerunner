@@ -813,9 +813,11 @@ func (ws *WorkerService) Run(doneCtx context.Context) error {
 	<-doneCtx.Done()
 
 	slog.Info("Shutting down query-worker service")
-	if err := srv.Shutdown(context.Background()); err != nil {
-		slog.Error("Failed to shutdown HTTP server", slog.Any("error", err))
-		return fmt.Errorf("failed to shutdown HTTP server: %w", err)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("Graceful shutdown timed out, forcing close", slog.Any("error", err))
+		_ = srv.Close()
 	}
 
 	// Clean up resources

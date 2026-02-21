@@ -138,6 +138,56 @@ func TestServer_SetIsReady(t *testing.T) {
 	}
 }
 
+func TestServer_ReadyConditions(t *testing.T) {
+	server := NewServer(Config{})
+	server.SetReady(true)
+
+	// No conditions: ready.
+	if !server.IsReady() {
+		t.Error("Expected ready with no conditions")
+	}
+
+	// Add a true condition: still ready.
+	server.SetReadyCondition("workers", true)
+	if !server.IsReady() {
+		t.Error("Expected ready when all conditions true")
+	}
+
+	// Set condition to false: not ready.
+	server.SetReadyCondition("workers", false)
+	if server.IsReady() {
+		t.Error("Expected not ready when a condition is false")
+	}
+
+	// Set it back to true: ready again.
+	server.SetReadyCondition("workers", true)
+	if !server.IsReady() {
+		t.Error("Expected ready after condition restored")
+	}
+
+	// Multiple conditions: all must be true.
+	server.SetReadyCondition("db", true)
+	if !server.IsReady() {
+		t.Error("Expected ready when all conditions true")
+	}
+	server.SetReadyCondition("db", false)
+	if server.IsReady() {
+		t.Error("Expected not ready when one condition is false")
+	}
+
+	// Clear the failing condition: ready again.
+	server.ClearReadyCondition("db")
+	if !server.IsReady() {
+		t.Error("Expected ready after clearing failing condition")
+	}
+
+	// Base flag overrides conditions: SetReady(false) means not ready.
+	server.SetReady(false)
+	if server.IsReady() {
+		t.Error("Expected not ready when base flag is false")
+	}
+}
+
 func TestHealthEndpoints(t *testing.T) {
 	config := Config{
 		Port: 8090,
