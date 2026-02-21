@@ -15,7 +15,6 @@
 package traces
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -23,7 +22,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 var (
@@ -91,49 +89,31 @@ func SetAPIKey(key string) {
 }
 
 func runTraceCompact(orgID uuid.UUID, instance int16, startTime time.Time, endTime *time.Time, dryRun bool) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	var store lrdb.StoreFull
 	if !dryRun {
-		var err error
-		store, err = lrdb.LRDBStoreForAdmin(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to connect to lrdb: %w", err)
-		}
+		return fmt.Errorf("trace compaction queueing is no longer supported - work queue system has been removed")
 	}
 
 	// Align start time to hour boundary
 	alignedStart := helpers.TruncateToHour(startTime)
 
-	// If no end time, queue single item
+	// If no end time, preview single item
 	if endTime == nil {
-		return queueSingleTraceCompact(ctx, store, orgID, instance, alignedStart, dryRun)
+		fmt.Printf("[DRY-RUN] Would queue 1 trace compaction work item for org %s instance %d at %v\n",
+			orgID, instance, alignedStart)
+		return nil
 	}
 
-	// Queue items for time range
+	// Preview items for time range
 	alignedEnd := helpers.TruncateToHour(*endTime)
 	current := alignedStart
 
 	var queuedCount int
 	for current.Before(alignedEnd) || current.Equal(alignedEnd) {
-		if err := queueSingleTraceCompact(ctx, store, orgID, instance, current, dryRun); err != nil {
-			return fmt.Errorf("failed to queue trace compaction for time %v: %w", current, err)
-		}
 		queuedCount++
 		current = current.Add(time.Hour)
 	}
 
-	if dryRun {
-		fmt.Printf("[DRY-RUN] Would queue %d trace compaction work items from %v to %v\n",
-			queuedCount, alignedStart, alignedEnd)
-	} else {
-		fmt.Printf("Successfully queued %d trace compaction work items from %v to %v\n",
-			queuedCount, alignedStart, alignedEnd)
-	}
+	fmt.Printf("[DRY-RUN] Would queue %d trace compaction work items for org %s instance %d from %v to %v\n",
+		queuedCount, orgID, instance, alignedStart, alignedEnd)
 	return nil
-}
-
-func queueSingleTraceCompact(ctx context.Context, store lrdb.StoreFull, orgID uuid.UUID, instance int16, hourTime time.Time, dryRun bool) error {
-	return fmt.Errorf("trace compaction queueing is no longer supported - work queue system has been removed")
 }
