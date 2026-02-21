@@ -290,6 +290,27 @@ func TestMergeSorted_Limit_Descending(t *testing.T) {
 	}
 }
 
+func TestMergeSorted_DoesNotCancelProducerOnNaturalCompletion(t *testing.T) {
+	ctx := context.Background()
+	a := []tsItem{{1}, {3}, {5}}
+	b := []tsItem{{2}, {4}, {6}}
+
+	cancelCalled := false
+	cancel := func() {
+		cancelCalled = true
+	}
+
+	out := MergeSorted(ctx, cancel, 8, false, 0, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
+	got := toSlice(out)
+
+	if len(got) != len(a)+len(b) {
+		t.Fatalf("len mismatch: got=%d want=%d", len(got), len(a)+len(b))
+	}
+	if cancelCalled {
+		t.Fatal("producerCancel should not be called on natural completion")
+	}
+}
+
 // TestMergeSorted_LimitDrainsPreventsBlocking verifies that when a limit is reached,
 // the drain mechanism prevents producers from blocking on channel sends.
 func TestMergeSorted_LimitDrainsPreventsBlocking(t *testing.T) {

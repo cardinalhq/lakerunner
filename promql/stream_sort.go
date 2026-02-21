@@ -30,7 +30,8 @@ type Timestamped interface {
 // reverse=false → ascending; reverse=true → descending.
 // limit=0 → unlimited; limit>0 → stop after emitting exactly limit items.
 // When limit is reached or context is cancelled, input channels are drained to unblock producers.
-// producerCancel (if not nil) is called when limit is reached to stop upstream producers immediately.
+// producerCancel (if not nil) is called only on early stop (limit reached or cancellation),
+// not on natural completion.
 func MergeSorted[T Timestamped](
 	ctx context.Context,
 	producerCancel context.CancelFunc,
@@ -117,11 +118,13 @@ func MergeSorted[T Timestamped](
 	}
 
 	go func() {
+		earlyStop := false
+
 		defer close(out)
 		defer cancelMerge() // Signal all fetchers and drain goroutines to stop
 		defer func() {
-			// Always cancel producer context to prevent context leak
-			if producerCancel != nil {
+			// Cancel producers only if merge stopped early.
+			if producerCancel != nil && earlyStop {
 				producerCancel()
 			}
 		}()
@@ -160,6 +163,7 @@ func MergeSorted[T Timestamped](
 			awaiting[i] = true
 			select {
 			case <-ctx.Done():
+				earlyStop = true
 				return
 			case req[i] <- struct{}{}:
 			}
@@ -196,6 +200,7 @@ func MergeSorted[T Timestamped](
 				}
 				select {
 				case <-mergeCtx.Done():
+					earlyStop = true
 					return
 				case m, ok := <-rsp[i]:
 					handleRsp(i, m, ok)
@@ -217,6 +222,7 @@ func MergeSorted[T Timestamped](
 			}
 			select {
 			case <-mergeCtx.Done():
+				earlyStop = true
 				return false
 			case m, ok := <-rsp[idx]:
 				handleRsp(idx, m, ok)
@@ -244,6 +250,7 @@ func MergeSorted[T Timestamped](
 					awaiting[src] = true
 					select {
 					case <-mergeCtx.Done():
+						earlyStop = true
 						return
 					case req[src] <- struct{}{}:
 					}
@@ -262,6 +269,7 @@ func MergeSorted[T Timestamped](
 
 				select {
 				case <-mergeCtx.Done():
+					earlyStop = true
 					return
 				case out <- best.val:
 				}
@@ -273,10 +281,7 @@ func MergeSorted[T Timestamped](
 						slog.Debug("MergeSorted: limit reached; stopping early",
 							"limit", limit, "emitted", emitted, "heapPending", h.Len(), "openSources", openCount)
 					}
-					// Cancel upstream producers immediately if cancel func provided
-					if producerCancel != nil {
-						producerCancel()
-					}
+					earlyStop = true
 					return
 				}
 				continue
@@ -289,6 +294,7 @@ func MergeSorted[T Timestamped](
 			if !waitOne() {
 				select {
 				case <-mergeCtx.Done():
+					earlyStop = true
 					return
 				default:
 				}
