@@ -23,10 +23,23 @@ import (
 	"github.com/google/uuid"
 )
 
-// Worker represents a discovered worker instance
+// Worker represents a discovered worker instance.
 type Worker struct {
 	IP   string
 	Port int
+	// ID is a unique, opaque identifier for this worker instance set by the
+	// discovery backend. K8s uses the pod UID, ECS uses the task ARN.
+	// When empty, Identity() falls back to IP:Port.
+	ID string
+}
+
+// Identity returns the unique identifier for this worker. If ID is set by the
+// discovery backend it is returned directly; otherwise the fallback is "IP:Port".
+func (w Worker) Identity() string {
+	if w.ID != "" {
+		return w.ID
+	}
+	return w.IP + ":" + strconv.Itoa(w.Port)
 }
 
 // SegmentWorkerMapping represents the assignment of a segment to a worker
@@ -110,8 +123,7 @@ func (b *BaseWorkerDiscovery) assignSegmentToWorker(org uuid.UUID, seg int64, ws
 	var best Worker
 	var bestHash uint64
 	for i, w := range ws {
-		wk := w.IP + ":" + strconv.Itoa(w.Port)
-		hv := xxhash.Sum64String(segKey + wk)
+		hv := xxhash.Sum64String(segKey + w.Identity())
 		if i == 0 || hv > bestHash {
 			best, bestHash = w, hv
 		}

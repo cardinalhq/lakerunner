@@ -1,0 +1,111 @@
+// Copyright (C) 2025-2026 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+syntax = "proto3";
+
+package workcoordpb;
+
+option go_package = "github.com/cardinalhq/lakerunner/core/workcoordpb";
+
+// WorkControlService defines the bidirectional control stream between
+// query-api and query-worker instances.
+service WorkControlService {
+  // ControlStream is the single bidirectional stream between API (client) and
+  // worker (server). API sends assignments/cancellations/acks; worker sends
+  // acceptances/completions/status.
+  rpc ControlStream(stream APIMessage) returns (stream WorkerMessage);
+}
+
+// APIMessage is a message sent from the query-api to a worker.
+message APIMessage {
+  oneof msg {
+    AssignWork assign_work = 1;
+    CancelWork cancel_work = 2;
+    ArtifactAck artifact_ack = 3;
+    Heartbeat heartbeat = 4;
+  }
+}
+
+// WorkerMessage is a message sent from a worker to the query-api.
+message WorkerMessage {
+  oneof msg {
+    WorkAccepted work_accepted = 1;
+    WorkRejected work_rejected = 2;
+    WorkReady work_ready = 3;
+    WorkFailed work_failed = 4;
+    WorkerStatus worker_status = 5;
+    Heartbeat heartbeat = 6;
+  }
+}
+
+// AssignWork tells a worker to execute a query leaf.
+message AssignWork {
+  string query_id = 1;
+  string leaf_id = 2;
+  string work_id = 3;
+  string affinity_key = 4;
+  bytes spec = 5; // Opaque work specification (query plan leaf).
+}
+
+// WorkAccepted acknowledges that the worker has accepted a work item.
+message WorkAccepted {
+  string work_id = 1;
+}
+
+// WorkRejected indicates the worker cannot accept this work item.
+message WorkRejected {
+  string work_id = 1;
+  string reason = 2;
+}
+
+// WorkReady indicates the worker has completed execution and the artifact
+// is ready for fetch.
+message WorkReady {
+  string work_id = 1;
+  string artifact_url = 2;
+  int64 artifact_size_bytes = 3;
+  string artifact_checksum = 4;
+  int64 row_count = 5;
+  int64 min_ts = 6;
+  int64 max_ts = 7;
+  int32 parquet_schema_version = 8;
+}
+
+// WorkFailed indicates the worker failed to execute this work item.
+message WorkFailed {
+  string work_id = 1;
+  string reason = 2;
+}
+
+// CancelWork tells the worker to cancel a specific work item.
+message CancelWork {
+  string work_id = 1;
+}
+
+// ArtifactAck acknowledges that the API has fetched the artifact.
+message ArtifactAck {
+  string work_id = 1;
+}
+
+// WorkerStatus reports the worker's current admission state.
+message WorkerStatus {
+  string worker_id = 1;
+  bool accepting_work = 2;
+  bool draining = 3;
+}
+
+// Heartbeat is sent in both directions for liveness detection.
+message Heartbeat {
+  int64 timestamp_ns = 1;
+}

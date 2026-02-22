@@ -255,6 +255,12 @@ func (k *KubernetesWorkerDiscovery) rebuildWorkers() error {
 					continue
 				}
 
+				// Use the pod UID as the unique worker identity.
+				podUID := ""
+				if ep.TargetRef != nil {
+					podUID = string(ep.TargetRef.UID)
+				}
+
 				for _, addr := range ep.Addresses {
 					ip := net.ParseIP(addr)
 					if ip == nil || ip.To4() == nil {
@@ -265,7 +271,7 @@ func (k *KubernetesWorkerDiscovery) rebuildWorkers() error {
 						continue
 					}
 					seen[key] = struct{}{}
-					out = append(out, Worker{IP: addr, Port: esPort})
+					out = append(out, Worker{IP: addr, Port: esPort, ID: podUID})
 				}
 			}
 		}

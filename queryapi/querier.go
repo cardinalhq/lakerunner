@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
@@ -129,6 +130,17 @@ func (q *QuerierService) sseWriter(w http.ResponseWriter) (func(event string, v 
 		return nil
 	}
 	return write, true
+}
+
+// finishSSEWithStatus drains the query error channel and sends the final
+// "done" SSE event with status "ok" or "error".
+func finishSSEWithStatus(writeSSE func(string, any) error, queryErrc <-chan error) {
+	status := "ok"
+	if qErr := drainErrors(queryErrc); qErr != nil {
+		slog.Error("query completed with segment errors", "error", qErr)
+		status = "error"
+	}
+	_ = writeSSE("done", map[string]string{"status": status})
 }
 
 // TagMap is a map[string]any with a custom JSON marshaler that emits
@@ -253,7 +265,7 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resultsCh, err := q.EvaluateMetricsQuery(ctx, qPayload.OrgUUID, qPayload.StartTs, qPayload.EndTs, plan)
+	resultsCh, queryErrc, err := q.EvaluateMetricsQuery(ctx, qPayload.OrgUUID, qPayload.StartTs, qPayload.EndTs, plan)
 	if err != nil {
 		requestSpan.RecordError(err)
 		requestSpan.SetStatus(codes.Error, "evaluate error")
@@ -261,10 +273,10 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	q.sendEvalResults(ctx, w, resultsCh, plan)
+	q.sendEvalResults(ctx, w, resultsCh, queryErrc, plan)
 }
 
-func (q *QuerierService) sendEvalResults(ctx context.Context, w http.ResponseWriter, resultsCh <-chan map[string]promql.EvalResult, plan promql.QueryPlan) {
+func (q *QuerierService) sendEvalResults(ctx context.Context, w http.ResponseWriter, resultsCh <-chan map[string]promql.EvalResult, queryErrc <-chan error, plan promql.QueryPlan) {
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
 		return
@@ -278,7 +290,7 @@ func (q *QuerierService) sendEvalResults(ctx context.Context, w http.ResponseWri
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				_ = writeSSE("done", map[string]string{"status": "ok"})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			for _, v := range res {
@@ -503,7 +515,7 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 		}
 		plan.AttachLogLeaves(rr)
 
-		evalResults, err := q.EvaluateMetricsQuery(ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
+		evalResults, queryErrc, err := q.EvaluateMetricsQuery(ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
 		if err != nil {
 			requestSpan.RecordError(err)
 			requestSpan.SetStatus(codes.Error, "evaluate error")
@@ -511,7 +523,7 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 			writeAPIError(w, status, code, "evaluate error: "+err.Error())
 			return
 		}
-		q.sendEvalResults(ctx, w, evalResults, plan)
+		q.sendEvalResults(ctx, w, evalResults, queryErrc, plan)
 		return
 	}
 
@@ -523,7 +535,7 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resultsCh, err := q.EvaluateLogsQuery(
+	resultsCh, queryErrc, err := q.EvaluateLogsQuery(
 		ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan, qp.Fields,
 	)
 	if err != nil {
@@ -542,7 +554,7 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				_ = writeSSE("done", map[string]string{"status": "ok"})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			if err := writeSSE("result", res); err != nil {
@@ -630,14 +642,14 @@ func (q *QuerierService) handleSpansQuery(w http.ResponseWriter, r *http.Request
 		}
 		plan.AttachLogLeaves(rr)
 
-		evalResults, err := q.EvaluateMetricsQuery(ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
+		evalResults, queryErrc, err := q.EvaluateMetricsQuery(ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
 		if err != nil {
 			requestSpan.RecordError(err)
 			requestSpan.SetStatus(codes.Error, "evaluate error")
 			http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		q.sendEvalResults(ctx, w, evalResults, plan)
+		q.sendEvalResults(ctx, w, evalResults, queryErrc, plan)
 		return
 	}
 
@@ -648,7 +660,7 @@ func (q *QuerierService) handleSpansQuery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	resultsCh, err := q.EvaluateSpansQuery(
+	resultsCh, queryErrc, err := q.EvaluateSpansQuery(
 		ctx, qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan, qp.Fields,
 	)
 	if err != nil {
@@ -666,7 +678,7 @@ func (q *QuerierService) handleSpansQuery(w http.ResponseWriter, r *http.Request
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				_ = writeSSE("done", map[string]string{"status": "ok"})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			if err := writeSSE("result", res); err != nil {
@@ -779,9 +791,11 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	<-doneCtx.Done()
 
 	slog.Info("Shutting down querier service")
-	if err := srv.Shutdown(context.Background()); err != nil {
-		slog.Error("Failed to shutdown HTTP server", slog.Any("error", err))
-		return fmt.Errorf("failed to shutdown HTTP server: %w", err)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("Graceful shutdown timed out, forcing close", slog.Any("error", err))
+		_ = srv.Close()
 	}
 	return nil
 }

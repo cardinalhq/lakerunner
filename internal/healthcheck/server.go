@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -62,6 +63,7 @@ type Server struct {
 	port        int
 	status      atomic.Int32
 	readyStatus atomic.Int32
+	conditions  sync.Map // map[string]bool — named readiness conditions
 	server      *http.Server
 }
 
@@ -110,8 +112,33 @@ func (s *Server) SetReady(ready bool) {
 	slog.Debug("Ready status updated", slog.Bool("ready", ready))
 }
 
+// SetReadyCondition sets a named readiness condition. All conditions must be
+// true (along with the base ready flag) for IsReady() to return true.
+// Use this to add gates like "has_connected_workers" without changing existing
+// SetReady(bool) callers.
+func (s *Server) SetReadyCondition(name string, ready bool) {
+	s.conditions.Store(name, ready)
+	slog.Debug("Ready condition updated", slog.String("condition", name), slog.Bool("ready", ready))
+}
+
+// ClearReadyCondition removes a named readiness condition entirely.
+func (s *Server) ClearReadyCondition(name string) {
+	s.conditions.Delete(name)
+}
+
 func (s *Server) IsReady() bool {
-	return ReadyStatus(s.readyStatus.Load()) == ReadyStatusReady
+	if ReadyStatus(s.readyStatus.Load()) != ReadyStatusReady {
+		return false
+	}
+	ready := true
+	s.conditions.Range(func(_, value any) bool {
+		if !value.(bool) {
+			ready = false
+			return false
+		}
+		return true
+	})
+	return ready
 }
 
 func (s *Server) Start(ctx context.Context) error {

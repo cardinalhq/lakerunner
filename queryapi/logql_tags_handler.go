@@ -133,7 +133,7 @@ func (q *QuerierService) handleListLogQLTags(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Query workers for tag names matching the filter
-	resultsCh, err := q.EvaluateLogTagNamesQuery(ctx, p.OrgUUID, p.StartTs, p.EndTs, lplan)
+	resultsCh, queryErrc, err := q.EvaluateLogTagNamesQuery(ctx, p.OrgUUID, p.StartTs, p.EndTs, lplan)
 	if err != nil {
 		slog.Error("EvaluateLogTagNamesQuery failed", "org", p.OrgUUID, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -146,6 +146,12 @@ func (q *QuerierService) handleListLogQLTags(w http.ResponseWriter, r *http.Requ
 		if tv, ok := res.(promql.TagValue); ok {
 			tags = append(tags, tv.Value)
 		}
+	}
+
+	if qErr := drainErrors(queryErrc); qErr != nil {
+		slog.Error("log tag names query completed with errors", "org", p.OrgUUID, "error", qErr)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -18,12 +18,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
-
-	"github.com/google/uuid"
+	"github.com/cardinalhq/lakerunner/queryapi/workmanager"
 )
 
 // PushDownRequest is sent to a worker.
@@ -60,6 +61,7 @@ type QuerierService struct {
 	workerDiscovery WorkerDiscovery
 	apiKeyProvider  orgapikey.OrganizationAPIKeyProvider
 	jwtSecretKey    string // Cached JWT secret key from TOKEN_HMAC256_KEY environment variable
+	WorkMgr         *workmanager.Manager
 }
 
 func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery, apiKeyProvider orgapikey.OrganizationAPIKeyProvider) (*QuerierService, error) {

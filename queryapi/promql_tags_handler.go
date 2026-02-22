@@ -228,7 +228,7 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		}
 
 		// Query workers for tag names matching the filter
-		resultsCh, err := q.EvaluateMetricTagNamesQuery(ctx, orgUUID, startTs, endTs, plan)
+		resultsCh, queryErrc, err := q.EvaluateMetricTagNamesQuery(ctx, orgUUID, startTs, endTs, plan)
 		if err != nil {
 			slog.Error("EvaluateMetricTagNamesQuery failed", "org", orgUUID, "error", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -241,6 +241,12 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 			if tv, ok := res.(promql.TagValue); ok {
 				tags = append(tags, tv.Value)
 			}
+		}
+
+		if qErr := drainErrors(queryErrc); qErr != nil {
+			slog.Error("metric tag names query completed with errors", "org", orgUUID, "error", qErr)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")

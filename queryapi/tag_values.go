@@ -72,7 +72,7 @@ func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http
 		return
 	}
 
-	resultsCh, err := q.EvaluateMetricTagValuesQuery(r.Context(), qPayload.OrgUUID, qPayload.StartTs, qPayload.EndTs, plan)
+	resultsCh, queryErrc, err := q.EvaluateMetricTagValuesQuery(r.Context(), qPayload.OrgUUID, qPayload.StartTs, qPayload.EndTs, plan)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -86,7 +86,7 @@ func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				_ = writeSSE("done", map[string]string{"status": "ok"})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			if err := writeSSE("result", res); err != nil {
@@ -137,7 +137,7 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	resultsCh, err := q.EvaluateLogTagValuesQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, lplan)
+	resultsCh, queryErrc, err := q.EvaluateLogTagValuesQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, lplan)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -151,7 +151,7 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				_ = writeSSE("done", map[string]string{"status": "ok"})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			if err := writeSSE("result", res); err != nil {
@@ -202,7 +202,7 @@ func (q *QuerierService) handleGetSpanTagValues(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	resultsCh, err := q.EvaluateSpanTagValuesQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, lplan)
+	resultsCh, queryErrc, err := q.EvaluateSpanTagValuesQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, lplan)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -216,7 +216,7 @@ func (q *QuerierService) handleGetSpanTagValues(w http.ResponseWriter, r *http.R
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				_ = writeSSE("done", map[string]string{"status": "ok"})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			if err := writeSSE("result", res); err != nil {
