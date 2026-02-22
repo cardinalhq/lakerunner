@@ -147,6 +147,21 @@ func (be *BaseExpr) ToSummarySQL() string {
 	return sql
 }
 
+// ToWorkerCardinalityEstimateSQL builds a SQL query that estimates the
+// cardinality of the current GroupBy projection for guardrail checks.
+// Returns empty string when no GroupBy is present.
+func (be *BaseExpr) ToWorkerCardinalityEstimateSQL() string {
+	if len(be.GroupBy) == 0 {
+		return ""
+	}
+
+	where := withTime(whereFor(be))
+	groupExpr := buildCardinalityGroupExpr(be.GroupBy)
+
+	return "SELECT COALESCE(CAST(" + groupExpr + " AS BIGINT), 0) AS estimated_cardinality" +
+		" FROM {table}" + where
+}
+
 // ToWorkerSummarySQL builds a SQL query that returns merged DDSketches per series across the entire time range.
 // This is used for summary queries where workers merge DDSketches and return them for further aggregation.
 // The returned sketches can be used to extract all stats: count, sum, min, max, and percentiles.
@@ -760,6 +775,20 @@ func RangeMsFromRange(rangeStr string) int64 {
 }
 
 // --- Helpers ---------------------------------------------------------------
+func buildCardinalityGroupExpr(groupBy []string) string {
+	if len(groupBy) == 1 {
+		fieldName := normalizeFieldName(groupBy[0])
+		return fmt.Sprintf(`approx_count_distinct(COALESCE(CAST("%s" AS VARCHAR), '__null__'))`, fieldName)
+	}
+
+	parts := make([]string, 0, len(groupBy))
+	for _, g := range groupBy {
+		fieldName := normalizeFieldName(g)
+		parts = append(parts, fmt.Sprintf(`COALESCE(CAST("%s" AS VARCHAR), '__null__')`, fieldName))
+	}
+	return "approx_count_distinct(hash(" + strings.Join(parts, ", ") + "))"
+}
+
 func withTime(where string) string {
 	if where == "" {
 		return " WHERE " + timePredicate
