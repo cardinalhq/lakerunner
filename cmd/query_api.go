@@ -27,13 +27,15 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
 	"github.com/cardinalhq/lakerunner/queryapi"
+	"github.com/cardinalhq/lakerunner/queryapi/artifactfetcher"
+	"github.com/cardinalhq/lakerunner/queryapi/streammanager"
+	"github.com/cardinalhq/lakerunner/queryapi/workmanager"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
-
-	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 )
 
 func init() {
@@ -98,6 +100,9 @@ func init() {
 
 			configservice.NewGlobal(cdb, 5*time.Minute)
 
+			// Gate readiness on worker availability (initialized false; set true by stream manager callback).
+			healthServer.SetReadyCondition("has_workers", false)
+
 			// Mark as ready now that database connections are established and migrations have been checked
 			healthServer.SetReady(true)
 			healthServer.SetStatus(healthcheck.StatusHealthy)
@@ -122,13 +127,32 @@ func init() {
 				}
 			}()
 
+			// --- Control stream runtime ---
+			fetcher := artifactfetcher.NewFetcher()
+			workMgr := workmanager.NewManager(nil, fetcher) // streams set below
+			streamMgr := streammanager.NewManager(workMgr.MakeStreamHandler())
+			streamMgr.OnWorkerCountChange = func(count int) {
+				healthServer.SetReadyCondition("has_workers", count > 0)
+				slog.Info("Worker count changed", slog.Int("count", count))
+			}
+			streamMgr.Start(ctx)
+			defer streamMgr.Stop()
+
+			// Wire streams into work manager now that both are created.
+			workMgr.SetStreams(streamMgr)
+
+			// Bridge: sync worker discovery into stream manager.
+			controlPort := queryapi.WorkerControlPort()
+			bridge := queryapi.NewDiscoveryBridge(workerDiscovery, streamMgr, controlPort)
+			go bridge.Start(ctx)
+			defer bridge.Stop()
+
 			querier, err := queryapi.NewQuerierService(mdb, workerDiscovery, apiKeyProvider)
 			if err != nil {
 				slog.Error("Failed to create querier service", slog.Any("error", err))
 				return fmt.Errorf("failed to create querier service: %w", err)
 			}
-
-			// All services are now fully initialized
+			querier.WorkMgr = workMgr
 
 			if err := querier.Run(ctx); err != nil {
 				if errors.Is(err, context.Canceled) {

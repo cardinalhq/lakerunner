@@ -129,7 +129,7 @@ func (q *QuerierService) handleListSpanTags(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Query workers for tag names matching the filter
-	resultsCh, err := q.EvaluateSpanTagNamesQuery(ctx, p.OrgUUID, p.StartTs, p.EndTs, lplan)
+	resultsCh, queryErrc, err := q.EvaluateSpanTagNamesQuery(ctx, p.OrgUUID, p.StartTs, p.EndTs, lplan)
 	if err != nil {
 		slog.Error("EvaluateSpanTagNamesQuery failed", "org", p.OrgUUID, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -142,6 +142,12 @@ func (q *QuerierService) handleListSpanTags(w http.ResponseWriter, r *http.Reque
 		if tv, ok := res.(promql.TagValue); ok {
 			tags = append(tags, tv.Value)
 		}
+	}
+
+	if qErr := drainErrors(queryErrc); qErr != nil {
+		slog.Error("span tag names query completed with errors", "org", p.OrgUUID, "error", qErr)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -133,6 +133,18 @@ func createEcsWorkerDiscovery() (WorkerDiscovery, error) {
 	return NewEcsWorkerDiscovery(config)
 }
 
+// WorkerControlPort returns the gRPC control stream port for workers,
+// read from WORKER_CONTROL_PORT env var or defaulting to 8082.
+func WorkerControlPort() int {
+	if v := os.Getenv("WORKER_CONTROL_PORT"); v != "" {
+		port, err := strconv.Atoi(v)
+		if err == nil && port > 0 {
+			return port
+		}
+	}
+	return 8082
+}
+
 // getFirstEnv returns the value of the first environment variable that is set
 func getFirstEnv(keys []string) string {
 	for _, key := range keys {

@@ -19,22 +19,24 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
-
-	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/configdb"
-
-	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/configservice"
-	"github.com/cardinalhq/lakerunner/internal/debugging"
-	"github.com/cardinalhq/lakerunner/internal/duckdbx"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/queryworker"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/configservice"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/queryworker"
+	"github.com/cardinalhq/lakerunner/queryworker/artifactspool"
+	"github.com/cardinalhq/lakerunner/queryworker/controlstream"
+	"github.com/cardinalhq/lakerunner/queryworker/workmanager"
 )
 
 func init() {
@@ -106,7 +108,41 @@ func init() {
 				return fmt.Errorf("failed to create worker service: %w", err)
 			}
 
+			// --- Control-stream runtime ---
+
+			// Artifact spool for local Parquet results.
+			spool, err := artifactspool.NewSpool("/tmp/lakerunner-artifacts")
+			if err != nil {
+				return fmt.Errorf("failed to create artifact spool: %w", err)
+			}
+			spool.Start()
+			worker.Spool = spool
+
+			// Determine advertised HTTP address for artifact URLs.
+			httpAddr := workerHTTPAddr()
+
+			// Executor bridges PlanQuery + EvaluatePushDownToFile → ArtifactResult.
+			executor := queryworker.NewWorkExecutor(worker, spool, httpAddr)
+
+			// Work manager with concurrency control.
+			workMgr := workmanager.NewManager(executor, 4, spool.Acknowledge)
+			worker.WorkMgr = workMgr
+
+			// Worker identity — stable across reconnects.
+			workerID := workerIdentity()
+
+			// gRPC control stream server.
+			csServer := controlstream.NewServer(controlstream.Config{
+				WorkerID: workerID,
+				Handler:  workMgr,
+			})
+			worker.ControlStreamServer = csServer
+
 			healthServer.SetReady(true)
+
+			slog.Info("Worker runtime initialized",
+				slog.String("worker_id", workerID),
+				slog.String("http_addr", httpAddr))
 
 			if err := worker.Run(ctx); err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -120,4 +156,36 @@ func init() {
 	}
 
 	rootCmd.AddCommand(cmd)
+}
+
+// workerIdentity returns a stable worker ID, preferring POD_NAME, then HOSTNAME env,
+// then os.Hostname().
+func workerIdentity() string {
+	if v := os.Getenv("POD_NAME"); v != "" {
+		return v
+	}
+	if v := os.Getenv("HOSTNAME"); v != "" {
+		return v
+	}
+	h, _ := os.Hostname()
+	if h != "" {
+		return h
+	}
+	return "query-worker"
+}
+
+// workerHTTPAddr returns the advertised host:port for artifact HTTP fetches.
+// Uses WORKER_HTTP_ADDR env if set, otherwise POD_IP:8081, otherwise hostname:8081.
+func workerHTTPAddr() string {
+	if v := os.Getenv("WORKER_HTTP_ADDR"); v != "" {
+		return v
+	}
+	if v := os.Getenv("POD_IP"); v != "" {
+		return v + ":8081"
+	}
+	h, _ := os.Hostname()
+	if h != "" {
+		return h + ":8081"
+	}
+	return "localhost:8081"
 }

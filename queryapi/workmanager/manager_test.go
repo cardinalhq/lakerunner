@@ -360,6 +360,165 @@ func TestManager_DispatchLeafWork_MarshalError(t *testing.T) {
 	assert.Contains(t, err.Error(), "marshal spec")
 }
 
+func TestManager_DispatchAndWait_ResolvesWithoutStartQuery(t *testing.T) {
+	mgr, _ := setupManager(t)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	// DispatchAndWait without StartQuery — the evaluator path.
+	done := make(chan struct{})
+	var result *WorkResult
+	var dispatchErr error
+
+	go func() {
+		defer close(done)
+		result, dispatchErr = mgr.DispatchAndWait(ctx, "q-no-start", "leaf-1", "org:seg1", []byte("spec"))
+	}()
+
+	// Give the goroutine time to dispatch and register the waiter.
+	time.Sleep(50 * time.Millisecond)
+
+	// Find the workID from the coordinator.
+	items := mgr.Coordinator().Work.WorkForQuery("q-no-start")
+	require.Len(t, items, 1)
+	workID := items[0].WorkID
+
+	// Simulate worker accepting and completing.
+	mgr.HandleWorkAccepted("worker-1", &workcoordpb.WorkAccepted{WorkId: workID})
+	mgr.HandleWorkReady("worker-1", &workcoordpb.WorkReady{
+		WorkId:            workID,
+		ArtifactUrl:       "http://worker-1:8081/artifacts/" + workID,
+		ArtifactSizeBytes: 512,
+		ArtifactChecksum:  "sha256:test",
+		RowCount:          42,
+		MinTs:             1000,
+		MaxTs:             2000,
+	})
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("DispatchAndWait did not return")
+	}
+
+	require.NoError(t, dispatchErr)
+	require.NotNil(t, result)
+	assert.Equal(t, workID, result.WorkID)
+	assert.Equal(t, int64(42), result.RowCount)
+	assert.Equal(t, []byte("parquet-data"), result.ArtifactData)
+}
+
+func TestManager_DispatchAndWait_RejectReassignResolves(t *testing.T) {
+	sender := newMockStreamSender()
+	mgr := NewManager(sender, &mockArtifactFetcher{data: []byte("parquet-data")})
+
+	// Register two workers so reject can reassign.
+	require.NoError(t, mgr.Coordinator().RegisterWorker("worker-1"))
+	require.NoError(t, mgr.Coordinator().Workers.SetAcceptingWork("worker-1", true))
+	require.NoError(t, mgr.Coordinator().RegisterWorker("worker-2"))
+	require.NoError(t, mgr.Coordinator().Workers.SetAcceptingWork("worker-2", true))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	var result *WorkResult
+	var dispatchErr error
+
+	go func() {
+		defer close(done)
+		result, dispatchErr = mgr.DispatchAndWait(ctx, "q-reject", "leaf-1", "org:seg1", []byte("spec"))
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Find the original work ID.
+	items := mgr.Coordinator().Work.WorkForQuery("q-reject")
+	require.Len(t, items, 1)
+	origWorkID := items[0].WorkID
+	origWorker := items[0].WorkerID
+
+	// Reject the work — should reassign to the other worker.
+	mgr.HandleWorkRejected(origWorker, &workcoordpb.WorkRejected{WorkId: origWorkID, Reason: "busy"})
+
+	// Find the new work ID.
+	allItems := mgr.Coordinator().Work.WorkForQuery("q-reject")
+	var newWorkID string
+	for _, it := range allItems {
+		if it.WorkID != origWorkID {
+			newWorkID = it.WorkID
+		}
+	}
+	require.NotEmpty(t, newWorkID, "expected reassigned work item")
+
+	// Complete the reassigned work.
+	mgr.HandleWorkAccepted("worker-1", &workcoordpb.WorkAccepted{WorkId: newWorkID})
+	mgr.HandleWorkAccepted("worker-2", &workcoordpb.WorkAccepted{WorkId: newWorkID})
+	mgr.HandleWorkReady("worker-1", &workcoordpb.WorkReady{
+		WorkId:            newWorkID,
+		ArtifactUrl:       "http://worker:8081/artifacts/" + newWorkID,
+		ArtifactSizeBytes: 512,
+		ArtifactChecksum:  "sha256:test",
+		RowCount:          10,
+	})
+	mgr.HandleWorkReady("worker-2", &workcoordpb.WorkReady{
+		WorkId:            newWorkID,
+		ArtifactUrl:       "http://worker:8081/artifacts/" + newWorkID,
+		ArtifactSizeBytes: 512,
+		ArtifactChecksum:  "sha256:test",
+		RowCount:          10,
+	})
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("DispatchAndWait did not return after reject + reassign")
+	}
+
+	require.NoError(t, dispatchErr)
+	require.NotNil(t, result)
+	assert.Equal(t, newWorkID, result.WorkID)
+}
+
+func TestManager_DispatchAndWait_RejectNoWorkers(t *testing.T) {
+	sender := newMockStreamSender()
+	mgr := NewManager(sender, &mockArtifactFetcher{data: []byte("parquet-data")})
+
+	// Only one worker — reject can't reassign.
+	require.NoError(t, mgr.Coordinator().RegisterWorker("worker-1"))
+	require.NoError(t, mgr.Coordinator().Workers.SetAcceptingWork("worker-1", true))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	var dispatchErr error
+
+	go func() {
+		defer close(done)
+		_, dispatchErr = mgr.DispatchAndWait(ctx, "q-reject-none", "leaf-1", "org:seg1", []byte("spec"))
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	items := mgr.Coordinator().Work.WorkForQuery("q-reject-none")
+	require.Len(t, items, 1)
+	origWorkID := items[0].WorkID
+
+	// Reject with no other workers available.
+	mgr.HandleWorkRejected("worker-1", &workcoordpb.WorkRejected{WorkId: origWorkID, Reason: "busy"})
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("DispatchAndWait did not return after reject with no workers")
+	}
+
+	require.Error(t, dispatchErr)
+	assert.Contains(t, dispatchErr.Error(), "no workers available")
+}
+
 func TestManager_MakeStreamHandler(t *testing.T) {
 	mgr, _ := setupManager(t)
 	handler := mgr.MakeStreamHandler()

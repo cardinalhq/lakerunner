@@ -16,7 +16,6 @@ package queryapi
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -50,7 +49,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 	limit int,
 	queryPlan logql.LQueryPlan,
 	fields []string,
-) (<-chan promql.Timestamped, error) {
+) (<-chan promql.Timestamped, <-chan error, error) {
 	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
 	ctx, evalSpan := tracer.Start(ctx, "query.api.evaluate_logs")
 
@@ -63,22 +62,26 @@ func (q *QuerierService) EvaluateLogsQuery(
 		attribute.Int("leaf_count", len(queryPlan.Leaves)),
 	)
 
+	queryID := uuid.New().String()
+
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
 		evalSpan.RecordError(err)
 		evalSpan.SetStatus(codes.Error, "failed to get workers")
 		evalSpan.End()
 		slog.Error("failed to get all workers", "err", err)
-		return nil, fmt.Errorf("failed to get all workers: %w", err)
+		return nil, nil, fmt.Errorf("failed to get all workers: %w", err)
 	}
 	evalSpan.SetAttributes(attribute.Int("worker_count", len(workers)))
 	stepDuration := StepForQueryDuration(startTs, endTs)
 
 	out := make(chan promql.Timestamped, 1024)
+	queryErrc := make(chan error, 1)
 
 	go func() {
 		defer close(out)
 		defer evalSpan.End()
+		defer close(queryErrc)
 
 		// If limit <= 0, treat as unlimited.
 		unlimited := limit <= 0
@@ -89,6 +92,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 
 		emitted := 0
 		totalSegments := 0
+		groupCounter := 0
 
 		// Partition by dateInt hours for storage listing.
 		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, reverse)
@@ -99,6 +103,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 				segments, err := q.lookupLogsSegments(ctxAll, dih, leaf, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery)
 				if err != nil {
 					slog.Error("failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
+					queryErrc <- fmt.Errorf("lookup log segments: %w", err)
 					return
 				}
 				if len(segments) == 0 {
@@ -126,54 +131,30 @@ func (q *QuerierService) EvaluateLogsQuery(
 
 					slog.Info("Pushing down segments", "groupSize", len(group.Segments), "remaining", remaining)
 
-					// Collect all segment IDs for worker assignment
-					segmentIDs := make([]int64, 0, len(group.Segments))
-					segmentMap := make(map[int64][]SegmentInfo)
-					for _, segment := range group.Segments {
-						segmentIDs = append(segmentIDs, segment.SegmentID)
-						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
+					reqLimit := 0
+					if !unlimited {
+						reqLimit = remaining
+					}
+					req := PushDownRequest{
+						OrganizationID: orgID,
+						LogLeaf:        &leaf,
+						StartTs:        group.StartTs,
+						EndTs:          group.EndTs,
+						Segments:       group.Segments,
+						Step:           stepDuration,
+						Limit:          reqLimit,
+						Reverse:        reverse,
+						Fields:         fields,
 					}
 
-					// Get worker assignments
-					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+					workLeafID := fmt.Sprintf("logs-%d", groupCounter)
+					groupCounter++
+					chs, errc, err := q.logsPushDownArtifact(ctxAll, queryID, workLeafID, req)
 					if err != nil {
-						slog.Error("failed to get worker assignments", "err", err)
+						slog.Error("pushdown failed", "err", err)
 						continue
 					}
-
-					workerGroups := make(map[Worker][]SegmentInfo)
-					for _, mapping := range mappings {
-						segmentList := segmentMap[mapping.SegmentID]
-						workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
-					}
-
-					var groupLeafChans []<-chan promql.Timestamped
-					for worker, workerSegments := range workerGroups {
-						reqLimit := 0
-						if !unlimited {
-							reqLimit = remaining
-						}
-						req := PushDownRequest{
-							OrganizationID: orgID,
-							LogLeaf:        &leaf,
-							StartTs:        group.StartTs,
-							EndTs:          group.EndTs,
-							Segments:       workerSegments,
-							Step:           stepDuration,
-							Limit:          reqLimit,
-							Reverse:        reverse,
-							Fields:         fields,
-						}
-						ch, err := q.logsPushDown(ctxAll, worker, req)
-						if err != nil {
-							slog.Error("pushdown failed", "worker", worker, "err", err)
-							continue
-						}
-						groupLeafChans = append(groupLeafChans, ch)
-					}
-					if len(groupLeafChans) == 0 {
-						continue
-					}
+					groupLeafChans := chs
 
 					// Merge this group's worker streams by timestamp
 					mergeLimit := 0 // unlimited for the merge by default
@@ -203,6 +184,12 @@ func (q *QuerierService) EvaluateLogsQuery(
 						}
 					}
 				nextGroup:
+					if segErr := drainErrors(errc); segErr != nil {
+						slog.Error("segment failures in logs query", "err", segErr)
+						queryErrc <- segErr
+						cancelAll()
+						break outer
+					}
 				}
 			}
 		}
@@ -211,26 +198,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 			attribute.Int("rows_emitted", emitted),
 		)
 	}()
-	return out, nil
-}
-
-func (q *QuerierService) logsPushDown(
-	ctx context.Context,
-	worker Worker,
-	request PushDownRequest,
-) (<-chan promql.Timestamped, error) {
-	return PushDownStream(ctx, worker, request,
-		func(typ string, data json.RawMessage) (promql.Timestamped, bool, error) {
-			var zero promql.Timestamped
-			if typ != "result" {
-				return zero, false, nil
-			}
-			var si promql.Exemplar
-			if err := json.Unmarshal(data, &si); err != nil {
-				return zero, false, err
-			}
-			return si, true, nil
-		})
+	return out, queryErrc, nil
 }
 
 type SegmentLookupFunc func(context.Context, lrdb.ListLogSegmentsForQueryParams) ([]lrdb.ListLogSegmentsForQueryRow, error)

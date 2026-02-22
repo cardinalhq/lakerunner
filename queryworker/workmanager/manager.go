@@ -54,8 +54,9 @@ type workItem struct {
 
 // Manager processes work assignments on the worker side.
 type Manager struct {
-	executor    Executor
-	maxInFlight int
+	executor      Executor
+	maxInFlight   int
+	onArtifactAck func(workID string)
 
 	mu       sync.RWMutex
 	items    map[string]*workItem // workID → item
@@ -66,15 +67,17 @@ type Manager struct {
 }
 
 // NewManager creates a worker-side work manager.
-func NewManager(executor Executor, maxInFlight int) *Manager {
+// onArtifactAck is called when the API acknowledges artifact retrieval (may be nil).
+func NewManager(executor Executor, maxInFlight int, onArtifactAck func(string)) *Manager {
 	if maxInFlight <= 0 {
 		maxInFlight = 4
 	}
 	m := &Manager{
-		executor:    executor,
-		maxInFlight: maxInFlight,
-		items:       make(map[string]*workItem),
-		sem:         make(chan struct{}, maxInFlight),
+		executor:      executor,
+		maxInFlight:   maxInFlight,
+		onArtifactAck: onArtifactAck,
+		items:         make(map[string]*workItem),
+		sem:           make(chan struct{}, maxInFlight),
 	}
 	registerExecutionQueueDepthGauge(m)
 	return m
@@ -213,9 +216,11 @@ func (m *Manager) OnCancelWork(_ *controlstream.Session, msg *workcoordpb.Cancel
 }
 
 // OnArtifactAck acknowledges that the API has fetched the artifact.
-// The artifact spool manager (Task #26) will handle cleanup.
 func (m *Manager) OnArtifactAck(_ *controlstream.Session, msg *workcoordpb.ArtifactAck) {
 	slog.Debug("Artifact acknowledged", slog.String("work_id", msg.WorkId))
+	if m.onArtifactAck != nil {
+		m.onArtifactAck(msg.WorkId)
+	}
 }
 
 // OnSessionClosed cancels all work items for the disconnected session.

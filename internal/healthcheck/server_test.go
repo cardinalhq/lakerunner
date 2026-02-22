@@ -188,6 +188,32 @@ func TestServer_ReadyConditions(t *testing.T) {
 	}
 }
 
+func TestServer_PreInitializedFalseConditionBlocksReady(t *testing.T) {
+	server := NewServer(Config{})
+
+	// Pre-initialize condition to false before setting base readiness.
+	// This mirrors the query-api startup pattern where has_workers must
+	// gate readiness before any callback fires.
+	server.SetReadyCondition("has_workers", false)
+	server.SetReady(true)
+
+	if server.IsReady() {
+		t.Error("Expected not ready when pre-initialized condition is false")
+	}
+
+	// Callback fires with workers available.
+	server.SetReadyCondition("has_workers", true)
+	if !server.IsReady() {
+		t.Error("Expected ready after condition becomes true")
+	}
+
+	// Workers go away.
+	server.SetReadyCondition("has_workers", false)
+	if server.IsReady() {
+		t.Error("Expected not ready when workers removed")
+	}
+}
+
 func TestHealthEndpoints(t *testing.T) {
 	config := Config{
 		Port: 8090,

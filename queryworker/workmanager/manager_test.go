@@ -87,19 +87,19 @@ func waitForMessage(t *testing.T, sess *controlstream.Session, timeout time.Dura
 }
 
 func TestNewManager_Defaults(t *testing.T) {
-	mgr := NewManager(nil, 0)
+	mgr := NewManager(nil, 0, nil)
 	assert.Equal(t, 4, mgr.maxInFlight)
 	assert.Equal(t, 0, mgr.InFlightCount())
 }
 
 func TestNewManager_CustomInFlight(t *testing.T) {
-	mgr := NewManager(nil, 8)
+	mgr := NewManager(nil, 8, nil)
 	assert.Equal(t, 8, mgr.maxInFlight)
 }
 
 func TestOnAssignWork_AcceptsAndExecutes(t *testing.T) {
 	exec := &mockExecutor{}
-	mgr := NewManager(exec, 4)
+	mgr := NewManager(exec, 4, nil)
 	sess := newTestSession("sess-1")
 
 	mgr.OnAssignWork(sess, &workcoordpb.AssignWork{
@@ -128,7 +128,7 @@ func TestOnAssignWork_AcceptsAndExecutes(t *testing.T) {
 }
 
 func TestOnAssignWork_RejectsWhenDraining(t *testing.T) {
-	mgr := NewManager(nil, 4)
+	mgr := NewManager(nil, 4, nil)
 	mgr.SetDraining(true)
 	sess := newTestSession("sess-1")
 
@@ -144,7 +144,7 @@ func TestOnAssignWork_RejectsWhenDraining(t *testing.T) {
 func TestOnAssignWork_RejectsAtCapacity(t *testing.T) {
 	blockCh := make(chan struct{})
 	exec := &mockExecutor{blockCh: blockCh}
-	mgr := NewManager(exec, 1)
+	mgr := NewManager(exec, 1, nil)
 	sess := newTestSession("sess-1")
 
 	// Fill the single slot.
@@ -170,7 +170,7 @@ func TestOnAssignWork_ExecutionFailure(t *testing.T) {
 			return nil, fmt.Errorf("OOM killed")
 		},
 	}
-	mgr := NewManager(exec, 4)
+	mgr := NewManager(exec, 4, nil)
 	sess := newTestSession("sess-1")
 
 	mgr.OnAssignWork(sess, &workcoordpb.AssignWork{WorkId: "w1", Spec: []byte("spec")})
@@ -190,7 +190,7 @@ func TestOnAssignWork_ExecutionFailure(t *testing.T) {
 func TestOnCancelWork_CancelsInFlight(t *testing.T) {
 	blockCh := make(chan struct{})
 	exec := &mockExecutor{blockCh: blockCh}
-	mgr := NewManager(exec, 4)
+	mgr := NewManager(exec, 4, nil)
 	sess := newTestSession("sess-1")
 
 	mgr.OnAssignWork(sess, &workcoordpb.AssignWork{WorkId: "w1", Spec: []byte("spec")})
@@ -211,7 +211,7 @@ func TestOnCancelWork_CancelsInFlight(t *testing.T) {
 }
 
 func TestOnCancelWork_UnknownWorkID(t *testing.T) {
-	mgr := NewManager(nil, 4)
+	mgr := NewManager(nil, 4, nil)
 	sess := newTestSession("sess-1")
 	// Should not panic.
 	mgr.OnCancelWork(sess, &workcoordpb.CancelWork{WorkId: "nonexistent"})
@@ -220,7 +220,7 @@ func TestOnCancelWork_UnknownWorkID(t *testing.T) {
 func TestOnSessionClosed_CancelsSessionWork(t *testing.T) {
 	blockCh := make(chan struct{})
 	exec := &mockExecutor{blockCh: blockCh}
-	mgr := NewManager(exec, 4)
+	mgr := NewManager(exec, 4, nil)
 	sess := newTestSession("sess-1")
 
 	// Assign two work items to this session.
@@ -243,7 +243,7 @@ func TestOnSessionClosed_CancelsSessionWork(t *testing.T) {
 func TestOnSessionClosed_OnlyCancelsMatchingSession(t *testing.T) {
 	blockCh := make(chan struct{})
 	exec := &mockExecutor{blockCh: blockCh}
-	mgr := NewManager(exec, 4)
+	mgr := NewManager(exec, 4, nil)
 	sess1 := newTestSession("sess-1")
 	sess2 := newTestSession("sess-2")
 
@@ -270,7 +270,7 @@ func TestOnSessionClosed_OnlyCancelsMatchingSession(t *testing.T) {
 }
 
 func TestSetDraining(t *testing.T) {
-	mgr := NewManager(nil, 4)
+	mgr := NewManager(nil, 4, nil)
 	assert.False(t, mgr.draining.Load())
 
 	mgr.SetDraining(true)
@@ -281,7 +281,7 @@ func TestSetDraining(t *testing.T) {
 }
 
 func TestWaitForDrain_ReturnsImmediately(t *testing.T) {
-	mgr := NewManager(nil, 4)
+	mgr := NewManager(nil, 4, nil)
 	err := mgr.WaitForDrain(t.Context())
 	assert.NoError(t, err)
 }
@@ -289,7 +289,7 @@ func TestWaitForDrain_ReturnsImmediately(t *testing.T) {
 func TestWaitForDrain_WaitsForCompletion(t *testing.T) {
 	blockCh := make(chan struct{})
 	exec := &mockExecutor{blockCh: blockCh}
-	mgr := NewManager(exec, 4)
+	mgr := NewManager(exec, 4, nil)
 	sess := newTestSession("sess-1")
 
 	mgr.OnAssignWork(sess, &workcoordpb.AssignWork{WorkId: "w1", Spec: []byte("spec")})
@@ -323,7 +323,7 @@ func TestWaitForDrain_Timeout(t *testing.T) {
 	blockCh := make(chan struct{})
 	defer close(blockCh)
 	exec := &mockExecutor{blockCh: blockCh}
-	mgr := NewManager(exec, 4)
+	mgr := NewManager(exec, 4, nil)
 	sess := newTestSession("sess-1")
 
 	mgr.OnAssignWork(sess, &workcoordpb.AssignWork{WorkId: "w1", Spec: []byte("spec")})
@@ -338,7 +338,7 @@ func TestWaitForDrain_Timeout(t *testing.T) {
 }
 
 func TestOnArtifactAck(t *testing.T) {
-	mgr := NewManager(nil, 4)
+	mgr := NewManager(nil, 4, nil)
 	sess := newTestSession("sess-1")
 	// Should not panic.
 	mgr.OnArtifactAck(sess, &workcoordpb.ArtifactAck{WorkId: "w1"})
@@ -355,7 +355,7 @@ func TestSemaphoreReleasedOnFailure(t *testing.T) {
 			return &ArtifactResult{ArtifactURL: "url", RowCount: 1}, nil
 		},
 	}
-	mgr := NewManager(exec, 1)
+	mgr := NewManager(exec, 1, nil)
 	sess := newTestSession("sess-1")
 
 	// First work item will fail.

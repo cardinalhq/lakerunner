@@ -16,7 +16,6 @@ package queryapi
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -117,7 +116,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 	orgID uuid.UUID,
 	startTs, endTs int64,
 	queryPlan promql.QueryPlan,
-) (<-chan map[string]promql.EvalResult, error) {
+) (<-chan map[string]promql.EvalResult, <-chan error, error) {
 	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
 	ctx, evalSpan := tracer.Start(ctx, "query.api.evaluate_metrics")
 
@@ -131,21 +130,25 @@ func (q *QuerierService) EvaluateMetricsQuery(
 	stepDuration := StepForQueryDuration(startTs, endTs)
 	evalSpan.SetAttributes(attribute.Int64("step_ms", stepDuration.Milliseconds()))
 
+	queryID := uuid.New().String()
+
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
 		evalSpan.RecordError(err)
 		evalSpan.SetStatus(codes.Error, "failed to get workers")
 		evalSpan.End()
 		slog.Error("failed to get all workers", "err", err)
-		return nil, fmt.Errorf("failed to get all workers: %w", err)
+		return nil, nil, fmt.Errorf("failed to get all workers: %w", err)
 	}
 	evalSpan.SetAttributes(attribute.Int("worker_count", len(workers)))
 
 	out := make(chan map[string]promql.EvalResult, 1024)
+	queryErrc := make(chan error, 1)
 
 	go func() {
 		defer close(out)
 		defer evalSpan.End()
+		defer close(queryErrc)
 
 		// ---------- Stage 0: coordinator & EvalFlow ----------
 		regs := make(chan groupReg, 256)
@@ -249,6 +252,9 @@ func (q *QuerierService) EvaluateMetricsQuery(
 		maxParallel := computeMaxParallel(len(workers))
 		sem := make(chan struct{}, maxParallel)
 		var regWG sync.WaitGroup
+		var monitorWG sync.WaitGroup
+		// segErrCh collects the first segment error from monitoring goroutines.
+		segErrCh := make(chan error, 1)
 
 		for gi, group := range groups {
 			regWG.Add(1)
@@ -264,6 +270,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 				}
 
 				leafChans := make([]<-chan promql.SketchInput, 0, len(segmentsByLeaf))
+				leafErrcs := make([]<-chan error, 0, len(segmentsByLeaf))
 				for leafID, segmentsForLeaf := range segmentsByLeaf {
 					leaf := leavesByID[leafID]
 					offMs, err := parseOffsetMs(leaf.Offset)
@@ -272,67 +279,34 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						offMs = 0
 					}
 
-					// worker mapping just for this leaf’s segments
-					segmentIDs := make([]int64, 0, len(segmentsForLeaf))
-					segmentMap := make(map[int64]SegmentInfo, len(segmentsForLeaf))
-					for _, s := range segmentsForLeaf {
-						segmentIDs = append(segmentIDs, s.SegmentID)
-						segmentMap[s.SegmentID] = s
-					}
-					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
-					if err != nil {
-						slog.Error("failed to get worker assignments", "err", err)
-						continue
-					}
-					workerGroups := make(map[Worker][]SegmentInfo)
-					for _, m := range mappings {
-						workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
-					}
-					if len(workerGroups) == 0 {
-						slog.Error("no worker assignments for leaf segments; skipping leaf", "leafID", leafID, "numLeafSegments", len(segmentsForLeaf))
-						continue
-					}
-
-					loc := time.Local
 					slog.Info("Pushing down segments (aggregates)",
 						"groupIndex", gi, "leafID", leafID, "leafSegments", len(segmentsForLeaf),
-						"groupStart", time.UnixMilli(group.StartTs).In(loc).Format("15:04:05"),
-						"groupEnd", time.UnixMilli(group.EndTs).In(loc).Format("15:04:05"),
+						"groupStart", time.UnixMilli(group.StartTs).In(time.Local).Format("15:04:05"),
+						"groupEnd", time.UnixMilli(group.EndTs).In(time.Local).Format("15:04:05"),
 					)
 
-					workerChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
-					for worker, wsegs := range workerGroups {
-						//slog.Info("Pushdown to worker", "worker", worker, "numSegments", len(wsegs), "leafID", leafID)
-
-						req := PushDownRequest{
-							OrganizationID: orgID,
-							BaseExpr:       &leaf,
-							StartTs:        group.StartTs - offMs,
-							EndTs:          group.EndTs - offMs,
-							Segments:       wsegs,
-							Step:           stepDuration,
-						}
-
-						ch, err := q.metricsPushDown(pushCtx, worker, req)
-						if err != nil {
-							slog.Error("pushdown failed", "worker", worker, "err", err)
-							continue
-						}
-						if offMs != 0 {
-							ch = shiftTimestamps(pushCtx, ch, offMs, 256)
-						}
-
-						tag := fmt.Sprintf("g=%d leaf=%s %s:%d", gi, leafID, worker.IP, worker.Port)
-						ch = tapStream(pushCtx, ch, tag)
-
-						workerChans = append(workerChans, ch)
+					req := PushDownRequest{
+						OrganizationID: orgID,
+						BaseExpr:       &leaf,
+						StartTs:        group.StartTs - offMs,
+						EndTs:          group.EndTs - offMs,
+						Segments:       segmentsForLeaf,
+						Step:           stepDuration,
 					}
-					if len(workerChans) == 0 {
-						slog.Error("no worker pushdowns survived; skipping leaf", "leafID", leafID)
+
+					workLeafID := fmt.Sprintf("g%d-%s", gi, leafID)
+					chs, errc, err := q.metricsPushDownArtifact(pushCtx, queryID, workLeafID, req)
+					if err != nil {
+						slog.Error("pushdown failed", "leafID", leafID, "err", err)
 						continue
 					}
-
-					leafChans = append(leafChans, workerChans...)
+					leafErrcs = append(leafErrcs, errc)
+					if offMs != 0 {
+						for i, ch := range chs {
+							chs[i] = shiftTimestamps(pushCtx, ch, offMs, 256)
+						}
+					}
+					leafChans = append(leafChans, chs...)
 				}
 
 				// If nothing survived, register a closed stream so ordering advances.
@@ -345,6 +319,20 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					}
 					return
 				}
+
+				// Monitor segment errors: cancel all pushdowns on first failure.
+				monitorWG.Add(1)
+				go func() {
+					defer monitorWG.Done()
+					if err := drainErrors(mergeErrChans(leafErrcs)); err != nil {
+						slog.Error("segment failures in metrics group", "group", gi, "err", err)
+						select {
+						case segErrCh <- err:
+						default:
+						}
+						cancelAllPush()
+					}
+				}()
 
 				// Merge across leaves within this group and register immediately.
 				groupChan := promql.MergeSorted(pushCtx, 1024, false, 0, leafChans...)
@@ -368,73 +356,19 @@ func (q *QuerierService) EvaluateMetricsQuery(
 		// wait for EvalFlow to finish, then stop all pushdowns
 		<-done
 		cancelAllPush()
-	}()
 
-	return out, nil
-}
+		// Wait for all monitor goroutines to finish so segErrCh is
+		// fully populated before we read it.
+		monitorWG.Wait()
 
-// tapStream logs how many items and the timestamp span we actually consumed
-// from a worker stream. Helps diagnose early disconnects or zero-delivery shards.
-func tapStream(ctx context.Context, in <-chan promql.SketchInput, tag string) <-chan promql.SketchInput {
-	out := make(chan promql.SketchInput, 256)
-	go func() {
-		defer close(out)
-		var n int
-		var tmin, tmax int64
-		first := true
-		for {
-			select {
-			case <-ctx.Done():
-				slog.Info("pushdown stream closed (ctx)", "tag", tag, "count", n, "tmin", tmin, "tmax", tmax)
-				return
-			case v, ok := <-in:
-				if !ok {
-					slog.Info("pushdown stream closed (eof)", "tag", tag, "count", n, "tmin", tmin, "tmax", tmax)
-					return
-				}
-				if first {
-					tmin, tmax = v.GetTimestamp(), v.GetTimestamp()
-					first = false
-				} else {
-					if ts := v.GetTimestamp(); ts < tmin {
-						tmin = ts
-					} else if ts > tmax {
-						tmax = ts
-					}
-				}
-				n++
-				select {
-				case out <- v:
-				case <-ctx.Done():
-					slog.Info("pushdown stream closed (ctx while forward)", "tag", tag, "count", n, "tmin", tmin, "tmax", tmax)
-					return
-				}
-			}
+		select {
+		case err := <-segErrCh:
+			queryErrc <- err
+		default:
 		}
 	}()
-	return out
-}
 
-// metricsPushDown should POST req to the worker’s /pushdown and return a channel that yields SketchInput
-// decoded from the worker’s SSE (or chunked JSON) stream. You can keep your existing stub here.
-// Implement the HTTP/SSE client and decoding where you wire up workers.
-func (q *QuerierService) metricsPushDown(
-	ctx context.Context,
-	worker Worker,
-	request PushDownRequest,
-) (<-chan promql.SketchInput, error) {
-	return PushDownStream(ctx, worker, request,
-		func(typ string, data json.RawMessage) (promql.SketchInput, bool, error) {
-			var zero promql.SketchInput
-			if typ != "result" {
-				return zero, false, nil
-			}
-			var si promql.SketchInput
-			if err := json.Unmarshal(data, &si); err != nil {
-				return zero, false, err
-			}
-			return si, true, nil
-		})
+	return out, queryErrc, nil
 }
 
 // shiftTimestamps returns a channel that forwards every SketchInput from `in`
@@ -646,7 +580,7 @@ func (q *QuerierService) evaluateMetricsSummaryLegacy(
 	queryPlan promql.QueryPlan,
 ) ([]SeriesSummary, error) {
 	// Run the normal query
-	resultsCh, err := q.EvaluateMetricsQuery(ctx, orgID, startTs, endTs, queryPlan)
+	resultsCh, metricsErrc, err := q.EvaluateMetricsQuery(ctx, orgID, startTs, endTs, queryPlan)
 	if err != nil {
 		return nil, err
 	}
@@ -704,6 +638,10 @@ func (q *QuerierService) evaluateMetricsSummaryLegacy(
 		})
 	}
 
+	if qErr := drainErrors(metricsErrc); qErr != nil {
+		return nil, fmt.Errorf("segment failures: %w", qErr)
+	}
+
 	// Apply comparison filtering for consistency with sketch-based path
 	summaries = applySummaryFilter(summaries, queryPlan.Root)
 
@@ -755,11 +693,6 @@ func (q *QuerierService) evaluateMetricsSummaryWithSketches(
 
 	stepDuration := StepForQueryDuration(startTs, endTs)
 
-	workers, err := q.workerDiscovery.GetAllWorkers()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get workers: %w", err)
-	}
-
 	// We only support single-leaf queries for summary
 	if len(queryPlan.Leaves) != 1 {
 		return nil, fmt.Errorf("summary only supports single-leaf queries, got %d leaves", len(queryPlan.Leaves))
@@ -782,100 +715,60 @@ func (q *QuerierService) evaluateMetricsSummaryWithSketches(
 		return []SeriesSummary{}, nil
 	}
 
-	// Map segments to workers
-	segmentIDs := make([]int64, 0, len(allSegments))
-	segmentMap := make(map[int64]SegmentInfo, len(allSegments))
-	for _, s := range allSegments {
-		segmentIDs = append(segmentIDs, s.SegmentID)
-		segmentMap[s.SegmentID] = s
-	}
-
-	mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get worker assignments: %w", err)
-	}
-
-	workerGroups := make(map[Worker][]SegmentInfo)
-	for _, m := range mappings {
-		workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
-	}
-
-	if len(workerGroups) == 0 {
-		return []SeriesSummary{}, nil
-	}
-
 	// Create index mapping for DDSketch decoding
 	indexMapping, err := mapping.NewLogarithmicMapping(0.01)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create index mapping: %w", err)
 	}
 
-	// Collect sketches from all workers
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var workerErrors []error
 	sketchesBySeries := make(map[string]*ddsketch.DDSketch)
 	tagsBySeries := make(map[string]map[string]any)
 
-	for worker, wsegs := range workerGroups {
-		wg.Add(1)
-		go func(worker Worker, wsegs []SegmentInfo) {
-			defer wg.Done()
-
-			req := PushDownRequest{
-				OrganizationID: orgID,
-				BaseExpr:       &leaf,
-				StartTs:        startTs,
-				EndTs:          endTs,
-				Segments:       wsegs,
-				Step:           stepDuration,
-				IsSummary:      true,
-			}
-
-			ch, err := q.summaryPushDown(ctx, worker, req)
-			if err != nil {
-				slog.Error("summary pushdown failed", "worker", worker, "err", err)
-				mu.Lock()
-				workerErrors = append(workerErrors, fmt.Errorf("worker %s:%d: %w", worker.IP, worker.Port, err))
-				mu.Unlock()
-				return
-			}
-
-			for si := range ch {
-				if si.SketchTags.SketchType != promql.SketchDDS || len(si.SketchTags.Bytes) == 0 {
-					continue
-				}
-
-				sketch, err := ddsketch.DecodeDDSketch(si.SketchTags.Bytes, store.DefaultProvider, indexMapping)
-				if err != nil {
-					slog.Warn("failed to decode DDSketch", "error", err)
-					continue
-				}
-
-				key := tagsKeyForSummary(si.SketchTags.Tags)
-				mu.Lock()
-				if existing, ok := sketchesBySeries[key]; ok {
-					if err := existing.MergeWith(sketch); err != nil {
-						slog.Warn("failed to merge DDSketches", "error", err, "key", key)
-					}
-				} else {
-					sketchesBySeries[key] = sketch
-					tagsBySeries[key] = si.SketchTags.Tags
-				}
-				mu.Unlock()
-			}
-		}(worker, wsegs)
+	summaryQueryID := uuid.New().String()
+	req := PushDownRequest{
+		OrganizationID: orgID,
+		BaseExpr:       &leaf,
+		StartTs:        startTs,
+		EndTs:          endTs,
+		Segments:       allSegments,
+		Step:           stepDuration,
+		IsSummary:      true,
 	}
 
-	wg.Wait()
+	chs, errc, err := q.summaryPushDownArtifact(ctx, summaryQueryID, "summary-0", req)
+	if err != nil {
+		return nil, fmt.Errorf("summary pushdown failed: %w", err)
+	}
 
-	// If any workers failed, return error to trigger fallback
-	if len(workerErrors) > 0 {
-		return nil, fmt.Errorf("summary pushdown failed for %d workers: %w", len(workerErrors), workerErrors[0])
+	for _, ch := range chs {
+		for si := range ch {
+			if si.SketchTags.SketchType != promql.SketchDDS || len(si.SketchTags.Bytes) == 0 {
+				continue
+			}
+
+			sketch, err := ddsketch.DecodeDDSketch(si.SketchTags.Bytes, store.DefaultProvider, indexMapping)
+			if err != nil {
+				slog.Warn("failed to decode DDSketch", "error", err)
+				continue
+			}
+
+			key := tagsKeyForSummary(si.SketchTags.Tags)
+			if existing, ok := sketchesBySeries[key]; ok {
+				if err := existing.MergeWith(sketch); err != nil {
+					slog.Warn("failed to merge DDSketches", "error", err, "key", key)
+				}
+			} else {
+				sketchesBySeries[key] = sketch
+				tagsBySeries[key] = si.SketchTags.Tags
+			}
+		}
+	}
+
+	if segErr := drainErrors(errc); segErr != nil {
+		return nil, fmt.Errorf("summary segment failures: %w", segErr)
 	}
 
 	sketchSpan.SetAttributes(
-		attribute.Int("worker_count", len(workers)),
 		attribute.Int("segment_count", len(allSegments)),
 		attribute.Int("series_count", len(sketchesBySeries)),
 	)
@@ -947,26 +840,6 @@ func (q *QuerierService) evaluateMetricsSummaryWithSketches(
 	summaries = applySummaryFilter(summaries, queryPlan.Root)
 
 	return summaries, nil
-}
-
-// summaryPushDown sends a summary request to a worker and returns a channel of SketchInput with DDSketch bytes.
-func (q *QuerierService) summaryPushDown(
-	ctx context.Context,
-	worker Worker,
-	request PushDownRequest,
-) (<-chan promql.SketchInput, error) {
-	return PushDownStream(ctx, worker, request,
-		func(typ string, data json.RawMessage) (promql.SketchInput, bool, error) {
-			var zero promql.SketchInput
-			if typ != "result" {
-				return zero, false, nil
-			}
-			var si promql.SketchInput
-			if err := json.Unmarshal(data, &si); err != nil {
-				return zero, false, err
-			}
-			return si, true, nil
-		})
 }
 
 // --- Summary comparison filtering ---

@@ -16,7 +16,6 @@ package queryapi
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -48,7 +47,7 @@ func (q *QuerierService) EvaluateSpansQuery(
 	limit int,
 	queryPlan logql.LQueryPlan,
 	fields []string,
-) (<-chan promql.Timestamped, error) {
+) (<-chan promql.Timestamped, <-chan error, error) {
 	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryapi")
 	ctx, evalSpan := tracer.Start(ctx, "query.api.evaluate_spans")
 
@@ -61,22 +60,26 @@ func (q *QuerierService) EvaluateSpansQuery(
 		attribute.Int("leaf_count", len(queryPlan.Leaves)),
 	)
 
+	queryID := uuid.New().String()
+
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
 		evalSpan.RecordError(err)
 		evalSpan.SetStatus(codes.Error, "failed to get workers")
 		evalSpan.End()
 		slog.Error("failed to get all workers", "err", err)
-		return nil, fmt.Errorf("failed to get all workers: %w", err)
+		return nil, nil, fmt.Errorf("failed to get all workers: %w", err)
 	}
 	evalSpan.SetAttributes(attribute.Int("worker_count", len(workers)))
 	stepDuration := StepForQueryDuration(startTs, endTs)
 
 	out := make(chan promql.Timestamped, 1024)
+	queryErrc := make(chan error, 1)
 
 	go func() {
 		defer close(out)
 		defer evalSpan.End()
+		defer close(queryErrc)
 
 		// If limit <= 0, treat as unlimited.
 		unlimited := limit <= 0
@@ -87,6 +90,7 @@ func (q *QuerierService) EvaluateSpansQuery(
 
 		emitted := 0
 		totalSegments := 0
+		groupCounter := 0
 
 		// Partition by dateInt hours for storage listing.
 		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, reverse)
@@ -98,6 +102,7 @@ func (q *QuerierService) EvaluateSpansQuery(
 				slog.Info("lookupSpansSegments", "dih", dih, "leaf", leaf, "found", len(segments))
 				if err != nil {
 					slog.Error("failed to lookup spans segments", "err", err, "dih", dih, "leaf", leaf)
+					queryErrc <- fmt.Errorf("lookup spans segments: %w", err)
 					return
 				}
 				if len(segments) == 0 {
@@ -125,55 +130,31 @@ func (q *QuerierService) EvaluateSpansQuery(
 
 					slog.Info("Pushing down segments", "groupSize", len(group.Segments), "remaining", remaining)
 
-					// Collect all segment IDs for worker assignment
-					segmentIDs := make([]int64, 0, len(group.Segments))
-					segmentMap := make(map[int64][]SegmentInfo)
-					for _, segment := range group.Segments {
-						segmentIDs = append(segmentIDs, segment.SegmentID)
-						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
+					reqLimit := 0
+					if !unlimited {
+						reqLimit = remaining
+					}
+					req := PushDownRequest{
+						OrganizationID: orgID,
+						LogLeaf:        &leaf,
+						StartTs:        group.StartTs,
+						EndTs:          group.EndTs,
+						Segments:       group.Segments,
+						Step:           stepDuration,
+						Limit:          reqLimit,
+						Reverse:        reverse,
+						Fields:         fields,
+						IsSpans:        true,
 					}
 
-					// Get worker assignments
-					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+					workLeafID := fmt.Sprintf("spans-%d", groupCounter)
+					groupCounter++
+					chs, errc, err := q.spansPushDownArtifact(ctxAll, queryID, workLeafID, req)
 					if err != nil {
-						slog.Error("failed to get worker assignments", "err", err)
+						slog.Error("pushdown failed", "err", err)
 						continue
 					}
-
-					workerGroups := make(map[Worker][]SegmentInfo)
-					for _, mapping := range mappings {
-						segmentList := segmentMap[mapping.SegmentID]
-						workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
-					}
-
-					var groupLeafChans []<-chan promql.Timestamped
-					for worker, workerSegments := range workerGroups {
-						reqLimit := 0
-						if !unlimited {
-							reqLimit = remaining
-						}
-						req := PushDownRequest{
-							OrganizationID: orgID,
-							LogLeaf:        &leaf,
-							StartTs:        group.StartTs,
-							EndTs:          group.EndTs,
-							Segments:       workerSegments,
-							Step:           stepDuration,
-							Limit:          reqLimit,
-							Reverse:        reverse,
-							Fields:         fields,
-							IsSpans:        true,
-						}
-						ch, err := q.spansPushDown(ctxAll, worker, req)
-						if err != nil {
-							slog.Error("pushdown failed", "worker", worker, "err", err)
-							continue
-						}
-						groupLeafChans = append(groupLeafChans, ch)
-					}
-					if len(groupLeafChans) == 0 {
-						continue
-					}
+					groupLeafChans := chs
 
 					// Merge this group's worker streams by timestamp
 					mergeLimit := 0 // unlimited for the merge by default
@@ -203,6 +184,12 @@ func (q *QuerierService) EvaluateSpansQuery(
 						}
 					}
 				nextGroup:
+					if segErr := drainErrors(errc); segErr != nil {
+						slog.Error("segment failures in spans query", "err", segErr)
+						queryErrc <- segErr
+						cancelAll()
+						break outer
+					}
 				}
 			}
 		}
@@ -211,34 +198,7 @@ func (q *QuerierService) EvaluateSpansQuery(
 			attribute.Int("rows_emitted", emitted),
 		)
 	}()
-	return out, nil
-}
-
-func (q *QuerierService) spansPushDown(
-	ctx context.Context,
-	worker Worker,
-	request PushDownRequest,
-) (<-chan promql.Timestamped, error) {
-	// Modify the request to use spans-specific SQL generation
-	spansRequest := request
-	if spansRequest.LogLeaf != nil {
-		// Create a copy of the LogLeaf and modify it to use spans SQL generation
-		leaf := *spansRequest.LogLeaf
-		spansRequest.LogLeaf = &leaf
-	}
-
-	return PushDownStream(ctx, worker, spansRequest,
-		func(typ string, data json.RawMessage) (promql.Timestamped, bool, error) {
-			var zero promql.Timestamped
-			if typ != "result" {
-				return zero, false, nil
-			}
-			var si promql.Exemplar
-			if err := json.Unmarshal(data, &si); err != nil {
-				return zero, false, err
-			}
-			return si, true, nil
-		})
+	return out, queryErrc, nil
 }
 
 type TraceSegmentLookupFunc func(context.Context, lrdb.ListTraceSegmentsForQueryParams) ([]lrdb.ListTraceSegmentsForQueryRow, error)
