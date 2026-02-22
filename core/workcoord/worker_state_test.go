@@ -149,6 +149,31 @@ func TestWorkerRegistry_BeginDrainNotFound(t *testing.T) {
 	require.ErrorAs(t, err, &notFound)
 }
 
+func TestWorkerRegistry_EndDrain(t *testing.T) {
+	r := NewWorkerRegistry()
+	require.NoError(t, r.Register("w1"))
+	require.NoError(t, r.BeginDrain("w1"))
+
+	w, err := r.Get("w1")
+	require.NoError(t, err)
+	assert.True(t, w.Draining)
+	assert.False(t, w.IsAvailable())
+
+	require.NoError(t, r.EndDrain("w1"))
+	w, err = r.Get("w1")
+	require.NoError(t, err)
+	assert.False(t, w.Draining)
+	assert.True(t, w.AcceptingWork)
+	assert.True(t, w.IsAvailable())
+}
+
+func TestWorkerRegistry_EndDrainNotFound(t *testing.T) {
+	r := NewWorkerRegistry()
+	err := r.EndDrain("nonexistent")
+	var notFound *ErrWorkerNotFound
+	require.ErrorAs(t, err, &notFound)
+}
+
 func TestWorkerRegistry_SetAcceptingWork(t *testing.T) {
 	r := NewWorkerRegistry()
 	require.NoError(t, r.Register("w1"))

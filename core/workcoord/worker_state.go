@@ -129,6 +129,19 @@ func (r *WorkerRegistry) BeginDrain(workerID string) error {
 	return nil
 }
 
+// EndDrain clears the draining flag and restores accepting_work.
+func (r *WorkerRegistry) EndDrain(workerID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w, exists := r.workers[workerID]
+	if !exists {
+		return &ErrWorkerNotFound{WorkerID: workerID}
+	}
+	w.Draining = false
+	w.AcceptingWork = true
+	return nil
+}
+
 // SetAcceptingWork updates whether a worker is accepting new work.
 func (r *WorkerRegistry) SetAcceptingWork(workerID string, accepting bool) error {
 	r.mu.Lock()

@@ -260,6 +260,42 @@ func TestManager_HandleWorkerStatus_RegistersAndDrains(t *testing.T) {
 	assert.True(t, w.Draining)
 }
 
+func TestManager_HandleWorkerStatus_DrainThenUndrain(t *testing.T) {
+	sender := newMockStreamSender()
+	mgr := NewManager(sender, nil)
+
+	// Register and accept.
+	mgr.HandleWorkerStatus("w1", &workcoordpb.WorkerStatus{
+		WorkerId:      "w1",
+		AcceptingWork: true,
+	})
+	w, err := mgr.Coordinator().Workers.Get("w1")
+	require.NoError(t, err)
+	assert.True(t, w.IsAvailable())
+
+	// Begin drain.
+	mgr.HandleWorkerStatus("w1", &workcoordpb.WorkerStatus{
+		WorkerId: "w1",
+		Draining: true,
+	})
+	w, err = mgr.Coordinator().Workers.Get("w1")
+	require.NoError(t, err)
+	assert.True(t, w.Draining)
+	assert.False(t, w.IsAvailable())
+
+	// End drain — worker should become available again.
+	mgr.HandleWorkerStatus("w1", &workcoordpb.WorkerStatus{
+		WorkerId:      "w1",
+		AcceptingWork: true,
+		Draining:      false,
+	})
+	w, err = mgr.Coordinator().Workers.Get("w1")
+	require.NoError(t, err)
+	assert.False(t, w.Draining)
+	assert.True(t, w.AcceptingWork)
+	assert.True(t, w.IsAvailable(), "worker should be available after drain ends")
+}
+
 func TestManager_HandleWorkerDisconnected_ReassignsWork(t *testing.T) {
 	sender := newMockStreamSender()
 	mgr := NewManager(sender, nil)

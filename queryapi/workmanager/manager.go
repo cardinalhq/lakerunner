@@ -467,10 +467,13 @@ func (m *Manager) HandleWorkerStatus(workerID string, msg *workcoordpb.WorkerSta
 		if _, err := m.coord.DrainWorker(workerID); err != nil {
 			slog.Debug("DrainWorker failed", slog.String("worker_id", workerID), slog.Any("error", err))
 		}
-	} else if msg.AcceptingWork {
-		_ = m.coord.Workers.SetAcceptingWork(workerID, true)
 	} else {
-		_ = m.coord.Workers.SetAcceptingWork(workerID, false)
+		// Clear drain state if previously draining.
+		w, werr := m.coord.Workers.Get(workerID)
+		if werr == nil && w.Draining {
+			_ = m.coord.Workers.EndDrain(workerID)
+		}
+		_ = m.coord.Workers.SetAcceptingWork(workerID, msg.AcceptingWork)
 	}
 }
 
