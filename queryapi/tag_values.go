@@ -86,12 +86,7 @@ func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				status := "ok"
-				if qErr := drainErrors(queryErrc); qErr != nil {
-					slog.Error("metric tag values query completed with errors", "error", qErr)
-					status = "error"
-				}
-				_ = writeSSE("done", map[string]string{"status": status})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			if err := writeSSE("result", res); err != nil {
@@ -156,12 +151,7 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				status := "ok"
-				if qErr := drainErrors(queryErrc); qErr != nil {
-					slog.Error("log tag values query completed with errors", "error", qErr)
-					status = "error"
-				}
-				_ = writeSSE("done", map[string]string{"status": status})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			if err := writeSSE("result", res); err != nil {
@@ -226,12 +216,7 @@ func (q *QuerierService) handleGetSpanTagValues(w http.ResponseWriter, r *http.R
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				status := "ok"
-				if qErr := drainErrors(queryErrc); qErr != nil {
-					slog.Error("span tag values query completed with errors", "error", qErr)
-					status = "error"
-				}
-				_ = writeSSE("done", map[string]string{"status": status})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			if err := writeSSE("result", res); err != nil {

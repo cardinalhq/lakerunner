@@ -217,18 +217,19 @@ func (q *QuerierService) EvaluateMetricsQuery(
 				globalEnd = effEnd
 			}
 
-			for _, dih := range dateIntHoursRange(effStart, effEnd, time.UTC, false) {
-				var segments []SegmentInfo
-				if leaf.LogLeaf != nil {
-					segments, err = q.lookupLogsSegments(ctx, dih, *leaf.LogLeaf, effStart, effEnd, orgID, q.mdb.ListLogSegmentsForQuery)
-					slog.Info("Logs Metadata Query for segments", "numSegments", len(segments))
-				} else {
-					segments, err = q.lookupMetricsSegments(ctx, dih, leaf, effStart, effEnd, stepDuration, orgID)
-				}
-				if err != nil {
-					slog.Error("failed to get segment infos", "dateInt", dih.DateInt, "err", err)
-					continue
-				}
+				for _, dih := range dateIntHoursRange(effStart, effEnd, time.UTC, false) {
+					var segments []SegmentInfo
+					if leaf.LogLeaf != nil {
+						segments, err = q.lookupLogsSegments(ctx, dih, *leaf.LogLeaf, effStart, effEnd, orgID, q.mdb.ListLogSegmentsForQuery)
+						slog.Info("Logs Metadata Query for segments", "numSegments", len(segments))
+					} else {
+						segments, err = q.lookupMetricsSegments(ctx, dih, leaf, effStart, effEnd, stepDuration, orgID)
+					}
+					if err != nil {
+						slog.Error("failed to get segment infos", "dateInt", dih.DateInt, "err", err)
+						queryErrc <- fmt.Errorf("segment lookup failed for dateInt %d: %w", dih.DateInt, err)
+						return
+					}
 				for i := range segments {
 					segments[i].EffectiveStartTs = segments[i].StartTs + offMs
 					segments[i].EffectiveEndTs = segments[i].EndTs + offMs

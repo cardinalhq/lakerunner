@@ -132,6 +132,17 @@ func (q *QuerierService) sseWriter(w http.ResponseWriter) (func(event string, v 
 	return write, true
 }
 
+// finishSSEWithStatus drains the query error channel and sends the final
+// "done" SSE event with status "ok" or "error".
+func finishSSEWithStatus(writeSSE func(string, any) error, queryErrc <-chan error) {
+	status := "ok"
+	if qErr := drainErrors(queryErrc); qErr != nil {
+		slog.Error("query completed with segment errors", "error", qErr)
+		status = "error"
+	}
+	_ = writeSSE("done", map[string]string{"status": status})
+}
+
 // TagMap is a map[string]any with a custom JSON marshaler that emits
 // int64 and uint64 values as JSON integers with sorted keys for
 // deterministic output.
@@ -279,12 +290,7 @@ func (q *QuerierService) sendEvalResults(ctx context.Context, w http.ResponseWri
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				status := "ok"
-				if qErr := drainErrors(queryErrc); qErr != nil {
-					slog.Error("query completed with errors", "error", qErr)
-					status = "error"
-				}
-				_ = writeSSE("done", map[string]string{"status": status})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			for _, v := range res {
@@ -548,12 +554,7 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				status := "ok"
-				if qErr := drainErrors(queryErrc); qErr != nil {
-					slog.Error("log query completed with errors", "error", qErr)
-					status = "error"
-				}
-				_ = writeSSE("done", map[string]string{"status": status})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			if err := writeSSE("result", res); err != nil {
@@ -677,12 +678,7 @@ func (q *QuerierService) handleSpansQuery(w http.ResponseWriter, r *http.Request
 			return
 		case res, more := <-resultsCh:
 			if !more {
-				status := "ok"
-				if qErr := drainErrors(queryErrc); qErr != nil {
-					slog.Error("spans query completed with errors", "error", qErr)
-					status = "error"
-				}
-				_ = writeSSE("done", map[string]string{"status": status})
+				finishSSEWithStatus(writeSSE, queryErrc)
 				return
 			}
 			if err := writeSSE("result", res); err != nil {
