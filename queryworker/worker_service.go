@@ -667,6 +667,11 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if err != nil {
 			requestSpan.RecordError(err)
+			if errors.Is(err, ErrCardinalityLimitExceeded) {
+				requestSpan.SetStatus(codes.Error, "cardinality limit exceeded")
+				http.Error(w, "query rejected: "+err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
 			requestSpan.SetStatus(codes.Error, "query failed")
 			slog.Error("failed to query cache", "error", err)
 			http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)

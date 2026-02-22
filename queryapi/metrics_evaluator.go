@@ -17,9 +17,11 @@ package queryapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -315,6 +317,15 @@ func (q *QuerierService) EvaluateMetricsQuery(
 
 						ch, err := q.metricsPushDown(pushCtx, worker, req)
 						if err != nil {
+							if isCardinalityLimitRejection(err) {
+								slog.Error("pushdown rejected by worker due to cardinality limit",
+									"worker", worker,
+									"leafID", leafID,
+									"groupIndex", gi,
+									"err", err)
+								cancelAllPush()
+								return
+							}
 							slog.Error("pushdown failed", "worker", worker, "err", err)
 							continue
 						}
@@ -474,6 +485,18 @@ func parseOffsetMs(offset string) (int64, error) {
 		return 0, err
 	}
 	return int64(time.Duration(d) / time.Millisecond), nil
+}
+
+func isCardinalityLimitRejection(err error) bool {
+	var httpErr *PushDownHTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	if httpErr.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	body := strings.ToLower(httpErr.Body + " " + httpErr.Status)
+	return strings.Contains(body, "cardinality")
 }
 
 func (q *QuerierService) lookupMetricsSegments(ctx context.Context,

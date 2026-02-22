@@ -245,6 +245,7 @@ func EvaluatePushDown[T promql.Timestamped](
 	start = time.Now()
 
 	outs := make([]<-chan T, 0)
+	var totalEstimatedCardinality int64
 
 	// Build channels per (org, instance)
 	for orgId, instances := range segmentsByOrg {
@@ -332,6 +333,29 @@ func EvaluatePushDown[T promql.Timestamped](
 				continue
 			}
 
+			if shouldGuardGroupCardinality(request) {
+				estimated, estimateErr := estimateGroupCardinalityForLocalPaths(ctx, w, request, localPaths)
+				if estimateErr != nil {
+					// Guardrail should not block queries when estimation fails.
+					slog.Warn("Failed to estimate group cardinality, continuing without rejection",
+						"error", estimateErr,
+						"orgId", orgId,
+						"instanceNum", instanceNum)
+				} else {
+					totalEstimatedCardinality += estimated
+					if totalEstimatedCardinality > DefaultMaxEstimatedGroupCardinality {
+						limitErr := &CardinalityLimitError{
+							Estimated: totalEstimatedCardinality,
+							Limit:     DefaultMaxEstimatedGroupCardinality,
+							GroupBy:   append([]string(nil), request.BaseExpr.GroupBy...),
+						}
+						evalSpan.RecordError(limitErr)
+						evalSpan.SetStatus(codes.Error, "estimated cardinality limit exceeded")
+						return nil, limitErr
+					}
+				}
+			}
+
 			// Stream from downloaded local files
 			s3Channels, err := streamFromLocalFiles(ctx, w, request,
 				localPaths,
@@ -388,12 +412,7 @@ func streamFromLocalFiles[T promql.Timestamped](
 		)
 
 		// Build read_parquet source from local paths
-		quoted := make([]string, len(pathsCopy))
-		for i := range pathsCopy {
-			quoted[i] = "'" + escapeSQL(pathsCopy[i]) + "'"
-		}
-		array := "[" + strings.Join(quoted, ", ") + "]"
-		src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
+		src := buildReadParquetSource(pathsCopy)
 
 		sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 
@@ -499,6 +518,15 @@ func (w *CacheManager) downloadForQuery(ctx context.Context, profile storageprof
 
 func escapeSQL(s string) string {
 	return strings.ReplaceAll(s, `'`, `''`)
+}
+
+func buildReadParquetSource(localPaths []string) string {
+	quoted := make([]string, len(localPaths))
+	for i := range localPaths {
+		quoted[i] = "'" + escapeSQL(localPaths[i]) + "'"
+	}
+	array := "[" + strings.Join(quoted, ", ") + "]"
+	return fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 }
 
 // EvaluatePushDownWithAggSplit evaluates a pushdown query with intelligent
