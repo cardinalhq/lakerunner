@@ -31,4 +31,6 @@ type logProcessingParams struct {
 	ActiveSegments []lrdb.LogSeg
 	MaxRecords     int64
 	StreamField    string // Field to use for stream identification
+	// EnableDerivedMetrics enables 10s bucket aggregation metadata for derived metric emission.
+	EnableDerivedMetrics bool
 }

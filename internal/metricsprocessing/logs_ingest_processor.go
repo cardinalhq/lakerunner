@@ -35,6 +35,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/configservice"
+	"github.com/cardinalhq/lakerunner/internal/expressionindex"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -64,6 +65,8 @@ type DateintBinManager struct {
 	schema      *filereader.ReaderSchema
 	backendType parquetwriter.BackendType
 	streamField string // Field to use for stream identification
+	// enableDerivedMetrics toggles 10s bucket metadata used for derived metric emission.
+	enableDerivedMetrics bool
 }
 
 // LogIngestProcessor implements the Processor interface for raw log ingestion
@@ -129,6 +132,27 @@ func validateLogIngestMessages(key messages.IngestKey, msgs []*messages.ObjStore
 	return nil
 }
 
+func configuredDerivedMetricNames(cfg configservice.ExpressionCatalogConfig, sourceSignal string) []string {
+	if len(cfg.DerivedMetrics) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(cfg.DerivedMetrics))
+	names := make([]string, 0, len(cfg.DerivedMetrics))
+	for i := range cfg.DerivedMetrics {
+		dm := cfg.DerivedMetrics[i]
+		if dm.SourceSignal != sourceSignal || dm.MetricName == "" {
+			continue
+		}
+		if _, exists := seen[dm.MetricName]; exists {
+			continue
+		}
+		seen[dm.MetricName] = struct{}{}
+		names = append(names, dm.MetricName)
+	}
+	return names
+}
+
 // Process implements the Processor interface and performs raw log ingestion
 func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.IngestKey, msgs []*messages.ObjStoreNotificationMessage, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx).With(
@@ -140,6 +164,19 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 
 	if err := validateLogIngestMessages(key, msgs); err != nil {
 		return fmt.Errorf("message validation failed: %w", err)
+	}
+	if refresher := expressionindex.MaybeGlobalCatalogRefresher(); refresher != nil {
+		if err := refresher.MaybeRefreshOrg(ctx, key.OrganizationID); err != nil {
+			ll.Warn("Failed to refresh expression catalog", slog.Any("error", err))
+		}
+	}
+	catalogCfg := configservice.Global().GetExpressionCatalogConfig(ctx, key.OrganizationID)
+	derivedMetricNames := configuredDerivedMetricNames(catalogCfg, "logs")
+	enableLogAggregation := len(derivedMetricNames) > 0
+	if enableLogAggregation {
+		ll.Info("Configured log-derived metric emission", slog.Any("metricNames", derivedMetricNames))
+	} else {
+		ll.Info("No log-derived metrics configured in expression catalog")
 	}
 
 	// Create temporary directory for this ingestion run
@@ -199,7 +236,18 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 
 	// Use DuckDB path when all files are binpb for better performance
 	if allFilesBinpb(msgs) {
-		return p.processBundleWithDuckDB(ctx, key, msgs, tmpDir, inputClient, outputClient, srcProfile, dstProfile, streamField)
+		return p.processBundleWithDuckDB(
+			ctx,
+			key,
+			msgs,
+			tmpDir,
+			inputClient,
+			outputClient,
+			srcProfile,
+			dstProfile,
+			streamField,
+			derivedMetricNames,
+		)
 	}
 
 	var readers []filereader.Reader
@@ -267,7 +315,7 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	readerSpan.End()
 
 	ctx, processSpan := boxerTracer.Start(ctx, "logs.ingest.process_rows")
-	dateintBins, totalInputRecords, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile)
+	dateintBins, totalInputRecords, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile, enableLogAggregation)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to process rows")
@@ -286,14 +334,24 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 	schema := finalReader.GetSchema()
 
 	ctx, uploadSpan := boxerTracer.Start(ctx, "logs.ingest.upload_segments")
-	segmentParams, err := p.uploadAndCreateLogSegments(ctx, outputClient, dateintBins, schema, dstProfile)
+	segmentParams, metricSegmentParams, err := p.uploadAndCreateLogSegments(
+		ctx,
+		outputClient,
+		dateintBins,
+		schema,
+		dstProfile,
+		derivedMetricNames,
+	)
 	if err != nil {
 		uploadSpan.RecordError(err)
 		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
 		uploadSpan.End()
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
-	uploadSpan.SetAttributes(attribute.Int("segment_count", len(segmentParams)))
+	uploadSpan.SetAttributes(
+		attribute.Int("segment_count", len(segmentParams)),
+		attribute.Int("metric_segment_count", len(metricSegmentParams)),
+	)
 	uploadSpan.End()
 
 	criticalCtx := context.WithoutCancel(ctx)
@@ -324,6 +382,10 @@ func (p *LogIngestProcessor) ProcessBundle(ctx context.Context, key messages.Ing
 		return fmt.Errorf("failed to insert log segments with Kafka offsets: %w", err)
 	}
 	dbSpan.End()
+
+	if err := p.insertAndPublishMetricSegments(criticalCtx, metricSegmentParams); err != nil {
+		return fmt.Errorf("failed to emit derived metric segments: %w", err)
+	}
 
 	_, kafkaSpan := boxerTracer.Start(ctx, "logs.ingest.publish_compaction", trace.WithAttributes(
 		attribute.Int("message_count", len(segmentParams)),
@@ -397,6 +459,7 @@ func (p *LogIngestProcessor) processBundleWithDuckDB(
 	_ storageprofile.StorageProfile, // srcProfile unused in DuckDB path
 	dstProfile storageprofile.StorageProfile,
 	streamField string,
+	derivedMetricNames []string,
 ) error {
 	ll := logctx.FromContext(ctx).With(
 		slog.String("organizationID", key.OrganizationID.String()),
@@ -466,14 +529,23 @@ func (p *LogIngestProcessor) processBundleWithDuckDB(
 
 	// Upload segments and create database records
 	ctx, uploadSpan := boxerTracer.Start(ctx, "logs.ingest.duckdb.upload_segments")
-	segmentParams, err := p.uploadDuckDBLogSegments(ctx, outputClient, result, dstProfile, streamField)
+	segmentParams, metricSegmentParams, err := p.uploadDuckDBLogSegments(
+		ctx,
+		outputClient,
+		result,
+		dstProfile,
+		derivedMetricNames,
+	)
 	if err != nil {
 		uploadSpan.RecordError(err)
 		uploadSpan.SetStatus(codes.Error, "failed to upload segments")
 		uploadSpan.End()
 		return fmt.Errorf("failed to upload duckdb segments: %w", err)
 	}
-	uploadSpan.SetAttributes(attribute.Int("segment_count", len(segmentParams)))
+	uploadSpan.SetAttributes(
+		attribute.Int("segment_count", len(segmentParams)),
+		attribute.Int("metric_segment_count", len(metricSegmentParams)),
+	)
 	uploadSpan.End()
 
 	criticalCtx := context.WithoutCancel(ctx)
@@ -488,6 +560,10 @@ func (p *LogIngestProcessor) processBundleWithDuckDB(
 		return fmt.Errorf("failed to insert log segments: %w", err)
 	}
 	dbSpan.End()
+
+	if err := p.insertAndPublishMetricSegments(criticalCtx, metricSegmentParams); err != nil {
+		return fmt.Errorf("failed to emit derived metric segments: %w", err)
+	}
 
 	// Send compaction notifications
 	_, kafkaSpan := boxerTracer.Start(ctx, "logs.ingest.duckdb.publish_compaction", trace.WithAttributes(
@@ -555,14 +631,23 @@ func (p *LogIngestProcessor) uploadDuckDBLogSegments(
 	storageClient cloudstorage.Client,
 	result *LogIngestDuckDBResult,
 	storageProfile storageprofile.StorageProfile,
-	streamField string,
-) ([]lrdb.InsertLogSegmentParams, error) {
+	derivedMetricNames []string,
+) ([]lrdb.InsertLogSegmentParams, []lrdb.InsertMetricSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Generate unique batch IDs for all bins
 	batchSegmentIDs := idgen.GenerateBatchIDs(len(result.DateintBins))
+	numDerivedMetricSegments := 0
+	for _, binResult := range result.DateintBins {
+		if binResult.Metadata != nil && len(binResult.Metadata.AggCounts) > 0 && len(derivedMetricNames) > 0 {
+			numDerivedMetricSegments += len(derivedMetricNames)
+		}
+	}
+	metricSegmentIDs := idgen.GenerateBatchIDs(numDerivedMetricSegments)
+	metricIDIdx := 0
 
 	var segmentParams []lrdb.InsertLogSegmentParams
+	var metricSegmentParams []lrdb.InsertMetricSegmentParams
 	i := 0
 
 	for dateint, binResult := range result.DateintBins {
@@ -579,7 +664,7 @@ func (p *LogIngestProcessor) uploadDuckDBLogSegments(
 		)
 
 		if err := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadPath, binResult.OutputFile); err != nil {
-			return nil, fmt.Errorf("failed to upload file %s to %s: %w", binResult.OutputFile, uploadPath, err)
+			return nil, nil, fmt.Errorf("failed to upload file %s to %s: %w", binResult.OutputFile, uploadPath, err)
 		}
 
 		ll.Debug("Uploaded log segment",
@@ -587,9 +672,6 @@ func (p *LogIngestProcessor) uploadDuckDBLogSegments(
 			slog.Int64("segmentID", segmentID),
 			slog.Int64("recordCount", binResult.RecordCount),
 			slog.Int64("fileSize", binResult.FileSize))
-
-		// Build agg_fields from stream field config
-		aggFields := factories.GetAggFields(streamField)
 
 		// Convert stream ID field to pointer
 		var streamIDFieldPtr *string
@@ -614,15 +696,162 @@ func (p *LogIngestProcessor) uploadDuckDBLogSegments(
 			StreamIds:      binResult.Metadata.StreamIds,
 			StreamIDField:  streamIDFieldPtr,
 			SortVersion:    lrdb.CurrentLogSortVersion,
-			AggFields:      aggFields,
+			AggFields:      nil,
 		}
 
 		segmentParams = append(segmentParams, params)
+
+		if len(binResult.Metadata.AggCounts) > 0 && len(derivedMetricNames) > 0 {
+			for _, metricName := range derivedMetricNames {
+				metricSegmentID := metricSegmentIDs[metricIDIdx]
+				metricIDIdx++
+
+				derivedMetric, err := createLogDerivedMetricParquet(
+					os.TempDir(),
+					dateint,
+					metricSegmentID,
+					metricName,
+					binResult.Metadata.AggCounts,
+				)
+				if err != nil {
+					return nil, nil, fmt.Errorf("build log-derived metric parquet: %w", err)
+				}
+				if derivedMetric == nil {
+					continue
+				}
+				defer func() { _ = os.Remove(derivedMetric.FileName) }()
+
+				metricPath := helpers.MakeDBObjectID(
+					storageProfile.OrganizationID,
+					storageProfile.CollectorName,
+					dateint,
+					helpers.HourFromMillis(derivedMetric.StartTs),
+					metricSegmentID,
+					"metrics",
+				)
+				if err := storageClient.UploadObject(ctx, storageProfile.Bucket, metricPath, derivedMetric.FileName); err != nil {
+					return nil, nil, fmt.Errorf("failed to upload derived metric file %s to %s: %w", derivedMetric.FileName, metricPath, err)
+				}
+
+				metricSegmentParams = append(metricSegmentParams, lrdb.InsertMetricSegmentParams{
+					OrganizationID: storageProfile.OrganizationID,
+					Dateint:        dateint,
+					FrequencyMs:    int32(factories.AggFrequency),
+					SegmentID:      metricSegmentID,
+					InstanceNum:    storageProfile.InstanceNum,
+					StartTs:        derivedMetric.StartTs,
+					EndTs:          derivedMetric.EndTs,
+					RecordCount:    derivedMetric.RecordCount,
+					FileSize:       derivedMetric.FileSize,
+					CreatedBy:      lrdb.CreatedByIngest,
+					Published:      true,
+					Compacted:      false,
+					Fingerprints:   derivedMetric.Fingerprints,
+					SortVersion:    lrdb.CurrentMetricSortVersion,
+					LabelNameMap:   derivedMetric.LabelNameMap,
+					MetricNames:    derivedMetric.MetricNames,
+					MetricTypes:    derivedMetric.MetricTypes,
+				})
+			}
+		}
 	}
 
-	ll.Info("DuckDB log segment upload completed", slog.Int("totalSegments", len(segmentParams)))
+	ll.Info("DuckDB log segment upload completed",
+		slog.Int("totalSegments", len(segmentParams)),
+		slog.Int("totalMetricSegments", len(metricSegmentParams)))
 
-	return segmentParams, nil
+	return segmentParams, metricSegmentParams, nil
+}
+
+type metricSegmentBatchInserter interface {
+	InsertMetricSegmentsBatch(ctx context.Context, segments []lrdb.InsertMetricSegmentParams) error
+}
+
+func (p *LogIngestProcessor) insertAndPublishMetricSegments(
+	criticalCtx context.Context,
+	segmentParams []lrdb.InsertMetricSegmentParams,
+) error {
+	if len(segmentParams) == 0 {
+		return nil
+	}
+
+	store, ok := p.store.(metricSegmentBatchInserter)
+	if !ok {
+		return fmt.Errorf("log ingest store does not support metric segment insertion")
+	}
+
+	if err := store.InsertMetricSegmentsBatch(criticalCtx, segmentParams); err != nil {
+		return fmt.Errorf("insert derived metric segments: %w", err)
+	}
+
+	if p.kafkaProducer == nil {
+		slog.Warn("No Kafka producer provided - derived metric segment notifications will not be sent")
+		return nil
+	}
+
+	compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerMetricsCompact)
+	rollupTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerMetricsRollup)
+
+	for _, segParams := range segmentParams {
+		rollupStartTime := (segParams.StartTs / int64(segParams.FrequencyMs)) * int64(segParams.FrequencyMs)
+		segmentStartTime := time.Unix(rollupStartTime/1000, (rollupStartTime%1000)*1000000)
+
+		compactionNotification := messages.MetricCompactionMessage{
+			Version:        1,
+			OrganizationID: segParams.OrganizationID,
+			DateInt:        segParams.Dateint,
+			FrequencyMs:    segParams.FrequencyMs,
+			SegmentID:      segParams.SegmentID,
+			InstanceNum:    segParams.InstanceNum,
+			Records:        segParams.RecordCount,
+			FileSize:       segParams.FileSize,
+			QueuedAt:       time.Now(),
+		}
+
+		compactionMsgBytes, err := compactionNotification.Marshal()
+		if err != nil {
+			return fmt.Errorf("marshal derived metric compaction notification: %w", err)
+		}
+		compactionMessage := fly.Message{
+			Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.StartTs/300000),
+			Value: compactionMsgBytes,
+		}
+		if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
+			return fmt.Errorf("send derived metric compaction notification: %w", err)
+		}
+
+		targetFrequency, ok := config.GetTargetRollupFrequency(segParams.FrequencyMs)
+		if !ok {
+			continue
+		}
+
+		rollupNotification := messages.MetricRollupMessage{
+			Version:           1,
+			OrganizationID:    segParams.OrganizationID,
+			DateInt:           segParams.Dateint,
+			SourceFrequencyMs: segParams.FrequencyMs,
+			TargetFrequencyMs: targetFrequency,
+			SegmentID:         segParams.SegmentID,
+			InstanceNum:       segParams.InstanceNum,
+			Records:           segParams.RecordCount,
+			FileSize:          segParams.FileSize,
+			SegmentStartTime:  segmentStartTime,
+			QueuedAt:          time.Now(),
+		}
+		rollupMsgBytes, err := rollupNotification.Marshal()
+		if err != nil {
+			return fmt.Errorf("marshal derived metric rollup notification: %w", err)
+		}
+		rollupMessage := fly.Message{
+			Key:   fmt.Appendf(nil, "%s-%d-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, targetFrequency, rollupStartTime),
+			Value: rollupMsgBytes,
+		}
+		if err := p.kafkaProducer.Send(criticalCtx, rollupTopic, rollupMessage); err != nil {
+			return fmt.Errorf("send derived metric rollup notification: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // ProcessBundleFromQueue implements the BundleProcessor interface for work queue integration
@@ -748,12 +977,13 @@ func ProcessLogFiles(
 
 	// Create dateint bin manager
 	binManager := &DateintBinManager{
-		bins:        make(map[int32]*DateintBin),
-		tmpDir:      outputDir,
-		rpfEstimate: rpfEstimate,
-		schema:      schema,
-		backendType: backendType,
-		streamField: streamField,
+		bins:                 make(map[int32]*DateintBin),
+		tmpDir:               outputDir,
+		rpfEstimate:          rpfEstimate,
+		schema:               schema,
+		backendType:          backendType,
+		streamField:          streamField,
+		enableDerivedMetrics: true,
 	}
 
 	var totalRowsProcessed int64
@@ -967,7 +1197,13 @@ func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers
 }
 
 // processRowsWithDateintBinning groups logs by dateint only (no aggregation, no time window)
-func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*DateintBin, int64, error) {
+func (p *LogIngestProcessor) processRowsWithDateintBinning(
+	ctx context.Context,
+	reader filereader.Reader,
+	tmpDir string,
+	storageProfile storageprofile.StorageProfile,
+	enableAggregation bool,
+) (map[int32]*DateintBin, int64, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Get RPF estimate for this org/instance - use logs estimator logic
@@ -984,12 +1220,13 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	schema.AddColumn(wkk.RowKeyCID, wkk.RowKeyCID, filereader.DataTypeString, true)
 
 	binManager := &DateintBinManager{
-		bins:        make(map[int32]*DateintBin),
-		tmpDir:      tmpDir,
-		rpfEstimate: rpfEstimate,
-		schema:      schema,
-		backendType: parquetwriter.DefaultBackend,
-		streamField: streamField,
+		bins:                 make(map[int32]*DateintBin),
+		tmpDir:               tmpDir,
+		rpfEstimate:          rpfEstimate,
+		schema:               schema,
+		backendType:          parquetwriter.DefaultBackend,
+		streamField:          streamField,
+		enableDerivedMetrics: enableAggregation,
 	}
 
 	var totalRowsRead, totalRowsProcessed int64
@@ -1093,7 +1330,14 @@ func (manager *DateintBinManager) getOrCreateBin(_ context.Context, dateint int3
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewLogsWriter(manager.tmpDir, manager.schema, manager.rpfEstimate, manager.backendType, manager.streamField)
+	writer, err := factories.NewLogsWriter(
+		manager.tmpDir,
+		manager.schema,
+		manager.rpfEstimate,
+		manager.backendType,
+		manager.streamField,
+		manager.enableDerivedMetrics,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}
@@ -1108,7 +1352,14 @@ func (manager *DateintBinManager) getOrCreateBin(_ context.Context, dateint int3
 }
 
 // uploadAndCreateLogSegments uploads dateint bins to S3 and creates segment parameters
-func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, storageClient cloudstorage.Client, dateintBins map[int32]*DateintBin, schema *filereader.ReaderSchema, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertLogSegmentParams, error) {
+func (p *LogIngestProcessor) uploadAndCreateLogSegments(
+	ctx context.Context,
+	storageClient cloudstorage.Client,
+	dateintBins map[int32]*DateintBin,
+	schema *filereader.ReaderSchema,
+	storageProfile storageprofile.StorageProfile,
+	derivedMetricNames []string,
+) ([]lrdb.InsertLogSegmentParams, []lrdb.InsertMetricSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Build label name map from schema once (used for all segments)
@@ -1119,6 +1370,7 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 	labelNameMap := factories.BuildLabelNameMapFromSchema(schemaColumnMappings)
 
 	var segmentParams []lrdb.InsertLogSegmentParams
+	var metricSegmentParams []lrdb.InsertMetricSegmentParams
 
 	// First, collect all valid results to know how many IDs we need
 	type validResult struct {
@@ -1144,7 +1396,7 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			// Extract file stats from parquetwriter result
 			stats, ok := result.Metadata.(factories.LogsFileStats)
 			if !ok {
-				return nil, fmt.Errorf("expected LogsFileStats metadata, got %T", result.Metadata)
+				return nil, nil, fmt.Errorf("expected LogsFileStats metadata, got %T", result.Metadata)
 			}
 
 			validResults = append(validResults, validResult{
@@ -1157,9 +1409,14 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 
 	// Generate unique batch IDs for all valid results to avoid collisions
 	batchSegmentIDs := idgen.GenerateBatchIDs(len(validResults))
-
-	// Get stream field for agg_fields
-	streamField := configservice.Global().GetLogStreamConfig(ctx, storageProfile.OrganizationID).FieldName
+	metricResultCount := 0
+	for _, valid := range validResults {
+		if len(valid.stats.AggCounts) > 0 && len(derivedMetricNames) > 0 {
+			metricResultCount += len(derivedMetricNames)
+		}
+	}
+	metricSegmentIDs := idgen.GenerateBatchIDs(metricResultCount)
+	metricIDIdx := 0
 
 	for i, valid := range validResults {
 		dateint := valid.dateint
@@ -1179,7 +1436,7 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 
 		uploadErr := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadPath, result.FileName)
 		if uploadErr != nil {
-			return nil, fmt.Errorf("failed to upload file %s to %s: %w", result.FileName, uploadPath, uploadErr)
+			return nil, nil, fmt.Errorf("failed to upload file %s to %s: %w", result.FileName, uploadPath, uploadErr)
 		}
 
 		ll.Debug("Uploaded log segment",
@@ -1193,41 +1450,57 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			factories.StreamFieldMissingCounter.Add(ctx, stats.MissingStreamFieldCount)
 		}
 
-		// Write and upload aggregation parquet file
-		var aggFields []string
-		if len(stats.AggCounts) > 0 {
-			aggFilename := fmt.Sprintf("%s/agg_%d.parquet", os.TempDir(), segmentID)
-			aggSize, aggWriteErr := factories.WriteAggParquet(ctx, aggFilename, stats.AggCounts)
-			if aggWriteErr != nil {
-				ll.Warn("Failed to write agg parquet, continuing without",
-					slog.Int64("segmentID", segmentID),
-					slog.Any("error", aggWriteErr))
-			} else {
-				defer func() { _ = os.Remove(aggFilename) }()
+		if len(stats.AggCounts) > 0 && len(derivedMetricNames) > 0 {
+			for _, metricName := range derivedMetricNames {
+				metricSegmentID := metricSegmentIDs[metricIDIdx]
+				metricIDIdx++
 
-				aggPath := helpers.MakeAggDBObjectID(
+				derivedMetric, err := createLogDerivedMetricParquet(
+					os.TempDir(),
+					dateint,
+					metricSegmentID,
+					metricName,
+					stats.AggCounts,
+				)
+				if err != nil {
+					return nil, nil, fmt.Errorf("build log-derived metric parquet: %w", err)
+				}
+				if derivedMetric == nil {
+					continue
+				}
+				defer func() { _ = os.Remove(derivedMetric.FileName) }()
+
+				metricPath := helpers.MakeDBObjectID(
 					storageProfile.OrganizationID,
 					storageProfile.CollectorName,
 					dateint,
-					helpers.HourFromMillis(stats.FirstTS),
-					segmentID,
-					"logs",
+					helpers.HourFromMillis(derivedMetric.StartTs),
+					metricSegmentID,
+					"metrics",
 				)
-
-				aggUploadErr := storageClient.UploadObject(ctx, storageProfile.Bucket, aggPath, aggFilename)
-				if aggUploadErr != nil {
-					ll.Warn("Failed to upload agg parquet, continuing without",
-						slog.Int64("segmentID", segmentID),
-						slog.String("aggPath", aggPath),
-						slog.Any("error", aggUploadErr))
-				} else {
-					aggFields = factories.GetAggFields(streamField)
-					factories.RecordAggFileWritten(ctx, storageProfile.OrganizationID, storageProfile.InstanceNum)
-					ll.Debug("Uploaded agg parquet",
-						slog.String("aggPath", aggPath),
-						slog.Int64("aggSize", aggSize),
-						slog.Int("aggBuckets", len(stats.AggCounts)))
+				if err := storageClient.UploadObject(ctx, storageProfile.Bucket, metricPath, derivedMetric.FileName); err != nil {
+					return nil, nil, fmt.Errorf("failed to upload derived metric file %s to %s: %w", derivedMetric.FileName, metricPath, err)
 				}
+
+				metricSegmentParams = append(metricSegmentParams, lrdb.InsertMetricSegmentParams{
+					OrganizationID: storageProfile.OrganizationID,
+					Dateint:        dateint,
+					FrequencyMs:    int32(factories.AggFrequency),
+					SegmentID:      metricSegmentID,
+					InstanceNum:    storageProfile.InstanceNum,
+					StartTs:        derivedMetric.StartTs,
+					EndTs:          derivedMetric.EndTs,
+					RecordCount:    derivedMetric.RecordCount,
+					FileSize:       derivedMetric.FileSize,
+					CreatedBy:      lrdb.CreatedByIngest,
+					Published:      true,
+					Compacted:      false,
+					Fingerprints:   derivedMetric.Fingerprints,
+					SortVersion:    lrdb.CurrentMetricSortVersion,
+					LabelNameMap:   derivedMetric.LabelNameMap,
+					MetricNames:    derivedMetric.MetricNames,
+					MetricTypes:    derivedMetric.MetricTypes,
+				})
 			}
 		}
 
@@ -1249,15 +1522,17 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			StreamIds:      stats.StreamValues,
 			StreamIDField:  stats.StreamIdField,
 			SortVersion:    lrdb.CurrentLogSortVersion,
-			AggFields:      aggFields,
+			AggFields:      nil,
 		}
 
 		segmentParams = append(segmentParams, params)
 	}
 
-	ll.Info("Log segment upload completed", slog.Int("totalSegments", len(segmentParams)))
+	ll.Info("Log segment upload completed",
+		slog.Int("totalSegments", len(segmentParams)),
+		slog.Int("totalMetricSegments", len(metricSegmentParams)))
 
-	return segmentParams, nil
+	return segmentParams, metricSegmentParams, nil
 }
 
 // allFilesBinpb returns true if all messages in the list are binpb files.

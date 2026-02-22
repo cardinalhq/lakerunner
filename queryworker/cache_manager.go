@@ -39,12 +39,6 @@ const (
 	ChannelBufferSize = 4096
 )
 
-// tblToAggObjectID converts a tbl_ object ID to its corresponding agg_ object ID.
-// e.g., db/org/col/123/logs/00/tbl_456.parquet -> db/org/col/123/logs/00/agg_456.parquet
-func tblToAggObjectID(tblObjectID string) string {
-	return strings.Replace(tblObjectID, "/tbl_", "/agg_", 1)
-}
-
 // isMissingFingerprintError checks if the error is about a missing chq_fingerprint column.
 // Only explicit column not found errors are treated as missing fingerprint issues.
 // Timeouts and other errors are not classified as fingerprint-related to avoid wasting
@@ -258,7 +252,6 @@ func EvaluatePushDown[T promql.Timestamped](
 
 			// Build object IDs for all segments (tbl_ files)
 			var objectIDs []string
-			var aggObjectIDs []string
 			for _, seg := range segments {
 				objectID := fmt.Sprintf("db/%s/%s/%d/%s/%s/tbl_%d.parquet",
 					orgId.String(),
@@ -268,16 +261,10 @@ func EvaluatePushDown[T promql.Timestamped](
 					seg.Hour,
 					seg.SegmentID)
 				objectIDs = append(objectIDs, objectID)
-
-				// Also download agg_ file if segment has agg_fields
-				if len(seg.AggFields) > 0 {
-					aggObjectIDs = append(aggObjectIDs, tblToAggObjectID(objectID))
-				}
 			}
 
 			slog.Info("Segment Stats",
-				"numSegments", len(objectIDs),
-				"numAggSegments", len(aggObjectIDs))
+				"numSegments", len(objectIDs))
 
 			// Download tbl_ files from S3 before querying
 			if len(objectIDs) > 0 {
@@ -285,16 +272,6 @@ func EvaluatePushDown[T promql.Timestamped](
 					evalSpan.RecordError(err)
 					evalSpan.SetStatus(codes.Error, "failed to download from S3")
 					return nil, fmt.Errorf("download from S3: %w", err)
-				}
-			}
-
-			// Download agg_ files (best-effort - don't fail if not found)
-			if len(aggObjectIDs) > 0 {
-				if err := w.downloadForQuery(ctx, profile, aggObjectIDs); err != nil {
-					// Log but don't fail - we'll fall back to tbl_ queries
-					slog.Warn("Failed to download some agg_ files, will use tbl_ fallback",
-						"error", err,
-						"numAggFiles", len(aggObjectIDs))
 				}
 			}
 
@@ -499,211 +476,4 @@ func (w *CacheManager) downloadForQuery(ctx context.Context, profile storageprof
 
 func escapeSQL(s string) string {
 	return strings.ReplaceAll(s, `'`, `''`)
-}
-
-// EvaluatePushDownWithAggSplit evaluates a pushdown query with intelligent
-// routing between agg_ and tbl_ files based on segment eligibility.
-// For segments where agg_ files exist and support the query's GROUP BY and matchers,
-// use aggSQL on agg_ files. Otherwise use tblSQL on tbl_ files.
-func EvaluatePushDownWithAggSplit[T promql.Timestamped](
-	ctx context.Context,
-	w *CacheManager,
-	request queryapi.PushDownRequest,
-	tblSQL string,
-	aggSQL string,
-	groupBy []string,
-	matcherFields []string,
-	s3GlobSize int,
-	mapper RowMapper[T],
-) (<-chan T, error) {
-	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/queryworker")
-	ctx, evalSpan := tracer.Start(ctx, "query.worker.evaluate_pushdown_with_agg_split")
-	defer evalSpan.End()
-
-	evalSpan.SetAttributes(
-		attribute.String("dataset", w.dataset),
-		attribute.Int("segment_count", len(request.Segments)),
-		attribute.Int("s3_glob_size", s3GlobSize),
-	)
-
-	if len(request.Segments) == 0 {
-		evalSpan.SetStatus(codes.Error, "no segment paths")
-		return nil, errors.New("no segment paths")
-	}
-	if mapper == nil {
-		evalSpan.SetStatus(codes.Error, "nil RowMapper")
-		return nil, errors.New("nil RowMapper")
-	}
-	if !strings.Contains(tblSQL, "{table}") {
-		evalSpan.SetStatus(codes.Error, "invalid tblSQL template")
-		return nil, errors.New(`tblSQL must contain "{table}" placeholder`)
-	}
-	if !strings.Contains(aggSQL, "{table}") {
-		evalSpan.SetStatus(codes.Error, "invalid aggSQL template")
-		return nil, errors.New(`aggSQL must contain "{table}" placeholder`)
-	}
-
-	// Group segments by orgId/instanceNum
-	ctx, groupSpan := tracer.Start(ctx, "query.worker.group_segments")
-	segmentsByOrg := make(map[uuid.UUID]map[int16][]queryapi.SegmentInfo)
-	start := time.Now()
-	for _, seg := range request.Segments {
-		if _, ok := segmentsByOrg[seg.OrganizationID]; !ok {
-			segmentsByOrg[seg.OrganizationID] = make(map[int16][]queryapi.SegmentInfo)
-		}
-		segmentsByOrg[seg.OrganizationID][seg.InstanceNum] =
-			append(segmentsByOrg[seg.OrganizationID][seg.InstanceNum], seg)
-	}
-	metadataCreationTime := time.Since(start)
-	groupSpan.SetAttributes(attribute.Int("org_instance_groups", len(segmentsByOrg)))
-	groupSpan.End()
-	slog.Info("Metadata Creation Time", "duration", metadataCreationTime.String())
-	start = time.Now()
-
-	outs := make([]<-chan T, 0)
-
-	// Build channels per (org, instance)
-	for orgId, instances := range segmentsByOrg {
-		for instanceNum, segments := range instances {
-			profile, err := w.getProfile(ctx, orgId, instanceNum)
-			if err != nil {
-				evalSpan.RecordError(err)
-				evalSpan.SetStatus(codes.Error, "failed to get profile")
-				return nil, err
-			}
-
-			// Build object IDs for all segments (tbl_ files)
-			var objectIDs []string
-			var aggObjectIDs []string
-			segmentObjectIDMap := make(map[int64]string) // segmentID -> objectID
-
-			for _, seg := range segments {
-				objectID := fmt.Sprintf("db/%s/%s/%d/%s/%s/tbl_%d.parquet",
-					orgId.String(),
-					profile.CollectorName,
-					seg.DateInt,
-					w.dataset,
-					seg.Hour,
-					seg.SegmentID)
-				objectIDs = append(objectIDs, objectID)
-				segmentObjectIDMap[seg.SegmentID] = objectID
-
-				// Also download agg_ file if segment has agg_fields
-				if len(seg.AggFields) > 0 {
-					aggObjectIDs = append(aggObjectIDs, tblToAggObjectID(objectID))
-				}
-			}
-
-			slog.Info("Segment Stats",
-				"numSegments", len(objectIDs),
-				"numAggSegments", len(aggObjectIDs))
-
-			// Download tbl_ files from S3 before querying
-			if len(objectIDs) > 0 {
-				if err := w.downloadForQuery(ctx, profile, objectIDs); err != nil {
-					evalSpan.RecordError(err)
-					evalSpan.SetStatus(codes.Error, "failed to download from S3")
-					return nil, fmt.Errorf("download from S3: %w", err)
-				}
-			}
-
-			// Download agg_ files (best-effort - don't fail if not found)
-			if len(aggObjectIDs) > 0 {
-				if err := w.downloadForQuery(ctx, profile, aggObjectIDs); err != nil {
-					// Log but don't fail - we'll fall back to tbl_ queries
-					slog.Warn("Failed to download some agg_ files, will use tbl_ fallback",
-						"error", err,
-						"numAggFiles", len(aggObjectIDs))
-				}
-			}
-
-			// Split segments into agg-eligible and tbl-only based on:
-			// 1. tbl_ file exists locally (skip missing files)
-			// 2. agg_ file exists locally
-			// 3. segment's agg_fields support the query's GROUP BY
-			var aggLocalPaths []string
-			var tblLocalPaths []string
-			var missingCount int
-
-			for _, seg := range segments {
-				tblObjectID := segmentObjectIDMap[seg.SegmentID]
-				tblLocalPath, tblExists, err := w.parquetCache.GetOrPrepare(profile.Region, profile.Bucket, tblObjectID)
-				if err != nil {
-					evalSpan.RecordError(err)
-					evalSpan.SetStatus(codes.Error, "failed to get local path")
-					return nil, fmt.Errorf("get local path for %s: %w", tblObjectID, err)
-				}
-				if !tblExists {
-					slog.Warn("File not found after download, skipping", "objectID", tblObjectID)
-					missingCount++
-					continue
-				}
-
-				// Check if we can use agg_ file for this segment
-				aggObjectID := tblToAggObjectID(tblObjectID)
-				aggLocalPath, aggExists, _ := w.parquetCache.GetOrPrepare(profile.Region, profile.Bucket, aggObjectID)
-
-				if aggExists && promql.CanUseAggFile(seg.AggFields, groupBy, matcherFields) {
-					aggLocalPaths = append(aggLocalPaths, aggLocalPath)
-					promql.RecordLogAggregationSource(ctx, profile.OrganizationID.String(), "agg", profile.InstanceNum)
-				} else {
-					tblLocalPaths = append(tblLocalPaths, tblLocalPath)
-					promql.RecordLogAggregationSource(ctx, profile.OrganizationID.String(), "tbl", profile.InstanceNum)
-				}
-			}
-
-			if missingCount > 0 {
-				slog.Warn("Some segment files were not found",
-					"missing", missingCount,
-					"found", len(aggLocalPaths)+len(tblLocalPaths),
-					"total", len(segments))
-			}
-
-			// If all files are missing, skip this org/instance group
-			if len(aggLocalPaths) == 0 && len(tblLocalPaths) == 0 {
-				slog.Warn("All segment files missing for org/instance, returning empty results",
-					"orgId", orgId,
-					"instanceNum", instanceNum,
-					"requestedFiles", len(segments))
-				continue
-			}
-
-			slog.Info("Segment Split",
-				"aggEligible", len(aggLocalPaths),
-				"tblOnly", len(tblLocalPaths),
-				"missing", missingCount)
-
-			// Stream from agg_ files with agg SQL
-			if len(aggLocalPaths) > 0 {
-				aggChannels, err := streamFromLocalFiles(ctx, w, request, aggLocalPaths, aggSQL, mapper)
-				if err != nil {
-					evalSpan.RecordError(err)
-					evalSpan.SetStatus(codes.Error, "failed to stream from agg files")
-					return nil, fmt.Errorf("stream from agg files: %w", err)
-				}
-				outs = append(outs, aggChannels...)
-			}
-
-			// Stream from tbl_ files with tbl SQL
-			if len(tblLocalPaths) > 0 {
-				tblChannels, err := streamFromLocalFiles(ctx, w, request, tblLocalPaths, tblSQL, mapper)
-				if err != nil {
-					evalSpan.RecordError(err)
-					evalSpan.SetStatus(codes.Error, "failed to stream from tbl files")
-					return nil, fmt.Errorf("stream from tbl files: %w", err)
-				}
-				outs = append(outs, tblChannels...)
-			}
-		}
-	}
-	channelCreationTime := time.Since(start)
-	slog.Info("Channel Creation Time", "duration", channelCreationTime.String())
-
-	evalSpan.SetAttributes(
-		attribute.Int("total_segments", len(request.Segments)),
-		attribute.Int("output_channels", len(outs)),
-	)
-
-	// Merge all sources in timestamp order.
-	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
 }

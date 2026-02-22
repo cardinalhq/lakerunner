@@ -471,11 +471,9 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 
 	var workerSql string
-	var aggSql string // SQL for agg_ files (only for simple log aggregations)
 	var cacheManager *CacheManager
 	var globSize int
 	var isTagValuesQuery = false
-	var isSimpleLogAgg = false // true when agg_ files can be used
 	var isSummaryQuery = false // true for summary queries that return DDSketch per series
 
 	if req.BaseExpr != nil {
@@ -501,11 +499,6 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if req.BaseExpr.LogLeaf != nil {
 				cacheManager = ws.LogsCM
 				globSize = ws.LogsGlobSize
-				// Check if this is a simple aggregation that can use agg_ files
-				if req.BaseExpr.LogLeaf.IsSimpleAggregation() {
-					isSimpleLogAgg = true
-					aggSql = promql.BuildAggFileSQL(req.BaseExpr, req.Step)
-				}
 			} else {
 				cacheManager = ws.MetricsCM
 				globSize = ws.MetricsGlobSize
@@ -587,10 +580,6 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Fill time placeholders. {table} stays in; CacheManager.EvaluatePushDown will replace it appropriately.
 	workerSql = strings.ReplaceAll(workerSql, "{start}", fmt.Sprintf("%d", req.StartTs))
 	workerSql = strings.ReplaceAll(workerSql, "{end}", fmt.Sprintf("%d", req.EndTs))
-	if aggSql != "" {
-		aggSql = strings.ReplaceAll(aggSql, "{start}", fmt.Sprintf("%d", req.StartTs))
-		aggSql = strings.ReplaceAll(aggSql, "{end}", fmt.Sprintf("%d", req.EndTs))
-	}
 
 	if cacheManager == nil {
 		requestSpan.SetStatus(codes.Error, "cache manager not initialized")
@@ -648,23 +637,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	} else if req.BaseExpr != nil {
 		// Handle metrics query
-		var sketchChannel <-chan promql.Timestamped
-		var err error
-
-		// For simple log aggregations, use agg_ file optimization
-		if isSimpleLogAgg && aggSql != "" {
-			// Extract matcher field names for agg_ file eligibility check
-			var matcherFields []string
-			if req.BaseExpr.LogLeaf != nil {
-				for _, m := range req.BaseExpr.LogLeaf.Matchers {
-					matcherFields = append(matcherFields, m.Label)
-				}
-			}
-			sketchChannel, err = EvaluatePushDownWithAggSplit(ctx, cacheManager, req, workerSql, aggSql, req.BaseExpr.GroupBy, matcherFields, globSize, sketchInputMapper)
-		} else {
-			sketchChannel, err = EvaluatePushDown(ctx, cacheManager, req, workerSql, globSize, sketchInputMapper)
-		}
-
+		sketchChannel, err := EvaluatePushDown(ctx, cacheManager, req, workerSql, globSize, sketchInputMapper)
 		if err != nil {
 			requestSpan.RecordError(err)
 			requestSpan.SetStatus(codes.Error, "query failed")

@@ -26,13 +26,25 @@ import (
 	"github.com/cardinalhq/lakerunner/pipeline/wkk"
 )
 
+const (
+	// AggFrequency is the log bucket frequency in milliseconds (10 seconds).
+	AggFrequency int64 = 10000
+)
+
 // NewLogsWriter creates a writer optimized for logs data.
 // Logs are sorted by [service_identifier, fingerprint, timestamp] and grouped
 // by [service_identifier, fingerprint] to keep related log entries together.
 // The schema must be provided from the reader and cannot be nil.
 // If backendType is empty, defaults to go-parquet backend.
 // If streamField is empty, defaults to priority: resource_customer_domain > resource_service_name.
-func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFile int64, backendType parquetwriter.BackendType, streamField string) (parquetwriter.ParquetWriter, error) {
+func NewLogsWriter(
+	tmpdir string,
+	schema *filereader.ReaderSchema,
+	recordsPerFile int64,
+	backendType parquetwriter.BackendType,
+	streamField string,
+	enableAggregation bool,
+) (parquetwriter.ParquetWriter, error) {
 	config := parquetwriter.WriterConfig{
 		TmpDir: tmpdir,
 		Schema: schema,
@@ -42,8 +54,11 @@ func NewLogsWriter(tmpdir string, schema *filereader.ReaderSchema, recordsPerFil
 		NoSplitGroups: true,
 
 		RecordsPerFile: recordsPerFile,
-		StatsProvider:  &LogsStatsProvider{StreamField: streamField},
-		BackendType:    backendType,
+		StatsProvider: &LogsStatsProvider{
+			StreamField:        streamField,
+			DisableAggregation: !enableAggregation,
+		},
+		BackendType: backendType,
 	}
 
 	return parquetwriter.NewUnifiedWriter(config)
@@ -115,15 +130,23 @@ type LogAggKey struct {
 // LogsStatsProvider collects timestamp and fingerprint statistics for logs files.
 type LogsStatsProvider struct {
 	StreamField string // Optional: specific field to use for stream identification
+	// DisableAggregation disables 10s log agg counting during stats collection.
+	DisableAggregation bool
 }
 
 func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
+	var aggCounts map[LogAggKey]int64
+	if !p.DisableAggregation {
+		aggCounts = make(map[LogAggKey]int64)
+	}
+
 	return &LogsStatsAccumulator{
 		fingerprints:       mapset.NewSet[int64](),
 		streamValues:       mapset.NewSet[string](),
 		fieldFingerprinter: fingerprint.NewFieldFingerprinter(p.StreamField),
 		streamField:        p.StreamField,
-		aggCounts:          make(map[LogAggKey]int64),
+		aggCounts:          aggCounts,
+		disableAggregation: p.DisableAggregation,
 	}
 }
 
@@ -139,6 +162,7 @@ type LogsStatsAccumulator struct {
 	missingFieldCount  int64
 	streamField        string              // Configured stream field (empty = use default priority)
 	aggCounts          map[LogAggKey]int64 // Aggregation counts for 10s buckets
+	disableAggregation bool
 }
 
 func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
@@ -198,18 +222,20 @@ func (a *LogsStatsAccumulator) Add(row pipeline.Row) {
 		}
 	}
 
-	// Aggregation: floor timestamp to 10s bucket and count
-	if ts, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
-		bucket := (ts / 10000) * 10000 // 10s = 10000ms
-		logLevel, _ := row[wkk.RowKeyCLevel].(string)
-		streamFieldName, streamFieldValue := getStreamFieldAndValue(row, a.streamField)
-		key := LogAggKey{
-			TimestampBucket:  bucket,
-			LogLevel:         logLevel,
-			StreamFieldName:  streamFieldName,
-			StreamFieldValue: streamFieldValue,
+	// Aggregation: floor timestamp to 10s bucket and count.
+	if !a.disableAggregation {
+		if ts, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
+			bucket := (ts / 10000) * 10000 // 10s = 10000ms
+			logLevel, _ := row[wkk.RowKeyCLevel].(string)
+			streamFieldName, streamFieldValue := getStreamFieldAndValue(row, a.streamField)
+			key := LogAggKey{
+				TimestampBucket:  bucket,
+				LogLevel:         logLevel,
+				StreamFieldName:  streamFieldName,
+				StreamFieldValue: streamFieldValue,
+			}
+			a.aggCounts[key]++
 		}
-		a.aggCounts[key]++
 	}
 }
 

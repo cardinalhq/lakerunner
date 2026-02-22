@@ -34,6 +34,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 )
 
 // LogIngestDuckDBResult contains the results of DuckDB-based log ingestion
@@ -62,6 +63,7 @@ type LogFileMetadata struct {
 	StreamIds     []string // Unique stream identifier values
 	StreamIdField string   // Field used for stream identification
 	LabelNameMap  []byte   // JSON map of label columns
+	AggCounts     map[factories.LogAggKey]int64
 }
 
 // processLogIngestWithDuckDB processes log binpb files using pure DuckDB SQL.
@@ -427,6 +429,11 @@ func processLogDateintPartition(
 	if err != nil {
 		return nil, fmt.Errorf("extract log metadata: %w", err)
 	}
+	aggCounts, err := extractLogPartitionAggCounts(ctx, conn, startMs, endMs, schema, streamField)
+	if err != nil {
+		return nil, fmt.Errorf("extract log aggregation counts: %w", err)
+	}
+	metadata.AggCounts = aggCounts
 	// Compute hour from the actual first timestamp in the data
 	metadata.Hour = getHourFromTimestamp(metadata.StartTs)
 
@@ -552,6 +559,92 @@ func extractLogPartitionMetadata(
 		StreamIdField: streamIdFieldUsed,
 		LabelNameMap:  labelNameMap,
 	}, nil
+}
+
+func extractLogPartitionAggCounts(
+	ctx context.Context,
+	conn *sql.Conn,
+	startMs, endMs int64,
+	schema []string,
+	streamField string,
+) (map[factories.LogAggKey]int64, error) {
+	schemaSet := mapset.NewSet[string]()
+	for _, col := range schema {
+		schemaSet.Add(col)
+	}
+
+	streamFieldToUse := ""
+	if streamField != "" && schemaSet.Contains(streamField) {
+		streamFieldToUse = streamField
+	} else if schemaSet.Contains("resource_customer_domain") {
+		streamFieldToUse = "resource_customer_domain"
+	} else if schemaSet.Contains("resource_service_name") {
+		streamFieldToUse = "resource_service_name"
+	}
+
+	var selectParts []string
+	var groupByParts []string
+
+	if !schemaSet.Contains("chq_timestamp") {
+		return nil, nil
+	}
+	selectParts = append(selectParts, "(chq_timestamp // 10000) * 10000 AS bucket_ts")
+	groupByParts = append(groupByParts, "bucket_ts")
+
+	if schemaSet.Contains("log_level") {
+		selectParts = append(selectParts, "COALESCE(log_level, '') AS log_level_out")
+		groupByParts = append(groupByParts, "log_level_out")
+	} else {
+		selectParts = append(selectParts, "'' AS log_level_out")
+	}
+
+	if streamFieldToUse != "" {
+		selectParts = append(selectParts, fmt.Sprintf("COALESCE(%s, '') AS stream_value", pq.QuoteIdentifier(streamFieldToUse)))
+		groupByParts = append(groupByParts, "stream_value")
+	} else {
+		selectParts = append(selectParts, "'' AS stream_value")
+	}
+
+	selectParts = append(selectParts, "COUNT(*) AS cnt")
+
+	query := fmt.Sprintf(
+		"SELECT %s FROM logs_raw WHERE chq_timestamp >= %d AND chq_timestamp < %d GROUP BY %s",
+		strings.Join(selectParts, ", "),
+		startMs,
+		endMs,
+		strings.Join(groupByParts, ", "),
+	)
+
+	rows, err := conn.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query partition agg counts: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			slog.Error("failed to close rows", slog.Any("error", err))
+		}
+	}()
+
+	aggCounts := make(map[factories.LogAggKey]int64)
+	for rows.Next() {
+		var bucketTS, count int64
+		var logLevel, streamValue string
+		if err := rows.Scan(&bucketTS, &logLevel, &streamValue, &count); err != nil {
+			return nil, fmt.Errorf("scan partition agg row: %w", err)
+		}
+
+		key := factories.LogAggKey{
+			TimestampBucket:  bucketTS,
+			LogLevel:         logLevel,
+			StreamFieldName:  streamFieldToUse,
+			StreamFieldValue: streamValue,
+		}
+		aggCounts[key] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return aggCounts, nil
 }
 
 // getLogFingerprints computes query fingerprints from indexed dimensions in the log partition.
