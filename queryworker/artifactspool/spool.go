@@ -60,12 +60,14 @@ func NewSpool(baseDir string) (*Spool, error) {
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create spool dir: %w", err)
 	}
-	return &Spool{
+	s := &Spool{
 		baseDir: baseDir,
 		entries: make(map[string]*artifactEntry),
 		stopCh:  make(chan struct{}),
 		done:    make(chan struct{}),
-	}, nil
+	}
+	registerSpoolGauges(s)
+	return s, nil
 }
 
 // Start begins the background cleanup goroutine.
@@ -254,5 +256,6 @@ func (s *Spool) expireEntries() {
 	for _, workID := range toRemove {
 		slog.Debug("Expiring artifact", slog.String("work_id", workID))
 		s.Remove(workID)
+		recordTTLCleanup()
 	}
 }

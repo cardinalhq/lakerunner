@@ -53,24 +53,29 @@ func (f *Fetcher) FetchArtifact(ctx context.Context, artifactURL string, expecte
 
 	resp, err := f.client.Do(req)
 	if err != nil {
+		recordFetchError("http_error")
 		return nil, fmt.Errorf("fetch artifact: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		recordFetchError("http_error")
 		return nil, fmt.Errorf("artifact fetch returned status %d", resp.StatusCode)
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxArtifactSize+1))
 	if err != nil {
+		recordFetchError("read_error")
 		return nil, fmt.Errorf("read artifact body: %w", err)
 	}
 	if int64(len(data)) > MaxArtifactSize {
+		recordFetchError("size_exceeded")
 		return nil, fmt.Errorf("artifact exceeds max size (%d bytes)", MaxArtifactSize)
 	}
 
 	if expectedChecksum != "" {
 		if err := verifyChecksum(data, expectedChecksum); err != nil {
+			recordFetchError("checksum_mismatch")
 			return nil, err
 		}
 	}

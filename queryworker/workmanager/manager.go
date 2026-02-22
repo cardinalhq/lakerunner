@@ -70,12 +70,14 @@ func NewManager(executor Executor, maxInFlight int) *Manager {
 	if maxInFlight <= 0 {
 		maxInFlight = 4
 	}
-	return &Manager{
+	m := &Manager{
 		executor:    executor,
 		maxInFlight: maxInFlight,
 		items:       make(map[string]*workItem),
 		sem:         make(chan struct{}, maxInFlight),
 	}
+	registerExecutionQueueDepthGauge(m)
+	return m
 }
 
 // OnAssignWork handles an incoming AssignWork message from the control stream.
@@ -173,6 +175,7 @@ func (m *Manager) OnAssignWork(session *controlstream.Session, msg *workcoordpb.
 			}) {
 				slog.Error("Failed to send WorkFailed", slog.String("work_id", msg.WorkId))
 			}
+			recordWorkFailed()
 			return
 		}
 
@@ -191,6 +194,8 @@ func (m *Manager) OnAssignWork(session *controlstream.Session, msg *workcoordpb.
 			},
 		}) {
 			slog.Error("Failed to send WorkReady", slog.String("work_id", msg.WorkId))
+		} else {
+			recordWorkCompleted()
 		}
 	}()
 }

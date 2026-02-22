@@ -70,6 +70,10 @@ type workerConn struct {
 type Manager struct {
 	handler MessageHandler
 
+	// OnWorkerCountChange is called when the number of connected workers changes.
+	// Useful for updating health check readiness conditions.
+	OnWorkerCountChange func(count int)
+
 	mu             sync.RWMutex
 	workers        map[string]*workerConn    // workerID → conn (currently connected)
 	knownEndpoints map[string]WorkerEndpoint // workerID → endpoint (for reconnect)
@@ -79,11 +83,13 @@ type Manager struct {
 
 // NewManager creates a new stream manager.
 func NewManager(handler MessageHandler) *Manager {
-	return &Manager{
+	m := &Manager{
 		handler:        handler,
 		workers:        make(map[string]*workerConn),
 		knownEndpoints: make(map[string]WorkerEndpoint),
 	}
+	registerActiveStreamGauge(m)
+	return m
 }
 
 // Start begins the manager's lifecycle.
@@ -132,7 +138,12 @@ func (m *Manager) ConnectWorker(endpoint WorkerEndpoint) error {
 		return nil
 	}
 	m.workers[endpoint.WorkerID] = wc
+	count := len(m.workers)
 	m.mu.Unlock()
+
+	if m.OnWorkerCountChange != nil {
+		m.OnWorkerCountChange(count)
+	}
 
 	go m.runWorkerStream(wc)
 	return nil
@@ -146,10 +157,14 @@ func (m *Manager) DisconnectWorker(workerID string) {
 	if exists {
 		delete(m.workers, workerID)
 	}
+	count := len(m.workers)
 	m.mu.Unlock()
 
 	if exists {
 		wc.close()
+		if m.OnWorkerCountChange != nil {
+			m.OnWorkerCountChange(count)
+		}
 	}
 }
 
@@ -275,10 +290,15 @@ func (m *Manager) runWorkerStream(wc *workerConn) {
 		workerID := wc.workerID
 		m.mu.Lock()
 		delete(m.workers, workerID)
+		count := len(m.workers)
 		endpoint, shouldReconnect := m.knownEndpoints[workerID]
 		m.mu.Unlock()
 		wc.close()
 
+		recordDisconnect(workerID)
+		if m.OnWorkerCountChange != nil {
+			m.OnWorkerCountChange(count)
+		}
 		if m.handler != nil {
 			m.handler.OnWorkerDisconnected(workerID)
 		}
@@ -412,7 +432,13 @@ func (m *Manager) reconnectWorker(initialEndpoint WorkerEndpoint) {
 			return
 		}
 		m.workers[workerID] = wc
+		count := len(m.workers)
 		m.mu.Unlock()
+
+		recordReconnect(workerID)
+		if m.OnWorkerCountChange != nil {
+			m.OnWorkerCountChange(count)
+		}
 
 		slog.Info("Reconnected to worker", slog.String("worker_id", endpoint.WorkerID))
 		go m.runWorkerStream(wc)

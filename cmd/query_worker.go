@@ -105,6 +105,9 @@ func init() {
 			if err != nil {
 				return fmt.Errorf("failed to create worker service: %w", err)
 			}
+
+			healthServer.SetReady(true)
+
 			if err := worker.Run(ctx); err != nil {
 				if errors.Is(err, context.Canceled) {
 					slog.Info("shutting down", "error", err)

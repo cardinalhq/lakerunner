@@ -208,6 +208,30 @@ func TestManager_CancelQuery(t *testing.T) {
 	}
 }
 
+func TestManager_CancelQuery_SendsCancelWork(t *testing.T) {
+	mgr, sender := setupManager(t)
+
+	_, _ = mgr.StartQuery(t.Context(), "q1", 16)
+
+	workID, err := mgr.DispatchWork("q1", "l1", "org:seg1", []byte("spec"))
+	require.NoError(t, err)
+
+	// Accept the work so it's in a non-terminal state.
+	mgr.HandleWorkAccepted("worker-1", &workcoordpb.WorkAccepted{WorkId: workID})
+
+	mgr.CancelQuery("q1")
+
+	// Verify a CancelWork message was sent for the in-flight work.
+	msgs := sender.messagesFor("worker-1")
+	var cancelFound bool
+	for _, m := range msgs {
+		if cw := m.GetCancelWork(); cw != nil && cw.WorkId == workID {
+			cancelFound = true
+		}
+	}
+	assert.True(t, cancelFound, "expected CancelWork message for work %s", workID)
+}
+
 func TestManager_HandleWorkerStatus_RegistersAndDrains(t *testing.T) {
 	sender := newMockStreamSender()
 	mgr := NewManager(sender, nil)
@@ -304,6 +328,36 @@ func TestManager_HandleWorkerStatus_ReconnectsDisconnectedWorker(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, w.Alive)
 	assert.True(t, w.AcceptingWork)
+}
+
+func TestManager_DispatchLeafWork(t *testing.T) {
+	mgr, sender := setupManager(t)
+
+	type testReq struct {
+		Table string `json:"table"`
+		Limit int    `json:"limit"`
+	}
+
+	workID, err := mgr.DispatchLeafWork("q1", "l1", "org:seg1", &testReq{Table: "logs", Limit: 100})
+	require.NoError(t, err)
+	assert.NotEmpty(t, workID)
+
+	// Verify an AssignWork message was sent with JSON spec.
+	msgs := sender.messagesFor("worker-1")
+	require.NotEmpty(t, msgs)
+	assign := msgs[0].GetAssignWork()
+	require.NotNil(t, assign)
+	assert.Equal(t, "q1", assign.QueryId)
+	assert.Contains(t, string(assign.Spec), `"table":"logs"`)
+}
+
+func TestManager_DispatchLeafWork_MarshalError(t *testing.T) {
+	mgr, _ := setupManager(t)
+
+	// Channels can't be marshaled to JSON.
+	_, err := mgr.DispatchLeafWork("q1", "l1", "org:seg1", make(chan int))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "marshal spec")
 }
 
 func TestManager_MakeStreamHandler(t *testing.T) {

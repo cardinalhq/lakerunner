@@ -76,11 +76,13 @@ type queryState struct {
 
 // NewManager creates an API work manager.
 func NewManager(streams StreamSender, fetcher ArtifactFetcher) *Manager {
-	return &Manager{
+	m := &Manager{
 		coord:   workcoord.NewCoordinator(&uuidIDGen{}),
 		streams: streams,
 		fetcher: fetcher,
 	}
+	registerQueueDepthGauge(m)
+	return m
 }
 
 // Coordinator returns the underlying workcoord.Coordinator for direct access
@@ -117,6 +119,7 @@ func (m *Manager) DispatchWork(queryID, leafID, affinityKey string, spec []byte)
 		return "", fmt.Errorf("send assign work to worker %s: %w", item.WorkerID, err)
 	}
 
+	recordWorkDispatched()
 	return workID, nil
 }
 
@@ -145,7 +148,23 @@ func (m *Manager) StartQuery(ctx context.Context, queryID string, bufferSize int
 }
 
 // CancelQuery cancels all work for a query and cleans up tracking.
+// It sends CancelWork messages to workers for all non-terminal work items
+// before performing local state cleanup.
 func (m *Manager) CancelQuery(queryID string) {
+	// Send CancelWork to workers for all non-terminal items before local cleanup.
+	items := m.coord.Work.WorkForQuery(queryID)
+	for _, item := range items {
+		if !item.State.IsTerminal() {
+			_ = m.streams.Send(item.WorkerID, &workcoordpb.APIMessage{
+				Msg: &workcoordpb.APIMessage_CancelWork{
+					CancelWork: &workcoordpb.CancelWork{
+						WorkId: item.WorkID,
+					},
+				},
+			})
+		}
+	}
+
 	if v, ok := m.queries.LoadAndDelete(queryID); ok {
 		qs := v.(*queryState)
 		qs.cancel()
@@ -161,11 +180,14 @@ func (m *Manager) HandleWorkAccepted(_ string, msg *workcoordpb.WorkAccepted) {
 		slog.Warn("HandleWorkAccepted failed",
 			slog.String("work_id", msg.WorkId),
 			slog.Any("error", err))
+		return
 	}
+	recordWorkAccepted()
 }
 
 // HandleWorkRejected processes a WorkRejected message from a worker.
 func (m *Manager) HandleWorkRejected(workerID string, msg *workcoordpb.WorkRejected) {
+	recordWorkRejected()
 	reassigned, err := m.coord.HandleWorkRejected(msg.WorkId)
 	if err != nil {
 		slog.Error("HandleWorkRejected failed",
@@ -176,6 +198,7 @@ func (m *Manager) HandleWorkRejected(workerID string, msg *workcoordpb.WorkRejec
 	if reassigned == nil {
 		return
 	}
+	recordReassignment()
 
 	sendMsg := &workcoordpb.APIMessage{
 		Msg: &workcoordpb.APIMessage_AssignWork{
@@ -316,6 +339,7 @@ func (m *Manager) HandleWorkerDisconnected(workerID string) {
 	}
 
 	for _, ra := range reassigned {
+		recordReassignment()
 		sendMsg := &workcoordpb.APIMessage{
 			Msg: &workcoordpb.APIMessage_AssignWork{
 				AssignWork: &workcoordpb.AssignWork{
