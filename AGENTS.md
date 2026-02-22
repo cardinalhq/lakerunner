@@ -8,6 +8,10 @@ Lakerunner is a **real-time telemetry ingestion engine** that transforms S3-comp
 - Converts data into optimized Apache Parquet with indexing, aggregation, and compaction
 - Currently processes logs and metrics (traces/spans and profile data may be added in future)
 
+## Documentation and Specs
+
+Specs should be written in to docs/specs/ with a lowercase filename in markdown format.  This should be done prior to adding or changing major parts of the code, and ideally any functional change should be tracked here.  It is Ok to update old documents to match new changes, and then use plan mode to implement them.
+
 ## Core Rules - NEVER BREAK THESE
 
 1. **Do not edit generated files** (e.g., `*.pb.go`, `*.sql.go`, sqlc output, or any file marked as generated)
