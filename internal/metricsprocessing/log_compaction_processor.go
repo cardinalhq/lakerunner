@@ -235,7 +235,15 @@ func (p *LogCompactionProcessor) processBundleInternal(ctx context.Context, key 
 		attribute.Int("active_segments", len(activeSegments)),
 	))
 
-	compactionResult, err := p.performLogCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
+	compactionResult, err := p.performLogCompactionCore(
+		ctx,
+		tmpDir,
+		storageClient,
+		key,
+		storageProfile,
+		activeSegments,
+		recordCountEstimate,
+	)
 	if err != nil {
 		processSpan.RecordError(err)
 		processSpan.SetStatus(codes.Error, "failed to perform compaction")
@@ -320,18 +328,27 @@ func (p *LogCompactionProcessor) ShouldEmitImmediately(msg *messages.LogCompacti
 	return false
 }
 
-func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.LogCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.LogSeg, recordCountEstimate int64) (*logProcessingResult, error) {
+func (p *LogCompactionProcessor) performLogCompactionCore(
+	ctx context.Context,
+	tmpDir string,
+	storageClient cloudstorage.Client,
+	compactionKey messages.LogCompactionKey,
+	storageProfile storageprofile.StorageProfile,
+	activeSegments []lrdb.LogSeg,
+	recordCountEstimate int64,
+) (*logProcessingResult, error) {
 	// Get stream field config for this organization
 	streamField := configservice.Global().GetLogStreamConfig(ctx, compactionKey.OrganizationID).FieldName
 
 	params := logProcessingParams{
-		TmpDir:         tmpDir,
-		StorageClient:  storageClient,
-		OrganizationID: compactionKey.OrganizationID,
-		StorageProfile: storageProfile,
-		ActiveSegments: activeSegments,
-		MaxRecords:     recordCountEstimate * 2, // safety net
-		StreamField:    streamField,
+		TmpDir:               tmpDir,
+		StorageClient:        storageClient,
+		OrganizationID:       compactionKey.OrganizationID,
+		StorageProfile:       storageProfile,
+		ActiveSegments:       activeSegments,
+		MaxRecords:           recordCountEstimate * 2, // safety net
+		StreamField:          streamField,
+		EnableDerivedMetrics: false,
 	}
 
 	return processLogsWithDuckDB(ctx, params)
@@ -348,9 +365,6 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 
 	// Merge label name maps from input segments for legacy API support
 	mergedLabelMap := mergeLabelNameMaps(inputSegments)
-
-	// Get stream field for agg_fields
-	streamField := configservice.Global().GetLogStreamConfig(ctx, key.OrganizationID).FieldName
 
 	var segments []lrdb.LogSeg
 	var totalOutputSize, totalOutputRecords int64
@@ -380,44 +394,6 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 		// Clean up local file
 		_ = os.Remove(result.FileName)
 
-		// Write and upload aggregation parquet file
-		var aggFields []string
-		if len(stats.AggCounts) > 0 {
-			aggFilename := fmt.Sprintf("%s/agg_%d.parquet", os.TempDir(), segmentID)
-			aggSize, aggWriteErr := factories.WriteAggParquet(ctx, aggFilename, stats.AggCounts)
-			if aggWriteErr != nil {
-				ll.Warn("Failed to write agg parquet, continuing without",
-					slog.Int64("segmentID", segmentID),
-					slog.Any("error", aggWriteErr))
-			} else {
-				defer func() { _ = os.Remove(aggFilename) }()
-
-				aggPath := helpers.MakeAggDBObjectID(
-					key.OrganizationID,
-					profile.CollectorName,
-					key.DateInt,
-					p.getHourFromTimestamp(stats.FirstTS),
-					segmentID,
-					"logs",
-				)
-
-				aggUploadErr := client.UploadObject(ctx, profile.Bucket, aggPath, aggFilename)
-				if aggUploadErr != nil {
-					ll.Warn("Failed to upload agg parquet, continuing without",
-						slog.Int64("segmentID", segmentID),
-						slog.String("aggPath", aggPath),
-						slog.Any("error", aggUploadErr))
-				} else {
-					aggFields = factories.GetAggFields(streamField)
-					factories.RecordAggFileWritten(ctx, key.OrganizationID, key.InstanceNum)
-					ll.Debug("Uploaded agg parquet",
-						slog.String("aggPath", aggPath),
-						slog.Int64("aggSize", aggSize),
-						slog.Int("aggBuckets", len(stats.AggCounts)))
-				}
-			}
-		}
-
 		segment := lrdb.LogSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
@@ -439,7 +415,7 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			LabelNameMap:  mergedLabelMap,
 			StreamIds:     stats.StreamValues,
 			StreamIDField: stats.StreamIdField,
-			AggFields:     aggFields,
+			AggFields:     nil,
 		}
 
 		segments = append(segments, segment)

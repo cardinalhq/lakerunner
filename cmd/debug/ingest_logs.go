@@ -111,7 +111,7 @@ func runIngestLogs(filename, orgID, bucket, outputDir, streamField string) error
 	schema := reader.GetSchema()
 
 	// Create parquet writer using the same factory as production
-	writer, err := factories.NewLogsWriter(outputDir, schema, 10000, parquetwriter.DefaultBackend, streamField)
+	writer, err := factories.NewLogsWriter(outputDir, schema, 10000, parquetwriter.DefaultBackend, streamField, true)
 	if err != nil {
 		return fmt.Errorf("failed to create parquet writer: %w", err)
 	}

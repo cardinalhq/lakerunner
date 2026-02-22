@@ -375,35 +375,20 @@ func TestLogsStatsAccumulator_AggregationWithConfiguredStreamField(t *testing.T)
 	}
 }
 
-func TestGetAggFields(t *testing.T) {
-	tests := []struct {
-		name        string
-		streamField string
-		expected    []string
-	}{
-		{
-			name:        "empty stream field uses default",
-			streamField: "",
-			expected:    []string{"log_level", "resource_customer_domain"},
-		},
-		{
-			name:        "custom stream field",
-			streamField: "resource_service_name",
-			expected:    []string{"log_level", "resource_service_name"},
-		},
-		{
-			name:        "k8s namespace field",
-			streamField: "resource_k8s_namespace_name",
-			expected:    []string{"log_level", "resource_k8s_namespace_name"},
-		},
-	}
+func TestLogsStatsAccumulator_DisableAggregation(t *testing.T) {
+	provider := &LogsStatsProvider{DisableAggregation: true}
+	acc := provider.NewAccumulator()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GetAggFields(tt.streamField)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
+	acc.Add(pipeline.Row{
+		wkk.RowKeyCTimestamp:             int64(1234567890000),
+		wkk.RowKeyCLevel:                 "info",
+		wkk.RowKeyResourceCustomerDomain: "example.com",
+	})
+
+	result := acc.Finalize()
+	stats, ok := result.(LogsFileStats)
+	require.True(t, ok)
+	assert.Nil(t, stats.AggCounts)
 }
 
 func stringPtr(s string) *string {

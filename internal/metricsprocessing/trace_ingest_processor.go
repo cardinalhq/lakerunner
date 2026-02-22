@@ -33,6 +33,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/expressionindex"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -247,6 +248,11 @@ func (p *TraceIngestProcessor) ProcessBundle(ctx context.Context, key messages.I
 
 	if err := validateTraceIngestMessages(key, msgs); err != nil {
 		return fmt.Errorf("message validation failed: %w", err)
+	}
+	if refresher := expressionindex.MaybeGlobalCatalogRefresher(); refresher != nil {
+		if err := refresher.MaybeRefreshOrg(ctx, key.OrganizationID); err != nil {
+			ll.Warn("Failed to refresh expression catalog", slog.Any("error", err))
+		}
 	}
 
 	// Create temporary directory for this ingestion run

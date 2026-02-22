@@ -20,4 +20,7 @@ package configservice
 const (
 	// configKeyLogStream is the config key for log stream field configuration.
 	configKeyLogStream = "log.stream"
+
+	// configKeyExpressionCatalog is the config key for expression catalog definitions.
+	configKeyExpressionCatalog = "expression.catalog.v1"
 )

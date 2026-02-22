@@ -28,6 +28,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/expressionindex"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -108,6 +109,11 @@ func (p *MetricIngestProcessor) ProcessBundle(ctx context.Context, key messages.
 
 	if err := validateMetricIngestMessages(key, msgs); err != nil {
 		return fmt.Errorf("message validation failed: %w", err)
+	}
+	if refresher := expressionindex.MaybeGlobalCatalogRefresher(); refresher != nil {
+		if err := refresher.MaybeRefreshOrg(ctx, key.OrganizationID); err != nil {
+			ll.Warn("Failed to refresh expression catalog", slog.Any("error", err))
+		}
 	}
 
 	// Create temporary directory for this ingestion run

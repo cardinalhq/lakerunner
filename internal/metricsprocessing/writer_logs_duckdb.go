@@ -126,11 +126,14 @@ func processLogsWithDuckDB(ctx context.Context, params logProcessingParams) (*lo
 	// Merge metadata from input segments (timestamps, fingerprints, stream values)
 	metadata := computeLogStatsFromSegments(downloaded.downloadedSegments, params.StreamField)
 
-	// Compute agg counts from DuckDB (10s bucket aggregation)
-	aggCounts, err := extractAggCounts(ctx, conn, params.StreamField)
-	if err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("extract agg counts: %w", err)
+	// Compute 10s bucket counts used for derived metric emission when enabled.
+	var aggCounts map[factories.LogAggKey]int64
+	if params.EnableDerivedMetrics {
+		aggCounts, err = extractAggCounts(ctx, conn, params.StreamField)
+		if err != nil {
+			span.RecordError(err)
+			return nil, fmt.Errorf("extract agg counts: %w", err)
+		}
 	}
 	metadata.AggCounts = aggCounts
 
@@ -364,7 +367,7 @@ func extractAggCounts(ctx context.Context, conn *sql.Conn, streamField string) (
 	// Log level
 	if schemaSet.Contains("log_level") {
 		selectParts = append(selectParts, "COALESCE(log_level, '') AS log_level_out")
-		groupByParts = append(groupByParts, "log_level")
+		groupByParts = append(groupByParts, "log_level_out")
 	} else {
 		selectParts = append(selectParts, "'' AS log_level_out")
 	}

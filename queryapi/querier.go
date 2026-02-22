@@ -234,6 +234,7 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid query expression: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	promExpr, materializedRewriteCount := rewritePromExprWithMaterializedCatalog(ctx, qPayload.OrgUUID, promExpr)
 	plan, err := promql.Compile(promExpr)
 	if err != nil {
 		parseSpan.RecordError(err)
@@ -244,7 +245,10 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	parseSpan.SetAttributes(attribute.Int("leaf_count", len(plan.Leaves)))
+	parseSpan.SetAttributes(
+		attribute.Int("leaf_count", len(plan.Leaves)),
+		attribute.Int("materialized_rewrite_count", materializedRewriteCount),
+	)
 	parseSpan.End()
 
 	// Summary mode: return per-series aggregate stats instead of time series
@@ -493,6 +497,8 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 			writeAPIError(w, http.StatusInternalServerError, ErrInternalError, "cannot parse rewritten PromQL: "+err.Error())
 			return
 		}
+		promExpr, materializedRewriteCount := rewritePromExprWithMaterializedCatalog(ctx, qp.OrgUUID, promExpr)
+		requestSpan.SetAttributes(attribute.Int("materialized_rewrite_count", materializedRewriteCount))
 
 		plan, err := promql.Compile(promExpr)
 		if err != nil {
@@ -620,6 +626,8 @@ func (q *QuerierService) handleSpansQuery(w http.ResponseWriter, r *http.Request
 			http.Error(w, "cannot parse rewritten PromQL: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		promExpr, materializedRewriteCount := rewritePromExprWithMaterializedCatalog(ctx, qp.OrgUUID, promExpr)
+		requestSpan.SetAttributes(attribute.Int("materialized_rewrite_count", materializedRewriteCount))
 
 		plan, err := promql.Compile(promExpr)
 		if err != nil {

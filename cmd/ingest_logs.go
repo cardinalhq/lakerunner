@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/configservice"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
+	"github.com/cardinalhq/lakerunner/internal/expressionindex"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -90,6 +91,7 @@ func init() {
 			}
 
 			configservice.NewGlobal(cdb, 5*time.Minute)
+			expressionindex.NewGlobalCatalogRefresher(2 * time.Minute)
 
 			cmgr, err := cloudstorage.NewCloudManagers(ctx)
 			if err != nil {

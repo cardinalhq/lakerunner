@@ -52,6 +52,11 @@ func Global() *Service {
 	return global
 }
 
+// MaybeGlobal returns the global config service when initialized.
+func MaybeGlobal() *Service {
+	return global
+}
+
 // OrgConfigQuerier defines the minimal database interface required by the config service.
 type OrgConfigQuerier interface {
 	GetOrgConfig(ctx context.Context, arg configdb.GetOrgConfigParams) (json.RawMessage, error)

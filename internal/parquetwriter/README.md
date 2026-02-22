@@ -32,7 +32,7 @@ schema := reader.GetSchema()
 writer, err := factories.NewMetricsWriter("/tmp", schema, 200)
 
 // Logs (timestamp-ordered, spillable sorting)
-writer, err := factories.NewLogsWriter("/tmp", schema, 150)
+writer, err := factories.NewLogsWriter("/tmp", schema, 150, parquetwriter.DefaultBackend, "", true)
 
 // Traces (slot-grouped, start time ordered)
 writer, err := factories.NewTracesWriter("/tmp", schema, 300)
