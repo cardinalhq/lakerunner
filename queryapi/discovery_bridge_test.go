@@ -124,6 +124,38 @@ func TestDiscoveryBridgeSync(t *testing.T) {
 	assert.Contains(t, fsc.disconnected, "10.0.0.1:8081")
 }
 
+func TestDiscoveryBridgeSyncWithID(t *testing.T) {
+	disc := &fakeDiscovery{
+		workers: []Worker{
+			{IP: "10.0.0.1", Port: 8081, ID: "uid-aaa"},
+			{IP: "10.0.0.2", Port: 8081, ID: "uid-bbb"},
+		},
+	}
+
+	fsc := newFakeStreamConnector()
+	bridge := NewDiscoveryBridge(disc, fsc, 8082)
+	bridge.sync()
+
+	ids := fsc.connectedIDs()
+	require.Len(t, ids, 2)
+	assert.Equal(t, []string{"uid-aaa", "uid-bbb"}, ids)
+	// Address still uses IP for gRPC dial.
+	assert.Equal(t, "10.0.0.1:8082", fsc.connected["uid-aaa"].Address)
+	assert.Equal(t, "10.0.0.2:8082", fsc.connected["uid-bbb"].Address)
+
+	// Simulate IP reuse by a different pod (new UID on same IP).
+	disc.setWorkers([]Worker{
+		{IP: "10.0.0.1", Port: 8081, ID: "uid-ccc"}, // same IP, new pod
+		{IP: "10.0.0.2", Port: 8081, ID: "uid-bbb"},
+	})
+	bridge.sync()
+
+	ids = fsc.connectedIDs()
+	require.Len(t, ids, 2)
+	assert.Equal(t, []string{"uid-bbb", "uid-ccc"}, ids)
+	assert.Contains(t, fsc.disconnected, "uid-aaa")
+}
+
 func TestDiscoveryBridgeNoChange(t *testing.T) {
 	disc := &fakeDiscovery{
 		workers: []Worker{{IP: "10.0.0.1", Port: 8081}},

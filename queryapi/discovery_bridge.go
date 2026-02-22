@@ -106,7 +106,7 @@ func (b *DiscoveryBridge) sync() {
 	// Build current set from discovery.
 	current := make(map[string]streammanager.WorkerEndpoint, len(workers))
 	for _, w := range workers {
-		workerID := fmt.Sprintf("%s:%d", w.IP, w.Port)
+		workerID := w.Identity()
 		endpoint := streammanager.WorkerEndpoint{
 			WorkerID: workerID,
 			Address:  fmt.Sprintf("%s:%d", w.IP, b.controlPort),

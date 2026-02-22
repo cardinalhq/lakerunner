@@ -208,6 +208,12 @@ func (e *EcsWorkerDiscovery) extractWorkers(tasks []types.Task) []Worker {
 			continue
 		}
 
+		// Use the task ARN as a unique identity; it changes on every launch.
+		taskARN := ""
+		if task.TaskArn != nil {
+			taskARN = *task.TaskArn
+		}
+
 		// Extract IP from ENI attachments
 		for _, attachment := range task.Attachments {
 			if attachment.Type == nil || *attachment.Type != "ElasticNetworkInterface" {
@@ -219,6 +225,7 @@ func (e *EcsWorkerDiscovery) extractWorkers(tasks []types.Task) []Worker {
 					worker := Worker{
 						IP:   *detail.Value,
 						Port: e.workerPort,
+						ID:   taskARN,
 					}
 					workers = append(workers, worker)
 					break

@@ -23,6 +23,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWorkerIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		worker   Worker
+		expected string
+	}{
+		{"id set", Worker{IP: "10.0.0.1", Port: 8081, ID: "pod-uid-abc"}, "pod-uid-abc"},
+		{"no id", Worker{IP: "10.0.0.1", Port: 8081}, "10.0.0.1:8081"},
+		{"empty id", Worker{IP: "10.0.0.1", Port: 8081, ID: ""}, "10.0.0.1:8081"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.worker.Identity())
+		})
+	}
+}
+
 func TestBaseWorkerDiscovery_GetAllWorkers(t *testing.T) {
 	base := &BaseWorkerDiscovery{}
 
