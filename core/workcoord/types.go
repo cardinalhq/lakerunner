@@ -68,6 +68,9 @@ type WorkItem struct {
 	// AffinityKey is used for rendezvous hashing assignment.
 	AffinityKey string
 
+	// Spec is the opaque work payload, stored for reassignment propagation.
+	Spec []byte
+
 	// ArtifactInfo is populated when the work reaches WorkStateReady.
 	ArtifactInfo *ArtifactInfo
 }

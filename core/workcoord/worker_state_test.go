@@ -49,7 +49,7 @@ func TestWorkerRegistry_Register(t *testing.T) {
 	w, err := r.Get("w1")
 	require.NoError(t, err)
 	assert.True(t, w.Alive)
-	assert.True(t, w.AcceptingWork)
+	assert.False(t, w.AcceptingWork, "new workers must not accept work until explicit status")
 	assert.False(t, w.Draining)
 }
 
@@ -170,8 +170,15 @@ func TestWorkerRegistry_AvailableWorkers(t *testing.T) {
 	require.NoError(t, r.Register("w2"))
 	require.NoError(t, r.Register("w3"))
 
-	// All available initially.
+	// None available initially (AcceptingWork defaults to false).
 	avail := r.AvailableWorkers()
+	assert.Empty(t, avail)
+
+	// Explicitly set all as accepting.
+	require.NoError(t, r.SetAcceptingWork("w1", true))
+	require.NoError(t, r.SetAcceptingWork("w2", true))
+	require.NoError(t, r.SetAcceptingWork("w3", true))
+	avail = r.AvailableWorkers()
 	assert.Len(t, avail, 3)
 
 	// Disconnect w1, drain w2.

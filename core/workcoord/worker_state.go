@@ -60,7 +60,8 @@ func NewWorkerRegistry() *WorkerRegistry {
 	}
 }
 
-// Register adds a new worker. The worker starts as alive and accepting work.
+// Register adds a new worker. The worker starts as alive but not accepting work;
+// the worker declares accepting_work via its first status message.
 func (r *WorkerRegistry) Register(workerID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -70,7 +71,7 @@ func (r *WorkerRegistry) Register(workerID string) error {
 	r.workers[workerID] = &WorkerInfo{
 		WorkerID:      workerID,
 		Alive:         true,
-		AcceptingWork: true,
+		AcceptingWork: false,
 		Draining:      false,
 	}
 	return nil

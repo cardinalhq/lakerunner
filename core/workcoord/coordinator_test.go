@@ -35,6 +35,15 @@ func newTestCoordinator() *Coordinator {
 	return NewCoordinator(&seqIDGen{})
 }
 
+// registerAvailable registers workers and marks them as accepting work.
+func registerAvailable(t *testing.T, c *Coordinator, workerIDs ...string) {
+	t.Helper()
+	for _, id := range workerIDs {
+		require.NoError(t, c.RegisterWorker(id))
+		require.NoError(t, c.Workers.SetAcceptingWork(id, true))
+	}
+}
+
 func TestCoordinator_RegisterAndRemoveWorker(t *testing.T) {
 	c := newTestCoordinator()
 	require.NoError(t, c.RegisterWorker("w1"))
@@ -47,10 +56,9 @@ func TestCoordinator_RegisterAndRemoveWorker(t *testing.T) {
 
 func TestCoordinator_AssignWork(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	require.NoError(t, c.RegisterWorker("w2"))
+	registerAvailable(t, c, "w1", "w2")
 
-	item, err := c.AssignWork("q1", "l1", "work-1", "seg-100")
+	item, err := c.AssignWork("q1", "l1", "work-1", "seg-100", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "q1", item.QueryID)
 	assert.Equal(t, "work-1", item.WorkID)
@@ -60,54 +68,54 @@ func TestCoordinator_AssignWork(t *testing.T) {
 
 func TestCoordinator_AssignWork_NoWorkers(t *testing.T) {
 	c := newTestCoordinator()
-	_, err := c.AssignWork("q1", "l1", "work-1", "seg-100")
+	_, err := c.AssignWork("q1", "l1", "work-1", "seg-100", nil)
 	require.ErrorIs(t, err, ErrNoAvailableWorkers)
 }
 
 func TestCoordinator_AssignWorkToWorker(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
+	registerAvailable(t, c, "w1")
 
-	item, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	item, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "w1", item.WorkerID)
 }
 
 func TestCoordinator_AssignWorkToWorker_Unavailable(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
+	registerAvailable(t, c, "w1")
 
 	// Disconnect makes worker unavailable.
 	require.NoError(t, c.Workers.Disconnect("w1"))
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	var unavail *ErrWorkerUnavailable
 	require.ErrorAs(t, err, &unavail)
 
 	// Draining makes worker unavailable.
 	require.NoError(t, c.Workers.Reconnect("w1"))
 	require.NoError(t, c.Workers.BeginDrain("w1"))
-	_, err = c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	_, err = c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.ErrorAs(t, err, &unavail)
 
 	// Not accepting makes worker unavailable.
 	require.NoError(t, c.Workers.Reconnect("w1"))
 	require.NoError(t, c.Workers.SetAcceptingWork("w1", false))
-	_, err = c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	_, err = c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.ErrorAs(t, err, &unavail)
 }
 
 func TestCoordinator_AssignWorkToWorker_NotFound(t *testing.T) {
 	c := newTestCoordinator()
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "nonexistent")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "nonexistent", nil)
 	var notFound *ErrWorkerNotFound
 	require.ErrorAs(t, err, &notFound)
 }
 
 func TestCoordinator_FullWorkLifecycle(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
+	registerAvailable(t, c, "w1")
 
-	item, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	item, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 	assert.Equal(t, WorkStateAssigned, item.State)
 
@@ -129,9 +137,8 @@ func TestCoordinator_FullWorkLifecycle(t *testing.T) {
 
 func TestCoordinator_WorkRejected_Reassigns(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	require.NoError(t, c.RegisterWorker("w2"))
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	registerAvailable(t, c, "w1", "w2")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 
 	// w1 rejects — should reassign to w2.
@@ -155,8 +162,8 @@ func TestCoordinator_WorkRejected_Reassigns(t *testing.T) {
 
 func TestCoordinator_WorkRejected_NoOtherWorkers(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	registerAvailable(t, c, "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 
 	// w1 rejects and is the only worker — no reassignment possible.
@@ -171,11 +178,10 @@ func TestCoordinator_WorkRejected_NoOtherWorkers(t *testing.T) {
 
 func TestCoordinator_WorkRejected_ExcludesRejectingWorker(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	require.NoError(t, c.RegisterWorker("w2"))
+	registerAvailable(t, c, "w1", "w2")
 
 	// Assign to w1 (w1 is still available/healthy).
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 
 	// w1 rejects but is still technically available — reassignment must
@@ -189,9 +195,8 @@ func TestCoordinator_WorkRejected_ExcludesRejectingWorker(t *testing.T) {
 
 func TestCoordinator_WorkRejected_DuplicateIsNoop(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	require.NoError(t, c.RegisterWorker("w2"))
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	registerAvailable(t, c, "w1", "w2")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 
 	// First reject succeeds.
@@ -206,8 +211,8 @@ func TestCoordinator_WorkRejected_DuplicateIsNoop(t *testing.T) {
 
 func TestCoordinator_WorkFailed(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	registerAvailable(t, c, "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 	require.NoError(t, c.HandleWorkAccepted("work-1"))
 
@@ -219,8 +224,8 @@ func TestCoordinator_WorkFailed(t *testing.T) {
 
 func TestCoordinator_CancelWork(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	registerAvailable(t, c, "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 
 	require.NoError(t, c.CancelWork("work-1"))
@@ -231,12 +236,12 @@ func TestCoordinator_CancelWork(t *testing.T) {
 
 func TestCoordinator_CancelQueryWork(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	registerAvailable(t, c, "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
-	_, err = c.AssignWorkToWorker("q1", "l2", "work-2", "seg-2", "w1")
+	_, err = c.AssignWorkToWorker("q1", "l2", "work-2", "seg-2", "w1", nil)
 	require.NoError(t, err)
-	_, err = c.AssignWorkToWorker("q2", "l1", "work-3", "seg-3", "w1")
+	_, err = c.AssignWorkToWorker("q2", "l1", "work-3", "seg-3", "w1", nil)
 	require.NoError(t, err)
 
 	c.CancelQueryWork("q1")
@@ -249,12 +254,11 @@ func TestCoordinator_CancelQueryWork(t *testing.T) {
 
 func TestCoordinator_DisconnectWorker_ReassignsWork(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	require.NoError(t, c.RegisterWorker("w2"))
+	registerAvailable(t, c, "w1", "w2")
 
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
-	_, err = c.AssignWorkToWorker("q1", "l2", "work-2", "seg-2", "w1")
+	_, err = c.AssignWorkToWorker("q1", "l2", "work-2", "seg-2", "w1", nil)
 	require.NoError(t, err)
 
 	reassigned, err := c.DisconnectWorker("w1")
@@ -279,9 +283,9 @@ func TestCoordinator_DisconnectWorker_ReassignsWork(t *testing.T) {
 
 func TestCoordinator_DisconnectWorker_NoOtherWorkers(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
+	registerAvailable(t, c, "w1")
 
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 
 	// Disconnect w1 — no other workers to reassign to.
@@ -296,15 +300,14 @@ func TestCoordinator_DisconnectWorker_NoOtherWorkers(t *testing.T) {
 
 func TestCoordinator_DrainWorker_ReassignsUnstarted(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	require.NoError(t, c.RegisterWorker("w2"))
+	registerAvailable(t, c, "w1", "w2")
 
 	// work-1: assigned (not yet accepted) — should be reassigned.
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 
 	// work-2: accepted (in-flight) — should NOT be reassigned.
-	_, err = c.AssignWorkToWorker("q1", "l2", "work-2", "seg-2", "w1")
+	_, err = c.AssignWorkToWorker("q1", "l2", "work-2", "seg-2", "w1", nil)
 	require.NoError(t, err)
 	require.NoError(t, c.HandleWorkAccepted("work-2"))
 
@@ -322,8 +325,8 @@ func TestCoordinator_DrainWorker_ReassignsUnstarted(t *testing.T) {
 
 func TestCoordinator_RemoveWorker_CancelsWork(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	registerAvailable(t, c, "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 
 	canceled, err := c.RemoveWorker("w1")
@@ -337,11 +340,11 @@ func TestCoordinator_RemoveWorker_CancelsWork(t *testing.T) {
 
 func TestCoordinator_QueryWorkStatus(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
+	registerAvailable(t, c, "w1")
 
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
-	_, err = c.AssignWorkToWorker("q1", "l2", "work-2", "seg-2", "w1")
+	_, err = c.AssignWorkToWorker("q1", "l2", "work-2", "seg-2", "w1", nil)
 	require.NoError(t, err)
 	require.NoError(t, c.HandleWorkAccepted("work-2"))
 
@@ -352,10 +355,10 @@ func TestCoordinator_QueryWorkStatus(t *testing.T) {
 
 func TestCoordinator_IdempotencyDedup_SameWorkID(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
+	registerAvailable(t, c, "w1")
 
 	// Complete work-1.
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 	require.NoError(t, c.HandleWorkAccepted("work-1"))
 	require.NoError(t, c.HandleWorkReady("work-1", ArtifactInfo{ArtifactChecksum: "checksum-1"}))
@@ -368,16 +371,15 @@ func TestCoordinator_IdempotencyDedup_SameWorkID(t *testing.T) {
 
 func TestCoordinator_DistinctWorkUnits_SameLeaf_NotDuplicate(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	require.NoError(t, c.RegisterWorker("w2"))
+	registerAvailable(t, c, "w1", "w2")
 
 	// Two distinct work units for the same leaf (different segment groups).
-	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1")
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", nil)
 	require.NoError(t, err)
 	require.NoError(t, c.HandleWorkAccepted("work-1"))
 	require.NoError(t, c.HandleWorkReady("work-1", ArtifactInfo{ArtifactChecksum: "checksum-1"}))
 
-	_, err = c.AssignWorkToWorker("q1", "l1", "work-2", "seg-2", "w2")
+	_, err = c.AssignWorkToWorker("q1", "l1", "work-2", "seg-2", "w2", nil)
 	require.NoError(t, err)
 	require.NoError(t, c.HandleWorkAccepted("work-2"))
 	require.NoError(t, c.HandleWorkReady("work-2", ArtifactInfo{ArtifactChecksum: "checksum-1"}),
@@ -386,19 +388,53 @@ func TestCoordinator_DistinctWorkUnits_SameLeaf_NotDuplicate(t *testing.T) {
 
 func TestCoordinator_AffinityStability(t *testing.T) {
 	c := newTestCoordinator()
-	require.NoError(t, c.RegisterWorker("w1"))
-	require.NoError(t, c.RegisterWorker("w2"))
-	require.NoError(t, c.RegisterWorker("w3"))
+	registerAvailable(t, c, "w1", "w2", "w3")
 
 	// Same affinity key should always go to the same worker.
-	item1, err := c.AssignWork("q1", "l1", "work-1", "seg-42")
+	item1, err := c.AssignWork("q1", "l1", "work-1", "seg-42", nil)
 	require.NoError(t, err)
 
 	// Clean up and re-assign with same key.
 	c.CancelQueryWork("q1")
 
-	item2, err := c.AssignWork("q2", "l1", "work-2", "seg-42")
+	item2, err := c.AssignWork("q2", "l1", "work-2", "seg-42", nil)
 	require.NoError(t, err)
 	assert.Equal(t, item1.WorkerID, item2.WorkerID,
 		"same affinity key should map to same worker")
+}
+
+func TestCoordinator_SpecPropagatedOnReject(t *testing.T) {
+	c := newTestCoordinator()
+	registerAvailable(t, c, "w1", "w2")
+
+	spec := []byte(`{"table":"logs","filter":"severity>3"}`)
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", spec)
+	require.NoError(t, err)
+
+	// w1 rejects — spec should propagate to the reassigned work item.
+	require.NoError(t, c.Workers.BeginDrain("w1"))
+	reassigned, err := c.HandleWorkRejected("work-1")
+	require.NoError(t, err)
+	require.NotNil(t, reassigned)
+
+	newItem, err := c.Work.Get(reassigned.NewWorkID)
+	require.NoError(t, err)
+	assert.Equal(t, spec, newItem.Spec)
+}
+
+func TestCoordinator_SpecPropagatedOnDisconnect(t *testing.T) {
+	c := newTestCoordinator()
+	registerAvailable(t, c, "w1", "w2")
+
+	spec := []byte(`{"table":"metrics","rollup":"5m"}`)
+	_, err := c.AssignWorkToWorker("q1", "l1", "work-1", "seg-1", "w1", spec)
+	require.NoError(t, err)
+
+	reassigned, err := c.DisconnectWorker("w1")
+	require.NoError(t, err)
+	require.Len(t, reassigned, 1)
+
+	newItem, err := c.Work.Get(reassigned[0].NewWorkID)
+	require.NoError(t, err)
+	assert.Equal(t, spec, newItem.Spec)
 }

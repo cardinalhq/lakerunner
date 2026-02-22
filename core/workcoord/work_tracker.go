@@ -183,6 +183,7 @@ func (t *WorkTracker) Reassign(workID string, newWorkID string, newWorkerID stri
 		WorkerID:    newWorkerID,
 		State:       WorkStateAssigned,
 		AffinityKey: old.AffinityKey,
+		Spec:        old.Spec,
 	}
 
 	t.work[newWorkID] = newItem

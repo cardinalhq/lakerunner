@@ -83,7 +83,7 @@ func (c *Coordinator) DrainWorker(workerID string) ([]ReassignedWork, error) {
 
 // AssignWork creates a work item and assigns it to the best worker via
 // rendezvous hashing.
-func (c *Coordinator) AssignWork(queryID, leafID, workID, affinityKey string) (*WorkItem, error) {
+func (c *Coordinator) AssignWork(queryID, leafID, workID, affinityKey string, spec []byte) (*WorkItem, error) {
 	workers := c.Workers.AllWorkers()
 	workerID, err := AssignByRendezvous(affinityKey, workers)
 	if err != nil {
@@ -97,6 +97,7 @@ func (c *Coordinator) AssignWork(queryID, leafID, workID, affinityKey string) (*
 		WorkerID:    workerID,
 		State:       WorkStateAssigned,
 		AffinityKey: affinityKey,
+		Spec:        spec,
 	}
 	if err := c.Work.Add(item); err != nil {
 		return nil, err
@@ -107,7 +108,7 @@ func (c *Coordinator) AssignWork(queryID, leafID, workID, affinityKey string) (*
 // AssignWorkToWorker creates a work item assigned to a specific worker.
 // Returns ErrWorkerUnavailable if the worker is not alive, not accepting work,
 // or draining.
-func (c *Coordinator) AssignWorkToWorker(queryID, leafID, workID, affinityKey, workerID string) (*WorkItem, error) {
+func (c *Coordinator) AssignWorkToWorker(queryID, leafID, workID, affinityKey, workerID string, spec []byte) (*WorkItem, error) {
 	w, err := c.Workers.Get(workerID)
 	if err != nil {
 		return nil, err
@@ -123,6 +124,7 @@ func (c *Coordinator) AssignWorkToWorker(queryID, leafID, workID, affinityKey, w
 		WorkerID:    workerID,
 		State:       WorkStateAssigned,
 		AffinityKey: affinityKey,
+		Spec:        spec,
 	}
 	if err := c.Work.Add(item); err != nil {
 		return nil, err
@@ -169,6 +171,7 @@ func (c *Coordinator) HandleWorkRejected(workID string) (*ReassignedWork, error)
 		WorkerID:    newWorkerID,
 		State:       WorkStateAssigned,
 		AffinityKey: item.AffinityKey,
+		Spec:        item.Spec,
 	}
 	if err := c.Work.Add(newItem); err != nil {
 		return nil, err
