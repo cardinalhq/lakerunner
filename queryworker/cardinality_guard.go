@@ -23,7 +23,7 @@ import (
 	"github.com/cardinalhq/lakerunner/queryapi"
 )
 
-const DefaultMaxEstimatedGroupCardinality int64 = 100
+const DefaultMaxEstimatedGroupCardinality int64 = 300
 
 var ErrCardinalityLimitExceeded = errors.New("cardinality limit exceeded")
 
